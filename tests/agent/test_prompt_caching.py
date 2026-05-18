@@ -6,6 +6,7 @@ import pytest
 from agent.prompt_caching import (
     _apply_cache_marker,
     apply_anthropic_cache_control,
+    apply_anthropic_tool_cache_control,
 )
 
 
@@ -89,6 +90,29 @@ class TestApplyAnthropicCacheControl:
         assert isinstance(sys_content, list)
         assert sys_content[0]["cache_control"]["type"] == "ephemeral"
 
+    def test_layered_system_marks_only_cacheable_prefix(self):
+        """Volatile/ephemeral system blocks must not poison the cached prefix."""
+        msgs = [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "stable identity", "_hermes_cacheable": True},
+                    {"type": "text", "text": "cwd context", "_hermes_cacheable": True},
+                    {"type": "text", "text": "timestamp", "_hermes_cacheable": False},
+                    {"type": "text", "text": "ephemeral hint", "_hermes_cacheable": False},
+                ],
+            },
+            {"role": "user", "content": "Hi"},
+        ]
+
+        result = apply_anthropic_cache_control(msgs)
+        sys_content = result[0]["content"]
+
+        assert sys_content[1]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in sys_content[2]
+        assert "cache_control" not in sys_content[3]
+        assert all("_hermes_cacheable" not in block for block in sys_content)
+
     def test_last_3_non_system_get_markers(self):
         msgs = [
             {"role": "system", "content": "System"},
@@ -141,3 +165,20 @@ class TestApplyAnthropicCacheControl:
             elif "cache_control" in msg:
                 count += 1
         assert count <= 4
+
+
+class TestApplyAnthropicToolCacheControl:
+    def test_marks_last_tool_without_mutating_original(self):
+        tools = [
+            {"type": "function", "function": {"name": "b"}},
+            {"type": "function", "function": {"name": "a"}},
+        ]
+
+        result = apply_anthropic_tool_cache_control(tools)
+
+        assert result is not tools
+        assert result[-1]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in tools[-1]
+
+    def test_empty_tools_return_empty_list(self):
+        assert apply_anthropic_tool_cache_control([]) == []

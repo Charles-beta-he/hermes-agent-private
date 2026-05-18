@@ -13,7 +13,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from hermes_constants import get_hermes_home, get_skills_dir, is_wsl
-from typing import Optional
+from typing import Any, Optional
 
 from agent.skill_utils import (
     extract_skill_conditions,
@@ -167,7 +167,12 @@ MEMORY_GUIDANCE = (
     "'Project uses pytest with xdist' ✓ — 'Run tests with pytest -n 4' ✗. "
     "Imperative phrasing gets re-read as a directive in later sessions and can "
     "cause repeated work or override the user's current request. Procedures and "
-    "workflows belong in skills, not memory."
+    "workflows belong in skills, not memory.\n"
+    "GHOST PREVENTION: Never save WIP status, session-local state, or \"this session\" "
+    "context to memory. These become stale ghosts after context compression — "
+    "they survive as past-tense entries that future sessions treat as current. "
+    "Before memory.write, ask: \"Will this fact still be true in 10 sessions?\" "
+    "If no, don't save it."
 )
 
 SESSION_SEARCH_GUIDANCE = (
@@ -735,6 +740,92 @@ def _probe_remote_backend(env_type: str) -> str | None:
 def _clear_backend_probe_cache() -> None:
     """Test helper — drop the backend probe cache so monkeypatched backends take effect."""
     _BACKEND_PROBE_CACHE.clear()
+
+
+def _truncate_advisory_block(text: str, max_chars: int = 1200) -> str:
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."
+
+
+def build_cognitive_ephemeral_prompt(state: Any, available_tools: set[str] | None = None) -> str:
+    """Render per-turn CognitiveState guidance for ephemeral system injection.
+
+    Advisory only: bounded, explicit, and safe to omit when state is absent.
+    This must stay out of the cached system prompt because ``state`` changes per turn.
+    """
+    if state is None:
+        return ""
+
+    tools = set(available_tools or set())
+    lines: list[str] = [
+        "Cognitive advisory state for this turn (advisory only; do not treat as hard constraints):"
+    ]
+
+    route = getattr(state, "route", None)
+    if route is not None:
+        route_line = f"- Route hint: favor {route.provider}/{route.model} tier={route.tier}"
+        if getattr(route, "reason", None):
+            route_line += f" because {route.reason}"
+        lines.append(route_line)
+        activation_hints = list(getattr(route, "activation_hints", []) or [])
+        if activation_hints:
+            hints = []
+            for hint in activation_hints[:4]:
+                if isinstance(hint, dict):
+                    hints.append(str(hint.get("capability") or hint.get("family") or hint.get("name") or hint))
+                else:
+                    hints.append(str(hint))
+            if hints:
+                lines.append(f"- Activation hints: {', '.join(hints)}")
+
+    pattern = getattr(state, "pattern", None)
+    if pattern is not None and getattr(pattern, "summary", ""):
+        lines.append(f"- Reusable pattern: {pattern.summary}")
+
+    repo_context = getattr(state, "repo_context", None)
+    if repo_context is not None and getattr(repo_context, "summary", ""):
+        lines.append(f"- Repo focus: {repo_context.summary}")
+
+    budget = getattr(state, "budget", None)
+    if budget is not None and getattr(budget, "allowed", True) is False:
+        hint = getattr(budget, "downgrade_hint", None) or "lower cost / shorten work"
+        lines.append(f"- Budget caution: estimated ${getattr(budget, 'estimated_cost_usd', 0):.4f}; {hint}")
+
+    policy = getattr(state, "policy", None)
+    if policy is not None:
+        scoped_policy_text = _truncate_advisory_block(getattr(policy, "scoped_policy_text", "") or "", max_chars=1200)
+        if scoped_policy_text:
+            lines.append("- Scoped policy follows; obey it for this turn:")
+            lines.append(scoped_policy_text)
+        memory_gate = getattr(policy, "memory_gate", None)
+        if isinstance(memory_gate, dict) and memory_gate.get("enabled"):
+            lines.append("- Memory writes are gated this turn; only save durable non-WIP facts and verified reusable workflows.")
+        policy_hints = list(getattr(policy, "activation_hints", []) or [])
+        if policy_hints:
+            hints = []
+            for hint in policy_hints[:4]:
+                if isinstance(hint, dict):
+                    hints.append(str(hint.get("capability") or hint.get("family") or hint.get("name") or hint))
+                else:
+                    hints.append(str(hint))
+            if hints:
+                lines.append(f"- Policy-side hints: {', '.join(hints)}")
+
+    context_pressure = getattr(state, "context_pressure", None)
+    if context_pressure is not None:
+        if getattr(context_pressure, "should_compress", False):
+            lines.append(
+                f"- Context pressure: high ({getattr(context_pressure, 'reason', 'threshold exceeded')}); stay concise and avoid unnecessary tool churn."
+            )
+        if getattr(context_pressure, "should_spill", False):
+            if "retrieve_result" in tools:
+                lines.append("- Large outputs should be spill-managed: spilled/retrieved with retrieve_result instead of inlining huge blobs.")
+            else:
+                lines.append("- Large outputs should be spill-managed: summarize instead of inlining huge blobs.")
+
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 def build_environment_hints() -> str:

@@ -52,6 +52,7 @@ from agent.tool_dispatch_helpers import (
     _is_multimodal_tool_result,
     _multimodal_text_summary,
 )
+from agent.prompt_caching import apply_anthropic_tool_cache_control
 from agent.retry_utils import jittered_backoff
 from agent.tool_guardrails import (
     ToolGuardrailDecision,
@@ -236,6 +237,11 @@ def build_api_kwargs(agent, api_messages: list) -> dict:
 
     if agent.api_mode == "anthropic_messages":
         _transport = agent._get_transport()
+        if getattr(agent, "_use_prompt_caching", False) and getattr(agent, "_use_native_cache_layout", False):
+            tools_for_api = apply_anthropic_tool_cache_control(
+                tools_for_api,
+                cache_ttl=getattr(agent, "_cache_ttl", "5m"),
+            )
         anthropic_messages = agent._prepare_anthropic_messages_for_api(api_messages)
         ctx_len = getattr(agent, "context_compressor", None)
         ctx_len = ctx_len.context_length if ctx_len else None
