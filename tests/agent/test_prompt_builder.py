@@ -28,7 +28,9 @@ from agent.prompt_builder import (
     SESSION_SEARCH_GUIDANCE,
     PLATFORM_HINTS,
     WSL_ENVIRONMENT_HINT,
+    build_cognitive_ephemeral_prompt,
 )
+from agent.cognitive_state import BudgetState, CognitiveState, ContextPressureState, PatternState, PolicyState, RepoContextState, RouteState
 from hermes_cli.nous_subscription import NousFeatureState, NousSubscriptionFeatures
 
 
@@ -48,6 +50,46 @@ class TestGuidanceConstants:
     def test_session_search_guidance_is_simple_cross_session_recall(self):
         assert "relevant cross-session context exists" in SESSION_SEARCH_GUIDANCE
         assert "recent turns of the current session" not in SESSION_SEARCH_GUIDANCE
+
+
+class TestCognitiveEphemeralPrompt:
+    def test_renders_route_policy_and_context_pressure_guidance(self):
+        state = CognitiveState(
+            route=RouteState(
+                provider="openai-codex",
+                model="gpt-5.5",
+                tier="COMPLEX",
+                score=0.91,
+                reason="debugging task",
+                activation_hints=[{"family": "memory", "capability": "write"}],
+            ),
+            pattern=PatternState(summary="reuse verified repo triage", source="pattern-cache", confidence=0.8),
+            repo_context=RepoContextState(summary="agent/, tests/", top_paths=["agent/", "tests/"]),
+            budget=BudgetState(allowed=False, estimated_cost_usd=1.2, downgrade_hint="downgrade model/tier"),
+            policy=PolicyState(
+                scoped_policy_text="Scoped Repository Policy\n- Keep tests green\n- Preserve fail-soft behavior",
+                memory_gate={"enabled": True},
+                activation_hints=[{"family": "tool", "capability": "browser"}],
+            ),
+            context_pressure=ContextPressureState(
+                should_compress=True,
+                should_spill=True,
+                reason="chars>=12000, chars>=2000",
+                compression_target="conversation_history",
+            ),
+        )
+
+        prompt = build_cognitive_ephemeral_prompt(state, available_tools={"retrieve_result", "memory"})
+
+        assert "Cognitive advisory state for this turn" in prompt
+        assert "Route hint: favor openai-codex/gpt-5.5 tier=COMPLEX" in prompt
+        assert "Scoped Repository Policy" in prompt
+        assert "Memory writes are gated this turn" in prompt
+        assert "retrieve_result" in prompt
+        assert "reuse verified repo triage" in prompt
+
+    def test_returns_empty_string_without_state(self):
+        assert build_cognitive_ephemeral_prompt(None) == ""
 
 
 # =========================================================================

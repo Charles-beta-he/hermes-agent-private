@@ -1,15 +1,18 @@
 """Anthropic prompt caching strategy.
 
-Single layout: ``system_and_3``. 4 cache_control breakpoints — system
+Default layout: ``system_and_3``. 4 cache_control breakpoints — system
 prompt + last 3 non-system messages, all at the same TTL (5m or 1h).
-Reduces input token costs by ~75% on multi-turn conversations within a
-single session.
+When Hermes supplies a layered system prompt as text blocks, the system
+breakpoint is placed on the last cacheable prefix block (stable/context),
+not on volatile per-turn/session blocks. This keeps Anthropic's prefix cache
+warm across sessions and sub-agents without letting timestamps, memory
+snapshots, or ephemeral hints poison the cache key.
 
 Pure functions -- no class state, no AIAgent dependency.
 """
 
 import copy
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 def _apply_cache_marker(msg: dict, cache_marker: dict, native_anthropic: bool = False) -> None:
@@ -46,6 +49,44 @@ def _build_marker(ttl: str) -> Dict[str, str]:
     return marker
 
 
+def _apply_layered_system_cache_marker(msg: dict, cache_marker: dict) -> bool:
+    """Mark the last explicitly-cacheable system block and strip internals.
+
+    Conversation assembly can represent the system prompt as ordered text
+    blocks with a private ``_hermes_cacheable`` flag. Anthropic caches the
+    prefix up to the block carrying ``cache_control``. Marking the final
+    volatile/ephemeral block would make timestamp and one-off hints part of
+    the cache key, defeating prefix reuse. Instead, mark the last block whose
+    private flag is true and remove the private flag before the request leaves
+    Hermes.
+
+    Returns True when this function handled a layered system content list.
+    """
+    if msg.get("role") != "system":
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list) or not content:
+        return False
+    saw_private_flag = any(
+        isinstance(block, dict) and "_hermes_cacheable" in block
+        for block in content
+    )
+    if not saw_private_flag:
+        return False
+
+    cacheable_idx = None
+    for idx, block in enumerate(content):
+        if not isinstance(block, dict):
+            continue
+        if block.get("_hermes_cacheable") is True:
+            cacheable_idx = idx
+        block.pop("_hermes_cacheable", None)
+
+    if cacheable_idx is not None and isinstance(content[cacheable_idx], dict):
+        content[cacheable_idx]["cache_control"] = cache_marker
+    return True
+
+
 def apply_anthropic_cache_control(
     api_messages: List[Dict[str, Any]],
     cache_ttl: str = "5m",
@@ -54,7 +95,9 @@ def apply_anthropic_cache_control(
     """Apply system_and_3 caching strategy to messages for Anthropic models.
 
     Places up to 4 cache_control breakpoints: system prompt + last 3 non-system
-    messages, all at the same TTL.
+    messages, all at the same TTL. If the system message is layered using
+    Hermes' private ``_hermes_cacheable`` flags, the system breakpoint is placed
+    on the last cacheable prefix block instead of the final volatile block.
 
     Returns:
         Deep copy of messages with cache_control breakpoints injected.
@@ -68,7 +111,8 @@ def apply_anthropic_cache_control(
     breakpoints_used = 0
 
     if messages[0].get("role") == "system":
-        _apply_cache_marker(messages[0], marker, native_anthropic=native_anthropic)
+        if not _apply_layered_system_cache_marker(messages[0], marker):
+            _apply_cache_marker(messages[0], marker, native_anthropic=native_anthropic)
         breakpoints_used += 1
 
     remaining = 4 - breakpoints_used
@@ -77,3 +121,21 @@ def apply_anthropic_cache_control(
         _apply_cache_marker(messages[idx], marker, native_anthropic=native_anthropic)
 
     return messages
+
+
+def apply_anthropic_tool_cache_control(
+    tools: Optional[List[Dict[str, Any]]],
+    cache_ttl: str = "5m",
+) -> List[Dict[str, Any]]:
+    """Return a copy of *tools* with a cache breakpoint on the last tool.
+
+    Native Anthropic accepts ``cache_control`` on tool definitions. Hermes'
+    tool registry already returns definitions in deterministic name order;
+    marking the final schema caches the whole stable tools array while avoiding
+    mutation of ``agent.tools`` (which is reused across turns/retries).
+    """
+    if not tools:
+        return []
+    copied = copy.deepcopy(tools)
+    copied[-1]["cache_control"] = _build_marker(cache_ttl)
+    return copied
