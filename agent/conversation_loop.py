@@ -25,12 +25,19 @@ import ssl
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent.anthropic_adapter import _is_oauth_token
 from agent.auxiliary_client import set_runtime_main
 from agent.codex_responses_adapter import _summarize_user_message_for_log
 from agent.display import KawaiiSpinner
+from agent.continuation import (
+    build_continuation_packet,
+    continuation_root,
+    write_continuation_packet,
+    write_legacy_relay_packet,
+)
 from agent.error_classifier import FailoverReason, classify_api_error
 from agent.iteration_budget import IterationBudget
 from agent.memory_manager import build_memory_context_block
@@ -61,6 +68,7 @@ from agent.nous_rate_guard import (
 )
 from agent.process_bootstrap import _install_safe_stdio
 from agent.prompt_caching import apply_anthropic_cache_control
+from agent.prompt_builder import build_cognitive_ephemeral_prompt
 from agent.retry_utils import jittered_backoff
 from agent.trajectory import has_incomplete_scratchpad
 from agent.usage_pricing import estimate_usage_cost, normalize_usage
@@ -71,6 +79,295 @@ from tools.skill_provenance import set_current_write_origin
 from utils import base_url_host_matches, env_var_enabled
 
 logger = logging.getLogger(__name__)
+
+
+def _relay_packet_dir() -> Path:
+    return Path(os.environ.get("HERMES_RELAY_PACKET_DIR", str(Path.home() / ".hermes" / "state" / "relay-packets"))).expanduser()
+
+
+def _continuation_packet_root() -> Path:
+    return continuation_root()
+
+
+
+def _is_auto_relay_exit_reason(reason: str | None) -> bool:
+    text = str(reason or "")
+    return text == "budget_exhausted" or text.startswith("max_iterations_reached")
+
+
+def _should_auto_relay(agent, *, final_response: str | None, interrupted: bool, turn_exit_reason: str | None) -> bool:
+    if interrupted:
+        return False
+    if not final_response or not str(final_response).strip():
+        return False
+    if not getattr(agent, "auto_relay_enabled", False):
+        return False
+    if int(getattr(agent, "_relay_count", 0) or 0) >= int(getattr(agent, "max_relay_count", 0) or 0):
+        return False
+    return _is_auto_relay_exit_reason(turn_exit_reason)
+
+
+def _write_auto_relay_packet(agent, *, reason: str, summary: str, messages: list[dict[str, Any]], api_call_count: int) -> Path:
+    relay_index = int(getattr(agent, "_relay_count", 0) or 0) + 1
+    packet = build_continuation_packet(
+        scope="conversation",
+        reason=reason,
+        summary=summary,
+        session_id=getattr(agent, "session_id", None) or "no-session",
+        parent_session_id=getattr(agent, "parent_session_id", None),
+        task_id=getattr(agent, "task_id", None),
+        model=getattr(agent, "model", ""),
+        provider=getattr(agent, "provider", ""),
+        remaining_work=["continue the user task from the exhausted-turn summary"],
+        resume={
+            "mode": "immediate",
+            "executor": "conversation_loop",
+            "max_retries": int(getattr(agent, "max_relay_count", 0) or 0),
+        },
+        limits={
+            "relay_index": relay_index,
+            "max_relay_count": int(getattr(agent, "max_relay_count", 0) or 0),
+            "budget_used": getattr(getattr(agent, "iteration_budget", None), "used", api_call_count),
+            "budget_max": getattr(getattr(agent, "iteration_budget", None), "max_total", getattr(agent, "max_iterations", 0)),
+            "api_calls": api_call_count,
+        },
+        metadata={
+            "legacy_schema": "hermes_auto_relay_packet_v1",
+            "turn_exit_reason": reason,
+            "messages_snapshot": list(messages[-20:]),
+        },
+    )
+    write_continuation_packet(packet, root=_continuation_packet_root(), state="active")
+    return write_legacy_relay_packet(packet, legacy_dir=_relay_packet_dir(), relay_index=relay_index)
+
+
+def _build_auto_relay_prompt(*, relay_index: int, max_relay_count: int, reason: str, summary: str) -> str:
+    return (
+        f"[Auto-relay {relay_index}/{max_relay_count}] Previous turn stopped because {reason}.\n"
+        f"Summary from the exhausted turn:\n{summary}\n\n"
+        "Continue the task from that handoff. Use tools as needed, verify results, "
+        "and only provide a final answer after the work is complete."
+    )
+
+
+def _try_auto_relay(
+    agent,
+    *,
+    final_response: str | None,
+    interrupted: bool,
+    turn_exit_reason: str | None,
+    messages: list[dict[str, Any]],
+    api_call_count: int,
+    task_id: str,
+    stream_callback: Any = None,
+) -> Optional[dict[str, Any]]:
+    """Start a successor turn when the current turn only produced a budget handoff.
+
+    Returns the successor turn result when relay is triggered, otherwise None.
+    Keeping this as a small helper gives the budget-exhaustion state transition
+    a direct regression-test seam instead of relying only on full live LLM loops.
+    """
+    if not _should_auto_relay(
+        agent,
+        final_response=final_response,
+        interrupted=interrupted,
+        turn_exit_reason=turn_exit_reason,
+    ):
+        return None
+
+    relay_index = int(getattr(agent, "_relay_count", 0) or 0) + 1
+    try:
+        packet_path = _write_auto_relay_packet(
+            agent,
+            reason=turn_exit_reason or "budget_exhausted",
+            summary=final_response or "",
+            messages=messages,
+            api_call_count=api_call_count,
+        )
+    except Exception as exc:
+        logger.warning("auto-relay packet write failed; returning summary: %s", exc)
+        return None
+
+    if not getattr(agent, "quiet_mode", False):
+        agent._safe_print(
+            f"↻ Auto-relay {relay_index}/{getattr(agent, 'max_relay_count', 0)} after {turn_exit_reason}"
+        )
+    agent._relay_count = relay_index
+    agent.iteration_budget = IterationBudget(getattr(agent, "max_iterations", 90))
+    agent._budget_exhausted_injected = False
+    agent._budget_grace_call = False
+    relay_prompt = _build_auto_relay_prompt(
+        relay_index=relay_index,
+        max_relay_count=int(getattr(agent, "max_relay_count", 0) or 0),
+        reason=turn_exit_reason or "budget_exhausted",
+        summary=final_response or "",
+    )
+    relay_result = run_conversation(
+        agent,
+        relay_prompt,
+        None,
+        list(messages),
+        task_id,
+        stream_callback,
+        persist_user_message=relay_prompt,
+    )
+    if isinstance(relay_result, dict):
+        relay_result.setdefault("auto_relay", {})
+        relay_result["auto_relay"].update({
+            "triggered": True,
+            "relay_index": relay_index,
+            "packet_path": str(packet_path),
+            "parent_turn_exit_reason": turn_exit_reason,
+        })
+    return relay_result
+
+
+def _run_mainline_cognitive_pipeline(
+    agent,
+    *,
+    user_message: str,
+    conversation_history: List[Dict[str, Any]],
+    effective_task_id: str,
+):
+    agent.current_cognitive_state = None
+    if not getattr(agent, "cognitive_pipeline_enabled", False):
+        return None
+    pipeline = getattr(agent, "cognitive_pipeline", None)
+    if pipeline is None:
+        return None
+    try:
+        from agent.cognitive_pipeline import TurnInput
+
+        workdir = os.getenv("TERMINAL_CWD") or os.getcwd()
+        turn_input = TurnInput(
+            user_message=user_message,
+            conversation_history=list(conversation_history) + [{"role": "user", "content": user_message}],
+            workdir=workdir,
+            enabled_toolsets=list(getattr(agent, "enabled_toolsets", []) or []),
+            config_flags={
+                "enabled": True,
+                "advisory_only": bool(getattr(agent, "cognitive_pipeline_advisory_only", True)),
+            },
+            metadata={
+                "session_id": getattr(agent, "session_id", ""),
+                "task_id": effective_task_id,
+                "platform": getattr(agent, "platform", None) or "cli",
+                "provider": getattr(agent, "provider", "") or "",
+                "model": getattr(agent, "model", "") or "",
+            },
+        )
+        state = pipeline.run(
+            turn_input,
+            initial_state=getattr(agent, "last_cognitive_state", None),
+        )
+        agent.current_cognitive_state = state
+        agent.last_cognitive_state = state
+        return state
+    except Exception as exc:
+        agent.current_cognitive_state = None
+        logger.warning("cognitive pipeline mainline wiring failed soft: %s", exc)
+        return None
+
+
+def _run_conductor_intent_router(
+    agent,
+    *,
+    user_message: str,
+    task_ledger: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """Advisory intent router — classify message and manage task ledger.
+
+    When conductor.intent_router is enabled, run a lightweight structural
+    classification of each user message.  The decision is logged and stored
+    on the agent for downstream consumers (e.g. background worker dispatch).
+
+    For new_background_task: creates a ledger entry immediately.
+    For current_task_control: updates the task directive in the ledger.
+    For status_query: reads task state from the ledger.
+
+    The router_call is isolated: it does not count as a participant model call
+    and does not affect planner/implementer/arbiter candidate selection.
+    """
+    try:
+        cfg = getattr(agent, "_conductor_config", None)
+        if cfg is None:
+            # Load config directly from YAML to avoid import chain issues
+            cfg_path = Path.home() / ".hermes" / "config.yaml"
+            cfg = {}
+            if cfg_path.exists():
+                text = cfg_path.read_text(encoding="utf-8", errors="ignore")
+                try:
+                    import yaml  # type: ignore
+                    loaded = yaml.safe_load(text) or {}
+                    cfg = loaded if isinstance(loaded, dict) else {}
+                except Exception:
+                    pass
+            agent._conductor_config = cfg
+
+        conductor_raw = cfg.get("conductor")
+        conductor: Dict[str, Any] = conductor_raw if isinstance(conductor_raw, dict) else {}
+        router_cfg_raw = conductor.get("intent_router")
+        router_cfg: Dict[str, Any] = router_cfg_raw if isinstance(router_cfg_raw, dict) else {}
+        if not router_cfg.get("enabled"):
+            return None
+
+        from agent.conductor_runtime import ConversationIntentRouter, TaskLedger
+
+        ledger = task_ledger or TaskLedger()
+        model_name = getattr(agent, "model", "") or "default-main-model"
+        router = ConversationIntentRouter(default_model_name=model_name)
+        active_tasks = ledger.get_active_tasks()
+        decision = router.classify(user_message, active_tasks=active_tasks)
+
+        # Act on the decision — manage task ledger state
+        intent = decision.get("intent")
+        action = decision.get("action")
+        target_task_id = decision.get("target_task_id")
+
+        if intent == "new_background_task" and action == "create":
+            # Create a new background task in the ledger
+            task = ledger.create_task(
+                title=user_message[:80],
+                current_goal=user_message,
+                origin_session_id=getattr(agent, "session_id", ""),
+            )
+            decision["created_task_id"] = task.get("task_id")
+            decision["created_task_status"] = task.get("status")
+            logger.info(
+                "conductor: created background task %s for message: %s",
+                task.get("task_id"), user_message[:60],
+            )
+
+        elif intent == "current_task_control" and target_task_id:
+            # Update the task directive
+            try:
+                ledger.update_task_directive(target_task_id, user_message, action=action or "append_context")
+                logger.info("conductor: updated task %s directive: %s", target_task_id, action)
+            except KeyError:
+                logger.warning("conductor: task %s not found for directive update", target_task_id)
+
+        elif intent == "status_query" and target_task_id:
+            # Read task state for the agent to reference
+            task = ledger.get_task(target_task_id)
+            if task:
+                decision["task_status"] = task.get("status")
+                decision["task_last_summary"] = task.get("last_summary", "")[:500]
+                decision["task_latest_directive"] = task.get("latest_user_directive", "")
+
+        # Store advisory decision on agent
+        agent._last_conductor_decision = decision
+        logger.info(
+            "conductor intent router advisory: intent=%s action=%s target=%s confidence=%.2f router_model=%s",
+            decision.get("intent"),
+            decision.get("action"),
+            decision.get("target_task_id"),
+            decision.get("confidence", 0.0),
+            decision.get("router_model"),
+        )
+        return decision
+    except Exception as exc:
+        logger.warning("conductor intent router failed soft: %s", exc)
+        return None
 
 
 def _ra():
@@ -523,6 +820,34 @@ def run_conversation(
     except Exception as exc:
         logger.warning("pre_llm_call hook failed: %s", exc)
 
+    cognitive_state = _run_mainline_cognitive_pipeline(
+        agent,
+        user_message=original_user_message if isinstance(original_user_message, str) else user_message,
+        conversation_history=messages,
+        effective_task_id=effective_task_id,
+    )
+    cognitive_ephemeral_system_prompt = build_cognitive_ephemeral_prompt(
+        cognitive_state,
+        available_tools=set(getattr(agent, "valid_tool_names", []) or []),
+    )
+    if cognitive_state and getattr(cognitive_state, "context_pressure", None):
+        _pressure = cognitive_state.context_pressure
+        if getattr(_pressure, "should_compress", False) or getattr(_pressure, "should_spill", False):
+            logger.info(
+                "cognitive context pressure advisory: compress=%s spill=%s reason=%s target=%s",
+                bool(getattr(_pressure, "should_compress", False)),
+                bool(getattr(_pressure, "should_spill", False)),
+                getattr(_pressure, "reason", None),
+                getattr(_pressure, "compression_target", None),
+            )
+
+    # Conductor intent router advisory — classify message for async task routing.
+    # Advisory only: logged, stored on agent, does NOT alter the main loop.
+    conductor_decision = _run_conductor_intent_router(
+        agent,
+        user_message=original_user_message if isinstance(original_user_message, str) else user_message,
+    )
+
     # Main conversation loop
     api_call_count = 0
     final_response = None
@@ -796,14 +1121,34 @@ def run_conversation(
         #
         # Hermes invariant: the system prompt is built ONCE per session
         # (cached on ``_cached_system_prompt``) and replayed verbatim on
-        # every turn.  We send it as a single content string so the
-        # bytes are byte-stable across turns and upstream prompt caches
-        # stay warm.
+        # every turn. When prompt caching is enabled and the prompt was built
+        # in this process, send it as stable/context/volatile text blocks so
+        # cache_control can mark only the stable prefix. Otherwise, preserve
+        # the legacy opaque string for byte-for-byte continuation stability.
         effective_system = active_system_prompt or ""
+        extra_system_blocks = []
         if agent.ephemeral_system_prompt:
-            effective_system = (effective_system + "\n\n" + agent.ephemeral_system_prompt).strip()
-        if effective_system:
-            api_messages = [{"role": "system", "content": effective_system}] + api_messages
+            extra_system_blocks.append(agent.ephemeral_system_prompt)
+        if cognitive_ephemeral_system_prompt:
+            extra_system_blocks.append(cognitive_ephemeral_system_prompt)
+        system_content = None
+        if effective_system or extra_system_blocks:
+            if agent._use_prompt_caching:
+                try:
+                    from agent.system_prompt import build_system_prompt_content_blocks
+                    system_content = build_system_prompt_content_blocks(
+                        agent,
+                        system_prompt=effective_system,
+                        extra_blocks=extra_system_blocks,
+                    )
+                except Exception:
+                    system_content = None
+            if system_content is None:
+                if extra_system_blocks:
+                    effective_system = (effective_system + "\n\n" + "\n\n".join(extra_system_blocks)).strip()
+                system_content = effective_system
+        if system_content:
+            api_messages = [{"role": "system", "content": system_content}] + api_messages
 
         # Inject ephemeral prefill messages right after the system prompt
         # but before conversation history. Same API-call-time-only pattern.
@@ -2317,7 +2662,7 @@ def run_conversation(
                     # still recover.  See _pool_may_recover_from_rate_limit
                     # for the single-credential-pool and CloudCode-quota
                     # exceptions.  Fixes #11314 and #13636.
-                    pool_may_recover = _pool_may_recover_from_rate_limit(
+                    pool_may_recover = _ra()._pool_may_recover_from_rate_limit(
                         agent._credential_pool,
                         provider=agent.provider,
                         base_url=getattr(agent, "base_url", None),
@@ -4041,6 +4386,23 @@ def run_conversation(
         final_response=final_response,
         interrupted=interrupted,
     )
+
+    # Auto-relay tool/iteration budget exhaustion into a fresh turn before
+    # surfacing a partial summary. This path is deliberately after persistence
+    # and cleanup for the exhausted turn, and before background review, so the
+    # successor turn owns final delivery/background review.
+    relay_result = _try_auto_relay(
+        agent,
+        final_response=final_response,
+        interrupted=interrupted,
+        turn_exit_reason=_turn_exit_reason,
+        messages=messages,
+        api_call_count=api_call_count,
+        task_id=task_id,
+        stream_callback=stream_callback,
+    )
+    if relay_result is not None:
+        return relay_result
 
     # Background memory/skill review — runs AFTER the response is delivered
     # so it never competes with the user's task for model attention.

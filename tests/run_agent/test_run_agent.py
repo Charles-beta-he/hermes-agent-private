@@ -20,6 +20,7 @@ from agent.codex_responses_adapter import _chat_messages_to_responses_input, _no
 
 import run_agent
 from run_agent import AIAgent
+from agent.cognitive_state import CognitiveState, IntentState, PolicyState, ContextPressureState, RouteState
 from agent.error_classifier import FailoverReason
 from agent.prompt_builder import DEFAULT_AGENT_IDENTITY
 
@@ -149,6 +150,37 @@ def test_aiagent_reuses_existing_errors_log_handler():
                 handler.close()
         for handler in original_handlers:
             root_logger.addHandler(handler)
+
+
+def test_aiagent_cognitive_pipeline_defaults_disabled(agent):
+    assert getattr(agent, "cognitive_pipeline_enabled", False) is False
+    assert getattr(agent, "cognitive_pipeline", None) is None
+    assert getattr(agent, "current_cognitive_state", None) is None
+    assert getattr(agent, "last_cognitive_state", None) is None
+
+
+def test_aiagent_enables_cognitive_pipeline_from_env(monkeypatch):
+    monkeypatch.setenv("HERMES_COGNITIVE_PIPELINE_ENABLED", "1")
+    sentinel_pipeline = object()
+    with (
+        patch(
+            "run_agent.get_tool_definitions",
+            return_value=_make_tool_defs("web_search"),
+        ),
+        patch("run_agent.check_toolset_requirements", return_value={}),
+        patch("run_agent.OpenAI"),
+        patch("agent.cognitive_pipeline.build_default_cognitive_pipeline", return_value=sentinel_pipeline),
+    ):
+        a = AIAgent(
+            api_key="test-key-1234567890",
+            base_url="https://openrouter.ai/api/v1",
+            quiet_mode=True,
+            skip_context_files=True,
+            skip_memory=True,
+        )
+    assert getattr(a, "cognitive_pipeline_enabled", False) is True
+    assert getattr(a, "cognitive_pipeline", None) is sentinel_pipeline
+    assert getattr(a, "cognitive_pipeline_advisory_only", False) is True
 
 
 class TestProviderModelNormalization:
@@ -2595,6 +2627,130 @@ class TestRunConversation:
             result = agent.run_conversation("hello")
         assert result["final_response"] == "Final answer"
         assert result["completed"] is True
+
+    def test_cognitive_pipeline_disabled_does_not_run(self, agent):
+        self._setup_agent(agent)
+        resp = _mock_response(content="Final answer", finish_reason="stop")
+        agent.client.chat.completions.create.return_value = resp
+        pipeline = MagicMock()
+        agent.cognitive_pipeline = pipeline
+        agent.cognitive_pipeline_enabled = False
+
+        with (
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("hello")
+
+        assert result["final_response"] == "Final answer"
+        pipeline.run.assert_not_called()
+        assert agent.current_cognitive_state is None
+        assert agent.last_cognitive_state is None
+
+    def test_cognitive_pipeline_enabled_runs_once_and_stashes_state(self, agent):
+        self._setup_agent(agent)
+        resp = _mock_response(content="Final answer", finish_reason="stop")
+        agent.client.chat.completions.create.return_value = resp
+        captured = {}
+        state = CognitiveState(
+            intent=IntentState(
+                type="event",
+                detail="normal",
+                salience="normal",
+                recency="normal",
+                confidence=0.8,
+                reason="test",
+            )
+        )
+
+        class RecordingPipeline:
+            def run(self, turn_input, initial_state=None):
+                captured["turn_input"] = turn_input
+                captured["initial_state"] = initial_state
+                return state
+
+        agent.cognitive_pipeline = RecordingPipeline()
+        agent.cognitive_pipeline_enabled = True
+
+        with (
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("hello")
+
+        assert result["final_response"] == "Final answer"
+        assert captured["turn_input"].user_message == "hello"
+        assert captured["turn_input"].conversation_history[-1]["content"] == "hello"
+        assert agent.current_cognitive_state is state
+        assert agent.last_cognitive_state is state
+
+    def test_cognitive_state_injects_ephemeral_prompt_guidance(self, agent, caplog):
+        self._setup_agent(agent)
+        resp = _mock_response(content="Final answer", finish_reason="stop")
+        agent.client.chat.completions.create.return_value = resp
+        agent.cognitive_pipeline_enabled = True
+        agent.cognitive_pipeline = SimpleNamespace(
+            run=lambda turn_input, initial_state=None: CognitiveState(
+                route=RouteState(
+                    provider="openai-codex",
+                    model="gpt-5.5",
+                    tier="COMPLEX",
+                    score=0.8,
+                    reason="debugging task",
+                ),
+                policy=PolicyState(
+                    scoped_policy_text="Scoped Repository Policy\n- Keep tests green",
+                    memory_gate={"enabled": True},
+                ),
+                context_pressure=ContextPressureState(
+                    should_compress=True,
+                    should_spill=True,
+                    reason="chars>=12000",
+                    compression_target="conversation_history",
+                ),
+            )
+        )
+
+        with (
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("hello")
+
+        assert result["final_response"] == "Final answer"
+        request_messages = agent.client.chat.completions.create.call_args.kwargs["messages"]
+        assert request_messages[0]["role"] == "system"
+        assert "Cognitive advisory state for this turn" in request_messages[0]["content"]
+        assert "Scoped Repository Policy" in request_messages[0]["content"]
+        assert "retrieve_result" in request_messages[0]["content"] or "spill" in request_messages[0]["content"]
+        assert any("cognitive context pressure advisory" in record.message for record in caplog.records)
+
+    def test_cognitive_pipeline_exception_is_fail_soft(self, agent):
+        self._setup_agent(agent)
+        resp = _mock_response(content="Final answer", finish_reason="stop")
+        agent.client.chat.completions.create.return_value = resp
+
+        class ExplodingPipeline:
+            def run(self, turn_input, initial_state=None):
+                raise RuntimeError("cognitive pipeline unavailable")
+
+        agent.cognitive_pipeline = ExplodingPipeline()
+        agent.cognitive_pipeline_enabled = True
+
+        with (
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("hello")
+
+        assert result["final_response"] == "Final answer"
+        assert result["completed"] is True
+        assert agent.current_cognitive_state is None
+        assert agent.last_cognitive_state is None
 
     def test_tool_calls_then_stop(self, agent):
         self._setup_agent(agent)

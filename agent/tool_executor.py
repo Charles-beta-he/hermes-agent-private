@@ -641,6 +641,7 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                 content=function_args.get("content"),
                 old_text=function_args.get("old_text"),
                 store=agent._memory_store,
+                cognitive_state=getattr(agent, "current_cognitive_state", None),
             )
             # Bridge: notify external memory provider of built-in memory writes
             if agent._memory_manager and function_args.get("action") in {"add", "replace"}:
