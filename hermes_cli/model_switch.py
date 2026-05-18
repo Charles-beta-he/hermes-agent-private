@@ -1298,6 +1298,21 @@ def list_authenticated_providers(
                     if any(os.environ.get(ev) for ev in pcfg.api_key_env_vars):
                         has_creds = True
                         break
+        # OAuth/external providers such as google-gemini-cli keep their
+        # login state in provider-specific stores (for Gemini:
+        # ~/.hermes/auth/google_oauth.json), not in the generic auth.json
+        # provider map or credential pool.  Ask the provider auth registry
+        # directly so /model shows every provider that is actually logged in.
+        if not has_creds and overlay.auth_type in {"oauth_external", "external_process"}:
+            try:
+                from hermes_cli.auth import get_auth_status
+                for _key in (hermes_slug, pid):
+                    _status = get_auth_status(_key) or {}
+                    if _status.get("logged_in") or _status.get("configured"):
+                        has_creds = True
+                        break
+            except Exception as exc:
+                logger.debug("Auth status check failed for %s: %s", hermes_slug, exc)
         # Check auth store and credential pool for non-env-var credentials.
         # This applies to OAuth providers AND api_key providers that also
         # support OAuth (e.g. anthropic supports both API key and Claude Code
