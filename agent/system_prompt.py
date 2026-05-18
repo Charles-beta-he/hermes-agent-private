@@ -280,6 +280,50 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     }
 
 
+def build_system_prompt_content_blocks(
+    agent: Any,
+    system_prompt: Optional[str] = None,
+    extra_blocks: Optional[List[str]] = None,
+) -> str | List[Dict[str, Any]]:
+    """Return a cache-friendly system content payload for API calls.
+
+    When the current ``system_prompt`` exactly matches the cached prompt built
+    from ``stable/context/volatile`` parts in this process, return ordered text
+    blocks tagged with Hermes-private ``_hermes_cacheable`` flags.  The prompt
+    caching layer strips those private flags and places Anthropic's
+    ``cache_control`` marker on the last cacheable prefix block so volatile
+    memory/timestamp/ephemeral hints do not become part of the cache key.
+
+    If we only have an opaque stored prompt (e.g. a gateway continuation loaded
+    from SQLite), fall back to the legacy string representation to preserve
+    byte-for-byte compatibility.
+    """
+    base = system_prompt if system_prompt is not None else getattr(agent, "_cached_system_prompt", "")
+    base = base or ""
+    extras = [b.strip() for b in (extra_blocks or []) if isinstance(b, str) and b.strip()]
+    parts = getattr(agent, "_cached_system_prompt_parts", None)
+    if not isinstance(parts, dict) or base != (getattr(agent, "_cached_system_prompt", "") or ""):
+        effective = base
+        if extras:
+            effective = (effective + "\n\n" + "\n\n".join(extras)).strip()
+        return effective
+
+    blocks: List[Dict[str, Any]] = []
+    for key in ("stable", "context", "volatile"):
+        text = (parts.get(key) or "").strip()
+        if text:
+            blocks.append({
+                "type": "text",
+                "text": text,
+                "_hermes_cacheable": key in {"stable", "context"},
+            })
+    for extra in extras:
+        blocks.append({"type": "text", "text": extra, "_hermes_cacheable": False})
+    if not blocks:
+        return ""
+    return blocks
+
+
 def build_system_prompt(agent: Any, system_message: Optional[str] = None) -> str:
     """Assemble the full system prompt from all layers.
 
@@ -296,6 +340,10 @@ def build_system_prompt(agent: Any, system_message: Optional[str] = None) -> str
     warm across turns.
     """
     parts = build_system_prompt_parts(agent, system_message=system_message)
+    try:
+        agent._cached_system_prompt_parts = dict(parts)
+    except Exception:
+        pass
     return "\n\n".join(p for p in (parts["stable"], parts["context"], parts["volatile"]) if p)
 
 
@@ -306,6 +354,10 @@ def invalidate_system_prompt(agent: Any) -> None:
     so the rebuilt prompt captures any writes from this session.
     """
     agent._cached_system_prompt = None
+    try:
+        agent._cached_system_prompt_parts = None
+    except Exception:
+        pass
     if agent._memory_store:
         agent._memory_store.load_from_disk()
 
@@ -336,6 +388,7 @@ def format_tools_for_system_message(agent: Any) -> str:
 
 __all__ = [
     "build_system_prompt_parts",
+    "build_system_prompt_content_blocks",
     "build_system_prompt",
     "invalidate_system_prompt",
     "format_tools_for_system_message",

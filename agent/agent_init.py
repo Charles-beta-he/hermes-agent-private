@@ -53,7 +53,7 @@ from hermes_cli.config import cfg_get
 from hermes_cli.timeouts import get_provider_request_timeout
 from hermes_constants import get_hermes_home
 from model_tools import check_toolset_requirements, get_tool_definitions
-from utils import base_url_host_matches
+from utils import base_url_host_matches, env_var_enabled
 
 # Use the same logger name as run_agent so tests patching ``run_agent.logger``
 # capture our warnings.  (run_agent.py also does
@@ -193,6 +193,20 @@ def init_agent(
     # Shared iteration budget — parent creates, children inherit.
     # Consumed by every LLM turn across parent + all subagents.
     agent.iteration_budget = iteration_budget or IterationBudget(max_iterations)
+    # Budget/iteration auto-relay is config-driven and default-safe.
+    # The setting lives under delegation because relay is primarily needed
+    # when a tool-heavy turn/delegated worker exhausts its loop budget before
+    # producing a real final answer.
+    try:
+        _delegation_cfg = _agent_cfg.get("delegation", {})
+        if not isinstance(_delegation_cfg, dict):
+            _delegation_cfg = {}
+        agent.auto_relay_enabled = bool(_delegation_cfg.get("auto_relay", True))
+        agent.max_relay_count = max(0, int(_delegation_cfg.get("max_relay_count", 3) or 0))
+    except Exception:
+        agent.auto_relay_enabled = True
+        agent.max_relay_count = 3
+    agent._relay_count = 0
     agent.tool_delay = tool_delay
     agent.save_trajectories = save_trajectories
     agent.verbose_logging = verbose_logging
@@ -884,6 +898,7 @@ def init_agent(
     
     # Cached system prompt -- built once per session, only rebuilt on compression
     agent._cached_system_prompt: Optional[str] = None
+    agent._cached_system_prompt_parts = None
     
     # Filesystem checkpoint manager (transparent — not a tool)
     from tools.checkpoint_manager import CheckpointManager
@@ -1062,6 +1077,32 @@ def init_agent(
     except (TypeError, ValueError):
         _api_retries = 3
     agent._api_max_retries = _api_retries
+
+    # Cognitive pipeline mainline wiring is default-OFF and advisory-only.
+    # It can be enabled via config.yaml (agent.cognitive_pipeline.enabled)
+    # or env var HERMES_COGNITIVE_PIPELINE_ENABLED=1/true.
+    _cognitive_cfg = cfg_get(_agent_cfg, "agent", "cognitive_pipeline", default={})
+    if not isinstance(_cognitive_cfg, dict):
+        _cognitive_cfg = {}
+    _cognitive_enabled = bool(_cognitive_cfg.get("enabled", False))
+    if os.getenv("HERMES_COGNITIVE_PIPELINE_ENABLED") is not None:
+        _cognitive_enabled = env_var_enabled("HERMES_COGNITIVE_PIPELINE_ENABLED")
+    _disabled_stages = _cognitive_cfg.get("disabled_stages", []) or []
+    agent.cognitive_pipeline_enabled = _cognitive_enabled
+    agent.cognitive_pipeline_advisory_only = bool(_cognitive_cfg.get("advisory_only", True))
+    agent.current_cognitive_state = None
+    agent.last_cognitive_state = None
+    agent.cognitive_pipeline = None
+    if _cognitive_enabled:
+        try:
+            from agent.cognitive_pipeline import build_default_cognitive_pipeline
+            agent.cognitive_pipeline = build_default_cognitive_pipeline(
+                disabled_stages=set(str(s) for s in _disabled_stages)
+            )
+        except Exception as _cp_err:
+            agent.cognitive_pipeline_enabled = False
+            agent.cognitive_pipeline = None
+            _ra().logger.warning("Cognitive pipeline init disabled after setup failure: %s", _cp_err)
 
     # Initialize context compressor for automatic context management
     # Compresses conversation when approaching model's context limit
