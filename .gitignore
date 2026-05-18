@@ -19,6 +19,17 @@ logs/
 data/
 .pytest_cache/
 tmp/
+
+# Local runtime/state artifacts — never commit live Hermes state into source repo
+state.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.wal
+*.shm
+.hermes/
+
 temp_vision_images/
 hermes-*/*
 examples/
