@@ -3,7 +3,7 @@
 | Date | Upstream commit | Private commit | Branch / tag | Verification evidence | Notes |
 | --- | --- | --- | --- | --- | --- |
 | 2026-05-18 | `609c485fc6d0a0c24a023cd1349ebd6ddbf60315` | `9282d262df6c8d6a0c6c8bcc18a3db6512b1d040` | `private/main`, `private-stable-20260518-landing` | `/Users/charles/.hermes/backups/hermes-governance/landing-20260518-203325/p4-integrate-verify.txt` | First governance landing: origin/upstream split, runtime hygiene, overlay registry, integrate branch replay, post-update-check, targeted pytest, doctor, chat smoke |
-| 2026-05-18 | `609c485fc6d0a0c24a023cd1349ebd6ddbf60315` | `cfd25360a40e807eac4dceea5d58e94c36e1220b` | `private/main` | `/Users/charles/.hermes/backups/multibrain-rollout-20260518-2130/final-verification-after-overlay-snapshot.log`; P10 `/Users/charles/.hermes/backups/multibrain-rollout-20260518-2130/p10-final-pass.log` | Multi-brain rollout: `brainctl brains validate|route`, `multi_brain_registry`, private runtime docs, personal-hermes-brain backup branch `backup/multibrain-full-rollout-20260518` at `1e346425683a4fd66499e8295f1dd3ae3e361cf1` |
+| 2026-05-18 | `609c485fc6d0a0c24a023cd1349ebd6ddbf60315` | `2f28b8f6290735ea9a6dfa7638f46f544150cf8e` | `private/main` | `/Users/charles/.hermes/backups/multibrain-rollout-20260518-2130/final-verification-after-overlay-snapshot.log`; P10 `/Users/charles/.hermes/backups/multibrain-rollout-20260518-2130/p10-final-pass.log` | Multi-brain rollout: `brainctl brains validate|route`, `multi_brain_registry`, private runtime docs, personal-hermes-brain backup branch `backup/multibrain-full-rollout-20260518` at `1e346425683a4fd66499e8295f1dd3ae3e361cf1` |
 
 ## Evidence bundle
 
