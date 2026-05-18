@@ -8,6 +8,7 @@ history before the review started (e.g. an earlier "Cron job '...' created.").
 import json
 
 from run_agent import AIAgent
+from agent.background_review import _summarize_background_review_failures
 
 
 _summarize = AIAgent._summarize_background_review_actions
@@ -128,3 +129,36 @@ def test_removed_or_replaced_relabels_by_target():
 
     assert "User profile updated" in actions
     assert "Memory updated" in actions
+
+
+def test_failure_summary_skips_prior_tool_failures_by_tool_call_id():
+    """Main-turn failures inherited by bg-review must not be re-announced."""
+    prior_failure = _tool_msg(
+        "call_old",
+        {"success": False, "error": "Found 2 matches for old_string"},
+    )
+    new_failure = _tool_msg(
+        "call_new",
+        {"success": False, "error": "Skill patch failed"},
+    )
+    review_messages = [prior_failure, {"role": "user", "content": "<review>"}, new_failure]
+
+    failures = _summarize_background_review_failures(review_messages, [prior_failure])
+
+    assert failures == ["Skill patch failed"]
+
+
+def test_failure_summary_skips_prior_tool_failures_by_content_without_id():
+    """Content equality fallback covers tool messages without tool_call_id."""
+    prior_failure = {
+        "role": "tool",
+        "content": json.dumps({"success": False, "error": "Patch validation failed"}),
+    }
+    review_messages = [
+        prior_failure,
+        _tool_msg("call_new", {"success": False, "message": "Memory write failed"}),
+    ]
+
+    failures = _summarize_background_review_failures(review_messages, [prior_failure])
+
+    assert failures == ["Memory write failed"]

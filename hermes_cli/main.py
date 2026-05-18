@@ -5511,6 +5511,35 @@ def cmd_status(args):
     show_status(args)
 
 
+def cmd_bg_review(args):
+    """Show the latest post-turn background review status."""
+    from agent.background_review import get_background_review_status
+
+    status = get_background_review_status(getattr(args, "path", None))
+    if getattr(args, "json", False):
+        print(json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    if getattr(args, "html", False):
+        html_path = status.get("html_report_path")
+        if html_path:
+            print(html_path)
+        else:
+            print("No HTML report path recorded yet")
+        return
+    runtime = status.get("runtime") if isinstance(status.get("runtime"), dict) else {}
+    actions = status.get("actions") if isinstance(status.get("actions"), list) else []
+    failures = status.get("failures") if isinstance(status.get("failures"), list) else []
+    print(f"bg-review: {status.get('state', 'unknown')}")
+    if runtime:
+        print(f"runtime: {runtime.get('provider', '')}/{runtime.get('model', '')}")
+    if actions:
+        print("actions: " + " · ".join(str(item) for item in actions))
+    if failures:
+        print("failures: " + " · ".join(str(item) for item in failures))
+    if status.get("html_report_path"):
+        print(f"html: {status.get('html_report_path')}")
+
+
 def cmd_cron(args):
     """Cron job management."""
     from hermes_cli.cron import cron_command
@@ -8878,6 +8907,7 @@ def _coalesce_session_name_args(argv: list) -> list:
         "login",
         "logout",
         "auth",
+        "bg-review",
         "status",
         "cron",
         "doctor",
@@ -9626,7 +9656,7 @@ def _build_provider_choices() -> list[str]:
 # to parse.
 _BUILTIN_SUBCOMMANDS = frozenset(
     {
-        "acp", "auth", "backup", "checkpoints", "claw", "completion",
+        "acp", "auth", "backup", "bg-review", "checkpoints", "claw", "completion",
         "computer-use",
         "config", "cron", "curator", "dashboard", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
@@ -10308,6 +10338,19 @@ def main():
         "--deep", action="store_true", help="Run deep checks (may take longer)"
     )
     status_parser.set_defaults(func=cmd_status)
+
+    # =========================================================================
+    # bg-review command
+    # =========================================================================
+    bg_review_parser = subparsers.add_parser(
+        "bg-review",
+        help="Show latest post-turn background review status",
+        description="Inspect the background memory/skill review registry and HTML report",
+    )
+    bg_review_parser.add_argument("--json", action="store_true", help="Print raw JSON status")
+    bg_review_parser.add_argument("--html", action="store_true", help="Print HTML report path")
+    bg_review_parser.add_argument("--path", help="Read a custom bg-review status JSON path")
+    bg_review_parser.set_defaults(func=cmd_bg_review)
 
     # =========================================================================
     # cron command
