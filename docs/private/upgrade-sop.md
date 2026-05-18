@@ -34,11 +34,19 @@ This repo is a private overlay line for a locally customized Hermes checkout.
    git switch -c integrate/$(date +%Y%m%d)-upstream-sync upstream/main
    ```
 5. Replay private overlay commits or use the overlay registry to re-apply only active overlays.
-6. Run the post-update guard. This includes `private_repo_governance`, which checks the origin/upstream split, `docs/private/` governance docs, and source-checkout runtime-state leaks.
+6. Run the post-update guard. This includes:
+   - `multi_brain_registry`: validates `~/.hermes/brains/registry.yaml`, subbrain YAML, runtime/brain repo boundaries, and Hermes private-repo routing to `hermes-core`.
+   - `private_repo_governance`: checks the origin/upstream split, `docs/private/` governance docs, and source-checkout runtime-state leaks.
    ```bash
    python3 ~/.hermes/scripts/post-update-check.py --fix
    ```
-7. Verify with at least:
+7. Validate the multi-brain overlay registry explicitly.
+   ```bash
+   python3 ~/.hermes/scripts/brainctl.py --json brains status
+   python3 ~/.hermes/scripts/brainctl.py --json brains validate
+   python3 ~/.hermes/scripts/brainctl.py --json brains route 'Hermes private repo overlay governance'
+   ```
+8. Verify with at least:
    ```bash
    git diff --check
    hermes --version
