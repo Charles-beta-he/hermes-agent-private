@@ -635,6 +635,40 @@ class TestBuildGeminiRequest:
         assert fr_part["functionResponse"]["name"] == "get_weather"
         assert fr_part["functionResponse"]["response"] == {"temp": 72}
 
+    def test_parallel_tool_results_are_grouped_after_parallel_tool_calls(self):
+        """Code Assist requires one response part per call part in the next turn."""
+        from agent.gemini_cloudcode_adapter import build_gemini_request
+
+        req = build_gemini_request(messages=[
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "tool_calls": [
+                {
+                    "id": "c1", "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": "a"}'},
+                },
+                {
+                    "id": "c2", "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": "b"}'},
+                },
+            ]},
+            {"role": "tool", "tool_call_id": "c1", "content": '{"path": "a", "ok": true}'},
+            {"role": "tool", "tool_call_id": "c2", "content": '{"path": "b", "ok": true}'},
+        ])
+
+        model_turn = req["contents"][1]
+        response_turn = req["contents"][2]
+
+        assert model_turn["role"] == "model"
+        assert sum(1 for p in model_turn["parts"] if "functionCall" in p) == 2
+        assert response_turn["role"] == "user"
+        response_parts = [p for p in response_turn["parts"] if "functionResponse" in p]
+        assert len(response_parts) == 2
+        assert [p["functionResponse"]["name"] for p in response_parts] == [
+            "read_file",
+            "read_file",
+        ]
+        assert len(req["contents"]) == 3
+
     def test_tools_translated_to_function_declarations(self):
         from agent.gemini_cloudcode_adapter import build_gemini_request
 
