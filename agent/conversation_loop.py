@@ -107,6 +107,20 @@ def _should_auto_relay(agent, *, final_response: str | None, interrupted: bool, 
     return _is_auto_relay_exit_reason(turn_exit_reason)
 
 
+def _reset_auto_relay_count_for_root_turn(agent) -> None:
+    """Reset relay capacity for a user-initiated root turn.
+
+    ``_relay_count`` is intentionally shared across recursive auto-relay
+    successor turns so ``max_relay_count`` limits one exhausted root turn.
+    It must not leak into the next human/user turn though; otherwise one long
+    task permanently consumes the relay quota for the session and later tool
+    exhaustion only returns the partial max-iteration summary.
+    """
+    if getattr(agent, "_auto_relay_active", False):
+        return
+    agent._relay_count = 0
+
+
 def _write_auto_relay_packet(agent, *, reason: str, summary: str, messages: list[dict[str, Any]], api_call_count: int) -> Path:
     relay_index = int(getattr(agent, "_relay_count", 0) or 0) + 1
     packet = build_continuation_packet(
@@ -202,15 +216,20 @@ def _try_auto_relay(
         reason=turn_exit_reason or "budget_exhausted",
         summary=final_response or "",
     )
-    relay_result = run_conversation(
-        agent,
-        relay_prompt,
-        None,
-        list(messages),
-        task_id,
-        stream_callback,
-        persist_user_message=relay_prompt,
-    )
+    _previous_auto_relay_active = getattr(agent, "_auto_relay_active", False)
+    agent._auto_relay_active = True
+    try:
+        relay_result = run_conversation(
+            agent,
+            relay_prompt,
+            None,
+            list(messages),
+            task_id,
+            stream_callback,
+            persist_user_message=relay_prompt,
+        )
+    finally:
+        agent._auto_relay_active = _previous_auto_relay_active
     if isinstance(relay_result, dict):
         relay_result.setdefault("auto_relay", {})
         relay_result["auto_relay"].update({
@@ -568,6 +587,11 @@ def run_conversation(
     # child-launch time see the parent's real id, not None.
     agent._current_task_id = effective_task_id
     
+    # Reset relay capacity for human/root turns only. Recursive auto-relay
+    # successor turns preserve the count so max_relay_count applies to one
+    # exhausted root turn, not every recursive hop.
+    _reset_auto_relay_count_for_root_turn(agent)
+
     # Reset retry counters and iteration budget at the start of each turn
     # so subagent usage from a previous turn doesn't eat into the next one.
     agent._invalid_tool_retries = 0

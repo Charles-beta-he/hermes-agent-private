@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from agent.conversation_loop import (
     _build_auto_relay_prompt,
     _is_auto_relay_exit_reason,
+    _reset_auto_relay_count_for_root_turn,
     _should_auto_relay,
     _try_auto_relay,
     _write_auto_relay_packet,
@@ -39,6 +40,17 @@ def test_should_auto_relay_requires_enabled_summary_and_capacity():
         interrupted=False,
         turn_exit_reason="max_iterations_reached(60/60)",
     ) is False
+
+
+def test_reset_auto_relay_count_only_for_root_turns():
+    agent = SimpleNamespace(_relay_count=3, _auto_relay_active=False)
+    _reset_auto_relay_count_for_root_turn(agent)
+    assert agent._relay_count == 0
+
+    agent._relay_count = 2
+    agent._auto_relay_active = True
+    _reset_auto_relay_count_for_root_turn(agent)
+    assert agent._relay_count == 2
 
 
 def test_write_auto_relay_packet_and_prompt(tmp_path, monkeypatch):
@@ -98,6 +110,7 @@ def test_try_auto_relay_starts_successor_turn_and_annotates_result(tmp_path, mon
             "task_id": task_id,
             "stream_callback": stream_callback,
             "persist_user_message": persist_user_message,
+            "auto_relay_active": getattr(agent, "_auto_relay_active", False),
         })
         return {"final_response": "successor final"}
 
@@ -138,6 +151,8 @@ def test_try_auto_relay_starts_successor_turn_and_annotates_result(tmp_path, mon
     assert calls and "Auto-relay 1/3" in calls[0]["user_message"]
     assert calls[0]["history"] == messages
     assert calls[0]["persist_user_message"] == calls[0]["user_message"]
+    assert calls[0]["auto_relay_active"] is True
+    assert agent._auto_relay_active is False
     assert agent._relay_count == 1
     assert agent.iteration_budget.used == 0
     assert agent._budget_exhausted_injected is False

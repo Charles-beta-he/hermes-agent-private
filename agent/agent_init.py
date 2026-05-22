@@ -207,6 +207,7 @@ def init_agent(
         agent.auto_relay_enabled = True
         agent.max_relay_count = 3
     agent._relay_count = 0
+    agent._auto_relay_active = False
     agent.tool_delay = tool_delay
     agent.save_trajectories = save_trajectories
     agent.verbose_logging = verbose_logging
