@@ -3,7 +3,9 @@ import json
 from agent.continuation import (
     ContinuationPacket,
     build_continuation_packet,
+    build_clean_session_handoff,
     continuation_status,
+    evaluate_continuation_eligibility,
     normalize_continuation_reason,
     write_continuation_packet,
 )
@@ -64,3 +66,73 @@ def test_normalize_continuation_reason_keeps_raw_budget_variants():
     assert normalize_continuation_reason("budget_exhausted") == "budget_exhausted"
     assert normalize_continuation_reason("max_iterations_reached(8/8)") == "max_iterations"
     assert normalize_continuation_reason("provider timeout") == "provider_timeout"
+
+
+def test_goal_bound_continuation_requires_explicit_opt_in_and_machine_boundary():
+    packet = build_continuation_packet(
+        scope="conversation",
+        reason="max_iterations_reached(3/3)",
+        summary="candidate summary only",
+        task_id="task-1",
+        remaining_work=["finish linked Lark tasks"],
+        evidence=[{"id": "E-1", "supports": ["remaining_work"]}],
+        goal_boundary={"type": "lark_task_ids", "ids": ["lark-1"], "closure_criteria": "all_done"},
+        freshness_requirements={"lark": {"max_age_seconds": 300, "last_checked_at": "fresh"}},
+        limits={"refresh_count": 1, "max_refreshes_per_task": 3, "global_refresh_count": 1, "global_hard_cap": 5},
+    )
+
+    disabled = evaluate_continuation_eligibility(packet, goal_boundary_enabled=False)
+    assert disabled["decision"] == "recommend_only"
+    assert "goal_bound_disabled" in disabled["reasons"]
+
+    allowed = evaluate_continuation_eligibility(packet, goal_boundary_enabled=True)
+    assert allowed["decision"] == "continue"
+    assert allowed["boundary_type"] == "lark_task_ids"
+
+
+def test_open_ended_and_summary_only_continuations_are_refused():
+    packet = build_continuation_packet(
+        scope="conversation",
+        reason="budget_exhausted",
+        summary="we should keep going",
+        remaining_work=[],
+        evidence=[],
+        goal_boundary={"type": "until_satisfied", "closure_criteria": ""},
+        limits={"refresh_count": 0, "max_refreshes_per_task": 3, "global_refresh_count": 0, "global_hard_cap": 5},
+    )
+
+    decision = evaluate_continuation_eligibility(packet, goal_boundary_enabled=True)
+
+    assert decision["decision"] == "refuse"
+    assert "open_ended_goal_boundary" in decision["reasons"]
+    assert "missing_remaining_work" in decision["reasons"]
+    assert "missing_evidence" in decision["reasons"]
+
+
+def test_clean_session_handoff_requires_valid_packet_and_inherits_limits_not_summary_authority():
+    packet = build_continuation_packet(
+        scope="conversation",
+        reason="max_iterations_reached(3/3)",
+        summary="natural language summary is advisory",
+        session_id="old-session",
+        task_id="task-1",
+        remaining_work=["run acceptance command"],
+        evidence=[{"id": "E-1", "path": "proof.json"}],
+        completed_work=[{"id": "C-1", "evidence_id": "E-1"}],
+        goal_boundary={"type": "acceptance_commands", "commands": ["pytest"], "closure_criteria": "all_pass"},
+        side_effect_ledger=[{"key": "comment:lark-1", "status": "done"}],
+        limits={"refresh_count": 2, "max_refreshes_per_task": 3, "global_refresh_count": 2, "global_hard_cap": 5},
+        metadata={"compression_attempts": 3},
+    )
+
+    handoff = build_clean_session_handoff(packet, compression_cap=3)
+    payload = handoff.to_dict()
+
+    assert payload["scope"] == "clean_session_handoff"
+    assert payload["parent_packet_id"] == packet.packet_id
+    assert payload["remaining_work"] == ["run acceptance command"]
+    assert payload["evidence"] == [{"id": "E-1", "path": "proof.json"}]
+    assert payload["metadata"]["handoff_summary"] == "natural language summary is advisory"
+    assert payload["metadata"]["summary_authority"] == "non_authoritative"
+    assert payload["side_effect_ledger"] == [{"key": "comment:lark-1", "status": "done"}]
+    assert payload["limits"]["global_hard_cap"] == 5
