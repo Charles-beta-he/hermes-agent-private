@@ -2089,6 +2089,21 @@ class TestConcurrentToolExecution:
         assert "beta" in messages[1]["content"]
         assert "gamma" in messages[2]["content"]
 
+    def test_concurrent_summary_stringifies_non_string_tool_names(self, agent):
+        """Concurrent progress summary should not crash on malformed non-string tool names."""
+        tc1 = _mock_tool_call(name="web_search", arguments='{"q":"alpha"}', call_id="c1")
+        tc1.function.name = ("tuple_tool", "unexpected")
+        tc2 = _mock_tool_call(name="web_search", arguments='{"q":"beta"}', call_id="c2")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
+        messages = []
+
+        with patch("run_agent.handle_function_call", return_value='{"ok": true}'):
+            agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
+
+        assert len(messages) == 2
+        assert messages[0]["tool_call_id"] == "c1"
+        assert messages[1]["tool_call_id"] == "c2"
+
     def test_concurrent_preserves_order_despite_timing(self, agent):
         """Even if tools finish in different order, messages should be in original order."""
         import time as _time

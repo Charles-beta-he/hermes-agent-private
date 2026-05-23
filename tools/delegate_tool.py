@@ -741,6 +741,13 @@ def _build_child_progress_callback(
         kw["tool_count"] = _tool_count[0]
         return kw
 
+    def _text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        return str(value)
+
     def _relay(
         event_type: str, tool_name: str = None, preview: str = None, args=None, **kwargs
     ):
@@ -789,7 +796,7 @@ def _build_child_progress_callback(
                     return  # Unknown event — ignore
 
         if event == DelegateEvent.TASK_THINKING:
-            text = preview or tool_name or ""
+            text = _text(preview or tool_name)
             if spinner:
                 short = (text[:55] + "...") if len(text) > 55 else text
                 try:
@@ -810,7 +817,7 @@ def _build_child_progress_callback(
             # a pass-through: render distinctly (not via the tool-start
             # emoji lookup, which would mistake the summary string for a
             # tool name) and relay upward without re-batching.
-            summary_text = tool_name or preview or ""
+            summary_text = _text(tool_name or preview)
             if spinner and summary_text:
                 try:
                     spinner.print_above(f" {prefix}├─ 🔀 {summary_text}")
@@ -823,6 +830,9 @@ def _build_child_progress_callback(
                     logger.debug("Parent callback relay failed: %s", e)
             return
 
+        tool_name_text = _text(tool_name)
+        preview_text = _text(preview)
+
         # TASK_TOOL_STARTED — display and batch for parent relay
         _tool_count[0] += 1
         if subagent_id is not None:
@@ -830,17 +840,17 @@ def _build_child_progress_callback(
                 rec = _active_subagents.get(subagent_id)
                 if rec is not None:
                     rec["tool_count"] = _tool_count[0]
-                    rec["last_tool"] = tool_name or ""
+                    rec["last_tool"] = tool_name_text
         if spinner:
             short = (
-                (preview[:35] + "...")
-                if preview and len(preview) > 35
-                else (preview or "")
+                (preview_text[:35] + "...")
+                if preview_text and len(preview_text) > 35
+                else preview_text
             )
             from agent.display import get_tool_emoji
 
-            emoji = get_tool_emoji(tool_name or "")
-            line = f" {prefix}├─ {emoji} {tool_name}"
+            emoji = get_tool_emoji(tool_name_text)
+            line = f" {prefix}├─ {emoji} {tool_name_text}"
             if short:
                 line += f'  "{short}"'
             try:
@@ -849,8 +859,8 @@ def _build_child_progress_callback(
                 logger.debug("Spinner print_above failed: %s", e)
 
         if parent_cb:
-            _relay("subagent.tool", tool_name, preview, args)
-            _batch.append(tool_name or "")
+            _relay("subagent.tool", tool_name_text, preview_text, args)
+            _batch.append(tool_name_text)
             if len(_batch) >= _BATCH_SIZE:
                 summary = ", ".join(_batch)
                 _relay("subagent.progress", preview=f"🔀 {prefix}{summary}")

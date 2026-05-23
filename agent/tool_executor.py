@@ -143,7 +143,7 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
         parsed_calls.append((tool_call, function_name, function_args, block_result, blocked_by_guardrail))
 
     # ── Logging / callbacks ──────────────────────────────────────────
-    tool_names_str = ", ".join(name for _, name, _, _, _ in parsed_calls)
+    tool_names_str = ", ".join(str(name) for _, name, _, _, _ in parsed_calls)
     if not agent.quiet_mode:
         print(f"  ⚡ Concurrent: {num_tools} tool calls — {tool_names_str}")
         for i, (tc, name, args, block_result, blocked_by_guardrail) in enumerate(parsed_calls, 1):

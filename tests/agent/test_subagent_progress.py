@@ -146,6 +146,27 @@ class TestBuildChildProgressCallback:
         assert "tool_0" in summary_text
         assert "tool_4" in summary_text
 
+    def test_gateway_batched_progress_stringifies_non_string_tool_names(self):
+        """Gateway batching should not crash when a child emits a tuple tool name."""
+        parent = MagicMock()
+        parent._delegate_spinner = None
+        parent_cb = MagicMock()
+        parent.tool_progress_callback = parent_cb
+
+        cb = _build_child_progress_callback(0, "test goal", parent)
+        assert cb is not None
+
+        for i in range(4):
+            cb("tool.started", f"tool_{i}", f"arg_{i}", {})
+        cb("tool.started", ("tuple_tool", "unexpected"), "tuple arg", {})
+
+        events = [c.args[0] for c in parent_cb.call_args_list]
+        assert events == ["subagent.tool"] * 5 + ["subagent.progress"]
+        summary_call = parent_cb.call_args_list[-1]
+        summary_text = str(summary_call.kwargs.get("preview") or summary_call.args[2])
+        assert "tuple_tool" in summary_text
+        assert "unexpected" in summary_text
+
     def test_thinking_relayed_to_gateway(self):
         """Thinking events are relayed as subagent.thinking events."""
         parent = MagicMock()
