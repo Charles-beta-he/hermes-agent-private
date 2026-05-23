@@ -31,15 +31,22 @@ The watcher may fetch and record state, but it must never auto-merge, auto-rebas
 The local watcher is:
 
 ```bash
-python3 ~/.hermes/scripts/upstream-ratchet-watch.py --quiet-no-change
+python3 ~/.hermes/scripts/upstream_ratchet_review_noagent.py
 ```
 
-It records state in `~/.hermes/state/upstream-ratchet.json` and is intentionally cron/no-agent friendly:
+It wraps:
 
-- silent when `upstream/main` has not changed;
-- emits actionable JSON when a new upstream commit is detected;
-- records merge-base, ahead/behind counts, proposed `integrate/upstream-<sha>` branch, dirty-tree blockers, and overlay impact map;
-- fetches only, and never checks out, merges, rebases, pushes, or promotes.
+- `upstream-ratchet-watch.py`: fetch/detect/impact-map only;
+- `upstream-ratchet-review.py`: build a bounded upstream diff packet and call the real multi-model panel for semantic review when the current `upstream/main` has not yet been reviewed.
+
+It records watch state in `~/.hermes/state/upstream-ratchet.json`, review state in `~/.hermes/state/upstream-ratchet-review.json`, and durable review packets under `~/.hermes/reports/upstream-ratchet/<upstream-sha-12>/`.
+
+The cron wrapper is intentionally no-agent friendly:
+
+- silent when the current upstream SHA has already been semantically reviewed;
+- emits actionable JSON when a new upstream SHA is reviewed;
+- records merge-base, ahead/behind counts, proposed `integrate/upstream-<sha>` branch, dirty-tree blockers, overlay impact map, and multi-model review summary;
+- fetches and reviews only; it never checks out, merges, rebases, pushes, or promotes.
 
 If the watcher reports `dirty_worktree_blocks_integration_branch_creation`, finish/commit/stash the current scoped work before starting the upstream integration branch.
 
@@ -48,7 +55,7 @@ If the watcher reports `dirty_worktree_blocks_integration_branch_creation`, fini
 1. Confirm a clean private line.
    ```bash
    git status --short --branch
-   python3 ~/.hermes/scripts/upstream-ratchet-watch.py --pretty
+   python3 ~/.hermes/scripts/upstream-ratchet-review.py --pretty --only-if-needed
    ```
 2. Create a rollback point.
    ```bash

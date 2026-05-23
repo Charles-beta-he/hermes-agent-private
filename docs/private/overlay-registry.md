@@ -10,6 +10,7 @@ This registry records local Hermes enhancements that must remain explicit while 
 - Every long-lived local enhancement must be one of: committed overlay, registered replay check, or retired because upstream absorbed it.
 - After each upstream sync run `python3 ~/.hermes/scripts/post-update-check.py --fix`, then inspect the summary rather than trusting exit code alone.
 - Upstream sync is ratchet-style: watcher detection and impact mapping are allowed, but `private/main` promotion requires recorded verification evidence.
+- Every upstream SHA must have a semantic multi-model review packet before integration work starts: `~/.hermes/reports/upstream-ratchet/<upstream-sha-12>/review-packet.json`.
 
 ## Ratchet evidence fields
 
