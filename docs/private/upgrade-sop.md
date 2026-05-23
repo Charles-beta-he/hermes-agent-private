@@ -14,11 +14,41 @@ This repo is a private overlay line for a locally customized Hermes checkout.
 - `integrate/YYYYMMDD-upstream-sync`: temporary upstream integration branch.
 - `backup/*`: rollback points before governance or upgrades.
 
+## Ratchet invariant
+
+Private Hermes upgrades are ratchet-style upgrades, not automatic pulls:
+
+1. Detect official upstream movement.
+2. Produce an impact map against the private overlay registry.
+3. Create/queue an integration branch or task only after safety checks.
+4. Replay, retire, or redesign overlays with evidence.
+5. Promote `private/main` only after verification evidence is recorded.
+
+The watcher may fetch and record state, but it must never auto-merge, auto-rebase, push, or promote `private/main`.
+
+## Upstream watcher
+
+The local watcher is:
+
+```bash
+python3 ~/.hermes/scripts/upstream-ratchet-watch.py --quiet-no-change
+```
+
+It records state in `~/.hermes/state/upstream-ratchet.json` and is intentionally cron/no-agent friendly:
+
+- silent when `upstream/main` has not changed;
+- emits actionable JSON when a new upstream commit is detected;
+- records merge-base, ahead/behind counts, proposed `integrate/upstream-<sha>` branch, dirty-tree blockers, and overlay impact map;
+- fetches only, and never checks out, merges, rebases, pushes, or promotes.
+
+If the watcher reports `dirty_worktree_blocks_integration_branch_creation`, finish/commit/stash the current scoped work before starting the upstream integration branch.
+
 ## Upgrade flow
 
 1. Confirm a clean private line.
    ```bash
    git status --short --branch
+   python3 ~/.hermes/scripts/upstream-ratchet-watch.py --pretty
    ```
 2. Create a rollback point.
    ```bash

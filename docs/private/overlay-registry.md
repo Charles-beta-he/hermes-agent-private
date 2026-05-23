@@ -9,6 +9,17 @@ This registry records local Hermes enhancements that must remain explicit while 
 - Runtime state, logs, sessions, raw memory, credentials, caches, and SQLite state are not source assets.
 - Every long-lived local enhancement must be one of: committed overlay, registered replay check, or retired because upstream absorbed it.
 - After each upstream sync run `python3 ~/.hermes/scripts/post-update-check.py --fix`, then inspect the summary rather than trusting exit code alone.
+- Upstream sync is ratchet-style: watcher detection and impact mapping are allowed, but `private/main` promotion requires recorded verification evidence.
+
+## Ratchet evidence fields
+
+For each overlay, ratchet decisions must record:
+
+- `replay_verified_sha`: upstream/private integration commit where replay was verified.
+- `last_replay_status`: `kept`, `absorbed`, `redesigned`, or `blocked`.
+- `retire_justification`: equivalence evidence when upstream absorbed the capability.
+
+A path match is never enough to retire an overlay; retire only when behavior equivalence is proven by tests or explicit review evidence.
 
 ## Active overlays
 
