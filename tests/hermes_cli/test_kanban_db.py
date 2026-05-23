@@ -158,6 +158,78 @@ def test_claim_once_wins_second_loses(kanban_home):
         assert second is None
 
 
+def test_task_session_link_progress_projection_filters_without_transcript(kanban_home):
+    with kb.connect() as conn:
+        t1 = kb.create_task(conn, title="telegram progress", body="SECRET transcript text", assignee="a")
+        t2 = kb.create_task(conn, title="lark progress", body="another transcript", assignee="a")
+        kb.link_task_session(
+            conn,
+            task_id=t1,
+            session_id="session-telegram-1",
+            source_platform="telegram",
+            source_chat_id="chat-1",
+            source_thread_id="thread-1",
+            source_user_id="user-1",
+            external_task_ref="tg-msg-9",
+        )
+        kb.link_task_session(
+            conn,
+            task_id=t2,
+            session_id="session-lark-1",
+            source_platform="feishu",
+            source_chat_id="chat-2",
+        )
+        claimed = kb.claim_task(conn, t1, claimer="host:1")
+        assert claimed is not None and claimed.current_run_id is not None
+        assert kb.complete_task(conn, t1, summary="finished safely", expected_run_id=int(claimed.current_run_id))
+
+        telegram_rows = kb.list_progress(conn, source_platform="telegram", source_chat_id="chat-1")
+        session_rows = kb.list_progress(conn, session_id="session-telegram-1")
+
+    assert [row["task_id"] for row in telegram_rows] == [t1]
+    assert [row["task_id"] for row in session_rows] == [t1]
+    row = telegram_rows[0]
+    assert row["session_id"] == "session-telegram-1"
+    assert row["source_platform"] == "telegram"
+    assert row["source_thread_id"] == "thread-1"
+    assert row["latest_run_outcome"] == "completed"
+    assert row["latest_event_kind"] == "completed"
+    assert row["latest_run_summary"] == "finished safely"
+    assert "body" not in row
+    assert "SECRET transcript text" not in str(row)
+
+
+def test_task_session_link_is_idempotent_and_notify_subs_still_work(kanban_home):
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="notify bridge", assignee="a")
+        kb.link_task_session(
+            conn,
+            task_id=t,
+            session_id="session-1",
+            source_platform="telegram",
+            source_chat_id="chat-1",
+            source_user_id="user-a",
+        )
+        kb.link_task_session(
+            conn,
+            task_id=t,
+            session_id="session-1",
+            source_platform="telegram",
+            source_chat_id="chat-1",
+            source_user_id="user-b",
+            external_task_ref="message-2",
+        )
+        kb.add_notify_sub(conn, task_id=t, platform="telegram", chat_id="chat-1", thread_id="")
+        links = kb.list_task_session_links(conn, task_id=t)
+        subs = kb.list_notify_subs(conn, t)
+
+    assert len(links) == 1
+    assert links[0]["source_user_id"] == "user-b"
+    assert links[0]["external_task_ref"] == "message-2"
+    assert len(subs) == 1
+    assert subs[0]["platform"] == "telegram"
+
+
 def test_claim_fails_on_non_ready(kanban_home):
     with kb.connect() as conn:
         t = kb.create_task(conn, title="x")

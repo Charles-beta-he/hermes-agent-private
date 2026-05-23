@@ -868,6 +868,22 @@ CREATE TABLE IF NOT EXISTS kanban_notify_subs (
     PRIMARY KEY (task_id, platform, chat_id, thread_id)
 );
 
+-- Cross-surface progress links. This table binds a Kanban task to the
+-- session/source that created or is tracking it, while deliberately storing
+-- identifiers and compact refs only — never full chat transcripts.
+CREATE TABLE IF NOT EXISTS task_session_links (
+    task_id           TEXT NOT NULL,
+    session_id        TEXT NOT NULL DEFAULT '',
+    source_platform   TEXT NOT NULL DEFAULT '',
+    source_chat_id    TEXT NOT NULL DEFAULT '',
+    source_thread_id  TEXT NOT NULL DEFAULT '',
+    source_user_id    TEXT,
+    external_task_ref TEXT,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    PRIMARY KEY (task_id, session_id, source_platform, source_chat_id, source_thread_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_status          ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_tenant          ON tasks(tenant);
@@ -880,6 +896,9 @@ CREATE INDEX IF NOT EXISTS idx_events_run            ON task_events(run_id, id);
 CREATE INDEX IF NOT EXISTS idx_runs_task             ON task_runs(task_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_runs_status           ON task_runs(status);
 CREATE INDEX IF NOT EXISTS idx_notify_task           ON kanban_notify_subs(task_id);
+CREATE INDEX IF NOT EXISTS idx_session_links_task    ON task_session_links(task_id);
+CREATE INDEX IF NOT EXISTS idx_session_links_session ON task_session_links(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_links_source  ON task_session_links(source_platform, source_chat_id, source_thread_id);
 """
 
 
@@ -4665,6 +4684,184 @@ def task_age(task: Task) -> dict:
         "started_age_seconds": age_since_started,
         "time_to_complete_seconds": time_to_complete,
     }
+
+
+# ---------------------------------------------------------------------------
+# Cross-surface session progress links
+# ---------------------------------------------------------------------------
+
+def link_task_session(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    session_id: Optional[str] = None,
+    source_platform: Optional[str] = None,
+    source_chat_id: Optional[str] = None,
+    source_thread_id: Optional[str] = None,
+    source_user_id: Optional[str] = None,
+    external_task_ref: Optional[str] = None,
+) -> None:
+    """Bind a Kanban task to the session/source tracking its progress.
+
+    This is the durable cross-surface progress bridge: it stores stable
+    identifiers only, not transcript text. The row is idempotent on the
+    tuple that identifies the task/session/source view.
+    """
+    if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
+        raise ValueError(f"unknown task {task_id}")
+    session_key = (session_id or "").strip()
+    platform_key = (source_platform or "").strip()
+    chat_key = (source_chat_id or "").strip()
+    thread_key = (source_thread_id or "").strip()
+    if not any([session_key, platform_key, chat_key, thread_key, source_user_id, external_task_ref]):
+        raise ValueError("at least one session/source identifier is required")
+    now = int(time.time())
+    with write_txn(conn):
+        conn.execute(
+            """
+            INSERT INTO task_session_links (
+                task_id, session_id, source_platform, source_chat_id,
+                source_thread_id, source_user_id, external_task_ref,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id, session_id, source_platform, source_chat_id, source_thread_id)
+            DO UPDATE SET
+                source_user_id = COALESCE(excluded.source_user_id, task_session_links.source_user_id),
+                external_task_ref = COALESCE(excluded.external_task_ref, task_session_links.external_task_ref),
+                updated_at = excluded.updated_at
+            """,
+            (
+                task_id,
+                session_key,
+                platform_key,
+                chat_key,
+                thread_key,
+                source_user_id,
+                external_task_ref,
+                now,
+                now,
+            ),
+        )
+        _append_event(
+            conn,
+            task_id,
+            "session_linked",
+            {
+                "session_id": session_key or None,
+                "source_platform": platform_key or None,
+                "source_chat_id": chat_key or None,
+                "source_thread_id": thread_key or None,
+                "external_task_ref": external_task_ref,
+            },
+        )
+
+
+def list_task_session_links(
+    conn: sqlite3.Connection,
+    *,
+    task_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    source_platform: Optional[str] = None,
+    source_chat_id: Optional[str] = None,
+    source_thread_id: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    query = "SELECT * FROM task_session_links WHERE 1=1"
+    params: list[Any] = []
+    for column, value in (
+        ("task_id", task_id),
+        ("session_id", session_id),
+        ("source_platform", source_platform),
+        ("source_chat_id", source_chat_id),
+        ("source_thread_id", source_thread_id),
+    ):
+        if value is not None:
+            query += f" AND {column} = ?"
+            params.append(str(value).strip())
+    query += " ORDER BY updated_at DESC, created_at DESC"
+    return [dict(r) for r in conn.execute(query, params).fetchall()]
+
+
+def list_progress(
+    conn: sqlite3.Connection,
+    *,
+    task_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    source_platform: Optional[str] = None,
+    source_chat_id: Optional[str] = None,
+    source_thread_id: Optional[str] = None,
+    status: Optional[str] = None,
+    include_archived: bool = False,
+    limit: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    """Return compact Kanban progress rows for cross-surface viewers.
+
+    The projection intentionally excludes ``tasks.body`` and comment bodies so
+    dashboards/gateway surfaces can show progress without replaying transcript
+    content. Use session_search/session DB for full conversation recovery.
+    """
+    if status is not None and status not in VALID_STATUSES:
+        raise ValueError(f"status must be one of {sorted(VALID_STATUSES)}")
+    query = """
+        SELECT
+            t.id AS task_id,
+            t.title AS title,
+            t.status AS status,
+            t.assignee AS assignee,
+            t.priority AS priority,
+            t.tenant AS tenant,
+            t.created_at AS created_at,
+            t.started_at AS started_at,
+            t.completed_at AS completed_at,
+            t.current_run_id AS current_run_id,
+            l.session_id AS session_id,
+            l.source_platform AS source_platform,
+            l.source_chat_id AS source_chat_id,
+            l.source_thread_id AS source_thread_id,
+            l.source_user_id AS source_user_id,
+            l.external_task_ref AS external_task_ref,
+            l.created_at AS link_created_at,
+            l.updated_at AS link_updated_at,
+            r.status AS latest_run_status,
+            r.outcome AS latest_run_outcome,
+            r.summary AS latest_run_summary,
+            r.ended_at AS latest_run_ended_at,
+            e.kind AS latest_event_kind,
+            e.created_at AS latest_event_at
+        FROM tasks t
+        LEFT JOIN task_session_links l ON l.task_id = t.id
+        LEFT JOIN task_runs r ON r.id = (
+            SELECT rr.id FROM task_runs rr
+            WHERE rr.task_id = t.id
+            ORDER BY COALESCE(rr.ended_at, rr.started_at) DESC, rr.id DESC
+            LIMIT 1
+        )
+        LEFT JOIN task_events e ON e.id = (
+            SELECT ee.id FROM task_events ee
+            WHERE ee.task_id = t.id
+            ORDER BY ee.id DESC
+            LIMIT 1
+        )
+        WHERE 1=1
+    """
+    params: list[Any] = []
+    for column, value in (
+        ("t.id", task_id),
+        ("l.session_id", session_id),
+        ("l.source_platform", source_platform),
+        ("l.source_chat_id", source_chat_id),
+        ("l.source_thread_id", source_thread_id),
+        ("t.status", status),
+    ):
+        if value is not None:
+            query += f" AND {column} = ?"
+            params.append(str(value).strip())
+    if not include_archived and status != "archived":
+        query += " AND t.status != 'archived'"
+    query += " ORDER BY COALESCE(l.updated_at, e.created_at, t.created_at) DESC, t.created_at DESC"
+    if limit:
+        query += " LIMIT ?"
+        params.append(int(limit))
+    return [dict(r) for r in conn.execute(query, params).fetchall()]
 
 
 # ---------------------------------------------------------------------------

@@ -8814,6 +8814,11 @@ class GatewayRunner:
                     chat_id = str(getattr(source, "chat_id", "") or "")
                     thread_id = str(getattr(source, "thread_id", "") or "")
                     user_id = str(getattr(source, "user_id", "") or "") or None
+                    session_id = None
+                    try:
+                        session_id = self.session_store.get_or_create_session(source).session_key
+                    except Exception:
+                        session_id = None
                     if platform_str and chat_id:
                         def _sub():
                             from hermes_cli import kanban_db as _kb
@@ -8825,6 +8830,15 @@ class GatewayRunner:
                                     thread_id=thread_id or None,
                                     user_id=user_id,
                                     notifier_profile=getattr(self, "_kanban_notifier_profile", None) or self._active_profile_name(),
+                                )
+                                _kb.link_task_session(
+                                    conn,
+                                    task_id=task_id,
+                                    session_id=session_id,
+                                    source_platform=platform_str,
+                                    source_chat_id=chat_id,
+                                    source_thread_id=thread_id or None,
+                                    source_user_id=user_id,
                                 )
                             finally:
                                 conn.close()

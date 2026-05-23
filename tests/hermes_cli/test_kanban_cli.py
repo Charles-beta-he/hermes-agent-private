@@ -119,6 +119,25 @@ def test_run_slash_json_output(kanban_home):
     assert payload["status"] == "ready"
 
 
+def test_run_slash_session_link_and_progress_json(kanban_home):
+    out = kc.run_slash("create 'multi surface task' --assignee alice --body 'do not leak transcript'")
+    import re
+    m = re.search(r"(t_[a-f0-9]+)", out)
+    assert m
+    tid = m.group(1)
+    linked = json.loads(kc.run_slash(
+        f"session-link {tid} --session-id sess-1 --platform telegram "
+        "--chat-id chat-1 --thread-id thread-1 --json"
+    ))
+    assert linked["ok"] is True
+    progress = json.loads(kc.run_slash("progress --platform telegram --chat-id chat-1 --json"))
+    assert [row["task_id"] for row in progress] == [tid]
+    assert progress[0]["session_id"] == "sess-1"
+    assert progress[0]["source_thread_id"] == "thread-1"
+    assert "body" not in progress[0]
+    assert "do not leak transcript" not in json.dumps(progress)
+
+
 def test_run_slash_dispatch_dry_run_counts(kanban_home):
     kc.run_slash("create 'a' --assignee alice")
     kc.run_slash("create 'b' --assignee bob")

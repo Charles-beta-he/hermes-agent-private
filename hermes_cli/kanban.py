@@ -531,6 +531,34 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
     p_nrm.add_argument("--chat-id", required=True)
     p_nrm.add_argument("--thread-id", default=None)
 
+    # --- session/progress bridge ---
+    p_slink = sub.add_parser(
+        "session-link",
+        help="Bind a Kanban task to a gateway/session source for cross-surface progress views",
+    )
+    p_slink.add_argument("task_id")
+    p_slink.add_argument("--session-id", default=None)
+    p_slink.add_argument("--platform", default=None)
+    p_slink.add_argument("--chat-id", default=None)
+    p_slink.add_argument("--thread-id", default=None)
+    p_slink.add_argument("--user-id", default=None)
+    p_slink.add_argument("--external-ref", default=None)
+    p_slink.add_argument("--json", action="store_true")
+
+    p_progress = sub.add_parser(
+        "progress",
+        help="List compact task/session progress rows for dashboards and gateways",
+    )
+    p_progress.add_argument("--task-id", default=None)
+    p_progress.add_argument("--session-id", default=None)
+    p_progress.add_argument("--platform", default=None)
+    p_progress.add_argument("--chat-id", default=None)
+    p_progress.add_argument("--thread-id", default=None)
+    p_progress.add_argument("--status", default=None)
+    p_progress.add_argument("--include-archived", action="store_true")
+    p_progress.add_argument("--limit", type=int, default=None)
+    p_progress.add_argument("--json", action="store_true")
+
     # --- log ---
     p_log = sub.add_parser(
         "log",
@@ -775,6 +803,8 @@ def kanban_command(args: argparse.Namespace) -> int:
         "notify-subscribe":   _cmd_notify_subscribe,
         "notify-list":        _cmd_notify_list,
         "notify-unsubscribe": _cmd_notify_unsubscribe,
+        "session-link":       _cmd_session_link,
+        "progress":           _cmd_progress,
         "context":  _cmd_context,
         "specify":  _cmd_specify,
         "decompose":  _cmd_decompose,
@@ -2027,6 +2057,68 @@ def _cmd_notify_unsubscribe(args: argparse.Namespace) -> int:
         print("(no such subscription)", file=sys.stderr)
         return 1
     print(f"Unsubscribed from {args.task_id}")
+    return 0
+
+
+def _cmd_session_link(args: argparse.Namespace) -> int:
+    with kb.connect() as conn:
+        try:
+            kb.link_task_session(
+                conn,
+                task_id=args.task_id,
+                session_id=args.session_id,
+                source_platform=args.platform,
+                source_chat_id=args.chat_id,
+                source_thread_id=args.thread_id,
+                source_user_id=args.user_id,
+                external_task_ref=args.external_ref,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        links = kb.list_task_session_links(conn, task_id=args.task_id)
+    if getattr(args, "json", False):
+        print(json.dumps({"ok": True, "links": links}, indent=2, ensure_ascii=False))
+    else:
+        print(f"Linked {args.task_id} to session/source progress view")
+    return 0
+
+
+def _cmd_progress(args: argparse.Namespace) -> int:
+    with kb.connect() as conn:
+        try:
+            rows = kb.list_progress(
+                conn,
+                task_id=args.task_id,
+                session_id=args.session_id,
+                source_platform=args.platform,
+                source_chat_id=args.chat_id,
+                source_thread_id=args.thread_id,
+                status=args.status,
+                include_archived=bool(args.include_archived),
+                limit=args.limit,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    if getattr(args, "json", False):
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return 0
+    if not rows:
+        print("(no progress rows)")
+        return 0
+    for row in rows:
+        source = row.get("source_platform") or "-"
+        chat = row.get("source_chat_id") or "-"
+        thread = row.get("source_thread_id") or ""
+        if thread:
+            chat = f"{chat}:{thread}"
+        session = row.get("session_id") or "-"
+        latest = row.get("latest_event_kind") or row.get("latest_run_outcome") or "created"
+        print(
+            f"{row['task_id']:10s} {row['status']:8s} {source}:{chat} "
+            f"session={session} latest={latest} title={row['title']}"
+        )
     return 0
 
 
