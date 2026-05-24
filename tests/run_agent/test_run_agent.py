@@ -3642,6 +3642,7 @@ class TestRunConversation:
         violation and gives up after 1 failure (issue #23216)."""
         self._setup_agent(agent)
         agent.max_iterations = 2
+        agent.auto_relay_enabled = False
 
         monkeypatch.setenv("HERMES_KANBAN_TASK", "t_test_task_123")
 
@@ -3683,6 +3684,41 @@ class TestRunConversation:
         call = kanban_block_calls[0]
         assert call[0][1]["task_id"] == "t_test_task_123"
         assert "Iteration budget exhausted" in call[0][1]["reason"]
+
+    def test_kanban_block_deferred_when_auto_relay_has_capacity(self, agent, monkeypatch):
+        """Kanban workers should get the same auto-relay continuation as CLI chat
+        before the task is blocked for iteration exhaustion."""
+        self._setup_agent(agent)
+        agent.max_iterations = 2
+        agent.auto_relay_enabled = True
+        agent.max_relay_count = 1
+        agent._relay_count = 0
+
+        monkeypatch.setenv("HERMES_KANBAN_TASK", "t_test_task_123")
+
+        tc = _mock_tool_call(name="web_search", arguments="{}", call_id="c1")
+        tool_resp = _mock_response(
+            content="", finish_reason="tool_calls", tool_calls=[tc],
+        )
+        summary_resp = _mock_response(
+            content="Could not finish — budget exhausted.", finish_reason="stop",
+        )
+        agent.client.chat.completions.create.side_effect = [
+            tool_resp, tool_resp, summary_resp,
+        ]
+
+        with (
+            patch("run_agent.handle_function_call", return_value="ok") as mock_hfc,
+            patch("agent.conversation_loop._try_auto_relay", return_value={"final_response": "relay finished", "completed": True}) as mock_relay,
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("do the kanban work")
+
+        assert result["final_response"] == "relay finished"
+        assert mock_relay.called
+        assert [c for c in mock_hfc.call_args_list if c[0][0] == "kanban_block"] == []
 
     def test_no_kanban_block_when_not_in_kanban_mode(self, agent, monkeypatch):
         """kanban_block must NOT be called when HERMES_KANBAN_TASK is unset."""

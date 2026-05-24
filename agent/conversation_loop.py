@@ -4178,7 +4178,13 @@ def run_conversation(
         # _handle_max_iterations, so the model cannot call kanban_block
         # itself — we must do it on its behalf.
         _kanban_task = os.environ.get("HERMES_KANBAN_TASK")
-        if _kanban_task:
+        relay_available = _should_auto_relay(
+            agent,
+            final_response=final_response,
+            interrupted=interrupted,
+            turn_exit_reason=_turn_exit_reason,
+        )
+        if _kanban_task and not relay_available:
             try:
                 _ra().handle_function_call(
                     "kanban_block",
@@ -4205,6 +4211,12 @@ def run_conversation(
                     _kanban_task,
                     exc_info=True,
                 )
+        elif _kanban_task and relay_available:
+            logger.info(
+                "kanban block deferred for task %s after iteration exhaustion "
+                "(%d/%d) because auto-relay has remaining capacity",
+                _kanban_task, api_call_count, agent.max_iterations,
+            )
 
     # Determine if conversation completed successfully
     completed = final_response is not None and api_call_count < agent.max_iterations
