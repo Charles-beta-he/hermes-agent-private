@@ -1057,6 +1057,13 @@ def init_agent(
         _agent_cfg = _load_agent_config()
     except Exception:
         _agent_cfg = {}
+    norms_cfg = _agent_cfg.get("norms", {}) if isinstance(_agent_cfg, dict) else {}
+    try:
+        from utils import is_truthy_value as _is_truthy_value
+        agent.inject_norms_to_prompt = _is_truthy_value(norms_cfg.get("inject_to_prompt"), default=True) if isinstance(norms_cfg, dict) else True
+    except Exception:
+        agent.inject_norms_to_prompt = True
+    agent._norm_governance_store = None
     try:
         agent._tool_guardrails = ToolCallGuardrailController(
             ToolCallGuardrailConfig.from_mapping(

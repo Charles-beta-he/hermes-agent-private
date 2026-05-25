@@ -27,6 +27,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from agent.norm_governance import NormGovernanceStore
 from agent.prompt_builder import (
     DEFAULT_AGENT_IDENTITY,
     GOOGLE_MODEL_OPERATIONAL_GUIDANCE,
@@ -55,6 +56,66 @@ def _ra():
     """
     import run_agent
     return run_agent
+
+
+def _format_active_norms_prompt(agent: Any, *, max_norms: int = 12, max_content_chars: int = 700) -> str:
+    """Render active durable norms for runtime behavior guidance.
+
+    Norms are revisioned runtime policy, not identity.  Keep this block in the
+    volatile prompt tier so norm edits do not poison long-lived provider prefix
+    caches.  Any registry/storage problem fails open: the write guards and CLI
+    still enforce what they can, but prompt construction must not crash chat.
+    """
+    if getattr(agent, "inject_norms_to_prompt", True) is False:
+        return ""
+    try:
+        store = getattr(agent, "_norm_governance_store", None)
+        if store is None:
+            store = NormGovernanceStore()
+            try:
+                agent._norm_governance_store = store
+            except Exception:
+                pass
+        snapshot = store.build_snapshot()
+        norm_meta = snapshot.get("norms") if isinstance(snapshot, dict) else None
+        if not isinstance(norm_meta, dict) or not norm_meta:
+            return ""
+        lines = [
+            "Active Hermes Norms (runtime policy; follow these before lower-priority habits):"
+        ]
+        project_preflight_active = False
+        for key in sorted(norm_meta.keys())[:max_norms]:
+            meta = norm_meta.get(key) or {}
+            try:
+                record = store.get_norm(key)
+            except Exception:
+                record = None
+            content = (getattr(record, "content", "") or "").strip()
+            content = " ".join(content.split())
+            trigger_text = f"{key} {content}".lower()
+            if "project-preflight" in trigger_text or (
+                "project" in trigger_text
+                and "workpad" in trigger_text
+                and ("profile" in trigger_text or "项目画像" in trigger_text)
+            ):
+                project_preflight_active = True
+            if len(content) > max_content_chars:
+                content = content[: max_content_chars - 1].rstrip() + "…"
+            revision = meta.get("revision", getattr(record, "revision", "?"))
+            scope = meta.get("scope", getattr(record, "scope", "global"))
+            if content:
+                lines.append(f"- {key} (scope {scope}, rev {revision}): {content}")
+            else:
+                lines.append(f"- {key} (scope {scope}, rev {revision})")
+        if len(norm_meta) > max_norms:
+            lines.append(f"- … {len(norm_meta) - max_norms} additional norm(s) omitted; use `hermes norms snapshot` for full registry metadata.")
+        if project_preflight_active:
+            lines.append(
+                "Project preflight trigger: when the user names a concrete project/repo or asks for screenshot/UI/product/architecture/test judgment, resolve the project profile, repo AGENTS.md/CLAUDE.md, and referenced Workpad boot/handoff context before making claims or proposing fixes."
+            )
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) -> Dict[str, str]:
@@ -285,6 +346,13 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
             if user_block:
                 volatile_parts.append(user_block)
 
+    # Durable norms are runtime policy and can change between sessions. Keep
+    # them volatile (not stable/context cacheable) while still visible to
+    # ordinary CLI/TUI/gateway agents.
+    active_norms_block = _format_active_norms_prompt(agent)
+    if active_norms_block:
+        volatile_parts.append(active_norms_block)
+
     # External memory provider system prompt block (additive to built-in)
     if agent._memory_manager:
         try:
@@ -430,4 +498,5 @@ __all__ = [
     "build_system_prompt",
     "invalidate_system_prompt",
     "format_tools_for_system_message",
+    "_format_active_norms_prompt",
 ]
