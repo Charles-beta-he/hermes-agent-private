@@ -58,3 +58,38 @@ The task is complete only when one of these outcomes is recorded:
 ## Next worker instruction
 
 Start by re-checking the exact URL and GitHub search. If still 404, do not guess. Ask for or wait for a corrected canonical repository URL before any absorption analysis.
+
+## Recheck proof log — 2026-05-26T00:53:51+08:00
+
+Worker task: `2026-05-25-resolve-source-for-omni-ai-agent-agency-before-hermes-absorption-analysis`
+Workspace: `/tmp/agent-team-2026-05-25-r`
+
+Project preflight:
+
+- Read project profile `/Users/charles/.hermes/project-profiles/hermes.json`.
+- Read repo instructions `/Users/charles/.hermes/hermes-agent/AGENTS.md`.
+- No Workpad boot/handoff path is declared in the project profile; no Workpad file was resolved, so this recheck is limited to URL/source-resolution evidence only.
+
+Commands/checks performed:
+
+- `python3 /Users/charles/.hermes/scripts/brain_task_orchestrator.py list --json` → duplicate/source-overlap search found 1 matching active task: this task only, status `running`, priority `P3`, project `hermes-agent`, lane `advisory`.
+- `curl -sS -L -D headers_repos_omni-ai-agent_agency.txt -o body_repos_omni-ai-agent_agency.json https://api.github.com/repos/omni-ai-agent/agency` → final status `HTTP/2 404`, message `Not Found`, documentation URL `https://docs.github.com/rest/repos/repos#get-a-repository`.
+- `curl -sS -L -D headers_orgs_omni-ai-agent.txt -o body_orgs_omni-ai-agent.json https://api.github.com/orgs/omni-ai-agent` → final status `HTTP/2 404`, message `Not Found`, documentation URL `https://docs.github.com/rest/orgs/orgs#get-an-organization`.
+- `curl -sS -L -D headers_users_omni-ai-agent.txt -o body_users_omni-ai-agent.json https://api.github.com/users/omni-ai-agent` → final status `HTTP/2 404`, message `Not Found`.
+- `curl -sS -L -I https://github.com/omni-ai-agent/agency` → final status `HTTP/2 404`, server `github.com`.
+- GitHub repository search API query `"omni-ai-agent" agency in:name,description,readme` with `per_page=10` → `total_count: 0`, `incomplete_results: false`, no items.
+- GitHub repository search API query `"omni-ai-agent/agency" OR "omni ai agent agency"` with `per_page=10` → `total_count: 0`, `incomplete_results: false`, no items.
+
+Decision:
+
+- The exact requested URL remains unavailable.
+- The requested owner is not visible as a GitHub org or user from the API checks above.
+- Search did not identify a corrected canonical repository.
+- No unrelated search result was substituted.
+- No clone/install/third-party execution was performed.
+- Because no canonical source is inspectable, metadata/README/source-structure inspection and Hermes absorption analysis remain blocked until a corrected URL is provided.
+
+Closeout recommendation:
+
+- Treat the task as source-unavailable / awaiting corrected canonical URL.
+- Do not promote to an absorption/gap-analysis task without a live inspectable repository.
