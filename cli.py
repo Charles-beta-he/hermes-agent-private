@@ -410,6 +410,8 @@ def load_cli_config() -> Dict[str, Any]:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 file_config = yaml.safe_load(f) or {}
+            from hermes_cli.config import _normalize_root_model_keys
+            file_config = _normalize_root_model_keys(file_config)
             
             _file_has_terminal_config = "terminal" in file_config
 

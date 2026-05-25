@@ -36,7 +36,7 @@ from typing import List, Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from hermes_constants import get_hermes_home
-from hermes_cli.config import load_config, _expand_env_vars
+from hermes_cli.config import load_config
 from hermes_time import now as _hermes_now
 
 logger = logging.getLogger(__name__)
@@ -1297,21 +1297,22 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
 
         model = job.get("model") or os.getenv("HERMES_MODEL") or ""
 
-        # Load config.yaml for model, reasoning, prefill, toolsets, provider routing
+        # Load canonical config.yaml for model, reasoning, prefill, toolsets,
+        # provider routing.  Use hermes_cli.config.load_config() instead of
+        # raw yaml.safe_load so cron shares CLI/runtime normalization for
+        # legacy shapes (model string, model.model -> model.default, root-level
+        # provider/base_url fallback) while still re-reading on each tick via
+        # the loader's mtime/size cache.
         _cfg = {}
         try:
-            import yaml
-            _cfg_path = str(_get_hermes_home() / "config.yaml")
-            if os.path.exists(_cfg_path):
-                with open(_cfg_path, encoding="utf-8") as _f:
-                    _cfg = yaml.safe_load(_f) or {}
-                _cfg = _expand_env_vars(_cfg)
-                _model_cfg = _cfg.get("model", {})
-                if not job.get("model"):
-                    if isinstance(_model_cfg, str):
-                        model = _model_cfg
-                    elif isinstance(_model_cfg, dict):
-                        model = _model_cfg.get("default", model)
+            from hermes_cli.config import load_config
+            _cfg = load_config() or {}
+            _model_cfg = _cfg.get("model", {})
+            if not job.get("model"):
+                if isinstance(_model_cfg, str):
+                    model = _model_cfg or model
+                elif isinstance(_model_cfg, dict):
+                    model = _model_cfg.get("default", model) or model
         except Exception as e:
             logger.warning("Job '%s': failed to load config.yaml, using defaults: %s", job_id, e)
 
@@ -1365,6 +1366,7 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             # example DeepSeek) for cron jobs that do not pin provider/model.
             runtime_kwargs = {
                 "requested": job.get("provider"),
+                "target_model": model or None,
             }
             if job.get("base_url"):
                 runtime_kwargs["explicit_base_url"] = job.get("base_url")
@@ -1379,7 +1381,10 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
                 if not isinstance(entry, dict):
                     continue
                 try:
-                    fb_kwargs = {"requested": entry.get("provider")}
+                    fb_kwargs = {
+                        "requested": entry.get("provider"),
+                        "target_model": entry.get("model") or model or None,
+                    }
                     if entry.get("base_url"):
                         fb_kwargs["explicit_base_url"] = entry["base_url"]
                     if entry.get("api_key"):

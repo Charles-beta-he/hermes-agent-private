@@ -886,6 +886,117 @@ class TestRunJobSessionPersistence:
         assert "RuntimeError: boom" in error
         mock_agent.close.assert_called_once()
 
+    def test_run_job_uses_load_config_model_normalization_for_cron(self, tmp_path):
+        """Cron must consume the canonical normalized config, not raw YAML.
+
+        Regression: run_job() manually yaml.safe_load()'d config.yaml and only
+        read model.default, so legacy-but-supported ``model.model`` values were
+        ignored even though CLI config normalization handled them.
+        """
+        job = {
+            "id": "normalized-model-job",
+            "name": "normalized-model",
+            "prompt": "hello",
+        }
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "model:\n"
+            "  model: gpt-5.5\n"
+            "  provider: openai-codex\n"
+            "agent:\n"
+            "  max_turns: 12\n",
+            encoding="utf-8",
+        )
+        fake_db = MagicMock()
+        runtime_calls = []
+
+        def _runtime_resolve(**kwargs):
+            runtime_calls.append(kwargs)
+            return {
+                "api_key": "test-key",
+                "base_url": "https://example.invalid/v1",
+                "provider": "openai-codex",
+                "api_mode": "codex_responses",
+            }
+
+        from hermes_cli.config import load_config
+
+        with patch("cron.scheduler._hermes_home", tmp_path), \
+             patch("cron.scheduler._resolve_origin", return_value=None), \
+             patch("dotenv.load_dotenv"), \
+             patch("hermes_cli.config.get_config_path", return_value=config_file), \
+             patch("hermes_state.SessionDB", return_value=fake_db), \
+             patch("hermes_cli.runtime_provider.resolve_runtime_provider", side_effect=_runtime_resolve), \
+             patch("run_agent.AIAgent") as mock_agent_cls:
+            load_config.__globals__["_LOAD_CONFIG_CACHE"].clear()
+            load_config.__globals__["_RAW_CONFIG_CACHE"].clear()
+            mock_agent = MagicMock()
+            mock_agent.run_conversation.return_value = {"final_response": "ok"}
+            mock_agent_cls.return_value = mock_agent
+
+            success, output, final_response, error = run_job(job)
+
+        assert success is True
+        assert error is None
+        assert final_response == "ok"
+        assert "ok" in output
+        assert runtime_calls[0]["requested"] is None
+        assert runtime_calls[0]["target_model"] == "gpt-5.5"
+        kwargs = mock_agent_cls.call_args.kwargs
+        assert kwargs["model"] == "gpt-5.5"
+        assert kwargs["max_iterations"] == 12
+
+    def test_run_job_does_not_pass_stale_env_provider_to_runtime_resolution(self, tmp_path, monkeypatch):
+        """Env provider must not outrank persisted config for unpinned cron jobs."""
+        monkeypatch.setenv("HERMES_INFERENCE_PROVIDER", "stale-provider")
+        job = {
+            "id": "no-stale-env-provider-job",
+            "name": "no-stale-env-provider",
+            "prompt": "hello",
+        }
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "model:\n"
+            "  default: configured-model\n"
+            "  provider: configured-provider\n",
+            encoding="utf-8",
+        )
+        fake_db = MagicMock()
+        runtime_calls = []
+
+        def _runtime_resolve(**kwargs):
+            runtime_calls.append(kwargs)
+            return {
+                "api_key": "test-key",
+                "base_url": "https://example.invalid/v1",
+                "provider": "configured-provider",
+                "api_mode": "chat_completions",
+            }
+
+        from hermes_cli.config import load_config
+
+        with patch("cron.scheduler._hermes_home", tmp_path), \
+             patch("cron.scheduler._resolve_origin", return_value=None), \
+             patch("dotenv.load_dotenv"), \
+             patch("hermes_cli.config.get_config_path", return_value=config_file), \
+             patch("hermes_state.SessionDB", return_value=fake_db), \
+             patch("hermes_cli.runtime_provider.resolve_runtime_provider", side_effect=_runtime_resolve), \
+             patch("run_agent.AIAgent") as mock_agent_cls:
+            load_config.__globals__["_LOAD_CONFIG_CACHE"].clear()
+            load_config.__globals__["_RAW_CONFIG_CACHE"].clear()
+            mock_agent = MagicMock()
+            mock_agent.run_conversation.return_value = {"final_response": "ok"}
+            mock_agent_cls.return_value = mock_agent
+
+            success, _output, _final_response, error = run_job(job)
+
+        assert success is True
+        assert error is None
+        assert runtime_calls[0]["requested"] is None
+        assert runtime_calls[0]["target_model"] == "configured-model"
+        assert "stale-provider" not in runtime_calls[0].values()
+        assert mock_agent_cls.call_args.kwargs["provider"] == "configured-provider"
+
     def test_run_job_reaps_stale_auxiliary_clients_per_tick(self, tmp_path):
         # Regression: auxiliary clients bound to the cron worker's dead
         # event loop must be reaped each tick. Without this, ``_client_cache``

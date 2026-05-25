@@ -4175,24 +4175,37 @@ def _preserve_env_ref_templates(current, raw, loaded_expanded=None):
 
 
 def _normalize_root_model_keys(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Move stale root-level provider/base_url/context_length into model section.
+    """Normalize legacy model config shapes into the canonical model section.
 
-    Some users (or older code) placed ``provider:``, ``base_url:``, or
-    ``context_length:`` at the config root instead of inside ``model:``.
-    These root-level keys are only used as a fallback when the corresponding
-    ``model.*`` key is empty — they never override an existing value.
-    After migration the root-level keys are removed so they can't cause
-    confusion on subsequent loads.
+    Supported legacy shapes:
+    - ``model: <string>`` — preserved as-is unless root-level model keys need a
+      dict container.
+    - ``model: {model: <name>}`` — promote to ``model.default`` when
+      ``model.default`` is absent.
+    - root-level ``provider:``, ``base_url:``, or ``context_length:`` — move into
+      ``model.*`` only as fallback when the nested key is empty.
+
+    Root-level keys are removed after migration so they cannot become another
+    runtime decision source on subsequent loads.
     """
-    # Only act if there are root-level keys to migrate
+    config = dict(config)
+    model = config.get("model")
     has_root = any(config.get(k) for k in ("provider", "base_url", "context_length"))
+
+    if isinstance(model, dict):
+        model = dict(model)
+        if "model" in model and "default" not in model:
+            model["default"] = model["model"]
+        config["model"] = model
+    elif has_root:
+        model = {"default": model} if model else {}
+        config["model"] = model
+
     if not has_root:
         return config
 
-    config = dict(config)
-    model = config.get("model")
     if not isinstance(model, dict):
-        model = {"default": model} if model else {}
+        model = {}
         config["model"] = model
 
     for key in ("provider", "base_url", "context_length"):
