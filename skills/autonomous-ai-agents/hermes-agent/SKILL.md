@@ -652,6 +652,11 @@ the `cronjob` tool, the `hermes cron` CLI (`list`, `add`, `edit`,
   `skip_memory=True` by default, and cron deliveries are framed with a
   header/footer instead of being mirrored into the target gateway
   session (keeps role alternation intact).
+- **No-agent watchdog rule:** silent stdout is acceptable only for
+  read-back-verified no-op success. If a no-agent scheduled script finds
+  actionable state, dirty blockers, missing evidence, or any execution
+  error, emit a bounded JSON/evidence packet and fail closed instead of
+  hiding the condition behind a quiet exit.
 
 User docs: https://hermes-agent.nousresearch.com/docs/user-guide/features/cron
 

@@ -5,6 +5,8 @@ from pathlib import Path
 
 def load_dispatch_tick_module():
     script = Path.home() / ".hermes" / "scripts" / "brain_task_dispatch_tick.py"
+    if not script.exists():
+        script = Path("/Users/charles/.hermes/scripts/brain_task_dispatch_tick.py")
     spec = importlib.util.spec_from_file_location("brain_task_dispatch_tick_under_test", script)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -55,10 +57,37 @@ def test_continuation_status_is_exposed_to_taskpool_tick_summary(tmp_path, monke
     assert status["backlog_warning"] == "continuation_backlog_high"
 
 
+def test_dispatch_tick_run_envelope_points_at_projection_files(tmp_path, monkeypatch):
+    module = load_dispatch_tick_module()
+    monkeypatch.setenv("HERMES_RUN_LEDGER_DIR", str(tmp_path / "ledger"))
+    monkeypatch.setattr(module, "LOG_FILE", tmp_path / "brain_task_dispatch_tick.jsonl")
+    monkeypatch.setattr(module, "STATE_FILE", tmp_path / "brain_task_dispatch_tick_state.json")
+
+    event = {
+        "status": "OK",
+        "generated_at": "2026-05-20T12:00:00+08:00",
+        "next_task_id": "task-123",
+        "dispatchable": True,
+        "dispatch": {"next": {"id": "task-123"}},
+    }
+
+    result = module.append_dispatch_tick_run_envelope(event)
+    ledger_event = json.loads((tmp_path / "ledger" / "run_events.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+
+    assert result["run_id"] == ledger_event["run_id"]
+    assert ledger_event["surface"] == "dispatch_tick"
+    assert ledger_event["lifecycle_state"] == "tick_ok"
+    assert ledger_event["proof_refs"] == [
+        f"jsonl:{tmp_path / 'brain_task_dispatch_tick.jsonl'}",
+        "dispatch_hint:task-123",
+    ]
+    assert {"projection": "brain_task_dispatch_tick_state", "ref": str(tmp_path / "brain_task_dispatch_tick_state.json")} in ledger_event["projection_refs"]
+
+
 def test_handoff_backlog_status_warns_and_archives_old_files(tmp_path, monkeypatch):
     module = load_dispatch_tick_module()
     monkeypatch.setattr(module, "HOME", tmp_path)
-    root = tmp_path / ".hermes" / "state" / "autorun" / "auto_run_handoffs"
+    root = tmp_path / ".hermes" / "state" / "auto_run_handoffs"
     root.mkdir(parents=True)
     for idx in range(5):
         p = root / f"handoff-{idx}.md"
@@ -67,8 +96,9 @@ def test_handoff_backlog_status_warns_and_archives_old_files(tmp_path, monkeypat
     status = module.handoff_backlog_status(archive=True, threshold=3, keep=2)
 
     assert status["schema"] == "taskpool_handoff_backlog_v1"
-    assert status["warning"] == "handoff_backlog_high"
-    assert status["dirs"]["autorun"]["over_threshold"] is True
+    assert status["warning"] == ""
+    assert status["dirs"]["autorun"]["over_threshold_before"] is True
+    assert status["dirs"]["autorun"]["over_threshold"] is False
     assert status["dirs"]["autorun"]["archived"] == 3
     assert status["dirs"]["autorun"]["count_after"] == 2
     assert status["archived_count"] == 3

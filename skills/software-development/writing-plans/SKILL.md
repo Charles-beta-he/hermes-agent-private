@@ -37,6 +37,8 @@ Assume the implementer is a skilled developer but knows almost nothing about the
 
 **Each task = 2-5 minutes of focused work.**
 
+Experience-ratchet guardrail: prefer Karpathy-style thin verified slices over speculative architecture. A plan may still describe the long-term architecture, but each executable task should touch only the lines/surfaces required by the current acceptance criteria and name the verification that proves that slice.
+
 Every step is one action:
 - "Write the failing test" — step
 - "Run it to make sure it fails" — step

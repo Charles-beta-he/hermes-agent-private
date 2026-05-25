@@ -2182,7 +2182,7 @@ def _is_connection_error(exc: Exception) -> bool:
     if any(kw in err_lower for kw in (
         "connection refused", "name or service not known",
         "no route to host", "network is unreachable",
-        "timed out", "connection reset",
+        "timed out", "timeout", "connection reset",
         # httpcore / httpx streaming premature-close errors.  These surface
         # when a proxy or provider drops the connection mid-stream and are
         # transient by nature — the request should be retried or rerouted.
@@ -2559,11 +2559,14 @@ def _try_payment_fallback(
     failed_provider: str,
     task: str = None,
     reason: str = "payment error",
+    additional_skip: Optional[set[str]] = None,
 ) -> Tuple[Optional[Any], Optional[str], str]:
     """Try alternative providers after a payment/credit or connection error.
 
     Iterates the standard auto-detection chain, skipping the provider that
-    failed.
+    failed. ``additional_skip`` lets callers continue the chain when a fallback
+    candidate itself fails with a recoverable error (for example Codex timeout →
+    Nous 401 → next provider) instead of surfacing the intermediate failure.
 
     Returns:
         (client, model, provider_label) or (None, None, "") if no fallback.
@@ -2574,6 +2577,12 @@ def _try_payment_fallback(
     # (e.g. main_provider="openrouter" → skip "openrouter" in chain)
     main_provider = _read_main_provider()
     skip_labels = {skip}
+    if additional_skip:
+        skip_labels.update(
+            str(label or "").strip().lower()
+            for label in additional_skip
+            if str(label or "").strip()
+        )
     if main_provider and main_provider.lower() in skip:
         skip_labels.add(main_provider.lower())
     # Map common resolved_provider values back to chain labels.
@@ -4675,35 +4684,41 @@ def call_llm(
         # When the provider returns a 429 rate-limit (not billing), fall
         # back to an alternative provider instead of exhausting retries
         # against the same rate-limited endpoint.
+        is_auto = resolved_provider in {"auto", "", None}
         should_fallback = (
             _is_payment_error(first_err)
             or _is_connection_error(first_err)
             or _is_rate_limit_error(first_err)
+            or (is_auto and _is_auth_error(first_err))
         )
         # Respect explicit provider choice for transient errors (auth, request
         # validation, etc.) but allow fallback when the provider clearly cannot
         # serve the request due to capacity: payment/quota exhaustion and
         # connection failures are capacity problems, not request constraints.
         # See #26803: daily token quota (429 + "too many tokens per day") must
-        # fall back just like a 402 credit error.
-        is_auto = resolved_provider in {"auto", "", None}
+        # fall back just like a 402 credit error. In auto mode, auth errors are
+        # also recoverable chain failures: one stale OAuth provider must not
+        # prevent later providers from serving compression/session side tasks.
         # Capacity errors bypass the explicit-provider gate: the provider
         # literally cannot serve this request regardless of user intent.
         is_capacity_error = _is_payment_error(first_err) or _is_connection_error(first_err)
         if should_fallback and (is_auto or is_capacity_error):
             if _is_payment_error(first_err):
                 reason = "payment error"
-                # Resolve the actual provider label (resolved_provider may be
-                # "auto"; the client's base_url tells us which backend got the
-                # 402). Mark THAT label unhealthy so subsequent aux calls
-                # skip it instead of paying another doomed RTT.
-                _mark_provider_unhealthy(
-                    _recoverable_pool_provider(resolved_provider, client) or resolved_provider
-                )
             elif _is_rate_limit_error(first_err):
                 reason = "rate limit"
+            elif _is_auth_error(first_err):
+                reason = "auth error"
             else:
                 reason = "connection error"
+
+            # Resolve the actual provider label (resolved_provider may be
+            # "auto"; the client's base_url tells us which backend failed).
+            # Mark THAT label unhealthy so subsequent aux calls skip it instead
+            # of paying another doomed RTT.
+            failed_backend = _recoverable_pool_provider(resolved_provider, client) or resolved_provider
+            if _is_payment_error(first_err) or _is_auth_error(first_err):
+                _mark_provider_unhealthy(failed_backend)
             logger.info("Auxiliary %s: %s on %s (%s), trying fallback",
                         task or "call", reason, resolved_provider, first_err)
 
@@ -4715,24 +4730,61 @@ def call_llm(
             # model, so users on `auto` already get main-model fallback.
             fb_client, fb_model, fb_label = (None, None, "")
             if is_auto:
-                fb_client, fb_model, fb_label = _try_payment_fallback(
-                    resolved_provider, task, reason=reason)
+                skipped_fallbacks = {failed_backend, resolved_provider}
+                while True:
+                    fb_client, fb_model, fb_label = _try_payment_fallback(
+                        resolved_provider, task, reason=reason, additional_skip=skipped_fallbacks)
+                    if fb_client is None:
+                        break
+                    fb_kwargs = _build_call_kwargs(
+                        fb_label, fb_model or "", messages,
+                        temperature=temperature, max_tokens=max_tokens,
+                        tools=tools, timeout=effective_timeout,
+                        extra_body=effective_extra_body,
+                        base_url=str(getattr(fb_client, "base_url", "") or ""))
+                    try:
+                        return _validate_llm_response(
+                            fb_client.chat.completions.create(**fb_kwargs), task)
+                    except Exception as fb_err:
+                        fb_recoverable = (
+                            _is_payment_error(fb_err)
+                            or _is_connection_error(fb_err)
+                            or _is_rate_limit_error(fb_err)
+                            or _is_auth_error(fb_err)
+                        )
+                        if not fb_recoverable:
+                            raise
+                        failed_fallback = _recoverable_pool_provider(fb_label, fb_client) or fb_label
+                        skipped_fallbacks.add(failed_fallback)
+                        if _is_payment_error(fb_err) or _is_auth_error(fb_err):
+                            _mark_provider_unhealthy(failed_fallback)
+                        if _is_connection_error(fb_err):
+                            try:
+                                _evict_cached_client_instance(fb_client)
+                            except Exception:
+                                logger.debug(
+                                    "Auxiliary: fallback cache eviction after connection error failed",
+                                    exc_info=True,
+                                )
+                        logger.info(
+                            "Auxiliary %s: fallback %s failed with recoverable %s (%s), trying next provider",
+                            task or "call", fb_label, reason, fb_err,
+                        )
             else:
                 fb_client, fb_model, fb_label = _try_configured_fallback_chain(
                     task, resolved_provider or "auto", reason=reason)
                 if fb_client is None:
                     fb_client, fb_model, fb_label = _try_main_agent_model_fallback(
                         resolved_provider, task, reason=reason)
-
-            if fb_client is not None:
-                fb_kwargs = _build_call_kwargs(
-                    fb_label, fb_model, messages,
-                    temperature=temperature, max_tokens=max_tokens,
-                    tools=tools, timeout=effective_timeout,
-                    extra_body=effective_extra_body,
-                    base_url=str(getattr(fb_client, "base_url", "") or ""))
-                return _validate_llm_response(
-                    fb_client.chat.completions.create(**fb_kwargs), task)
+                if fb_client is not None:
+                    fb_kwargs = _build_call_kwargs(
+                        fb_label, fb_model or "", messages,
+                        temperature=temperature, max_tokens=max_tokens,
+                        tools=tools, timeout=effective_timeout,
+                        extra_body=effective_extra_body,
+                        base_url=str(getattr(fb_client, "base_url", "") or ""))
+                    return _validate_llm_response(
+                        fb_client.chat.completions.create(**fb_kwargs), task)
             # All fallback layers exhausted — emit a single user-visible
             # warning so the operator knows aux task is about to fail.
             # (#26882) The error itself is re-raised below.

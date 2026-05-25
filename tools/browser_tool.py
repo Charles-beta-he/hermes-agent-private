@@ -62,6 +62,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 import requests
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
@@ -195,6 +196,257 @@ _EMPTY_OK_COMMANDS: frozenset = frozenset({"close", "record"})
 
 _cached_command_timeout: Optional[int] = None
 _command_timeout_resolved = False
+
+_BROWSER_REPLAY_SCHEMA = "browser_replay_bundle_v1"
+_BROWSER_REPLAY_EVENT_SCHEMA = "browser_replay_event_v1"
+_BROWSER_REPLAY_ACTION_LIMIT = 12
+_BROWSER_REPLAY_TEXT_LIMIT = 1200
+_BROWSER_REPLAY_ITEM_LIMIT = 8
+
+
+def _browser_replay_root() -> Path:
+    root = get_hermes_home() / "browser_replay_evidence"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _browser_replay_paths(session_key: str) -> tuple[Path, Path]:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", session_key or "default").strip("-") or "default"
+    session_dir = _browser_replay_root() / slug
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir / "bundle.json", session_dir / "events.jsonl"
+
+
+def _browser_replay_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _bounded_browser_text(text: Any, *, limit: int = _BROWSER_REPLAY_TEXT_LIMIT) -> str:
+    from agent.redact import redact_sensitive_text
+
+    if text is None:
+        return ""
+    value = redact_sensitive_text(str(text), force=True).replace("\x00", "")
+    value = re.sub(r"\s+", " ", value).strip()
+    if len(value) <= limit:
+        return value
+    return value[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _bounded_browser_snapshot(snapshot_text: Any) -> str:
+    if not snapshot_text:
+        return ""
+    lines = []
+    for raw in str(snapshot_text).splitlines():
+        line = _bounded_browser_text(raw, limit=220)
+        if line:
+            lines.append(line)
+        if len(lines) >= 20:
+            break
+    return _bounded_browser_text("\n".join(lines), limit=_BROWSER_REPLAY_TEXT_LIMIT)
+
+
+def _bounded_browser_console(messages: Optional[List[Dict[str, Any]]], errors: Optional[List[Dict[str, Any]]]) -> List[Dict[str, str]]:
+    bounded: List[Dict[str, str]] = []
+    for msg in (messages or [])[:_BROWSER_REPLAY_ITEM_LIMIT]:
+        bounded.append({
+            "kind": msg.get("type", msg.get("source", "console")),
+            "text": _bounded_browser_text(msg.get("text", ""), limit=240),
+        })
+    for err in (errors or [])[:_BROWSER_REPLAY_ITEM_LIMIT]:
+        bounded.append({
+            "kind": err.get("source", "exception"),
+            "text": _bounded_browser_text(err.get("message", err.get("text", "")), limit=240),
+        })
+    return [item for item in bounded if item["text"]]
+
+
+def _classify_browser_failure(command: str, response: Dict[str, Any]) -> str:
+    if response.get("success"):
+        if response.get("total_errors"):
+            return "success_with_js_errors"
+        return "success"
+
+    error_text = " ".join(
+        str(part) for part in (
+            response.get("error"),
+            response.get("note"),
+            response.get("bot_detection_warning"),
+        )
+        if part
+    ).lower()
+    if response.get("blocked_by_policy") or "blocked:" in error_text:
+        return "policy_blocked"
+    if any(token in error_text for token in ("captcha", "bot detection", "verification required", "cloudflare", "just a moment")):
+        return "bot_detection"
+    if "timed out" in error_text or "timeout" in error_text:
+        return "timeout"
+    if "screenshot" in error_text and ("not created" in error_text or "failed to take" in error_text):
+        return "screenshot_capture_failed"
+    if command == "snapshot" and "empty" in error_text:
+        return "empty_snapshot"
+    if command in {"console", "eval"} and "javascript evaluation is not supported" in error_text:
+        return "backend_capability_gap"
+    if command == "vision" and "vision analysis" in error_text:
+        return "vision_analysis_failed"
+    return "command_failed"
+
+
+def _record_browser_replay(
+    session_key: str,
+    *,
+    command: str,
+    action_args: Optional[List[Any]],
+    response: Dict[str, Any],
+    url: Optional[str] = None,
+    title: Optional[str] = None,
+    snapshot_text: Optional[str] = None,
+    console_messages: Optional[List[Dict[str, Any]]] = None,
+    console_errors: Optional[List[Dict[str, Any]]] = None,
+    screenshot_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    bundle_path, events_path = _browser_replay_paths(session_key)
+    now = _browser_replay_now()
+    failure_class = _classify_browser_failure(command, response)
+    event = {
+        "schema": _BROWSER_REPLAY_EVENT_SCHEMA,
+        "recorded_at": now,
+        "session_key": session_key,
+        "command": command,
+        "action_sequence": [{
+            "command": command,
+            "args": [_bounded_browser_text(arg, limit=160) for arg in (action_args or [])],
+        }],
+        "success": bool(response.get("success")),
+        "url": _bounded_browser_text(url, limit=400) or None,
+        "title": _bounded_browser_text(title, limit=200) or None,
+        "dom_snapshot_excerpt": _bounded_browser_snapshot(snapshot_text) or None,
+        "console_errors": _bounded_browser_console(console_messages, console_errors),
+        "screenshot_path": str(screenshot_path) if screenshot_path else None,
+        "failure_class": failure_class,
+        "error": _bounded_browser_text(response.get("error"), limit=320) or None,
+    }
+
+    bundle: Dict[str, Any]
+    if bundle_path.exists():
+        try:
+            bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        except Exception:
+            bundle = {}
+    else:
+        bundle = {}
+
+    if not isinstance(bundle, dict):
+        bundle = {}
+    action_sequence = bundle.get("action_sequence")
+    if not isinstance(action_sequence, list):
+        action_sequence = []
+    action_sequence.append({
+        "recorded_at": now,
+        "command": command,
+        "args": [_bounded_browser_text(arg, limit=160) for arg in (action_args or [])],
+        "success": bool(response.get("success")),
+        "failure_class": failure_class,
+    })
+    action_sequence = action_sequence[-_BROWSER_REPLAY_ACTION_LIMIT:]
+
+    bundle.update({
+        "schema": _BROWSER_REPLAY_SCHEMA,
+        "session_key": session_key,
+        "started_at": bundle.get("started_at") or now,
+        "updated_at": now,
+        "bundle_path": str(bundle_path),
+        "events_path": str(events_path),
+        "event_count": int(bundle.get("event_count") or 0) + 1,
+        "current_url": event["url"] or bundle.get("current_url"),
+        "title": event["title"] or bundle.get("title"),
+        "latest_dom_snapshot_excerpt": event["dom_snapshot_excerpt"] or bundle.get("latest_dom_snapshot_excerpt"),
+        "latest_console_errors": event["console_errors"] if event["console_errors"] else bundle.get("latest_console_errors", []),
+        "latest_screenshot_path": event["screenshot_path"] or bundle.get("latest_screenshot_path"),
+        "latest_failure_class": failure_class,
+        "action_sequence": action_sequence,
+        "last_event": event,
+    })
+
+    bundle_path.write_text(json.dumps(bundle, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with events_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    return {
+        "replay_bundle_path": str(bundle_path),
+        "replay_events_path": str(events_path),
+        "replay_failure_class": failure_class,
+    }
+
+
+def _attach_browser_replay(
+    response: Dict[str, Any],
+    *,
+    session_key: str,
+    command: str,
+    action_args: Optional[List[Any]],
+    url: Optional[str] = None,
+    title: Optional[str] = None,
+    snapshot_text: Optional[str] = None,
+    console_messages: Optional[List[Dict[str, Any]]] = None,
+    console_errors: Optional[List[Dict[str, Any]]] = None,
+    screenshot_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        response.update(_record_browser_replay(
+            session_key,
+            command=command,
+            action_args=action_args,
+            response=response,
+            url=url,
+            title=title,
+            snapshot_text=snapshot_text,
+            console_messages=console_messages,
+            console_errors=console_errors,
+            screenshot_path=screenshot_path,
+        ))
+    except Exception as exc:
+        logger.debug("browser replay evidence write failed for %s: %s", command, exc)
+    return response
+
+
+def _attach_browser_replay_to_json_result(
+    raw_result: Any,
+    *,
+    session_key: str,
+    command: str,
+    action_args: Optional[List[Any]],
+    url_key: Optional[str] = None,
+    title_key: Optional[str] = None,
+    snapshot_key: Optional[str] = None,
+    console_messages_key: Optional[str] = None,
+    console_errors_key: Optional[str] = None,
+    screenshot_key: Optional[str] = None,
+) -> str:
+    """Parse a JSON-like browser response, attach replay metadata, and re-encode it."""
+    response = raw_result
+    if isinstance(raw_result, str):
+        try:
+            response = json.loads(raw_result)
+        except json.JSONDecodeError:
+            return raw_result
+
+    if not isinstance(response, dict):
+        return json.dumps(response, ensure_ascii=False, default=str)
+
+    enriched = _attach_browser_replay(
+        response,
+        session_key=session_key,
+        command=command,
+        action_args=action_args,
+        url=response.get(url_key) if url_key else None,
+        title=response.get(title_key) if title_key else None,
+        snapshot_text=response.get(snapshot_key) if snapshot_key else None,
+        console_messages=response.get(console_messages_key) if console_messages_key else None,
+        console_errors=response.get(console_errors_key) if console_errors_key else None,
+        screenshot_path=response.get(screenshot_key) if screenshot_key else None,
+    )
+    return json.dumps(enriched, ensure_ascii=False, default=str)
 
 
 def _get_command_timeout() -> int:
@@ -2357,7 +2609,15 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
     # Camofox backend — delegate after safety checks pass
     if _is_camofox_mode():
         from tools.browser_camofox import camofox_navigate
-        return camofox_navigate(url, task_id)
+        return _attach_browser_replay_to_json_result(
+            camofox_navigate(url, task_id),
+            session_key=_last_session_key(task_id or "default"),
+            command="open",
+            action_args=[url],
+            url_key="url",
+            title_key="title",
+            snapshot_key="snapshot",
+        )
 
     if auto_local_this_nav:
         logger.info(
@@ -2477,12 +2737,29 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
         except Exception as e:
             logger.debug("Auto-snapshot after navigate failed: %s", e)
 
+        response = _attach_browser_replay(
+            response,
+            session_key=nav_session_key,
+            command="open",
+            action_args=[url],
+            url=final_url,
+            title=title,
+            snapshot_text=response.get("snapshot"),
+        )
         return json.dumps(response, ensure_ascii=False)
     else:
-        return json.dumps({
+        response = {
             "success": False,
             "error": result.get("error", "Navigation failed")
-        }, ensure_ascii=False)
+        }
+        response = _attach_browser_replay(
+            response,
+            session_key=nav_session_key,
+            command="open",
+            action_args=[url],
+            url=url,
+        )
+        return json.dumps(response, ensure_ascii=False)
 
 
 def browser_snapshot(
@@ -2503,7 +2780,13 @@ def browser_snapshot(
     """
     if _is_camofox_mode():
         from tools.browser_camofox import camofox_snapshot
-        return camofox_snapshot(full, task_id, user_task)
+        return _attach_browser_replay_to_json_result(
+            camofox_snapshot(full, task_id, user_task),
+            session_key=_last_session_key(task_id or "default"),
+            command="snapshot",
+            action_args=[] if full else ["-c"],
+            snapshot_key="snapshot",
+        )
 
     effective_task_id = _last_session_key(task_id or "default")
 
@@ -2545,13 +2828,27 @@ def browser_snapshot(
         except Exception as _sv_exc:
             logger.debug("supervisor snapshot merge failed: %s", _sv_exc)
 
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="snapshot",
+            action_args=args,
+            snapshot_text=snapshot_text,
+        )
         return json.dumps(response, ensure_ascii=False)
     else:
         response = {
             "success": False,
             "error": result.get("error", "Failed to get snapshot")
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="snapshot",
+            action_args=args,
+        )
+        return json.dumps(response, ensure_ascii=False)
 
 
 def browser_click(ref: str, task_id: Optional[str] = None) -> str:
@@ -2567,7 +2864,13 @@ def browser_click(ref: str, task_id: Optional[str] = None) -> str:
     """
     if _is_camofox_mode():
         from tools.browser_camofox import camofox_click
-        return camofox_click(ref, task_id)
+        return _attach_browser_replay_to_json_result(
+            camofox_click(ref, task_id),
+            session_key=_last_session_key(task_id or "default"),
+            command="click",
+            action_args=[ref],
+            url_key="url",
+        )
 
     effective_task_id = _last_session_key(task_id or "default")
 
@@ -2582,13 +2885,27 @@ def browser_click(ref: str, task_id: Optional[str] = None) -> str:
             "success": True,
             "clicked": ref
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="click",
+            action_args=[ref],
+        )
+        return json.dumps(response, ensure_ascii=False)
     else:
         response = {
             "success": False,
             "error": result.get("error", f"Failed to click {ref}")
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="click",
+            action_args=[ref],
+        )
+        return json.dumps(response, ensure_ascii=False)
 
 
 def browser_type(ref: str, text: str, task_id: Optional[str] = None) -> str:
@@ -2605,7 +2922,12 @@ def browser_type(ref: str, text: str, task_id: Optional[str] = None) -> str:
     """
     if _is_camofox_mode():
         from tools.browser_camofox import camofox_type
-        return camofox_type(ref, text, task_id)
+        return _attach_browser_replay_to_json_result(
+            camofox_type(ref, text, task_id),
+            session_key=_last_session_key(task_id or "default"),
+            command="fill",
+            action_args=[ref, text],
+        )
 
     effective_task_id = _last_session_key(task_id or "default")
 
@@ -2622,13 +2944,27 @@ def browser_type(ref: str, text: str, task_id: Optional[str] = None) -> str:
             "typed": text,
             "element": ref
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="fill",
+            action_args=[ref, text],
+        )
+        return json.dumps(response, ensure_ascii=False)
     else:
         response = {
             "success": False,
             "error": result.get("error", f"Failed to type into {ref}")
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="fill",
+            action_args=[ref, text],
+        )
+        return json.dumps(response, ensure_ascii=False)
 
 
 def browser_scroll(direction: str, task_id: Optional[str] = None) -> str:
@@ -2661,7 +2997,12 @@ def browser_scroll(direction: str, task_id: Optional[str] = None) -> str:
         result = None
         for _ in range(_SCROLL_REPEATS):
             result = camofox_scroll(direction, task_id)
-        return result
+        return _attach_browser_replay_to_json_result(
+            result,
+            session_key=_last_session_key(task_id or "default"),
+            command="scroll",
+            action_args=[direction, str(_SCROLL_PIXELS)],
+        )
 
     effective_task_id = _last_session_key(task_id or "default")
 
@@ -2671,13 +3012,27 @@ def browser_scroll(direction: str, task_id: Optional[str] = None) -> str:
             "success": False,
             "error": result.get("error", f"Failed to scroll {direction}")
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="scroll",
+            action_args=[direction, str(_SCROLL_PIXELS)],
+        )
+        return json.dumps(response, ensure_ascii=False)
 
     response = {
         "success": True,
         "scrolled": direction
     }
-    return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+    response = _copy_fallback_warning(response, result)
+    response = _attach_browser_replay(
+        response,
+        session_key=effective_task_id,
+        command="scroll",
+        action_args=[direction, str(_SCROLL_PIXELS)],
+    )
+    return json.dumps(response, ensure_ascii=False)
 
 
 def browser_back(task_id: Optional[str] = None) -> str:
@@ -2692,7 +3047,13 @@ def browser_back(task_id: Optional[str] = None) -> str:
     """
     if _is_camofox_mode():
         from tools.browser_camofox import camofox_back
-        return camofox_back(task_id)
+        return _attach_browser_replay_to_json_result(
+            camofox_back(task_id),
+            session_key=_last_session_key(task_id or "default"),
+            command="back",
+            action_args=[],
+            url_key="url",
+        )
 
     effective_task_id = _last_session_key(task_id or "default")
     result = _run_browser_command(effective_task_id, "back", [])
@@ -2703,13 +3064,28 @@ def browser_back(task_id: Optional[str] = None) -> str:
             "success": True,
             "url": data.get("url", "")
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="back",
+            action_args=[],
+            url=response.get("url"),
+        )
+        return json.dumps(response, ensure_ascii=False)
     else:
         response = {
             "success": False,
             "error": result.get("error", "Failed to go back")
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="back",
+            action_args=[],
+        )
+        return json.dumps(response, ensure_ascii=False)
 
 
 def browser_press(key: str, task_id: Optional[str] = None) -> str:
@@ -2725,7 +3101,12 @@ def browser_press(key: str, task_id: Optional[str] = None) -> str:
     """
     if _is_camofox_mode():
         from tools.browser_camofox import camofox_press
-        return camofox_press(key, task_id)
+        return _attach_browser_replay_to_json_result(
+            camofox_press(key, task_id),
+            session_key=_last_session_key(task_id or "default"),
+            command="press",
+            action_args=[key],
+        )
 
     effective_task_id = _last_session_key(task_id or "default")
     result = _run_browser_command(effective_task_id, "press", [key])
@@ -2735,13 +3116,27 @@ def browser_press(key: str, task_id: Optional[str] = None) -> str:
             "success": True,
             "pressed": key
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="press",
+            action_args=[key],
+        )
+        return json.dumps(response, ensure_ascii=False)
     else:
         response = {
             "success": False,
             "error": result.get("error", f"Failed to press {key}")
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="press",
+            action_args=[key],
+        )
+        return json.dumps(response, ensure_ascii=False)
 
 
 
@@ -2769,7 +3164,14 @@ def browser_console(clear: bool = False, expression: Optional[str] = None, task_
     # --- Console output mode (original behaviour) ---
     if _is_camofox_mode():
         from tools.browser_camofox import camofox_console
-        return camofox_console(clear, task_id)
+        return _attach_browser_replay_to_json_result(
+            camofox_console(clear, task_id),
+            session_key=_last_session_key(task_id or "default"),
+            command="console",
+            action_args=["--clear"] if clear else [],
+            console_messages_key="console_messages",
+            console_errors_key="js_errors",
+        )
 
     effective_task_id = _last_session_key(task_id or "default")
 
@@ -2806,13 +3208,26 @@ def browser_console(clear: bool = False, expression: Optional[str] = None, task_
     _copy_fallback_warning(response, console_result)
     if errors_result.get("fallback_warning") and not response.get("fallback_warning"):
         _copy_fallback_warning(response, errors_result)
+    response = _attach_browser_replay(
+        response,
+        session_key=effective_task_id,
+        command="console",
+        action_args=console_args,
+        console_messages=messages,
+        console_errors=errors,
+    )
     return json.dumps(response, ensure_ascii=False)
 
 
 def _browser_eval(expression: str, task_id: Optional[str] = None) -> str:
     """Evaluate a JavaScript expression in the page context and return the result."""
     if _is_camofox_mode():
-        return _camofox_eval(expression, task_id)
+        return _attach_browser_replay_to_json_result(
+            _camofox_eval(expression, task_id),
+            session_key=_last_session_key(task_id or "default"),
+            command="eval",
+            action_args=[expression],
+        )
 
     effective_task_id = _last_session_key(task_id or "default")
 
@@ -2843,6 +3258,12 @@ def _browser_eval(expression: str, task_id: Optional[str] = None) -> str:
                     "result_type": type(parsed).__name__,
                     "method": "cdp_supervisor",
                 }
+                response = _attach_browser_replay(
+                    response,
+                    session_key=effective_task_id,
+                    command="eval",
+                    action_args=[expression],
+                )
                 return json.dumps(response, ensure_ascii=False, default=str)
             # JS exception is a real failure — surface it instead of falling
             # through to the subprocess path (which would just re-run and
@@ -2850,7 +3271,13 @@ def _browser_eval(expression: str, task_id: Optional[str] = None) -> str:
             err = sup_result.get("error") or "evaluate_runtime failed"
             if "supervisor" not in err.lower():
                 # Real JS-side error — return it.
-                return json.dumps({"success": False, "error": err}, ensure_ascii=False)
+                response = _attach_browser_replay(
+                    {"success": False, "error": err},
+                    session_key=effective_task_id,
+                    command="eval",
+                    action_args=[expression],
+                )
+                return json.dumps(response, ensure_ascii=False)
             # Supervisor-side failure (loop down, no session) — fall through.
             logger.debug(
                 "browser_eval: supervisor path unavailable (%s), falling back to subprocess",
@@ -2872,12 +3299,26 @@ def _browser_eval(expression: str, task_id: Optional[str] = None) -> str:
                 "success": False,
                 "error": f"JavaScript evaluation is not supported by this browser backend. {err}",
             }
-            return json.dumps(_copy_fallback_warning(response, result))
+            response = _copy_fallback_warning(response, result)
+            response = _attach_browser_replay(
+                response,
+                session_key=effective_task_id,
+                command="eval",
+                action_args=[expression],
+            )
+            return json.dumps(response, ensure_ascii=False)
         response = {
             "success": False,
             "error": err,
         }
-        return json.dumps(_copy_fallback_warning(response, result))
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="eval",
+            action_args=[expression],
+        )
+        return json.dumps(response, ensure_ascii=False)
 
     data = result.get("data", {})
     raw_result = data.get("result")
@@ -2896,7 +3337,14 @@ def _browser_eval(expression: str, task_id: Optional[str] = None) -> str:
         "result": parsed,
         "result_type": type(parsed).__name__,
     }
-    return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False, default=str)
+    response = _copy_fallback_warning(response, result)
+    response = _attach_browser_replay(
+        response,
+        session_key=effective_task_id,
+        command="eval",
+        action_args=[expression],
+    )
+    return json.dumps(response, ensure_ascii=False, default=str)
 
 
 def _camofox_eval(expression: str, task_id: Optional[str] = None) -> str:
@@ -2994,7 +3442,12 @@ def browser_get_images(task_id: Optional[str] = None) -> str:
     """
     if _is_camofox_mode():
         from tools.browser_camofox import camofox_get_images
-        return camofox_get_images(task_id)
+        return _attach_browser_replay_to_json_result(
+            camofox_get_images(task_id),
+            session_key=_last_session_key(task_id or "default"),
+            command="images",
+            action_args=[],
+        )
 
     effective_task_id = _last_session_key(task_id or "default")
 
@@ -3026,7 +3479,14 @@ def browser_get_images(task_id: Optional[str] = None) -> str:
                 "images": images,
                 "count": len(images)
             }
-            return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+            response = _copy_fallback_warning(response, result)
+            response = _attach_browser_replay(
+                response,
+                session_key=effective_task_id,
+                command="images",
+                action_args=[],
+            )
+            return json.dumps(response, ensure_ascii=False)
         except json.JSONDecodeError:
             response = {
                 "success": True,
@@ -3034,13 +3494,27 @@ def browser_get_images(task_id: Optional[str] = None) -> str:
                 "count": 0,
                 "warning": "Could not parse image data"
             }
-            return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+            response = _copy_fallback_warning(response, result)
+            response = _attach_browser_replay(
+                response,
+                session_key=effective_task_id,
+                command="images",
+                action_args=[],
+            )
+            return json.dumps(response, ensure_ascii=False)
     else:
         response = {
             "success": False,
             "error": result.get("error", "Failed to get images")
         }
-        return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
+        response = _copy_fallback_warning(response, result)
+        response = _attach_browser_replay(
+            response,
+            session_key=effective_task_id,
+            command="images",
+            action_args=[],
+        )
+        return json.dumps(response, ensure_ascii=False)
 
 
 def browser_vision(question: str, annotate: bool = False, task_id: Optional[str] = None) -> str:
@@ -3065,7 +3539,13 @@ def browser_vision(question: str, annotate: bool = False, task_id: Optional[str]
     """
     if _is_camofox_mode():
         from tools.browser_camofox import camofox_vision
-        return camofox_vision(question, annotate, task_id)
+        return _attach_browser_replay_to_json_result(
+            camofox_vision(question, annotate, task_id),
+            session_key=_last_session_key(task_id or "default"),
+            command="vision",
+            action_args=[question, annotate],
+            screenshot_key="screenshot_path",
+        )
 
     import base64
     import uuid as uuid_mod
@@ -3270,6 +3750,13 @@ def browser_vision(question: str, annotate: bool = False, task_id: Optional[str]
         # Include annotation data if annotated screenshot was taken
         if annotate and result.get("data", {}).get("annotations"):
             response_data["annotations"] = result["data"]["annotations"]
+        response_data = _attach_browser_replay(
+            response_data,
+            session_key=effective_task_id,
+            command="vision",
+            action_args=[question, "--annotate" if annotate else ""],
+            screenshot_path=str(screenshot_path),
+        )
         return json.dumps(response_data, ensure_ascii=False)
 
     except Exception as e:
@@ -3283,6 +3770,13 @@ def browser_vision(question: str, annotate: bool = False, task_id: Optional[str]
             error_info["screenshot_path"] = str(screenshot_path)
             error_info["note"] = "Screenshot was captured but vision analysis failed. You can still share it via MEDIA:<path>."
         _copy_fallback_warning(error_info, result if 'result' in locals() else {})
+        error_info = _attach_browser_replay(
+            error_info,
+            session_key=effective_task_id,
+            command="vision",
+            action_args=[question, "--annotate" if annotate else ""],
+            screenshot_path=str(screenshot_path) if screenshot_path.exists() else None,
+        )
         return json.dumps(error_info, ensure_ascii=False)
 
 
