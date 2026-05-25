@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import os
 import sqlite3
 import time
@@ -316,6 +317,64 @@ def test_claim_once_wins_second_loses(kanban_home):
         assert first is not None and first.status == "running"
         second = kb.claim_task(conn, t, claimer="host:2")
         assert second is None
+
+
+def test_claim_writes_unified_run_envelope_for_kanban_projection(kanban_home, tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_RUN_LEDGER_DIR", str(tmp_path))
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="x", assignee="a")
+        claimed = kb.claim_task(conn, t, claimer="host:1")
+        assert claimed is not None
+
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    kanban_events = [e for e in events if e["surface"] == "kanban" and e["run_id"].startswith("kanban:")]
+
+    assert kanban_events
+    event = kanban_events[-1]
+    assert event["lifecycle_state"] == "running"
+    assert event["trigger"]["kind"] == "kanban_worker"
+    assert event["trigger"]["task_id"] == t
+    assert event["proof_refs"] == [f"kanban_db:task_events:{t}:claimed"]
+    assert {"projection": "kanban.db", "ref": f"tasks/{t}"} in event["projection_refs"]
+    assert [e["trigger"]["event_kind"] for e in kanban_events] == ["claimed"]
+
+
+def test_kanban_run_envelope_tracks_heartbeat_complete_and_block(kanban_home, tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_RUN_LEDGER_DIR", str(tmp_path))
+    with kb.connect() as conn:
+        done_task = kb.create_task(conn, title="done path", assignee="a")
+        claimed = kb.claim_task(conn, done_task, claimer="host:1")
+        assert claimed is not None and claimed.current_run_id is not None
+        done_run_id = int(claimed.current_run_id)
+        assert kb.heartbeat_worker(conn, done_task, note="still alive", expected_run_id=done_run_id)
+        assert kb.complete_task(conn, done_task, summary="finished", expected_run_id=done_run_id)
+
+        blocked_task = kb.create_task(conn, title="blocked path", assignee="a")
+        blocked_claim = kb.claim_task(conn, blocked_task, claimer="host:2")
+        assert blocked_claim is not None and blocked_claim.current_run_id is not None
+        blocked_run_id = int(blocked_claim.current_run_id)
+        assert kb.block_task(conn, blocked_task, reason="needs review", expected_run_id=blocked_run_id)
+
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    done_events = [e for e in events if e["surface"] == "kanban" and e["task_id"] == done_task]
+    blocked_events = [e for e in events if e["surface"] == "kanban" and e["task_id"] == blocked_task]
+    checkpoint = json.loads((tmp_path / "run_reducer_checkpoint.json").read_text(encoding="utf-8"))
+
+    assert [e["trigger"]["event_kind"] for e in done_events] == ["claimed", "heartbeat", "completed"]
+    assert [e["lifecycle_state"] for e in done_events] == ["running", "running", "completed"]
+    assert done_events[-1]["proof_refs"] == [f"kanban_db:task_events:{done_task}:completed"]
+    assert checkpoint["runs"][f"kanban:{done_run_id}"]["lifecycle_state"] == "completed"
+
+    assert [e["trigger"]["event_kind"] for e in blocked_events] == ["claimed", "blocked"]
+    assert [e["lifecycle_state"] for e in blocked_events] == ["running", "blocked"]
+    assert blocked_events[-1]["proof_refs"] == [f"kanban_db:task_events:{blocked_task}:blocked"]
+    assert checkpoint["runs"][f"kanban:{blocked_run_id}"]["lifecycle_state"] == "blocked"
 
 
 def test_task_session_link_progress_projection_filters_without_transcript(kanban_home):

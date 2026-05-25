@@ -91,6 +91,17 @@ from toolsets import get_toolset_names
 
 _log = logging.getLogger(__name__)
 
+try:
+    from agent.run_envelope import RunEnvelopeV1, append_run_event_best_effort, build_projection_ref
+except Exception:  # pragma: no cover - kanban.db must remain usable without optional ledger module
+    RunEnvelopeV1 = None  # type: ignore[assignment]
+
+    def append_run_event_best_effort(envelope: Any) -> dict[str, Any]:
+        return {"status": "SKIP", "reason": "run_envelope_unavailable"}
+
+    def build_projection_ref(projection: str, ref: str) -> dict[str, str]:
+        return {"projection": projection, "ref": str(ref)}
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -2093,6 +2104,62 @@ def _append_event(
         "VALUES (?, ?, ?, ?, ?)",
         (task_id, run_id, kind, pl, now),
     )
+    lifecycle_state = {
+        "claimed": "running",
+        "claim_extended": "running",
+        "heartbeat": "running",
+        "completed": "completed",
+        "blocked": "blocked",
+        "spawn_failed": "failed",
+        "crashed": "failed",
+        "timed_out": "failed",
+        "gave_up": "failed",
+        "reclaimed": "failed",
+    }.get(kind)
+    if lifecycle_state is not None:
+        _append_kanban_run_envelope(
+            task_id=task_id,
+            run_id=run_id,
+            kind=kind,
+            lifecycle_state=lifecycle_state,
+            payload=payload,
+        )
+
+
+def _append_kanban_run_envelope(
+    *,
+    task_id: str,
+    run_id: Optional[int],
+    kind: str,
+    lifecycle_state: str,
+    payload: Optional[dict] = None,
+) -> dict[str, Any]:
+    """Mirror kanban.db task_events into the unified run ledger.
+
+    kanban.db remains the board projection / compatibility store. The run
+    ledger is append-only and groups attempts by the same task_runs id.
+    """
+    if run_id is None:
+        return {"status": "SKIP", "reason": "missing_run_id"}
+    if RunEnvelopeV1 is None:
+        return {"status": "SKIP", "reason": "run_envelope_unavailable"}
+    proof_ref = f"kanban_db:task_events:{task_id}:{kind}"
+    return append_run_event_best_effort(
+        RunEnvelopeV1(  # type: ignore[misc]
+            run_id=f"kanban:{run_id}",
+            surface="kanban",
+            task_id=task_id,
+            lifecycle_state=lifecycle_state,
+            trigger={"kind": "kanban_worker", "task_id": task_id, "event_kind": kind},
+            proof_refs=[proof_ref],
+            projection_refs=[
+                build_projection_ref("kanban.db", f"tasks/{task_id}"),
+                build_projection_ref("kanban.db", f"task_runs/{run_id}"),
+                build_projection_ref("kanban.db", f"task_events/{task_id}/{kind}"),
+            ],
+            metadata=payload or {},
+        )
+    )
 
 
 def _end_run(
@@ -2418,9 +2485,10 @@ def claim_task(
             "UPDATE tasks SET current_run_id = ? WHERE id = ?",
             (run_id, task_id),
         )
+        claim_payload = {"lock": lock, "expires": expires, "run_id": run_id}
         _append_event(
             conn, task_id, "claimed",
-            {"lock": lock, "expires": expires, "run_id": run_id},
+            claim_payload,
             run_id=run_id,
         )
         return get_task(conn, task_id)
