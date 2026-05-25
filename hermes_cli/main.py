@@ -10756,7 +10756,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "config", "cron", "curator", "dashboard", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
         "kanban", "login", "logout", "logs", "lsp", "mcp", "memory", "migrate",
-        "model", "pairing", "plugins", "portal", "postinstall", "profile", "proxy",
+        "model", "norms", "pairing", "plugins", "portal", "postinstall", "profile", "proxy",
         "send", "sessions", "setup",
         "skills", "slack", "status", "tools", "uninstall", "update",
         "version", "webhook", "whatsapp", "chat", "secrets", "security",
@@ -12805,6 +12805,24 @@ Examples:
             memory_command(args)
 
     memory_parser.set_defaults(func=cmd_memory)
+
+    # =========================================================================
+    # norms command — multi-session norm governance control plane
+    # =========================================================================
+    norms_parser = subparsers.add_parser(
+        "norms",
+        help="Manage shared norm snapshots, leases, and task fusion records",
+        description=(
+            "Versioned SSOT for cross-session norms plus resource leases and "
+            "FusionRecords. Outputs JSON for hooks, cron jobs, and taskpool workers."
+        ),
+    )
+    try:
+        from hermes_cli.norms import register_cli as _register_norms_cli
+
+        _register_norms_cli(norms_parser)
+    except Exception as _exc:
+        logging.getLogger(__name__).debug("norms CLI wiring failed: %s", _exc)
 
     # =========================================================================
     # tools command
