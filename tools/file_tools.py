@@ -5,6 +5,7 @@ import errno
 import json
 import logging
 import os
+import tempfile
 import threading
 from pathlib import Path
 
@@ -17,6 +18,14 @@ from tools.file_operations import (
 )
 from tools import file_state
 from agent.redact import redact_sensitive_text
+
+try:
+    from agent.norm_write_guard import WriteGuardConflict, conflict_payload, durable_write_guard, file_content_hash
+except Exception:  # pragma: no cover - keep file tools available during partial installs
+    WriteGuardConflict = None
+    conflict_payload = None
+    durable_write_guard = None
+    file_content_hash = None
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +164,21 @@ _SENSITIVE_PATH_PREFIXES = (
 _SENSITIVE_EXACT_PATHS = {"/var/run/docker.sock", "/run/docker.sock"}
 
 
+def _is_allowed_temp_path(path_value: str) -> bool:
+    """Return True when ``path_value`` is under the OS temp directory.
+
+    macOS resolves ``/var/folders/...`` temp paths to ``/private/var/folders/...``.
+    That prefix is otherwise guarded as sensitive, but per-user temp dirs are
+    normal scratch space for tests and tool-generated artifacts.
+    """
+    try:
+        resolved = os.path.realpath(path_value)
+        temp_root = os.path.realpath(tempfile.gettempdir())
+        return resolved == temp_root or resolved.startswith(temp_root.rstrip(os.sep) + os.sep)
+    except Exception:
+        return False
+
+
 def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None:
     """Return an error message if the path targets a sensitive system location."""
     try:
@@ -162,6 +186,8 @@ def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None
     except (OSError, ValueError):
         resolved = filepath
     normalized = os.path.normpath(os.path.expanduser(filepath))
+    if _is_allowed_temp_path(resolved) or _is_allowed_temp_path(normalized):
+        return None
     _err = (
         f"Refusing to write to sensitive system path: {filepath}\n"
         "Use the terminal tool with sudo if you need to modify system files."
@@ -858,19 +884,40 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
             _resolved = None
 
         if _resolved is None:
-            stale_warning = _check_file_staleness(path, task_id)
-            file_ops = _get_file_ops(task_id)
-            result = file_ops.write_file(path, content)
-            result_dict = result.to_dict()
-            if stale_warning:
-                result_dict["_warning"] = stale_warning
-            _update_read_timestamp(path, task_id)
-            return json.dumps(result_dict, ensure_ascii=False)
+            from contextlib import ExitStack
+            with ExitStack() as _guards:
+                if durable_write_guard is not None:
+                    _guards.enter_context(durable_write_guard(
+                        kind="file",
+                        identifier=path,
+                        write_mode="replace",
+                        intent="write_file",
+                        task_id=task_id,
+                    ))
+                stale_warning = _check_file_staleness(path, task_id)
+                file_ops = _get_file_ops(task_id)
+                result = file_ops.write_file(path, content)
+                result_dict = result.to_dict()
+                if stale_warning:
+                    result_dict["_warning"] = stale_warning
+                _update_read_timestamp(path, task_id)
+                return json.dumps(result_dict, ensure_ascii=False)
 
         # Serialize the read→modify→write region per-path so concurrent
         # subagents can't interleave on the same file.  Different paths
         # remain fully parallel.
-        with file_state.lock_path(_resolved):
+        from contextlib import ExitStack
+        with ExitStack() as _guards:
+            if durable_write_guard is not None:
+                _guards.enter_context(durable_write_guard(
+                    kind="file",
+                    identifier=_resolved,
+                    write_mode="replace",
+                    intent="write_file",
+                    task_id=task_id,
+                    base_hash=file_content_hash(_resolved) if file_content_hash is not None else "",
+                ))
+            _guards.enter_context(file_state.lock_path(_resolved))
             # Cross-agent staleness wins over per-task warning when both
             # fire — its message names the sibling subagent.
             cross_warning = file_state.check_stale(task_id, _resolved)
@@ -888,6 +935,8 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
                 file_state.note_write(task_id, _resolved)
         return json.dumps(result_dict, ensure_ascii=False)
     except Exception as e:
+        if WriteGuardConflict is not None and isinstance(e, WriteGuardConflict) and conflict_payload is not None:
+            return json.dumps(conflict_payload(e), ensure_ascii=False)
         if _is_expected_write_exception(e):
             logger.debug("write_file expected denial: %s: %s", type(e).__name__, e)
         else:
@@ -941,6 +990,16 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
         # it's a no-op and execution falls through unchanged.
         from contextlib import ExitStack
         with ExitStack() as _locks:
+            for _r in _resolved_paths:
+                if durable_write_guard is not None:
+                    _locks.enter_context(durable_write_guard(
+                        kind="file",
+                        identifier=_r,
+                        write_mode="patch" if mode == "replace" else "multi_patch",
+                        intent=f"patch:{mode}",
+                        task_id=task_id,
+                        base_hash=file_content_hash(_r) if file_content_hash is not None else "",
+                    ))
             for _r in _resolved_paths:
                 _locks.enter_context(file_state.lock_path(_r))
 
@@ -997,6 +1056,8 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                 )
         return json.dumps(result_dict, ensure_ascii=False)
     except Exception as e:
+        if WriteGuardConflict is not None and isinstance(e, WriteGuardConflict) and conflict_payload is not None:
+            return json.dumps(conflict_payload(e), ensure_ascii=False)
         return tool_error(str(e))
 
 

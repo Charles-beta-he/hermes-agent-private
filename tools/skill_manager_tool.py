@@ -45,6 +45,13 @@ from typing import Dict, Any, List, Optional, Tuple
 from utils import atomic_replace, is_truthy_value
 from hermes_cli.config import cfg_get
 
+try:
+    from agent.norm_write_guard import WriteGuardConflict, conflict_payload, durable_write_guard
+except Exception:  # pragma: no cover - keep skill management available during partial installs
+    WriteGuardConflict = None
+    conflict_payload = None
+    durable_write_guard = None
+
 logger = logging.getLogger(__name__)
 
 # Import security scanner — external hub installs always get scanned;
@@ -268,7 +275,7 @@ def _validate_content_size(content: str, label: str = "SKILL.md") -> Optional[st
     return None
 
 
-def _resolve_skill_dir(name: str, category: str = None) -> Path:
+def _resolve_skill_dir(name: str, category: Optional[str] = None) -> Path:
     """Build the directory path for a new skill, optionally under a category."""
     if category:
         return SKILLS_DIR / category / name
@@ -473,7 +480,7 @@ def _atomic_write_text(file_path: Path, content: str, encoding: str = "utf-8") -
 # Core actions
 # =============================================================================
 
-def _create_skill(name: str, content: str, category: str = None) -> Dict[str, Any]:
+def _create_skill(name: str, content: str, category: Optional[str] = None) -> Dict[str, Any]:
     """Create a new user skill with SKILL.md content."""
     # Validate name
     err = _validate_name(name)
@@ -567,7 +574,7 @@ def _patch_skill(
     name: str,
     old_string: str,
     new_string: str,
-    file_path: str = None,
+    file_path: Optional[str] = None,
     replace_all: bool = False,
 ) -> Dict[str, Any]:
     """Targeted find-and-replace within a skill file.
@@ -813,23 +820,26 @@ def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
 # Main entry point
 # =============================================================================
 
-def skill_manage(
+def _skill_write_mode(action: str) -> str:
+    if action in {"create", "write_file"}:
+        return "append"
+    if action in {"delete", "remove_file"}:
+        return "delete"
+    return "patch"
+
+
+def _skill_manage_dispatch(
     action: str,
     name: str,
-    content: str = None,
-    category: str = None,
-    file_path: str = None,
-    file_content: str = None,
-    old_string: str = None,
-    new_string: str = None,
+    content: Optional[str] = None,
+    category: Optional[str] = None,
+    file_path: Optional[str] = None,
+    file_content: Optional[str] = None,
+    old_string: Optional[str] = None,
+    new_string: Optional[str] = None,
     replace_all: bool = False,
-    absorbed_into: str = None,
+    absorbed_into: Optional[str] = None,
 ) -> str:
-    """
-    Manage user-created skills. Dispatches to the appropriate action handler.
-
-    Returns JSON string with results.
-    """
     if action == "create":
         if not content:
             return tool_error("content is required for 'create'. Provide the full SKILL.md text (frontmatter + body).", success=False)
@@ -891,6 +901,64 @@ def skill_manage(
             pass
 
     return json.dumps(result, ensure_ascii=False)
+
+
+def skill_manage(
+    action: str,
+    name: str,
+    content: str = None,
+    category: str = None,
+    file_path: str = None,
+    file_content: str = None,
+    old_string: str = None,
+    new_string: str = None,
+    replace_all: bool = False,
+    absorbed_into: str = None,
+) -> str:
+    """
+    Manage user-created skills. Dispatches to the appropriate action handler.
+
+    Durable skill mutations are guarded by a norm-governance write lease so
+    parallel sessions cannot silently patch/delete the same skill at once.
+    """
+    try:
+        if durable_write_guard is not None:
+            fragment = file_path if action in {"patch", "write_file", "remove_file"} and file_path else None
+            with durable_write_guard(
+                kind="skill",
+                identifier=name,
+                fragment=fragment,
+                write_mode=_skill_write_mode(action),
+                intent=f"skill_manage:{action}",
+            ):
+                return _skill_manage_dispatch(
+                    action,
+                    name,
+                    content=content,
+                    category=category,
+                    file_path=file_path,
+                    file_content=file_content,
+                    old_string=old_string,
+                    new_string=new_string,
+                    replace_all=replace_all,
+                    absorbed_into=absorbed_into,
+                )
+        return _skill_manage_dispatch(
+            action,
+            name,
+            content=content,
+            category=category,
+            file_path=file_path,
+            file_content=file_content,
+            old_string=old_string,
+            new_string=new_string,
+            replace_all=replace_all,
+            absorbed_into=absorbed_into,
+        )
+    except Exception as exc:
+        if WriteGuardConflict is not None and isinstance(exc, WriteGuardConflict) and conflict_payload is not None:
+            return json.dumps(conflict_payload(exc), ensure_ascii=False)
+        raise
 
 
 # =============================================================================

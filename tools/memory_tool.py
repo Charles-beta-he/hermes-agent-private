@@ -42,6 +42,13 @@ except Exception:  # pragma: no cover - fail-soft import guard
     load_experimental_config = None
     memory_write_gate = None
 
+try:
+    from agent.norm_write_guard import WriteGuardConflict, conflict_payload, durable_write_guard
+except Exception:  # pragma: no cover - keep memory available during partial installs
+    WriteGuardConflict = None
+    conflict_payload = None
+    durable_write_guard = None
+
 # fcntl is Unix-only; on Windows use msvcrt for file locking
 msvcrt = None
 try:
@@ -650,19 +657,61 @@ def memory_tool(
     if action == "add":
         if not content:
             return tool_error("Content is required for 'add' action.", success=False)
-        result = store.add(target, content)
+        try:
+            if durable_write_guard is not None:
+                with durable_write_guard(
+                    kind="memory",
+                    identifier=target,
+                    write_mode="append",
+                    intent=f"memory:{action}",
+                ):
+                    result = store.add(target, content)
+            else:
+                result = store.add(target, content)
+        except Exception as exc:
+            if WriteGuardConflict is not None and isinstance(exc, WriteGuardConflict) and conflict_payload is not None:
+                return json.dumps(conflict_payload(exc), ensure_ascii=False)
+            raise
 
     elif action == "replace":
         if not old_text:
             return tool_error("old_text is required for 'replace' action.", success=False)
         if not content:
             return tool_error("content is required for 'replace' action.", success=False)
-        result = store.replace(target, old_text, content)
+        try:
+            if durable_write_guard is not None:
+                with durable_write_guard(
+                    kind="memory",
+                    identifier=target,
+                    write_mode="patch",
+                    intent=f"memory:{action}",
+                ):
+                    result = store.replace(target, old_text, content)
+            else:
+                result = store.replace(target, old_text, content)
+        except Exception as exc:
+            if WriteGuardConflict is not None and isinstance(exc, WriteGuardConflict) and conflict_payload is not None:
+                return json.dumps(conflict_payload(exc), ensure_ascii=False)
+            raise
 
     elif action == "remove":
         if not old_text:
             return tool_error("old_text is required for 'remove' action.", success=False)
-        result = store.remove(target, old_text)
+        try:
+            if durable_write_guard is not None:
+                with durable_write_guard(
+                    kind="memory",
+                    identifier=target,
+                    write_mode="delete",
+                    intent=f"memory:{action}",
+                ):
+                    result = store.remove(target, old_text)
+            else:
+                result = store.remove(target, old_text)
+        except Exception as exc:
+            if WriteGuardConflict is not None and isinstance(exc, WriteGuardConflict) and conflict_payload is not None:
+                return json.dumps(conflict_payload(exc), ensure_ascii=False)
+            raise
 
     else:
         return tool_error(f"Unknown action '{action}'. Use: add, replace, remove", success=False)

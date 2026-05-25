@@ -59,7 +59,14 @@ hermes norms fusion create \
 
 ## Integration policy
 
-Before any high-risk durable write, callers should:
+The first production integrations are live:
+
+- `memory(...)` writes acquire `memory:<target>` leases before add/replace/remove.
+- `skill_manage(...)` writes acquire `skill:<name>` (or `skill:<name>#<file_path>`) leases before create/edit/patch/delete/supporting-file mutations.
+- `write_file(...)` and `patch(...)` acquire `file:<resolved_path>` leases before mutating file contents.
+- `hermes norms` exposes the same control plane for hooks, taskpool workers, cron jobs, and external automation.
+
+Before any other high-risk durable write, callers should:
 
 1. Build or load the current `NormSnapshot`.
 2. Declare a `WriteSet` of canonical resource keys.
