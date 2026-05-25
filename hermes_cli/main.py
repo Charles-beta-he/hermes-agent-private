@@ -6186,12 +6186,30 @@ def cmd_reflection(args):
 
     ledger = PostChatCandidateLedger(getattr(args, "ledger", None))
     rows = ledger.read_all()
+    total_count = len(rows)
+    show_all = bool(getattr(args, "all", False))
+    if show_all:
+        limit = None
+    else:
+        raw_limit = getattr(args, "limit", 50)
+        limit = 50 if raw_limit is None else int(raw_limit)
+        if limit < 1:
+            raise SystemExit("reflection status --limit must be >= 1; use --all for unbounded output")
+    visible_rows = rows if limit is None else rows[-limit:]
     if getattr(args, "json", False):
-        payload = {"candidate_count": len(rows), "candidates": rows}
+        payload = {
+            "candidate_count": total_count,
+            "returned_count": len(visible_rows),
+            "limit": limit,
+            "truncated": len(visible_rows) < total_count,
+            "candidates": visible_rows,
+        }
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return
-    print(f"post-chat reflection candidates: {len(rows)}")
-    for row in rows[-10:]:
+    print(f"post-chat reflection candidates: {total_count}")
+    if len(visible_rows) < total_count:
+        print(f"showing last {len(visible_rows)} candidate(s); pass --all to show every row")
+    for row in visible_rows:
         print(f"- {row.get('type')} [{row.get('status')}] {row.get('content')}")
 
 def cmd_cron(args):
@@ -11834,6 +11852,8 @@ def main():
     reflection_status = reflection_subparsers.add_parser("status", help="Show candidate ledger summary")
     reflection_status.add_argument("--json", action="store_true", help="Print candidate JSON")
     reflection_status.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_status.add_argument("--limit", type=int, default=50, help="Maximum recent candidates to print (default: 50)")
+    reflection_status.add_argument("--all", action="store_true", help="Print every candidate instead of the recent limit")
     reflection_status.set_defaults(func=cmd_reflection)
     reflection_synth = reflection_subparsers.add_parser("synthesize", help="Build nightly synthesis report")
     reflection_synth.add_argument("--json", action="store_true", help="Print raw synthesis JSON")
@@ -11854,6 +11874,8 @@ def main():
     reflection_install.set_defaults(func=cmd_reflection)
     reflection_parser.add_argument("--json", action="store_true", help="Print candidate JSON")
     reflection_parser.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_parser.add_argument("--limit", type=int, default=50, help="Maximum recent candidates to print (default: 50)")
+    reflection_parser.add_argument("--all", action="store_true", help="Print every candidate instead of the recent limit")
     reflection_parser.set_defaults(func=cmd_reflection)
 
     # =========================================================================

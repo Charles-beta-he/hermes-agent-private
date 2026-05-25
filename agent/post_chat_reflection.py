@@ -466,10 +466,18 @@ def nightly_script_path() -> Path:
 
 def install_nightly_script() -> Path:
     path = nightly_script_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    scripts_path = path.parent
+    hermes_home = get_hermes_home().expanduser().resolve()
+    if scripts_path.exists() and scripts_path.is_symlink():
+        raise ValueError(f"Refusing to write through symlinked scripts directory: {scripts_path}")
+    scripts_path.mkdir(parents=True, exist_ok=True)
+    if scripts_path.is_symlink() or not scripts_path.is_dir():
+        raise ValueError(f"Refusing to write through unsafe scripts directory: {scripts_path}")
+    scripts_dir = scripts_path.resolve()
+    if hermes_home not in {scripts_dir, *scripts_dir.parents}:
+        raise ValueError(f"Refusing to write nightly script outside Hermes home: {scripts_path}")
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"Refusing to write unsafe nightly script path: {path}")
-    scripts_dir = path.parent.resolve()
     target = path.resolve() if path.exists() else scripts_dir / path.name
     if scripts_dir not in {target.parent, *target.parents}:
         raise ValueError(f"Refusing to write nightly script outside scripts directory: {path}")

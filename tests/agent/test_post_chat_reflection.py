@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 
 from agent.post_chat_reflection import (
@@ -444,3 +446,79 @@ def test_install_nightly_script_rejects_symlink_target(tmp_path, monkeypatch):
         raise AssertionError("symlink nightly script path should be rejected")
 
     assert outside.read_text(encoding="utf-8") == "do not overwrite"
+
+
+def test_install_nightly_script_rejects_symlinked_scripts_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+    outside = tmp_path / "outside-scripts"
+    outside.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    scripts = home / "scripts"
+    scripts.symlink_to(outside, target_is_directory=True)
+
+    try:
+        install_nightly_script()
+    except ValueError as exc:
+        assert "symlinked scripts directory" in str(exc)
+    else:
+        raise AssertionError("symlinked scripts directory should be rejected")
+
+    assert not (outside / "post_chat_reflection_nightly.py").exists()
+
+
+def test_reflection_status_json_is_bounded_and_requires_positive_limit(tmp_path):
+    ledger = PostChatCandidateLedger(tmp_path / "candidates.jsonl")
+    rows = []
+    for i in range(60):
+        rows.append(
+            {
+                "id": str(i),
+                "type": "correction",
+                "content": f"candidate {i}",
+                "status": "pending",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "evidence_refs": [f"session:{i}"],
+                "sensitivity_level": "none",
+                "explicitness": "explicit",
+                "proposed_destination": "memory",
+            }
+        )
+    ledger.append_many(rows)
+
+    base_cmd = [sys.executable, "hermes_cli/main.py", "reflection", "status", "--json", "--ledger", str(ledger.path)]
+    default = subprocess.run(base_cmd, check=True, text=True, capture_output=True)
+    default_payload = json.loads(default.stdout)
+    assert default_payload["candidate_count"] == 60
+    assert default_payload["returned_count"] == 50
+    assert default_payload["limit"] == 50
+    assert default_payload["truncated"] is True
+    assert len(default_payload["candidates"]) == 50
+    assert default_payload["candidates"][0]["id"] == "10"
+    assert default_payload["candidates"][-1]["id"] == "59"
+
+    limited = subprocess.run([*base_cmd, "--limit", "7"], check=True, text=True, capture_output=True)
+    limited_payload = json.loads(limited.stdout)
+    assert limited_payload["candidate_count"] == 60
+    assert limited_payload["returned_count"] == 7
+    assert limited_payload["limit"] == 7
+    assert limited_payload["truncated"] is True
+    assert len(limited_payload["candidates"]) == 7
+    assert limited_payload["candidates"][0]["id"] == "53"
+    assert limited_payload["candidates"][-1]["id"] == "59"
+
+    all_rows = subprocess.run([*base_cmd, "--all"], check=True, text=True, capture_output=True)
+    all_payload = json.loads(all_rows.stdout)
+    assert all_payload["candidate_count"] == 60
+    assert all_payload["returned_count"] == 60
+    assert all_payload["limit"] is None
+    assert all_payload["truncated"] is False
+    assert len(all_payload["candidates"]) == 60
+
+    invalid = subprocess.run([*base_cmd, "--limit", "0"], text=True, capture_output=True)
+    assert invalid.returncode != 0
+    assert "--limit must be >= 1" in invalid.stderr or "--limit must be >= 1" in invalid.stdout
+
+    negative = subprocess.run([*base_cmd, "--limit", "-1"], text=True, capture_output=True)
+    assert negative.returncode != 0
+    assert "--limit must be >= 1" in negative.stderr or "--limit must be >= 1" in negative.stdout
