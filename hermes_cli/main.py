@@ -6138,6 +6138,80 @@ def cmd_bg_review(args):
         print(f"html: {status.get('html_report_path')}")
 
 
+def cmd_reflection(args):
+    """Inspect or synthesize post-chat reflection candidates."""
+    from agent.post_chat_reflection import PostChatCandidateLedger, install_nightly_cron, run_nightly_synthesis, run_promotion_review
+
+    sub = getattr(args, "reflection_command", None) or "status"
+    if sub == "synthesize":
+        report = run_nightly_synthesis(
+            ledger_path=getattr(args, "ledger", None),
+            json_path=getattr(args, "json_path", None),
+            html_path=getattr(args, "html_path", None),
+        )
+        if getattr(args, "json", False):
+            print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"post-chat reflection: synthesized {len(report.get('clusters', []))} clusters")
+            print(f"json: {report.get('json_report_path')}")
+            print(f"html: {report.get('html_report_path')}")
+        return
+    if sub == "review":
+        packet = run_promotion_review(
+            ledger_path=getattr(args, "ledger", None),
+            json_path=getattr(args, "json_path", None),
+            markdown_path=getattr(args, "markdown_path", None),
+        )
+        if getattr(args, "json", False):
+            print(json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"post-chat reflection: built {len(packet.get('actions', []))} manual promotion action(s)")
+            print(f"json: {packet.get('promotion_review_json_path')}")
+            print(f"markdown: {packet.get('promotion_review_markdown_path')}")
+        return
+    if sub == "install-nightly":
+        result = install_nightly_cron(
+            schedule=getattr(args, "schedule", None) or "0 3 * * *",
+            deliver=getattr(args, "deliver", None) or "local",
+        )
+        job = result.get("job", {}) if isinstance(result.get("job"), dict) else {}
+        if getattr(args, "json", False):
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"post-chat reflection nightly cron: {result.get('state')}")
+            print(f"job_id: {job.get('id')}")
+            print(f"schedule: {job.get('schedule_display')}")
+            print(f"script: {result.get('script_path')}")
+        return
+
+    ledger = PostChatCandidateLedger(getattr(args, "ledger", None))
+    rows = ledger.read_all()
+    total_count = len(rows)
+    show_all = bool(getattr(args, "all", False))
+    if show_all:
+        limit = None
+    else:
+        raw_limit = getattr(args, "limit", 50)
+        limit = 50 if raw_limit is None else int(raw_limit)
+        if limit < 1:
+            raise SystemExit("reflection status --limit must be >= 1; use --all for unbounded output")
+    visible_rows = rows if limit is None else rows[-limit:]
+    if getattr(args, "json", False):
+        payload = {
+            "candidate_count": total_count,
+            "returned_count": len(visible_rows),
+            "limit": limit,
+            "truncated": len(visible_rows) < total_count,
+            "candidates": visible_rows,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    print(f"post-chat reflection candidates: {total_count}")
+    if len(visible_rows) < total_count:
+        print(f"showing last {len(visible_rows)} candidate(s); pass --all to show every row")
+    for row in visible_rows:
+        print(f"- {row.get('type')} [{row.get('status')}] {row.get('content')}")
+
 def cmd_cron(args):
     """Cron job management."""
     from hermes_cli.cron import cron_command
@@ -9900,6 +9974,7 @@ def _coalesce_session_name_args(argv: list) -> list:
         "logout",
         "auth",
         "bg-review",
+        "reflection",
         "status",
         "cron",
         "doctor",
@@ -10757,7 +10832,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "dump", "fallback", "gateway", "hooks", "import", "insights",
         "kanban", "login", "logout", "logs", "lsp", "mcp", "memory", "migrate",
         "model", "norms", "pairing", "plugins", "portal", "postinstall", "profile", "proxy",
-        "send", "sessions", "setup",
+        "reflection", "send", "sessions", "setup",
         "skills", "slack", "status", "tools", "uninstall", "update",
         "version", "webhook", "whatsapp", "chat", "secrets", "security",
         # Help-ish invocations — plugin commands not being listed in
@@ -11764,6 +11839,44 @@ def main():
     bg_review_parser.add_argument("--html", action="store_true", help="Print HTML report path")
     bg_review_parser.add_argument("--path", help="Read a custom bg-review status JSON path")
     bg_review_parser.set_defaults(func=cmd_bg_review)
+
+    # =========================================================================
+    # reflection command
+    # =========================================================================
+    reflection_parser = subparsers.add_parser(
+        "reflection",
+        help="Inspect post-chat reflection candidate ledger",
+        description="Review suggest-only post-chat learning candidates and synthesize nightly reports",
+    )
+    reflection_subparsers = reflection_parser.add_subparsers(dest="reflection_command")
+    reflection_status = reflection_subparsers.add_parser("status", help="Show candidate ledger summary")
+    reflection_status.add_argument("--json", action="store_true", help="Print candidate JSON")
+    reflection_status.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_status.add_argument("--limit", type=int, default=50, help="Maximum recent candidates to print (default: 50)")
+    reflection_status.add_argument("--all", action="store_true", help="Print every candidate instead of the recent limit")
+    reflection_status.set_defaults(func=cmd_reflection)
+    reflection_synth = reflection_subparsers.add_parser("synthesize", help="Build nightly synthesis report")
+    reflection_synth.add_argument("--json", action="store_true", help="Print raw synthesis JSON")
+    reflection_synth.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_synth.add_argument("--json-path", help="Output JSON report path")
+    reflection_synth.add_argument("--html-path", help="Output HTML report path")
+    reflection_synth.set_defaults(func=cmd_reflection)
+    reflection_review = reflection_subparsers.add_parser("review", help="Build manual promotion review packet")
+    reflection_review.add_argument("--json", action="store_true", help="Print raw review JSON")
+    reflection_review.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_review.add_argument("--json-path", help="Output promotion review JSON path")
+    reflection_review.add_argument("--markdown-path", help="Output promotion review Markdown path")
+    reflection_review.set_defaults(func=cmd_reflection)
+    reflection_install = reflection_subparsers.add_parser("install-nightly", help="Install nightly no-agent synthesis cron")
+    reflection_install.add_argument("--json", action="store_true", help="Print created/existing job JSON")
+    reflection_install.add_argument("--schedule", default="0 3 * * *", help="Cron expression or schedule string")
+    reflection_install.add_argument("--deliver", default="local", help="Cron delivery target")
+    reflection_install.set_defaults(func=cmd_reflection)
+    reflection_parser.add_argument("--json", action="store_true", help="Print candidate JSON")
+    reflection_parser.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_parser.add_argument("--limit", type=int, default=50, help="Maximum recent candidates to print (default: 50)")
+    reflection_parser.add_argument("--all", action="store_true", help="Print every candidate instead of the recent limit")
+    reflection_parser.set_defaults(func=cmd_reflection)
 
     # =========================================================================
     # cron command

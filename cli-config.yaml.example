@@ -488,6 +488,17 @@ memory:
   # For exit/reset, only fires if the session had at least this many user turns.
   flush_min_turns: 6        # Min user turns to trigger flush on exit/reset (0 = disabled)
 
+# Suggest-only post-chat reflection candidate ledger. This runs after completed
+# turns and captures explicit requirements/corrections/red lines as JSONL
+# candidates. It never writes memory, skills, or taskpool directly; use
+# `hermes reflection synthesize` for the higher-level nightly review report,
+# `hermes reflection review` for a manual promotion packet, and
+# `hermes reflection install-nightly` to install a no-agent nightly cron job.
+post_chat_reflection:
+  enabled: true
+  # ledger_path: ~/.hermes/state/post_chat_reflection_candidates.jsonl
+  # status_path: ~/.hermes/state/post_chat_reflection_status.json
+
 # =============================================================================
 # Session Reset Policy (Messaging Platforms)
 # =============================================================================
