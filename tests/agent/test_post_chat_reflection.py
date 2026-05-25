@@ -4,8 +4,12 @@ from datetime import datetime, timedelta, timezone
 from agent.post_chat_reflection import (
     PostChatCandidateLedger,
     build_post_chat_candidates,
+    build_promotion_review,
     evaluate_candidate_promotion,
+    install_nightly_cron,
+    install_nightly_script,
     record_post_chat_reflection,
+    run_promotion_review,
     synthesize_nightly_reflection,
 )
 
@@ -210,3 +214,233 @@ def test_candidate_ledger_appends_jsonl_and_nightly_synthesizer_dedupes(tmp_path
     assert report["clusters"][0]["count"] == 2
     assert report["clusters"][0]["decision"]["decision"] == "promote_allowed"
     assert report["clusters"][0]["dissent"] == []
+
+
+def test_promotion_review_is_manual_only_and_writes_artifacts(tmp_path):
+    ledger = PostChatCandidateLedger(tmp_path / "candidates.jsonl")
+    ledger.append_many([
+        {
+            "id": "a",
+            "type": "correction",
+            "content": "改码前先 fetch/pull 防覆盖",
+            "status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "evidence_refs": ["session:1:turn:0"],
+            "sensitivity_level": "none",
+            "explicitness": "explicit",
+            "proposed_destination": "memory",
+        }
+    ])
+
+    packet = run_promotion_review(
+        ledger_path=str(ledger.path),
+        json_path=str(tmp_path / "review.json"),
+        markdown_path=str(tmp_path / "review.md"),
+    )
+
+    assert packet["manual_only"] is True
+    assert packet["actions"]
+    assert packet["actions"][0]["manual_only"] is True
+    assert packet["actions"][0]["target"] == "memory"
+    assert (tmp_path / "review.json").exists()
+    assert "Manual-only" in (tmp_path / "review.md").read_text(encoding="utf-8")
+
+
+def test_build_promotion_review_filters_non_actionable_clusters():
+    report = {
+        "generated_at": "now",
+        "clusters": [
+            {"cluster_id": "a", "content": "x", "decision": {"decision": "needs_more_evidence", "target": "staging"}},
+            {"cluster_id": "b", "content": "y", "decision": {"decision": "review_required", "target": "skill"}},
+        ],
+    }
+
+    packet = build_promotion_review(report)
+
+    assert [a["cluster_id"] for a in packet["actions"]] == ["b"]
+    assert packet["metrics"]["skill"] == 1
+
+
+def test_install_nightly_script_writes_safe_no_agent_script(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    script = install_nightly_script()
+    content = script.read_text(encoding="utf-8")
+
+    assert script == tmp_path / "scripts" / "post_chat_reflection_nightly.py"
+    assert "run_nightly_synthesis" in content
+    assert "memory" not in content.lower()
+    assert "skill_manage" not in content
+
+
+def test_install_nightly_cron_creates_expected_no_agent_job(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    created = {}
+
+    import cron.jobs as cron_jobs
+
+    monkeypatch.setattr(cron_jobs, "load_jobs", lambda: [])
+
+    def fake_create_job(**kwargs):
+        created.update(kwargs)
+        return {"id": "job1", "name": kwargs["name"], "script": kwargs["script"], "no_agent": kwargs["no_agent"], "prompt": kwargs["prompt"] or ""}
+
+    monkeypatch.setattr(cron_jobs, "create_job", fake_create_job)
+
+    result = install_nightly_cron(schedule="0 3 * * *", deliver="local")
+
+    assert result["state"] == "created"
+    assert created["no_agent"] is True
+    assert created["script"] == "post_chat_reflection_nightly.py"
+    assert created["prompt"] is None
+    assert (tmp_path / "scripts" / "post_chat_reflection_nightly.py").exists()
+
+
+def test_install_nightly_cron_rejects_unsafe_same_name_job_and_recreates_script(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    unsafe = {
+        "id": "bad",
+        "name": "Hermes post-chat reflection nightly synthesis",
+        "no_agent": False,
+        "script": "other.py",
+        "prompt": "wake an agent",
+    }
+
+    import cron.jobs as cron_jobs
+
+    monkeypatch.setattr(cron_jobs, "load_jobs", lambda: [unsafe])
+
+    try:
+        install_nightly_cron()
+    except ValueError as exc:
+        assert "Refusing" in str(exc)
+    else:
+        raise AssertionError("unsafe same-name cron job should be rejected")
+
+    assert not (tmp_path / "scripts" / "post_chat_reflection_nightly.py").exists()
+
+
+def test_install_nightly_cron_rejects_same_name_job_with_profile_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    profiled = {
+        "id": "profiled",
+        "name": "Hermes post-chat reflection nightly synthesis",
+        "no_agent": True,
+        "script": "post_chat_reflection_nightly.py",
+        "prompt": "",
+        "profile": "other",
+        "enabled": True,
+        "deliver": "local",
+        "schedule_display": "0 3 * * *",
+    }
+
+    import cron.jobs as cron_jobs
+
+    monkeypatch.setattr(cron_jobs, "load_jobs", lambda: [profiled])
+
+    try:
+        install_nightly_cron()
+    except ValueError as exc:
+        assert "Refusing" in str(exc)
+    else:
+        raise AssertionError("profile-overridden same-name cron job should be rejected")
+
+
+def test_install_nightly_cron_rejects_duplicate_expected_jobs(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    expected = {
+        "id": "ok1",
+        "name": "Hermes post-chat reflection nightly synthesis",
+        "no_agent": True,
+        "script": "post_chat_reflection_nightly.py",
+        "prompt": "",
+        "profile": None,
+        "enabled": True,
+        "deliver": "local",
+        "schedule_display": "0 3 * * *",
+        "state": "scheduled",
+    }
+
+    import cron.jobs as cron_jobs
+
+    monkeypatch.setattr(cron_jobs, "load_jobs", lambda: [dict(expected), dict(expected, id="ok2")])
+
+    try:
+        install_nightly_cron()
+    except ValueError as exc:
+        assert "duplicate" in str(exc)
+    else:
+        raise AssertionError("duplicate expected cron jobs should be rejected")
+
+
+def test_install_nightly_cron_rejects_schedule_deliver_or_disabled_mismatch(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    mismatched = {
+        "id": "mismatch",
+        "name": "Hermes post-chat reflection nightly synthesis",
+        "no_agent": True,
+        "script": "post_chat_reflection_nightly.py",
+        "prompt": "",
+        "profile": None,
+        "enabled": False,
+        "deliver": "origin",
+        "schedule_display": "0 4 * * *",
+    }
+
+    import cron.jobs as cron_jobs
+
+    monkeypatch.setattr(cron_jobs, "load_jobs", lambda: [mismatched])
+
+    try:
+        install_nightly_cron(schedule="0 3 * * *", deliver="local")
+    except ValueError as exc:
+        assert "matching schedule/deliver" in str(exc)
+    else:
+        raise AssertionError("mismatched disabled cron job should be rejected")
+
+
+def test_install_nightly_cron_rejects_missing_enabled_and_paused_same_name_job(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    missing_enabled = {
+        "id": "legacy",
+        "name": "Hermes post-chat reflection nightly synthesis",
+        "no_agent": True,
+        "script": "post_chat_reflection_nightly.py",
+        "prompt": "",
+        "profile": None,
+        "deliver": "local",
+        "schedule_display": "0 3 * * *",
+        "state": "paused",
+    }
+
+    import cron.jobs as cron_jobs
+
+    monkeypatch.setattr(cron_jobs, "load_jobs", lambda: [missing_enabled])
+
+    try:
+        install_nightly_cron(schedule="0 3 * * *", deliver="local")
+    except ValueError as exc:
+        assert "enabled job" in str(exc)
+    else:
+        raise AssertionError("missing-enabled paused cron job should be rejected")
+
+    assert not (tmp_path / "scripts" / "post_chat_reflection_nightly.py").exists()
+
+
+def test_install_nightly_script_rejects_symlink_target(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    outside = tmp_path / "outside.py"
+    outside.write_text("do not overwrite", encoding="utf-8")
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+    script = script_dir / "post_chat_reflection_nightly.py"
+    script.symlink_to(outside)
+
+    try:
+        install_nightly_script()
+    except ValueError as exc:
+        assert "unsafe nightly script path" in str(exc)
+    else:
+        raise AssertionError("symlink nightly script path should be rejected")
+
+    assert outside.read_text(encoding="utf-8") == "do not overwrite"

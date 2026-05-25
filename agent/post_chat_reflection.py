@@ -12,11 +12,16 @@ import argparse
 import hashlib
 import html
 import json
+import os
 import re
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+
+_NIGHTLY_SCRIPT_NAME = "post_chat_reflection_nightly.py"
+_NIGHTLY_JOB_NAME = "Hermes post-chat reflection nightly synthesis"
 
 from hermes_cli.config import load_config
 from hermes_constants import get_hermes_home
@@ -351,6 +356,182 @@ def run_nightly_synthesis(*, ledger_path: Optional[str] = None, json_path: Optio
     return report
 
 
+def build_promotion_review(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a manual promotion packet from a nightly report.
+
+    This is the explicit boundary between analysis and durable mutation: the
+    packet is auditable and manual-only. It never calls memory/skill/taskpool
+    tools and never mutates candidate state.
+    """
+    actions: List[Dict[str, Any]] = []
+    for cluster in report.get("clusters", []) if isinstance(report, dict) else []:
+        if not isinstance(cluster, dict):
+            continue
+        decision = cluster.get("decision", {}) if isinstance(cluster.get("decision"), dict) else {}
+        verdict = decision.get("decision")
+        target = decision.get("target")
+        if verdict not in {"promote_allowed", "review_required"}:
+            continue
+        actions.append({
+            "cluster_id": cluster.get("cluster_id"),
+            "decision": verdict,
+            "target": target,
+            "type": cluster.get("type"),
+            "scope": cluster.get("scope"),
+            "content": cluster.get("content"),
+            "evidence_refs": cluster.get("evidence_refs", []),
+            "manual_only": True,
+            "suggested_action": _suggested_manual_action(str(target or ""), str(cluster.get("content") or "")),
+        })
+    return {
+        "generated_at": _utc_now_iso(),
+        "source_report_generated_at": report.get("generated_at") if isinstance(report, dict) else None,
+        "manual_only": True,
+        "actions": actions,
+        "metrics": {
+            "manual_actions": len(actions),
+            "memory_or_profile": sum(1 for a in actions if a.get("target") in {"memory", "user_profile"}),
+            "skill": sum(1 for a in actions if a.get("target") == "skill"),
+            "taskpool": sum(1 for a in actions if a.get("target") == "taskpool"),
+        },
+    }
+
+
+def _suggested_manual_action(target: str, content: str) -> str:
+    if target in {"memory", "user_profile"}:
+        return "Review evidence_refs, then use memory.add/replace manually if durable and non-ephemeral."
+    if target == "skill":
+        return "Review evidence_refs, then create or patch a Hermes skill manually if this is a reusable workflow."
+    if target == "taskpool":
+        return "Review evidence_refs, then enqueue a task manually with dependencies and acceptance criteria."
+    return "Review evidence_refs manually; do not auto-promote."
+
+
+def render_promotion_review_markdown(packet: Dict[str, Any]) -> str:
+    lines = [
+        "# Hermes Post-chat Reflection Promotion Review",
+        "",
+        f"Generated: {packet.get('generated_at', '')}",
+        "",
+        "Manual-only: this artifact is an audit packet, not an auto-promotion mechanism.",
+        "",
+        "## Metrics",
+        "",
+        "```json",
+        json.dumps(packet.get("metrics", {}), ensure_ascii=False, indent=2, sort_keys=True),
+        "```",
+        "",
+        "## Actions",
+        "",
+    ]
+    for action in packet.get("actions", []):
+        lines.extend([
+            f"### {action.get('cluster_id')} → {action.get('target')} ({action.get('decision')})",
+            "",
+            f"Type: {action.get('type')} / Scope: {action.get('scope')}",
+            "",
+            f"Content: {action.get('content')}",
+            "",
+            "Evidence refs:",
+        ])
+        for ref in action.get("evidence_refs", []):
+            lines.append(f"- {ref}")
+        lines.extend(["", f"Suggested manual action: {action.get('suggested_action')}", ""])
+    if not packet.get("actions"):
+        lines.append("No promotion or review-required actions.")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_promotion_review(packet: Dict[str, Any], *, json_path: Optional[Path | str] = None, markdown_path: Optional[Path | str] = None) -> Dict[str, str]:
+    jp = _expand_path(json_path) if json_path else get_hermes_home() / "reports" / "post_chat_reflection_promotion_review.json"
+    mp = _expand_path(markdown_path) if markdown_path else get_hermes_home() / "reports" / "post_chat_reflection_promotion_review.md"
+    jp.parent.mkdir(parents=True, exist_ok=True)
+    mp.parent.mkdir(parents=True, exist_ok=True)
+    jp.write_text(json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    mp.write_text(render_promotion_review_markdown(packet), encoding="utf-8")
+    return {"promotion_review_json_path": str(jp), "promotion_review_markdown_path": str(mp)}
+
+
+def run_promotion_review(*, ledger_path: Optional[str] = None, json_path: Optional[str] = None, markdown_path: Optional[str] = None) -> Dict[str, Any]:
+    ledger = PostChatCandidateLedger(ledger_path)
+    report = synthesize_nightly_reflection(ledger.read_all())
+    packet = build_promotion_review(report)
+    packet.update(write_promotion_review(packet, json_path=json_path, markdown_path=markdown_path))
+    return packet
+
+
+def nightly_script_path() -> Path:
+    return get_hermes_home() / "scripts" / _NIGHTLY_SCRIPT_NAME
+
+
+def install_nightly_script() -> Path:
+    path = nightly_script_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError(f"Refusing to write unsafe nightly script path: {path}")
+    scripts_dir = path.parent.resolve()
+    target = path.resolve() if path.exists() else scripts_dir / path.name
+    if scripts_dir not in {target.parent, *target.parents}:
+        raise ValueError(f"Refusing to write nightly script outside scripts directory: {path}")
+    content = """from agent.post_chat_reflection import run_nightly_synthesis\n\nreport = run_nightly_synthesis()\nmetrics = report.get('metrics', {})\nactionable = int(metrics.get('promote_allowed', 0) or 0) + int(metrics.get('review_required', 0) or 0)\nif actionable:\n    print(f\"Post-chat reflection: {actionable} actionable cluster(s). JSON: {report.get('json_report_path')} HTML: {report.get('html_report_path')}\")\n"""
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.replace(tmp_name, path)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+    return path
+
+
+def _is_expected_nightly_job(job: Dict[str, Any], *, schedule: str = "0 3 * * *", deliver: str = "local") -> bool:
+    return (
+        isinstance(job, dict)
+        and job.get("name") == _NIGHTLY_JOB_NAME
+        and job.get("no_agent") is True
+        and str(job.get("script") or "") == _NIGHTLY_SCRIPT_NAME
+        and not str(job.get("prompt") or "").strip()
+        and job.get("profile") in {None, ""}
+        and job.get("enabled") is True
+        and str(job.get("state") or "scheduled") == "scheduled"
+        and str(job.get("deliver") or "") == str(deliver)
+        and str(job.get("schedule_display") or "") == str(schedule)
+    )
+
+
+def install_nightly_cron(*, schedule: str = "0 3 * * *", deliver: str = "local") -> Dict[str, Any]:
+    """Install a no-agent nightly synthesis cron job.
+
+    The job only writes JSON/HTML reports and prints output when actionable
+    clusters exist. Promotion remains manual via the review packet command.
+    """
+    from cron.jobs import create_job, load_jobs
+
+    matches = [job for job in load_jobs() if isinstance(job, dict) and job.get("name") == _NIGHTLY_JOB_NAME]
+    unsafe = [job for job in matches if not _is_expected_nightly_job(job, schedule=schedule, deliver=deliver)]
+    if unsafe:
+        raise ValueError(
+            "Refusing to treat existing same-name cron job as installed: "
+            "expected no_agent=True, empty prompt, enabled job, matching schedule/deliver, no profile override, and script "
+            f"{_NIGHTLY_SCRIPT_NAME!r}. Inspect/remove the conflicting job manually."
+        )
+    if len(matches) > 1:
+        raise ValueError("Refusing ambiguous duplicate post-chat reflection nightly cron jobs; inspect cron jobs manually.")
+    script = install_nightly_script()
+    if matches:
+        return {"state": "exists", "job": matches[0], "script_path": str(script)}
+    job = create_job(
+        prompt=None,
+        schedule=schedule,
+        name=_NIGHTLY_JOB_NAME,
+        deliver=deliver,
+        script=script.name,
+        no_agent=True,
+    )
+    return {"state": "created", "job": job, "script_path": str(script)}
+
+
 def record_post_chat_reflection(messages: List[Dict[str, Any]], *, session_id: str = "", config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Extract and persist post-chat reflection candidates.
 
@@ -393,10 +574,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     synth.add_argument("--ledger", help="Candidate JSONL path")
     synth.add_argument("--json", dest="json_path", help="Output JSON report path")
     synth.add_argument("--html", dest="html_path", help="Output HTML report path")
+    review = sub.add_parser("review", help="Build manual promotion review packet")
+    review.add_argument("--ledger", help="Candidate JSONL path")
+    review.add_argument("--json", dest="json_path", help="Output promotion review JSON path")
+    review.add_argument("--markdown", dest="markdown_path", help="Output promotion review Markdown path")
+    install = sub.add_parser("install-nightly", help="Install nightly no-agent synthesis cron")
+    install.add_argument("--schedule", default="0 3 * * *", help="Cron expression or schedule string")
+    install.add_argument("--deliver", default="local", help="Cron delivery target")
     args = parser.parse_args(argv)
     if args.command == "synthesize":
         report = run_nightly_synthesis(ledger_path=args.ledger, json_path=args.json_path, html_path=args.html_path)
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "review":
+        packet = run_promotion_review(ledger_path=args.ledger, json_path=args.json_path, markdown_path=args.markdown_path)
+        print(json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "install-nightly":
+        result = install_nightly_cron(schedule=args.schedule, deliver=args.deliver)
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     return 2
 

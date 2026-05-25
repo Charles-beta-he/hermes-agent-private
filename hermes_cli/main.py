@@ -6140,7 +6140,7 @@ def cmd_bg_review(args):
 
 def cmd_reflection(args):
     """Inspect or synthesize post-chat reflection candidates."""
-    from agent.post_chat_reflection import PostChatCandidateLedger, run_nightly_synthesis
+    from agent.post_chat_reflection import PostChatCandidateLedger, install_nightly_cron, run_nightly_synthesis, run_promotion_review
 
     sub = getattr(args, "reflection_command", None) or "status"
     if sub == "synthesize":
@@ -6156,14 +6156,43 @@ def cmd_reflection(args):
             print(f"json: {report.get('json_report_path')}")
             print(f"html: {report.get('html_report_path')}")
         return
-    rows = PostChatCandidateLedger(getattr(args, "ledger", None)).read_all()
+    if sub == "review":
+        packet = run_promotion_review(
+            ledger_path=getattr(args, "ledger", None),
+            json_path=getattr(args, "json_path", None),
+            markdown_path=getattr(args, "markdown_path", None),
+        )
+        if getattr(args, "json", False):
+            print(json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"post-chat reflection: built {len(packet.get('actions', []))} manual promotion action(s)")
+            print(f"json: {packet.get('promotion_review_json_path')}")
+            print(f"markdown: {packet.get('promotion_review_markdown_path')}")
+        return
+    if sub == "install-nightly":
+        result = install_nightly_cron(
+            schedule=getattr(args, "schedule", None) or "0 3 * * *",
+            deliver=getattr(args, "deliver", None) or "local",
+        )
+        job = result.get("job", {}) if isinstance(result.get("job"), dict) else {}
+        if getattr(args, "json", False):
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"post-chat reflection nightly cron: {result.get('state')}")
+            print(f"job_id: {job.get('id')}")
+            print(f"schedule: {job.get('schedule_display')}")
+            print(f"script: {result.get('script_path')}")
+        return
+
+    ledger = PostChatCandidateLedger(getattr(args, "ledger", None))
+    rows = ledger.read_all()
     if getattr(args, "json", False):
-        print(json.dumps({"candidate_count": len(rows), "candidates": rows[-50:]}, ensure_ascii=False, indent=2, sort_keys=True))
+        payload = {"candidate_count": len(rows), "candidates": rows}
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return
     print(f"post-chat reflection candidates: {len(rows)}")
     for row in rows[-10:]:
         print(f"- {row.get('type')} [{row.get('status')}] {row.get('content')}")
-
 
 def cmd_cron(args):
     """Cron job management."""
@@ -11812,6 +11841,17 @@ def main():
     reflection_synth.add_argument("--json-path", help="Output JSON report path")
     reflection_synth.add_argument("--html-path", help="Output HTML report path")
     reflection_synth.set_defaults(func=cmd_reflection)
+    reflection_review = reflection_subparsers.add_parser("review", help="Build manual promotion review packet")
+    reflection_review.add_argument("--json", action="store_true", help="Print raw review JSON")
+    reflection_review.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_review.add_argument("--json-path", help="Output promotion review JSON path")
+    reflection_review.add_argument("--markdown-path", help="Output promotion review Markdown path")
+    reflection_review.set_defaults(func=cmd_reflection)
+    reflection_install = reflection_subparsers.add_parser("install-nightly", help="Install nightly no-agent synthesis cron")
+    reflection_install.add_argument("--json", action="store_true", help="Print created/existing job JSON")
+    reflection_install.add_argument("--schedule", default="0 3 * * *", help="Cron expression or schedule string")
+    reflection_install.add_argument("--deliver", default="local", help="Cron delivery target")
+    reflection_install.set_defaults(func=cmd_reflection)
     reflection_parser.add_argument("--json", action="store_true", help="Print candidate JSON")
     reflection_parser.add_argument("--ledger", help="Candidate JSONL path")
     reflection_parser.set_defaults(func=cmd_reflection)
