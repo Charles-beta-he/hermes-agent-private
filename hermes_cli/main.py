@@ -6138,6 +6138,33 @@ def cmd_bg_review(args):
         print(f"html: {status.get('html_report_path')}")
 
 
+def cmd_reflection(args):
+    """Inspect or synthesize post-chat reflection candidates."""
+    from agent.post_chat_reflection import PostChatCandidateLedger, run_nightly_synthesis
+
+    sub = getattr(args, "reflection_command", None) or "status"
+    if sub == "synthesize":
+        report = run_nightly_synthesis(
+            ledger_path=getattr(args, "ledger", None),
+            json_path=getattr(args, "json_path", None),
+            html_path=getattr(args, "html_path", None),
+        )
+        if getattr(args, "json", False):
+            print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"post-chat reflection: synthesized {len(report.get('clusters', []))} clusters")
+            print(f"json: {report.get('json_report_path')}")
+            print(f"html: {report.get('html_report_path')}")
+        return
+    rows = PostChatCandidateLedger(getattr(args, "ledger", None)).read_all()
+    if getattr(args, "json", False):
+        print(json.dumps({"candidate_count": len(rows), "candidates": rows[-50:]}, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    print(f"post-chat reflection candidates: {len(rows)}")
+    for row in rows[-10:]:
+        print(f"- {row.get('type')} [{row.get('status')}] {row.get('content')}")
+
+
 def cmd_cron(args):
     """Cron job management."""
     from hermes_cli.cron import cron_command
@@ -9900,6 +9927,7 @@ def _coalesce_session_name_args(argv: list) -> list:
         "logout",
         "auth",
         "bg-review",
+        "reflection",
         "status",
         "cron",
         "doctor",
@@ -10757,7 +10785,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "dump", "fallback", "gateway", "hooks", "import", "insights",
         "kanban", "login", "logout", "logs", "lsp", "mcp", "memory", "migrate",
         "model", "norms", "pairing", "plugins", "portal", "postinstall", "profile", "proxy",
-        "send", "sessions", "setup",
+        "reflection", "send", "sessions", "setup",
         "skills", "slack", "status", "tools", "uninstall", "update",
         "version", "webhook", "whatsapp", "chat", "secrets", "security",
         # Help-ish invocations — plugin commands not being listed in
@@ -11764,6 +11792,29 @@ def main():
     bg_review_parser.add_argument("--html", action="store_true", help="Print HTML report path")
     bg_review_parser.add_argument("--path", help="Read a custom bg-review status JSON path")
     bg_review_parser.set_defaults(func=cmd_bg_review)
+
+    # =========================================================================
+    # reflection command
+    # =========================================================================
+    reflection_parser = subparsers.add_parser(
+        "reflection",
+        help="Inspect post-chat reflection candidate ledger",
+        description="Review suggest-only post-chat learning candidates and synthesize nightly reports",
+    )
+    reflection_subparsers = reflection_parser.add_subparsers(dest="reflection_command")
+    reflection_status = reflection_subparsers.add_parser("status", help="Show candidate ledger summary")
+    reflection_status.add_argument("--json", action="store_true", help="Print candidate JSON")
+    reflection_status.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_status.set_defaults(func=cmd_reflection)
+    reflection_synth = reflection_subparsers.add_parser("synthesize", help="Build nightly synthesis report")
+    reflection_synth.add_argument("--json", action="store_true", help="Print raw synthesis JSON")
+    reflection_synth.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_synth.add_argument("--json-path", help="Output JSON report path")
+    reflection_synth.add_argument("--html-path", help="Output HTML report path")
+    reflection_synth.set_defaults(func=cmd_reflection)
+    reflection_parser.add_argument("--json", action="store_true", help="Print candidate JSON")
+    reflection_parser.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_parser.set_defaults(func=cmd_reflection)
 
     # =========================================================================
     # cron command

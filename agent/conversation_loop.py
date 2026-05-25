@@ -4614,6 +4614,16 @@ def run_conversation(
     if relay_result is not None:
         return relay_result
 
+    # Post-chat reflection candidate extraction runs at the end of every
+    # completed foreground turn. It is deterministic and suggest-only: writes
+    # candidate JSONL/stats, never persistent memory or skills.
+    if final_response and not interrupted:
+        try:
+            from agent.post_chat_reflection import record_post_chat_reflection
+            record_post_chat_reflection(list(messages), session_id=getattr(agent, "session_id", ""))
+        except Exception as exc:
+            logger.warning("post-chat reflection candidate extraction failed: %s", exc)
+
     # Background memory/skill review — runs AFTER the response is delivered
     # so it never competes with the user's task for model attention.
     if final_response and not interrupted and (_should_review_memory or _should_review_skills):

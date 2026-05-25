@@ -144,6 +144,15 @@ def run_codex_app_server_turn(
         except Exception:
             logger.debug("external memory sync raised", exc_info=True)
 
+    # Post-chat reflection candidate extraction mirrors the default runtime:
+    # deterministic, suggest-only, and fail-soft.
+    if turn.final_text and not turn.interrupted:
+        try:
+            from agent.post_chat_reflection import record_post_chat_reflection
+            record_post_chat_reflection(list(messages), session_id=getattr(agent, "session_id", ""))
+        except Exception:
+            logger.debug("post-chat reflection candidate extraction raised", exc_info=True)
+
     # Background review fork — same cadence + signature as the default
     # path (line ~15449). Only fires when a trigger actually tripped AND
     # we have a real final response.
