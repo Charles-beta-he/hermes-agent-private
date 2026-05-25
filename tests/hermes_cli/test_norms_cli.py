@@ -48,3 +48,43 @@ def test_norms_cli_lease_conflict_returns_nonzero(tmp_path, capsys):
     assert blocked["success"] is False
     assert blocked["error"] == "lease_conflict"
     assert blocked["active_owner_session_id"] == "session-a"
+
+
+def test_norms_cli_completion_gate_blocks_stale_snapshot(tmp_path, capsys):
+    db = tmp_path / "norms.db"
+    assert main(["--db", str(db), "upsert", "global:evidence", "v1", "--expected-revision", "0"]) == 0
+    capsys.readouterr()
+    assert main(["--db", str(db), "snapshot", "--scope", "global"]) == 0
+    snapshot = json.loads(capsys.readouterr().out)
+    store = NormGovernanceStore(db)
+    store.upsert_norm("global:evidence", "v2", expected_revision=1)
+
+    rc = main([
+        "--db", str(db), "completion-gate",
+        "--task-id", "t1",
+        "--snapshot-hash", snapshot["snapshot_hash"],
+        "--owner-session-id", "session-a",
+    ])
+
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is False
+    assert payload["gate"]["reason"] == "norm_snapshot_stale"
+
+
+def test_norms_cli_cleanup_expired_leases(tmp_path, capsys):
+    db = tmp_path / "norms.db"
+    assert main([
+        "--db", str(db), "lease", "acquire", "file:/repo/expired.py",
+        "--owner-session-id", "session-a", "--ttl", "1", "--now", "100",
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "--db", str(db), "lease", "acquire", "file:/repo/live.py",
+        "--owner-session-id", "session-b", "--ttl", "100", "--now", "100",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--db", str(db), "cleanup", "--now", "102"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"success": True, "expired_leases_removed": 1}

@@ -168,6 +168,13 @@ class NormGovernanceStore:
                     created_at REAL NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS norm_snapshots (
+                    snapshot_hash TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    registry_revision INTEGER NOT NULL,
+                    created_at REAL NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS leases (
                     resource_key TEXT PRIMARY KEY,
                     owner_session_id TEXT NOT NULL,
@@ -293,6 +300,40 @@ class NormGovernanceStore:
         })
         return snapshot
 
+    def record_snapshot(self, snapshot: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(snapshot)
+        snapshot_hash = str(payload.get("snapshot_hash") or "")
+        if not snapshot_hash:
+            raise ValueError("snapshot missing snapshot_hash")
+        created_at = float(payload.get("generated_at") or time.time())
+        registry_revision = int(payload.get("registry_revision") or 0)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO norm_snapshots(snapshot_hash, payload_json, registry_revision, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (snapshot_hash, _json_dumps(payload), registry_revision, created_at),
+            )
+        return payload
+
+    def create_snapshot(self, *, scopes: Sequence[str] | None = None) -> dict[str, Any]:
+        return self.record_snapshot(self.build_snapshot(scopes=scopes))
+
+    def get_snapshot(self, snapshot_hash: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM norm_snapshots WHERE snapshot_hash = ?",
+                (snapshot_hash,),
+            ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+
+    def is_snapshot_stale(self, snapshot_hash: str) -> bool:
+        snapshot = self.get_snapshot(snapshot_hash)
+        if not snapshot:
+            return True
+        return bool(self.detect_stale_snapshot(snapshot))
+
     def detect_stale_snapshot(self, snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
         revision_vector = snapshot.get("revision_vector") or {}
         if not isinstance(revision_vector, Mapping):
@@ -368,6 +409,12 @@ class NormGovernanceStore:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM leases WHERE expires_at > ? ORDER BY resource_key", (ts,)).fetchall()
         return [dict(row) for row in rows]
+
+    def cleanup_expired_leases(self, *, now: float | None = None) -> int:
+        ts = time.time() if now is None else float(now)
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM leases WHERE expires_at <= ?", (ts,))
+            return cur.rowcount
 
     @staticmethod
     def detect_write_set_conflicts(write_sets: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:

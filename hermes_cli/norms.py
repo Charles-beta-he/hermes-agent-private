@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from agent.norm_governance import LeaseConflict, NormConflict, NormGovernanceStore
+from agent.norm_taskpool_gate import evaluate_completion_gate
 
 
 def _print(payload: dict[str, Any]) -> None:
@@ -62,7 +63,7 @@ def register_cli(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     upsert.add_argument("--source", default="cli")
     upsert.add_argument("--expected-revision", type=int, default=None)
 
-    snapshot = sub.add_parser("snapshot", help="Emit a versioned NormSnapshot")
+    snapshot = sub.add_parser("snapshot", help="Emit and persist a versioned NormSnapshot")
     snapshot.add_argument("--scope", action="append", dest="scopes", default=[])
 
     stale = sub.add_parser("stale", help="Compare a snapshot JSON file with current registry revisions")
@@ -84,6 +85,16 @@ def register_cli(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     release.add_argument("--owner-session-id", required=True)
     active = lease_sub.add_parser("active", help="List active leases")
     active.add_argument("--now", type=float, default=None, help=argparse.SUPPRESS)
+
+    gate = sub.add_parser("completion-gate", help="Evaluate whether a task may advance to done")
+    gate.add_argument("--task-id", required=True)
+    gate.add_argument("--snapshot-hash", required=True)
+    gate.add_argument("--write-set-json", default="[]", help="JSON list of resource keys or {kind,identifier,fragment} objects")
+    gate.add_argument("--owner-session-id", default=None)
+    gate.add_argument("--fusion-id", default=None)
+
+    cleanup = sub.add_parser("cleanup", help="Remove expired coordination state")
+    cleanup.add_argument("--now", type=float, default=None, help=argparse.SUPPRESS)
 
     fusion = sub.add_parser("fusion", help="Create/read task fusion records")
     fusion_sub = fusion.add_subparsers(dest="fusion_command", required=True)
@@ -134,7 +145,7 @@ def run_from_args(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "snapshot":
-        _print(store.build_snapshot(scopes=args.scopes or None))
+        _print(store.create_snapshot(scopes=args.scopes or None))
         return 0
 
     if args.command == "stale":
@@ -174,6 +185,22 @@ def run_from_args(args: argparse.Namespace) -> int:
         if args.lease_command == "active":
             _print({"success": True, "leases": store.active_leases(now=args.now)})
             return 0
+
+    if args.command == "completion-gate":
+        gate = evaluate_completion_gate(
+            task_id=args.task_id,
+            norm_snapshot_hash=args.snapshot_hash,
+            write_set=_load_json_arg(args.write_set_json, field="--write-set-json"),
+            owner_session_id=args.owner_session_id,
+            fusion_id=args.fusion_id,
+            store=store,
+        )
+        _print({"success": gate.allowed, "gate": gate.to_dict()})
+        return 0 if gate.allowed else 2
+
+    if args.command == "cleanup":
+        _print({"success": True, "expired_leases_removed": store.cleanup_expired_leases(now=args.now)})
+        return 0
 
     if args.command == "fusion":
         if args.fusion_command == "create":
