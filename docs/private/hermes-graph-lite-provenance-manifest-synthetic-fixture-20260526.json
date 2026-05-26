@@ -1,0 +1,115 @@
+{
+  "schema": "hermes_graph_lite_provenance_manifest_v1",
+  "manifest_id": "glm-20260526-graphiti-intake-synthetic",
+  "profile": "default",
+  "privacy_class": "public_reference",
+  "created_at": "2026-05-26T09:25:00+08:00",
+  "source_episodes": [
+    {
+      "episode_id": "episode-graphiti-intake-public-reference",
+      "source_kind": "public_reference_doc",
+      "source_ref": "docs/private/graphiti-gap-analysis-20260525.md#section-2.1",
+      "source_title": "Graphiti temporal context graph intake summary",
+      "observed_at": "2026-05-26T00:58:03+08:00",
+      "reference_time": "2026-05-25T00:00:00+08:00",
+      "content_digest": null,
+      "privacy_class": "public_reference",
+      "retention": "local_reference_only"
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "claim-validity-windows-for-evidence-freshness",
+      "claim_text": "Validity windows can help Hermes mark advisory provenance claims stale or superseded without changing proof-log authority.",
+      "claim_kind": "architecture_delta",
+      "episode_ids": [
+        "episode-graphiti-intake-public-reference"
+      ],
+      "task_id": "2026-05-26-design-hermes-graph-lite-provenance-manifest-schema-from-graphiti-intake",
+      "valid_from": "2026-05-26T00:58:03+08:00",
+      "valid_until": null,
+      "invalid_at": null,
+      "superseded_by": null,
+      "confidence": "medium",
+      "truth_gate_ids": [
+        "gate-no-runtime-no-private-indexing",
+        "gate-proof-log-authoritative"
+      ],
+      "advisory_only": true
+    },
+    {
+      "claim_id": "claim-source-episodes-for-local-provenance",
+      "claim_text": "Source episodes provide an explicit local pointer from an advisory claim to a non-private artifact without importing Graphiti or indexing private data.",
+      "claim_kind": "provenance_pattern",
+      "episode_ids": [
+        "episode-graphiti-intake-public-reference"
+      ],
+      "task_id": "2026-05-26-design-hermes-graph-lite-provenance-manifest-schema-from-graphiti-intake",
+      "valid_from": "2026-05-26T00:58:03+08:00",
+      "valid_until": null,
+      "invalid_at": null,
+      "superseded_by": null,
+      "confidence": "medium",
+      "truth_gate_ids": [
+        "gate-synthetic-fixture-only",
+        "gate-review-before-done"
+      ],
+      "advisory_only": true
+    }
+  ],
+  "relationships": [
+    {
+      "relationship_id": "rel-claim-validity-supported-by-episode",
+      "from": "claim-validity-windows-for-evidence-freshness",
+      "to": "episode-graphiti-intake-public-reference",
+      "type": "supported_by",
+      "created_at": "2026-05-26T09:25:00+08:00"
+    },
+    {
+      "relationship_id": "rel-claim-source-binds-synthetic-gate",
+      "from": "claim-source-episodes-for-local-provenance",
+      "to": "gate-synthetic-fixture-only",
+      "type": "binds_truth_gate",
+      "created_at": "2026-05-26T09:25:00+08:00"
+    }
+  ],
+  "truth_gates": [
+    {
+      "truth_gate_id": "gate-no-runtime-no-private-indexing",
+      "gate_kind": "red_line",
+      "authority": "taskpool_proof_check_and_manual_review",
+      "required_status": "PASS",
+      "failure_action": "block_review_closeout",
+      "description": "Reject any implementation that starts Graphiti, a graph database, Docker, MCP server, telemetry path, or indexes private data."
+    },
+    {
+      "truth_gate_id": "gate-proof-log-authoritative",
+      "gate_kind": "authority_boundary",
+      "authority": "task_note_proof_log_and_lifecycle_transition",
+      "required_status": "PASS",
+      "failure_action": "manifest_advisory_only",
+      "description": "Proof logs, command artifacts, and task lifecycle transitions remain authoritative over manifest claims."
+    },
+    {
+      "truth_gate_id": "gate-synthetic-fixture-only",
+      "gate_kind": "privacy_boundary",
+      "authority": "local_artifact_review",
+      "required_status": "PASS",
+      "failure_action": "reject_fixture",
+      "description": "Fixtures may contain synthetic or public-reference metadata only."
+    },
+    {
+      "truth_gate_id": "gate-review-before-done",
+      "gate_kind": "lifecycle_boundary",
+      "authority": "brain_task_orchestrator_transition_and_review",
+      "required_status": "PASS",
+      "failure_action": "keep_review_or_pending",
+      "description": "Evolution tasks move to done only after task-specific evidence and governing review or ratification requirements are met."
+    }
+  ],
+  "generated_by": {
+    "actor": "hermes-follow-through",
+    "command": "scheduled bounded evidence tranche",
+    "runtime_side_effects": "wrote local docs/private schema and synthetic JSON fixture only"
+  }
+}
