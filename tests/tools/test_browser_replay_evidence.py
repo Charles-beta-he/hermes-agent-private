@@ -98,6 +98,90 @@ def test_browser_navigate_writes_replay_bundle(tmp_path, monkeypatch):
     assert bundle["latest_browser_qa_validation"]["classification"] == "validation_success"
 
 
+def test_browser_navigate_blocks_file_scheme_and_writes_replay_bundle(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser_tool, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(browser_tool, "_is_local_backend", lambda: True)
+    monkeypatch.setattr(browser_tool, "check_website_access", lambda url, strict_errors=False: None)
+    monkeypatch.setattr(
+        browser_tool,
+        "_run_browser_command",
+        lambda *args, **kwargs: pytest.fail("browser command should not run for blocked file:// URL"),
+    )
+
+    result = json.loads(browser_tool.browser_navigate("file:///tmp/secret.txt", task_id="task-file-scheme"))
+
+    assert result["success"] is False
+    assert "scheme 'file'" in result["error"]
+    assert result["replay_failure_class"] == "policy_blocked"
+    assert result["browser_proof_log_entry"]["status"] == "blocked_unreadable"
+    bundle = json.loads(Path(result["replay_bundle_path"]).read_text(encoding="utf-8"))
+    assert bundle["current_url"] == "file:///tmp/secret.txt"
+    assert bundle["action_sequence"][-1]["command"] == "open"
+
+
+def test_browser_navigate_blocks_when_website_policy_errors_in_strict_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser_tool, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(browser_tool, "_is_local_backend", lambda: True)
+
+    def raising_policy(url, strict_errors=False):
+        raise RuntimeError("Invalid config YAML")
+
+    monkeypatch.setattr(browser_tool, "check_website_access", raising_policy)
+    monkeypatch.setattr(
+        browser_tool,
+        "_run_browser_command",
+        lambda *args, **kwargs: pytest.fail("browser command should not run when website policy fails closed"),
+    )
+
+    result = json.loads(browser_tool.browser_navigate("https://example.com", task_id="task-policy-error"))
+
+    assert result["success"] is False
+    assert "website policy could not be loaded safely" in result["error"]
+    assert result["replay_failure_class"] == "policy_blocked"
+    bundle = json.loads(Path(result["replay_bundle_path"]).read_text(encoding="utf-8"))
+    assert bundle["latest_failure_class"] == "policy_blocked"
+    assert bundle["latest_browser_proof_log_entry"]["status"] == "blocked_unreadable"
+
+
+def test_browser_navigate_blocks_obvious_local_filesystem_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser_tool, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(browser_tool, "_is_local_backend", lambda: True)
+    monkeypatch.setattr(browser_tool, "check_website_access", lambda url, strict_errors=False: None)
+    monkeypatch.setattr(
+        browser_tool,
+        "_run_browser_command",
+        lambda *args, **kwargs: pytest.fail("browser command should not run for local filesystem path targets"),
+    )
+
+    result = json.loads(browser_tool.browser_navigate("/tmp/secret.txt", task_id="task-local-path"))
+
+    assert result["success"] is False
+    assert "local filesystem targets" in result["error"]
+    bundle = json.loads(Path(result["replay_bundle_path"]).read_text(encoding="utf-8"))
+    assert bundle["current_url"] == "/tmp/secret.txt"
+    assert bundle["latest_browser_proof_log_entry"]["status"] == "blocked_unreadable"
+
+
+def test_browser_navigate_blocks_when_website_policy_module_failed_to_import(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser_tool, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(browser_tool, "_is_local_backend", lambda: True)
+    monkeypatch.setattr(browser_tool, "_website_policy_import_error", RuntimeError("module import failed"))
+    monkeypatch.setattr(browser_tool, "check_website_access", None)
+    monkeypatch.setattr(
+        browser_tool,
+        "_run_browser_command",
+        lambda *args, **kwargs: pytest.fail("browser command should not run when website policy module is unavailable"),
+    )
+
+    result = json.loads(browser_tool.browser_navigate("https://example.com", task_id="task-policy-import-error"))
+
+    assert result["success"] is False
+    assert "module import failed" in result["error"]
+    bundle = json.loads(Path(result["replay_bundle_path"]).read_text(encoding="utf-8"))
+    assert bundle["latest_failure_class"] == "policy_blocked"
+    assert bundle["latest_browser_proof_log_entry"]["status"] == "blocked_unreadable"
+
+
 def test_attach_browser_replay_marks_degraded_evidence_when_dom_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(browser_tool, "get_hermes_home", lambda: tmp_path)
 

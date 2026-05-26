@@ -209,6 +209,15 @@ def test_load_website_blocklist_raises_clean_error_for_malformed_yaml(tmp_path):
         load_website_blocklist(config_path)
 
 
+def test_check_website_access_strict_errors_raises_for_default_config(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("security: [oops\n", encoding="utf-8")
+    monkeypatch.setattr("tools.website_policy.get_hermes_home", lambda: tmp_path)
+
+    with pytest.raises(WebsitePolicyError, match="Invalid config YAML"):
+        check_website_access("https://example.com", strict_errors=True)
+
+
 def test_load_website_blocklist_wraps_shared_file_read_errors(tmp_path, monkeypatch):
     shared = tmp_path / "community-blocklist.txt"
     shared.write_text("example.org\n", encoding="utf-8")

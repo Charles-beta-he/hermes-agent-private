@@ -229,15 +229,21 @@ def _extract_host_from_urlish(url: str) -> str:
     return ""
 
 
-def check_website_access(url: str, config_path: Optional[Path] = None) -> Optional[Dict[str, str]]:
+def check_website_access(
+    url: str,
+    config_path: Optional[Path] = None,
+    *,
+    strict_errors: bool = False,
+) -> Optional[Dict[str, str]]:
     """Check whether a URL is allowed by the website blocklist policy.
 
     Returns ``None`` if access is allowed, or a dict with block metadata
     (``host``, ``rule``, ``source``, ``message``) if blocked.
 
-    Never raises on policy errors — logs a warning and returns ``None``
-    (fail-open) so a config typo doesn't break all web tools.  Pass
-    ``config_path`` explicitly (tests) to get strict error propagation.
+    Never raises on policy errors by default — logs a warning and returns
+    ``None`` (fail-open) so a config typo doesn't break all web tools.
+    Pass ``config_path`` explicitly (tests) or ``strict_errors=True`` to get
+    strict error propagation.
     """
     # Fast path: if no explicit config_path and the cached policy is disabled
     # or empty, skip all work (no YAML read, no host extraction).
@@ -253,11 +259,13 @@ def check_website_access(url: str, config_path: Optional[Path] = None) -> Option
     try:
         policy = load_website_blocklist(config_path)
     except WebsitePolicyError as exc:
-        if config_path is not None:
+        if config_path is not None or strict_errors:
             raise  # Tests pass explicit paths — let errors propagate
         logger.warning("Website policy config error (failing open): %s", exc)
         return None
     except Exception as exc:
+        if config_path is not None or strict_errors:
+            raise
         logger.warning("Unexpected error loading website policy (failing open): %s", exc)
         return None
 

