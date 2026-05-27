@@ -6140,9 +6140,26 @@ def cmd_bg_review(args):
 
 def cmd_reflection(args):
     """Inspect or synthesize post-chat reflection candidates."""
-    from agent.post_chat_reflection import PostChatCandidateLedger, install_nightly_cron, run_nightly_synthesis, run_promotion_review
+    from agent.post_chat_reflection import PostChatCandidateLedger, backfill_historical_reflection, install_nightly_cron, run_nightly_synthesis, run_promotion_review
 
     sub = getattr(args, "reflection_command", None) or "status"
+    if sub == "backfill":
+        status = backfill_historical_reflection(
+            max_sessions=getattr(args, "max_sessions", 50),
+            source=getattr(args, "source", None),
+            include_children=getattr(args, "include_children", False),
+            ledger_path=getattr(args, "ledger", None),
+            status_path=getattr(args, "status_path", None),
+        )
+        if getattr(args, "json", False):
+            print(json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"post-chat reflection backfill: {status.get('state')}")
+            print(f"scanned: {status.get('sessions_scanned', 0)} session(s)")
+            print(f"candidates written: {status.get('candidates_written', 0)}")
+            print(f"ledger: {status.get('ledger_path')}")
+            print(f"status: {status.get('status_path')}")
+        return
     if sub == "synthesize":
         report = run_nightly_synthesis(
             ledger_path=getattr(args, "ledger", None),
@@ -11849,6 +11866,14 @@ def main():
         description="Review suggest-only post-chat learning candidates and synthesize nightly reports",
     )
     reflection_subparsers = reflection_parser.add_subparsers(dest="reflection_command")
+    reflection_backfill = reflection_subparsers.add_parser("backfill", help="Scan recent SessionDB history into the suggest-only reflection ledger")
+    reflection_backfill.add_argument("--json", action="store_true", help="Print raw backfill status JSON")
+    reflection_backfill.add_argument("--ledger", help="Candidate JSONL path")
+    reflection_backfill.add_argument("--status-path", help="Output backfill status JSON path")
+    reflection_backfill.add_argument("--max-sessions", type=int, default=50, help="Maximum recent sessions to scan (default: 50, cap: 500)")
+    reflection_backfill.add_argument("--source", help="Only scan sessions from this source")
+    reflection_backfill.add_argument("--include-children", action="store_true", help="Include subagent/compression child sessions")
+    reflection_backfill.set_defaults(func=cmd_reflection)
     reflection_status = reflection_subparsers.add_parser("status", help="Show candidate ledger summary")
     reflection_status.add_argument("--json", action="store_true", help="Print candidate JSON")
     reflection_status.add_argument("--ledger", help="Candidate JSONL path")

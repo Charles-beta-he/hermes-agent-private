@@ -69,6 +69,10 @@ def default_reflection_status_path() -> Path:
     return get_hermes_home() / "state" / "post_chat_reflection_status.json"
 
 
+def default_backfill_status_path() -> Path:
+    return get_hermes_home() / "state" / "post_chat_reflection_backfill_status.json"
+
+
 def post_chat_reflection_config() -> Dict[str, Any]:
     try:
         cfg = load_config() or {}
@@ -265,6 +269,139 @@ class PostChatCandidateLedger:
                 if isinstance(parsed, dict):
                     rows.append(parsed)
         return rows
+
+    def existing_ids(self) -> set[str]:
+        return {str(row.get("id")) for row in self.read_all() if row.get("id")}
+
+
+def _bounded_positive_int(value: Any, *, default: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return min(parsed, maximum)
+
+
+def _write_json(path: Path | str, payload: Dict[str, Any]) -> None:
+    target = _expand_path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def backfill_historical_reflection(
+    *,
+    max_sessions: int = 50,
+    source: Optional[str] = None,
+    include_children: bool = False,
+    ledger_path: Optional[str] = None,
+    status_path: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+    session_db: Any = None,
+) -> Dict[str, Any]:
+    """Dreaming-style historical backfill into the suggest-only ledger.
+
+    This collector reads bounded SessionDB history, extracts the same scrubbed
+    candidate shape as the post-chat path, dedupes against the ledger, and
+    writes only candidates plus a status artifact. Durable mutation still
+    requires nightly synthesis and manual promotion review.
+    """
+    cfg = dict(post_chat_reflection_config())
+    if config:
+        cfg.update(config)
+    if not _truthy(cfg.get("enabled"), default=True):
+        return {"state": "disabled", "suggest_only": True, "candidates_written": 0}
+
+    limit = _bounded_positive_int(
+        max_sessions if max_sessions is not None else cfg.get("backfill_max_sessions"),
+        default=50,
+        maximum=500,
+    )
+    ledger = PostChatCandidateLedger(ledger_path or cfg.get("ledger_path"))
+    status_target = _expand_path(status_path or cfg.get("backfill_status_path") or default_backfill_status_path())
+
+    try:
+        db = session_db
+        if db is None:
+            from hermes_state import SessionDB
+            db = SessionDB()
+        sessions = db.list_sessions_rich(
+            source=source or "",
+            limit=limit,
+            include_children=include_children,
+            order_by_last_active=True,
+        )
+    except Exception as exc:
+        status = {
+            "state": "failed",
+            "suggest_only": True,
+            "error": str(exc),
+            "sessions_scanned": 0,
+            "candidates_written": 0,
+            "ledger_path": str(ledger.path),
+            "status_path": str(status_target),
+            "updated_at": _utc_now_iso(),
+        }
+        _write_json(status_target, status)
+        return status
+
+    existing = ledger.existing_ids()
+    candidates_to_write: List[Candidate] = []
+    sessions_scanned = 0
+    per_session: List[Dict[str, Any]] = []
+    for sess in sessions or []:
+        if not isinstance(sess, dict):
+            continue
+        sid = str(sess.get("id") or "")
+        if not sid:
+            continue
+        try:
+            messages = db.get_messages(sid)
+        except Exception as exc:
+            per_session.append({"session_id": sid, "state": "failed", "error": str(exc)})
+            continue
+        sessions_scanned += 1
+        extracted = build_post_chat_candidates(messages, session_id=sid)
+        new_count = 0
+        for candidate in extracted:
+            cid = str(candidate.get("id") or "")
+            if not cid or cid in existing:
+                continue
+            candidate = dict(candidate)
+            candidate["source"] = "historical_backfill"
+            candidate["backfill_policy"] = "suggest_only_manual_promotion"
+            candidates_to_write.append(candidate)
+            existing.add(cid)
+            new_count += 1
+        per_session.append({
+            "session_id": sid,
+            "title": sess.get("title") or "",
+            "candidate_count": len(extracted),
+            "new_candidate_count": new_count,
+        })
+
+    written = ledger.append_many(candidates_to_write)
+    status = {
+        "state": "completed" if sessions_scanned else "no_sessions",
+        "suggest_only": True,
+        "dreaming_style": True,
+        "promotion_gate": "nightly_synthesis_then_manual_review",
+        "max_sessions": limit,
+        "source": source or "all",
+        "include_children": include_children,
+        "sessions_scanned": sessions_scanned,
+        "sessions_seen": len(sessions or []),
+        "candidates_found": sum(int(item.get("candidate_count", 0) or 0) for item in per_session),
+        "candidates_written": written,
+        "candidate_ids": [str(c.get("id")) for c in candidates_to_write if c.get("id")],
+        "ledger_path": str(ledger.path),
+        "status_path": str(status_target),
+        "updated_at": _utc_now_iso(),
+        "sessions": per_session[:limit],
+    }
+    _write_json(status_target, status)
+    return status
 
 
 def _cluster_key(candidate: Candidate) -> str:

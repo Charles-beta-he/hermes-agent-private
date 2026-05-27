@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from agent.post_chat_reflection import (
     PostChatCandidateLedger,
+    backfill_historical_reflection,
     build_post_chat_candidates,
     build_promotion_review,
     evaluate_candidate_promotion,
@@ -184,6 +185,74 @@ def test_structured_user_content_only_extracts_safe_text_parts():
     assert "SHOULD_NOT_PERSIST" not in serialized
     assert "以后先验证再总结" in serialized
     assert "不要保存图像 payload" in serialized
+
+
+def test_backfill_historical_reflection_scans_sessiondb_suggest_only_and_dedupes(tmp_path):
+    class FakeSessionDB:
+        def __init__(self):
+            self.list_kwargs = None
+
+        def list_sessions_rich(self, **kwargs):
+            self.list_kwargs = kwargs
+            return [
+                {"id": "s1", "title": "first"},
+                {"id": "s2", "title": "second"},
+            ]
+
+        def get_messages(self, session_id):
+            if session_id == "s1":
+                return [_msg("user", "以后多模型分析必须真实外调，不要单模型模拟。")]
+            return [_msg("user", "本轮任务已完成，PR #123 合了。")]
+
+    ledger_path = tmp_path / "candidates.jsonl"
+    status_path = tmp_path / "backfill.json"
+    fake_db = FakeSessionDB()
+
+    first = backfill_historical_reflection(
+        max_sessions=2,
+        ledger_path=str(ledger_path),
+        status_path=str(status_path),
+        session_db=fake_db,
+    )
+    second = backfill_historical_reflection(
+        max_sessions=2,
+        ledger_path=str(ledger_path),
+        status_path=str(status_path),
+        session_db=fake_db,
+    )
+
+    rows = PostChatCandidateLedger(ledger_path).read_all()
+    serialized = json.dumps(rows, ensure_ascii=False)
+    assert first["suggest_only"] is True
+    assert first["dreaming_style"] is True
+    assert first["promotion_gate"] == "nightly_synthesis_then_manual_review"
+    assert first["sessions_scanned"] == 2
+    assert first["candidates_written"] == 2
+    assert second["candidates_written"] == 0
+    assert len(rows) == 2
+    assert all(row["source"] == "historical_backfill" for row in rows)
+    assert "PR #123" not in serialized or '"status": "rejected"' in serialized
+    assert json.loads(status_path.read_text(encoding="utf-8"))["suggest_only"] is True
+    assert fake_db.list_kwargs is not None
+    assert fake_db.list_kwargs["order_by_last_active"] is True
+
+
+def test_backfill_historical_reflection_fail_closed_on_sessiondb_error(tmp_path):
+    class BrokenSessionDB:
+        def list_sessions_rich(self, **kwargs):
+            raise RuntimeError("db unavailable")
+
+    status = backfill_historical_reflection(
+        ledger_path=str(tmp_path / "candidates.jsonl"),
+        status_path=str(tmp_path / "backfill.json"),
+        session_db=BrokenSessionDB(),
+    )
+
+    assert status["state"] == "failed"
+    assert status["suggest_only"] is True
+    assert status["candidates_written"] == 0
+    assert not (tmp_path / "candidates.jsonl").exists()
+    assert json.loads((tmp_path / "backfill.json").read_text(encoding="utf-8"))["state"] == "failed"
 
 
 def test_candidate_ledger_appends_jsonl_and_nightly_synthesizer_dedupes(tmp_path):
