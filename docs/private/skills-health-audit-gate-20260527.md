@@ -1,6 +1,6 @@
 # Hermes Skills Health Audit Gate (2026-05-27)
 
-Task SSOT: `2026-05-27-add-governed-skills-health-audit-gate-for-token-budget-duplicates-and-profile-dr-2`.
+Task SSOT: `2026-05-27-add-governed-skills-health-audit-gate-for-token-budget-duplicates-and-profile-dr`.
 
 ## Contract
 
