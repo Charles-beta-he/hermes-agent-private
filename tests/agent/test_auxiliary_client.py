@@ -2366,6 +2366,84 @@ class TestVisionAutoSkipsKimiCoding:
         })
 
 
+class TestCodexAuxiliaryAdapterNullOutputSalvage:
+    def test_backfills_null_final_output_from_streamed_text_deltas(self):
+        class FakeStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                yield SimpleNamespace(type="response.output_text.delta", delta="Title")
+                yield SimpleNamespace(type="response.output_text.delta", delta=" OK")
+
+            def get_final_response(self):
+                return SimpleNamespace(output=None, usage=None)
+
+        class FakeResponses:
+            def stream(self, **kwargs):
+                return FakeStream()
+
+        fake_client = SimpleNamespace(responses=FakeResponses())
+        adapter = _CodexCompletionsAdapter(fake_client, "gpt-5.5")
+
+        response = adapter.create(messages=[{"role": "user", "content": "make a title"}])
+
+        assert response.choices[0].message.content == "Title OK"
+
+    def test_salvages_when_sdk_crashes_on_null_completed_output(self):
+        class CrashingStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                yield SimpleNamespace(type="response.output_text.delta", delta="Recovered title")
+                raise TypeError("'NoneType' object is not iterable")
+
+            def get_final_response(self):  # pragma: no cover - SDK crash prevents this
+                raise AssertionError("get_final_response must not run after SDK parse crash")
+
+        class FakeResponses:
+            def stream(self, **kwargs):
+                return CrashingStream()
+
+        fake_client = SimpleNamespace(responses=FakeResponses())
+        adapter = _CodexCompletionsAdapter(fake_client, "gpt-5.5")
+
+        response = adapter.create(messages=[{"role": "user", "content": "make a title"}])
+
+        assert response.choices[0].message.content == "Recovered title"
+
+    def test_unrelated_typeerror_is_not_swallowed(self):
+        class CrashingStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                raise TypeError("build_kwargs() got an unexpected keyword")
+
+            def get_final_response(self):  # pragma: no cover - crash prevents this
+                raise AssertionError("get_final_response must not run after unrelated TypeError")
+
+        class FakeResponses:
+            def stream(self, **kwargs):
+                return CrashingStream()
+
+        fake_client = SimpleNamespace(responses=FakeResponses())
+        adapter = _CodexCompletionsAdapter(fake_client, "gpt-5.5")
+
+        with pytest.raises(TypeError, match="unexpected keyword"):
+            adapter.create(messages=[{"role": "user", "content": "make a title"}])
+
+
 class TestCodexAuxiliaryAdapterTimeout:
     def test_forwards_timeout_to_responses_stream(self):
         class FakeStream:

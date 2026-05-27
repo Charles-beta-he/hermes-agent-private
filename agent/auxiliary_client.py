@@ -784,13 +784,37 @@ class _CodexCompletionsAdapter:
                 # new failure mode for auxiliary calls.
                 pass
 
+        def _item_get(obj: Any, key: str, default: Any = None) -> Any:
+            val = getattr(obj, key, None)
+            if val is None and isinstance(obj, dict):
+                val = obj.get(key, default)
+            return val if val is not None else default
+
+        def _extract_response_output(output_items: Any) -> None:
+            for item in (output_items or []):
+                item_type = _item_get(item, "type")
+                if item_type == "message":
+                    for part in (_item_get(item, "content") or []):
+                        ptype = _item_get(part, "type")
+                        if ptype in {"output_text", "text"}:
+                            text_parts.append(_item_get(part, "text", ""))
+                elif item_type == "function_call":
+                    tool_calls_raw.append(SimpleNamespace(
+                        id=_item_get(item, "call_id", ""),
+                        type="function",
+                        function=SimpleNamespace(
+                            name=_item_get(item, "name", ""),
+                            arguments=_item_get(item, "arguments", "{}"),
+                        ),
+                    ))
+
+        collected_output_items: List[Any] = []
+        collected_text_deltas: List[str] = []
+        has_function_calls = False
         try:
             # Collect output items and text deltas during streaming —
-            # the Codex backend can return empty response.output from
+            # the Codex backend can return empty/null response.output from
             # get_final_response() even when items were streamed.
-            collected_output_items: List[Any] = []
-            collected_text_deltas: List[str] = []
-            has_function_calls = False
             if total_timeout:
                 timeout_timer = threading.Timer(float(total_timeout), _close_client_on_timeout)
                 timeout_timer.daemon = True
@@ -813,9 +837,12 @@ class _CodexCompletionsAdapter:
                 _check_cancelled()
                 final = stream.get_final_response()
 
-            # Backfill empty output from collected stream events
+            # Backfill null/empty output from collected stream events.  The
+            # chatgpt.com Codex backend can send response.completed with
+            # response.output=null; the SDK normally expects a list and may
+            # leave final.output as None in tests/raw paths.
             _output = getattr(final, "output", None)
-            if isinstance(_output, list) and not _output:
+            if _output is None or (isinstance(_output, list) and not _output):
                 if collected_output_items:
                     final.output = list(collected_output_items)
                     logger.debug(
@@ -835,32 +862,13 @@ class _CodexCompletionsAdapter:
                         "Codex auxiliary: synthesized from %d deltas (%d chars)",
                         len(collected_text_deltas), len(assembled),
                     )
+                else:
+                    final.output = []
 
             # Extract text and tool calls from the Responses output.
             # Items may be SDK objects (attrs) or dicts (raw/fallback paths),
             # so use a helper that handles both shapes.
-            def _item_get(obj: Any, key: str, default: Any = None) -> Any:
-                val = getattr(obj, key, None)
-                if val is None and isinstance(obj, dict):
-                    val = obj.get(key, default)
-                return val if val is not None else default
-
-            for item in getattr(final, "output", []):
-                item_type = _item_get(item, "type")
-                if item_type == "message":
-                    for part in (_item_get(item, "content") or []):
-                        ptype = _item_get(part, "type")
-                        if ptype in {"output_text", "text"}:
-                            text_parts.append(_item_get(part, "text", ""))
-                elif item_type == "function_call":
-                    tool_calls_raw.append(SimpleNamespace(
-                        id=_item_get(item, "call_id", ""),
-                        type="function",
-                        function=SimpleNamespace(
-                            name=_item_get(item, "name", ""),
-                            arguments=_item_get(item, "arguments", "{}"),
-                        ),
-                    ))
+            _extract_response_output(getattr(final, "output", None))
 
             resp_usage = getattr(final, "usage", None)
             if resp_usage:
@@ -872,8 +880,32 @@ class _CodexCompletionsAdapter:
         except Exception as exc:
             if timed_out.is_set():
                 raise TimeoutError(_timeout_message()) from exc
-            logger.debug("Codex auxiliary Responses API call failed: %s", exc)
-            raise
+            if isinstance(exc, TypeError) and "is not iterable" in str(exc):
+                # OpenAI SDK streaming accumulator can crash while parsing a
+                # Codex response.completed frame whose response.output is null.
+                # The crash arrives after deltas/items have streamed, so salvage
+                # locally instead of issuing a second request for auxiliary work.
+                if collected_output_items:
+                    salvaged_output = list(collected_output_items)
+                elif collected_text_deltas and not has_function_calls:
+                    assembled = "".join(collected_text_deltas)
+                    salvaged_output = [SimpleNamespace(
+                        type="message", role="assistant", status="completed",
+                        content=[SimpleNamespace(type="output_text", text=assembled)],
+                    )]
+                else:
+                    salvaged_output = []
+                logger.warning(
+                    "Codex auxiliary: SDK parse_response crashed on null "
+                    "response.output; salvaged %d output item(s), %d text delta(s)",
+                    len(collected_output_items),
+                    len(collected_text_deltas),
+                )
+                final = SimpleNamespace(output=salvaged_output, usage=None)
+                _extract_response_output(salvaged_output)
+            else:
+                logger.debug("Codex auxiliary Responses API call failed: %s", exc)
+                raise
         finally:
             if timeout_timer is not None:
                 timeout_timer.cancel()
