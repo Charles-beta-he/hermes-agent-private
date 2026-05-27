@@ -254,7 +254,7 @@ def run_codex_stream(agent, api_kwargs: dict, client: Any = None, on_first_delta
                 # but get_final_response() can return an empty output list.
                 # Backfill from collected items or synthesize from deltas.
                 _out = getattr(final_response, "output", None)
-                if isinstance(_out, list) and not _out:
+                if _out is None or (isinstance(_out, list) and not _out):
                     if collected_output_items:
                         final_response.output = list(collected_output_items)
                         logger.debug(
@@ -338,6 +338,49 @@ def run_codex_stream(agent, api_kwargs: dict, client: Any = None, on_first_delta
                 )
                 return agent._run_codex_create_stream_fallback(api_kwargs, client=active_client)
             raise
+        except TypeError as exc:
+            # chatgpt.com/backend-api/codex emits a `response.completed` event
+            # whose `response.output` is null.  The OpenAI SDK's streaming
+            # accumulator parses it eagerly (parse_response -> `for output in
+            # response.output`) and raises "'NoneType' object is not iterable"
+            # — but only AFTER every text/output-item event has already
+            # streamed to us.  Salvage the turn from what we collected instead
+            # of failing or re-issuing the request (which would otherwise
+            # double the cost on every call for this backend).
+            if "'NoneType' object is not iterable" not in str(exc):
+                raise
+            if collected_output_items:
+                salvaged_output = list(collected_output_items)
+            elif agent._codex_streamed_text_parts and not has_tool_calls:
+                assembled = "".join(agent._codex_streamed_text_parts)
+                salvaged_output = [SimpleNamespace(
+                    type="message",
+                    role="assistant",
+                    status="completed",
+                    content=[SimpleNamespace(type="output_text", text=assembled)],
+                )]
+            else:
+                # No completed output item and no text-only turn to reconstruct.
+                # Do not convert a partial tool-call stream (or an unrelated
+                # iterable TypeError with no recoverable events) into a false
+                # successful empty assistant response.
+                raise
+            logger.warning(
+                "Codex stream: SDK parse_response crashed on null "
+                "response.output; salvaged %d output item(s), %d text part(s). %s",
+                len(collected_output_items),
+                len(agent._codex_streamed_text_parts),
+                agent._client_log_context(),
+            )
+            return SimpleNamespace(
+                output=salvaged_output,
+                status="completed",
+                output_text="".join(agent._codex_streamed_text_parts) or None,
+                incomplete_details=None,
+                error=None,
+                usage=None,
+                model=api_kwargs.get("model"),
+            )
 
 
 
@@ -417,7 +460,7 @@ def run_codex_create_stream_fallback(agent, api_kwargs: dict, client: Any = None
             if terminal_response is not None:
                 # Backfill empty output from collected stream events
                 _out = getattr(terminal_response, "output", None)
-                if isinstance(_out, list) and not _out:
+                if _out is None or (isinstance(_out, list) and not _out):
                     if collected_output_items:
                         terminal_response.output = list(collected_output_items)
                         logger.debug(
