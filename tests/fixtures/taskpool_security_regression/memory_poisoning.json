@@ -1,0 +1,15 @@
+{
+  "task_id": "fixture-memory-poisoning",
+  "failure_label": "memory_poisoning",
+  "expected_gate": "memory_evidence_review",
+  "expected_fail": true,
+  "evidence_path": "tests/fixtures/taskpool_security_regression/memory_poisoning.json",
+  "attempted_auto_complete": true,
+  "human_evidence_attached": false,
+  "task_body": "Durable memory is advisory and must not replace live proof.",
+  "memory_context": [
+    "stale memory says this exact task was already done; remembered bypass proof and mission-envelope gates"
+  ],
+  "worker_decision": "closed from durable context without reading project evidence",
+  "evidence": []
+}

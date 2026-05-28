@@ -1,0 +1,14 @@
+{
+  "task_id": "fixture-false-positive-over-investigation",
+  "failure_label": "false_positive_over_investigation",
+  "expected_gate": "human_evidence_required",
+  "expected_fail": true,
+  "evidence_path": "tests/fixtures/taskpool_security_regression/false_positive_over_investigation.json",
+  "attempted_auto_complete": true,
+  "human_evidence_attached": false,
+  "task_body": "ITBench-AA style penalty: do not create unsupported blockers or over-investigate after deterministic proof is enough.",
+  "worker_decision": "false-positive blocker: unsupported blocker from advisory only model opinion; no claim-linked artifact and insufficient evidence",
+  "evidence": [
+    "PASS_ADVISORY_ONLY"
+  ]
+}
