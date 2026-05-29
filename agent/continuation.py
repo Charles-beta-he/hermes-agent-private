@@ -20,6 +20,11 @@ SCHEMA = "hermes_continuation_packet_v1"
 STATUS_SCHEMA = "hermes_continuation_status_v1"
 STATES = ("active", "completed", "failed", "archived")
 
+# Backpressure: cap live active packets. New packets that would exceed the cap
+# are diverted to archived/ (flagged metadata.overflow_archived) so a burst of
+# turns can't unboundedly grow the active backlog before the GC sweep runs.
+MAX_ACTIVE_CONTINUATIONS = 100
+
 
 def continuation_root() -> Path:
     return Path(
@@ -316,6 +321,18 @@ def write_continuation_packet(packet: ContinuationPacket | Mapping[str, Any], *,
         raise ValueError(f"invalid continuation state: {state}")
     payload = packet.to_dict() if isinstance(packet, ContinuationPacket) else dict(packet)
     base = Path(root).expanduser() if root is not None else continuation_root()
+
+    if state == "active":
+        active_dir = base / "active"
+        active_count = len(list(active_dir.glob("*.json"))) if active_dir.exists() else 0
+        if active_count > MAX_ACTIVE_CONTINUATIONS:
+            state = "archived"
+            metadata = payload.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata["overflow_archived"] = True
+            payload["metadata"] = metadata
+
     out_dir = base / state
     out_dir.mkdir(parents=True, exist_ok=True)
     packet_id = str(payload.get("packet_id") or uuid.uuid4().hex)
