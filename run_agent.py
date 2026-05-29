@@ -106,6 +106,8 @@ from model_tools import (
     get_toolset_for_tool,
     handle_function_call,
     check_toolset_requirements,
+    clear_active_disallowed_tools,
+    set_active_disallowed_tools,
 )
 from tools.terminal_tool import cleanup_vm, get_active_env, is_persistent_env
 from tools.terminal_tool import (
@@ -413,6 +415,7 @@ class AIAgent:
         checkpoint_max_total_size_mb: int = 500,
         checkpoint_max_file_size_mb: int = 10,
         pass_session_id: bool = False,
+        default_disallowed_tools: List[str] | None = None,
     ):
         """Forwarder — see ``agent.agent_init.init_agent``."""
         from agent.agent_init import init_agent
@@ -482,6 +485,7 @@ class AIAgent:
             checkpoint_max_total_size_mb=checkpoint_max_total_size_mb,
             checkpoint_max_file_size_mb=checkpoint_max_file_size_mb,
             pass_session_id=pass_session_id,
+            default_disallowed_tools=default_disallowed_tools,
         )
 
     def _get_session_db_for_recall(self):
@@ -1947,10 +1951,82 @@ class AIAgent:
         """Return the last captured RateLimitState, or None."""
         return self._rate_limit_state
 
-    def _check_openrouter_cache_status(self, http_response: Any) -> None:
-        """Read X-OpenRouter-Cache-Status from response headers and log it.
+    def _get_openrouter_cache_strategy(self) -> dict[str, object]:
+        """Return the current OpenRouter response-cache request strategy.
 
-        Increments ``_or_cache_hits`` on HIT so callers can report savings.
+        Reads the request headers already attached to the active OpenAI client so
+        the signal reflects the exact live routing configuration (env/config
+        overrides already resolved) without re-reading config files.
+        """
+        headers = {}
+        try:
+            headers = (getattr(self, "_client_kwargs", None) or {}).get("default_headers") or {}
+        except Exception:
+            headers = {}
+        enabled = str(headers.get("X-OpenRouter-Cache") or "").strip().lower() == "true"
+        ttl_seconds = None
+        ttl_raw = headers.get("X-OpenRouter-Cache-TTL")
+        if ttl_raw is not None:
+            try:
+                ttl_seconds = int(float(str(ttl_raw).strip()))
+            except Exception:
+                ttl_seconds = None
+        return {"enabled": enabled, "ttl_seconds": ttl_seconds}
+
+    def _estimate_openrouter_cache_saved_cost(self) -> tuple[Optional[float], Optional[str]]:
+        """Heuristically estimate saved cost from OpenRouter response-cache hits.
+
+        OpenRouter does not surface avoided-token pricing directly in response
+        headers. We therefore use the session's observed average per-call cost as
+        a rough control-plane estimate and label the source/status explicitly so
+        downstream consumers do not mistake it for a provider-billed exact value.
+        """
+        hits = int(getattr(self, "_or_cache_hits", 0) or 0)
+        api_calls = int(getattr(self, "session_api_calls", 0) or 0)
+        if hits <= 0 or api_calls <= 0:
+            return None, None
+        try:
+            from agent.usage_pricing import CanonicalUsage, estimate_usage_cost
+
+            cost_result = estimate_usage_cost(
+                getattr(self, "model", "") or "",
+                CanonicalUsage(
+                    input_tokens=int(getattr(self, "session_input_tokens", 0) or 0),
+                    output_tokens=int(getattr(self, "session_output_tokens", 0) or 0),
+                    cache_read_tokens=int(getattr(self, "session_cache_read_tokens", 0) or 0),
+                    cache_write_tokens=int(getattr(self, "session_cache_write_tokens", 0) or 0),
+                ),
+                provider=getattr(self, "provider", None),
+                base_url=getattr(self, "base_url", None),
+            )
+            amount = getattr(cost_result, "amount_usd", None)
+            status = getattr(cost_result, "status", None)
+            if amount is None:
+                return None, status
+            avg_per_call = float(amount) / max(api_calls, 1)
+            return round(avg_per_call * hits, 6), status
+        except Exception:
+            return None, None
+
+    def get_openrouter_cache_summary(self) -> dict[str, object]:
+        """Return a compact, prompt-safe cache observability summary."""
+        observations = list(getattr(self, "_openrouter_cache_observations", None) or [])
+        estimated_saved_cost_usd, estimated_saved_cost_source = self._estimate_openrouter_cache_saved_cost()
+        return {
+            "hits": int(getattr(self, "_or_cache_hits", 0) or 0),
+            "strategy": self._get_openrouter_cache_strategy(),
+            "last_observation": observations[-1] if observations else None,
+            "observations_recorded": len(observations),
+            "estimated_saved_cost_usd": estimated_saved_cost_usd,
+            "estimated_saved_cost_source": estimated_saved_cost_source,
+        }
+
+    def _check_openrouter_cache_status(self, http_response: Any) -> None:
+        """Read OpenRouter cache headers and persist a prompt-safe observation.
+
+        Records request strategy (enabled/TTL), observed hit/miss status, routed
+        upstream provider/model, and any invalidation reason header exposed by
+        OpenRouter. The observation intentionally excludes prompt content.
         """
         if http_response is None:
             return
@@ -1961,11 +2037,46 @@ class AIAgent:
             status = headers.get("x-openrouter-cache-status")
             if not status:
                 return
-            if status.upper() == "HIT":
+            status_upper = str(status).upper()
+            strategy = self._get_openrouter_cache_strategy()
+            invalidation_reason = (
+                headers.get("x-openrouter-cache-status-reason")
+                or headers.get("x-openrouter-cache-reason")
+                or None
+            )
+            if not invalidation_reason and status_upper != "HIT":
+                if not strategy.get("enabled"):
+                    invalidation_reason = "cache_disabled"
+                else:
+                    invalidation_reason = "unreported"
+            observation = {
+                "status": status_upper,
+                "route_provider": headers.get("x-openrouter-provider") or None,
+                "route_model": headers.get("x-openrouter-model") or None,
+                "request_id": headers.get("x-openrouter-id") or headers.get("x-request-id") or None,
+                "cf_ray": headers.get("cf-ray") or None,
+                "invalidation_reason": invalidation_reason,
+                "strategy": strategy,
+            }
+            observations = getattr(self, "_openrouter_cache_observations", None)
+            if not isinstance(observations, list):
+                observations = []
+                self._openrouter_cache_observations = observations
+            observations.append(observation)
+            if len(observations) > 25:
+                del observations[:-25]
+            if status_upper == "HIT":
                 self._or_cache_hits += 1
-                logger.info("OpenRouter response cache HIT (total: %d)", self._or_cache_hits)
-            else:
-                logger.debug("OpenRouter response cache %s", status.upper())
+            logger.info(
+                "OpenRouter response cache status=%s enabled=%s ttl=%s route_provider=%s route_model=%s invalidation_reason=%s hits=%d",
+                status_upper,
+                strategy.get("enabled"),
+                strategy.get("ttl_seconds"),
+                observation["route_provider"] or "",
+                observation["route_model"] or "",
+                invalidation_reason or "",
+                int(getattr(self, "_or_cache_hits", 0) or 0),
+            )
         except Exception:
             pass  # Never let header parsing break the agent loop
 
@@ -1985,6 +2096,7 @@ class AIAgent:
             "max_iterations": self.max_iterations,
             "budget_used": self.iteration_budget.used,
             "budget_max": self.iteration_budget.max_total,
+            "openrouter_cache": self.get_openrouter_cache_summary(),
         }
 
     def shutdown_memory_provider(self, messages: list = None) -> None:
@@ -4105,10 +4217,50 @@ class AIAgent:
         task_id: str = None,
         stream_callback: Optional[callable] = None,
         persist_user_message: Optional[str] = None,
+        turn_disallowed_tools: List[str] | None = None,
     ) -> Dict[str, Any]:
         """Forwarder — see ``agent.conversation_loop.run_conversation``."""
         from agent.conversation_loop import run_conversation
-        return run_conversation(self, user_message, system_message, conversation_history, task_id, stream_callback, persist_user_message)
+
+        original_tools = list(self.tools or [])
+        original_valid_tool_names = set(getattr(self, "valid_tool_names", set()) or set())
+        effective_disallowed = sorted(
+            {
+                str(name).strip()
+                for name in (
+                    list(getattr(self, "default_disallowed_tools", []) or [])
+                    + list(turn_disallowed_tools or [])
+                )
+                if str(name).strip()
+            }
+        )
+        try:
+            set_active_disallowed_tools(effective_disallowed)
+            if effective_disallowed:
+                filtered_tools = [
+                    tool
+                    for tool in original_tools
+                    if (tool.get("function") or {}).get("name") not in effective_disallowed
+                ]
+                self.tools = filtered_tools
+                self.valid_tool_names = {
+                    tool["function"]["name"]
+                    for tool in filtered_tools
+                    if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
+                }
+            return run_conversation(
+                self,
+                user_message,
+                system_message,
+                conversation_history,
+                task_id,
+                stream_callback,
+                persist_user_message,
+            )
+        finally:
+            clear_active_disallowed_tools()
+            self.tools = original_tools
+            self.valid_tool_names = original_valid_tool_names
 
     def chat(self, message: str, stream_callback: Optional[callable] = None) -> str:
         """

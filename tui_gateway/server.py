@@ -1968,6 +1968,9 @@ def _background_agent_kwargs(agent, task_id: str) -> dict:
         "platform": "tui",
         "session_db": _get_db(),
         "fallback_model": getattr(agent, "_fallback_model", None),
+        "default_disallowed_tools": list(
+            getattr(agent, "default_disallowed_tools", []) or []
+        ),
     }
 
 
@@ -2004,10 +2007,16 @@ def _make_agent(sid: str, key: str, session_id: str | None = None):
     agent_cfg = cfg.get("agent") or {}
     system_prompt = (agent_cfg.get("system_prompt", "") or "").strip()
     startup_skills = _parse_tui_skills_env()
+    startup_disallowed_tools: list[str] = []
     if startup_skills:
         from agent.skill_commands import build_preloaded_skills_prompt
 
-        skills_prompt, _loaded_skills, missing_skills = build_preloaded_skills_prompt(
+        (
+            skills_prompt,
+            _loaded_skills,
+            missing_skills,
+            startup_disallowed_tools,
+        ) = build_preloaded_skills_prompt(
             startup_skills,
             task_id=session_id or key,
         )
@@ -2049,6 +2058,7 @@ def _make_agent(sid: str, key: str, session_id: str | None = None):
         pass_session_id=is_truthy_value(os.environ.get("HERMES_TUI_PASS_SESSION_ID")),
         skip_context_files=is_truthy_value(os.environ.get("HERMES_IGNORE_RULES")),
         skip_memory=is_truthy_value(os.environ.get("HERMES_IGNORE_RULES")),
+        default_disallowed_tools=startup_disallowed_tools,
         **_agent_cbs(sid),
     )
 
@@ -3393,10 +3403,18 @@ def _run_prompt_submit(rid, sid: str, session: dict, text: Any) -> None:
                     payload["rendered"] = r
                 _emit("message.delta", sid, payload)
 
+            _turn_disallowed_tools = list(
+                session.pop("pending_turn_disallowed_tools", []) or []
+            )
+            _conversation_kwargs = {
+                "conversation_history": list(history),
+                "stream_callback": _stream,
+            }
+            if _turn_disallowed_tools:
+                _conversation_kwargs["turn_disallowed_tools"] = _turn_disallowed_tools
             result = agent.run_conversation(
                 run_message,
-                conversation_history=list(history),
-                stream_callback=_stream,
+                **_conversation_kwargs,
             )
 
             last_reasoning = None
@@ -4778,6 +4796,7 @@ def _(rid, params: dict) -> dict:
         from agent.skill_commands import (
             scan_skill_commands,
             build_skill_invocation_message,
+            get_tool_policy_for_command,
         )
 
         cmds = scan_skill_commands()
@@ -4787,6 +4806,10 @@ def _(rid, params: dict) -> dict:
                 key, arg, task_id=session.get("session_key", "") if session else ""
             )
             if msg:
+                if session is not None:
+                    session["pending_turn_disallowed_tools"] = list(
+                        get_tool_policy_for_command(key).get("disabled_tools") or []
+                    )
                 return _ok(
                     rid,
                     {

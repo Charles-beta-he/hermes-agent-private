@@ -8,8 +8,12 @@ import pytest
 
 import tools.skills_tool as skills_tool_module
 from agent.skill_commands import (
+    activate_tool_policy_for_command,
     build_preloaded_skills_prompt,
+    build_reload_tool_policy_sections,
     build_skill_invocation_message,
+    get_tool_policy_for_command,
+    reload_skills,
     resolve_skill_command_key,
     scan_skill_commands,
 )
@@ -378,6 +382,136 @@ class TestScanSkillCommands:
         assert any("/" in k[1:] for k in result) is False  # no unescaped /
 
 
+class TestSkillToolPolicy:
+    def test_skill_disallowed_tools_hide_schema_and_reject_dispatch(self, tmp_path):
+        import json
+        import model_tools
+
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "no-terminal",
+                frontmatter_extra="disallowed-tools: [terminal]\n",
+            )
+            commands = scan_skill_commands()
+            evidence = activate_tool_policy_for_command("/no-terminal")
+            tools = model_tools.get_tool_definitions(
+                enabled_toolsets=["terminal"], quiet_mode=True
+            )
+            result = json.loads(model_tools.handle_function_call("terminal", {"command": "pwd"}))
+
+        assert commands["/no-terminal"]["disallowed_tools"] == ["terminal"]
+        assert evidence["status"] == "applied"
+        assert "terminal" in evidence["disabled_tools"]
+        assert "terminal" not in {t["function"]["name"] for t in tools}
+        assert "disallowed by active skill/tool policy" in result["error"]
+        model_tools.clear_active_disallowed_tools()
+
+    def test_reload_skills_returns_structured_tool_policy_evidence(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "normal")
+            _make_skill(
+                tmp_path,
+                "no-terminal",
+                frontmatter_extra="disallowed-tools: [terminal]\n",
+            )
+            result = reload_skills()
+
+        assert str(tmp_path) in result["scan_dirs"]
+        assert result["affected_skills"] == ["no-terminal"]
+        assert result["disabled_tools_by_skill"] == {"no-terminal": ["terminal"]}
+        assert result["errors"] == []
+        assert result["conflicts"] == []
+
+    def test_unknown_disallowed_tool_is_reported_as_reload_error(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "bad-tool",
+                frontmatter_extra="disallowed-tools: [definitely_not_a_tool]\n",
+            )
+            result = reload_skills()
+
+        assert result["affected_skills"] == []
+        assert result["disabled_tools_by_skill"] == {}
+        assert result["errors"]
+        assert result["errors"][0]["skill"] == "bad-tool"
+        assert result["errors"][0]["tool"] == "definitely_not_a_tool"
+
+    def test_cross_profile_skill_dir_is_skipped_for_tool_policy(self, tmp_path):
+        active = tmp_path / "skills"
+        other_profile = tmp_path / "profiles" / "other" / "skills"
+        active.mkdir(parents=True)
+        other_profile.mkdir(parents=True)
+        _make_skill(active, "local-skill")
+        _make_skill(
+            other_profile,
+            "other-profile-skill",
+            frontmatter_extra="disallowed-tools: [terminal]\n",
+        )
+
+        with (
+            patch("tools.skills_tool.SKILLS_DIR", active),
+            patch("agent.skill_commands.get_external_skills_dirs", return_value=[other_profile]),
+        ):
+            result = reload_skills()
+            commands = scan_skill_commands()
+
+        assert "/local-skill" in commands
+        assert result["affected_skills"] == []
+        assert any(
+            error.get("code") == "cross_profile_boundary"
+            and error.get("skill") == "other-profile-skill"
+            for error in result["errors"]
+        )
+
+
+class TestBuildReloadToolPolicySections:
+    def test_renders_summary_and_note_lines_for_policy_evidence(self):
+        sections = build_reload_tool_policy_sections(
+            {
+                "scan_dirs": ["/skills/local", "/skills/external"],
+                "disabled_tools_by_skill": {"no-terminal": ["terminal", "browser"]},
+                "conflicts": [{"skill": "dupe-skill", "error": "conflicts with existing declaration"}],
+                "errors": [{"skill": "bad-skill", "tool": "fake_tool", "error": "Unknown disallowed tool/toolset"}],
+            }
+        )
+
+        assert sections["has_meaningful_changes"] is True
+        assert sections["summary_lines"] == [
+            "Tool policy scan dirs:",
+            "    - /skills/local",
+            "    - /skills/external",
+            "Tool policy declarations:",
+            "    - no-terminal: disables terminal, browser",
+            "Tool policy conflicts:",
+            "    - dupe-skill: conflicts with existing declaration",
+            "Tool policy errors:",
+            "    - bad-skill: Unknown disallowed tool/toolset (fake_tool)",
+        ]
+        assert sections["note_lines"] == [
+            "",
+            "Tool Policy Declarations:",
+            "    - no-terminal: disables terminal, browser",
+            "",
+            "Tool Policy Conflicts:",
+            "    - dupe-skill: conflicts with existing declaration",
+            "",
+            "Tool Policy Errors:",
+            "    - bad-skill: Unknown disallowed tool/toolset (fake_tool)",
+        ]
+
+    def test_scan_dirs_alone_do_not_count_as_meaningful_changes(self):
+        sections = build_reload_tool_policy_sections({"scan_dirs": ["/skills/local"]})
+
+        assert sections["has_meaningful_changes"] is False
+        assert sections["summary_lines"] == [
+            "Tool policy scan dirs:",
+            "    - /skills/local",
+        ]
+        assert sections["note_lines"] == []
+
+
 class TestResolveSkillCommandKey:
     """Telegram bot-command names disallow hyphens, so the menu registers
     skills with hyphens swapped for underscores. When Telegram autocomplete
@@ -430,12 +564,13 @@ class TestBuildPreloadedSkillsPrompt:
         with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
             _make_skill(tmp_path, "first-skill")
             _make_skill(tmp_path, "second-skill")
-            prompt, loaded, missing = build_preloaded_skills_prompt(
+            prompt, loaded, missing, disallowed_tools = build_preloaded_skills_prompt(
                 ["first-skill", "second-skill"]
             )
 
         assert missing == []
         assert loaded == ["first-skill", "second-skill"]
+        assert disallowed_tools == []
         assert "first-skill" in prompt
         assert "second-skill" in prompt
         assert "preloaded" in prompt.lower()
@@ -443,13 +578,30 @@ class TestBuildPreloadedSkillsPrompt:
     def test_reports_missing_named_skills(self, tmp_path):
         with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
             _make_skill(tmp_path, "present-skill")
-            prompt, loaded, missing = build_preloaded_skills_prompt(
+            prompt, loaded, missing, disallowed_tools = build_preloaded_skills_prompt(
                 ["present-skill", "missing-skill"]
             )
 
         assert "present-skill" in prompt
         assert loaded == ["present-skill"]
         assert missing == ["missing-skill"]
+        assert disallowed_tools == []
+
+    def test_collects_disallowed_tools_from_preloaded_skills(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "no-terminal",
+                frontmatter_extra="disallowed-tools: [terminal]\n",
+            )
+            prompt, loaded, missing, disallowed_tools = build_preloaded_skills_prompt(
+                ["no-terminal"]
+            )
+
+        assert missing == []
+        assert loaded == ["no-terminal"]
+        assert "no-terminal" in prompt
+        assert disallowed_tools == ["terminal"]
 
 
 class TestBuildSkillInvocationMessage:

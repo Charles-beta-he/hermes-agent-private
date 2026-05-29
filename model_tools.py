@@ -27,6 +27,7 @@ import asyncio
 import logging
 import threading
 import time
+from contextvars import ContextVar
 from typing import Dict, Any, List, Optional, Tuple
 
 from tools.registry import discover_builtin_tools, registry
@@ -209,8 +210,41 @@ TOOL_TO_TOOLSET_MAP: Dict[str, str] = registry.get_tool_to_toolset_map()
 TOOLSET_REQUIREMENTS: Dict[str, dict] = registry.get_toolset_requirements()
 
 # Resolved tool names from the last get_tool_definitions() call.
-# Used by code_execution_tool to know which tools are available in this session.
+# Used as a fallback for execute_code sandbox filtering in handle_function_call.
 _last_resolved_tool_names: List[str] = []
+
+# Session-scoped negative tool policy declared by loaded skills/commands.
+# The policy is enforced twice: schema filtering in get_tool_definitions()
+# and a dispatch-time guard in handle_function_call() so stale model calls
+# are rejected even if a provider replays an older schema.
+_active_disallowed_tools: ContextVar[frozenset[str]] = ContextVar(
+    "active_disallowed_tools", default=frozenset()
+)
+
+
+def set_active_disallowed_tools(tool_names: List[str] | set[str] | tuple[str, ...]) -> None:
+    """Replace the active per-session tool deny-list."""
+    normalized = frozenset(str(name).strip() for name in (tool_names or []) if str(name).strip())
+    _active_disallowed_tools.set(normalized)
+    _clear_tool_defs_cache()
+
+
+def add_active_disallowed_tools(tool_names: List[str] | set[str] | tuple[str, ...]) -> frozenset[str]:
+    """Union additional tool names into the active per-session deny-list."""
+    current = set(_active_disallowed_tools.get())
+    current.update(str(name).strip() for name in (tool_names or []) if str(name).strip())
+    set_active_disallowed_tools(current)
+    return _active_disallowed_tools.get()
+
+
+def get_active_disallowed_tools() -> frozenset[str]:
+    """Return active tool names denied by skill/command policy."""
+    return _active_disallowed_tools.get()
+
+
+def clear_active_disallowed_tools() -> None:
+    """Clear the active per-session tool deny-list."""
+    set_active_disallowed_tools([])
 
 
 # =============================================================================
@@ -298,6 +332,7 @@ def get_tool_definitions(
         cache_key = (
             frozenset(enabled_toolsets) if enabled_toolsets is not None else None,
             frozenset(disabled_toolsets) if disabled_toolsets else None,
+            frozenset(get_active_disallowed_tools()),
             registry._generation,
             cfg_fp,
             bool(os.environ.get("HERMES_KANBAN_TASK")),
@@ -390,6 +425,13 @@ def _compute_tool_definitions(
 
     # Ask the registry for schemas (only returns tools whose check_fn passes)
     filtered_tools = registry.get_definitions(tools_to_include, quiet=quiet_mode)
+
+    active_disallowed = get_active_disallowed_tools()
+    if active_disallowed:
+        filtered_tools = [
+            td for td in filtered_tools
+            if td.get("function", {}).get("name") not in active_disallowed
+        ]
 
     # The set of tool names that actually passed check_fn filtering.
     # Use this (not tools_to_include) for any downstream schema that references
@@ -768,6 +810,12 @@ def handle_function_call(
     function_args = coerce_tool_args(function_name, function_args)
 
     try:
+        if function_name in get_active_disallowed_tools():
+            return json.dumps(
+                {"error": f"Tool '{function_name}' is disallowed by active skill/tool policy"},
+                ensure_ascii=False,
+            )
+
         if function_name in _AGENT_LOOP_TOOLS:
             return json.dumps({"error": f"{function_name} must be handled by the agent loop"})
 

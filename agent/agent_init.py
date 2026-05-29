@@ -202,6 +202,7 @@ def init_agent(
     checkpoint_max_total_size_mb: int = 500,
     checkpoint_max_file_size_mb: int = 10,
     pass_session_id: bool = False,
+    default_disallowed_tools: list[str] | None = None,
 ):
     """
     Initialize the AI Agent.
@@ -468,7 +469,14 @@ def init_agent(
     # Store toolset filtering options
     agent.enabled_toolsets = enabled_toolsets
     agent.disabled_toolsets = disabled_toolsets
-    
+    agent.default_disallowed_tools = sorted(
+        {
+            str(name).strip()
+            for name in (default_disallowed_tools or [])
+            if str(name).strip()
+        }
+    )
+
     # Model response configuration
     agent.max_tokens = max_tokens  # None = use model default
     agent.reasoning_config = reasoning_config  # None = use default (medium for OpenRouter)
@@ -523,9 +531,13 @@ def init_agent(
     # after each API call.  Accessed by /usage slash command.
     agent._rate_limit_state: Optional["RateLimitState"] = None
 
-    # OpenRouter response cache hit counter — incremented when
-    # X-OpenRouter-Cache-Status: HIT is seen in streaming response headers.
-    agent._or_cache_hits: int = 0
+    # OpenRouter response-cache observability — promoted from a raw hit counter
+    # to a small control-plane signal. `_or_cache_hits` remains the cheap
+    # aggregate, while `_openrouter_cache_observations` captures the latest
+    # request strategy (enabled/ttl), observed status, invalidation reason, and
+    # routed upstream metadata without storing prompt bodies.
+    agent._or_cache_hits = 0
+    agent._openrouter_cache_observations = []
 
     # Centralized logging — agent.log (INFO+) and errors.log (WARNING+)
     # both live under ~/.hermes/logs/.  Idempotent, so gateway mode

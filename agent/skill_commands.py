@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from hermes_constants import display_hermes_home
+from agent.skill_utils import get_external_skills_dirs
 from agent.skill_preprocessing import (
     expand_inline_shell as _expand_inline_shell,
     load_skills_config as _load_skills_config,
@@ -22,6 +23,13 @@ logger = logging.getLogger(__name__)
 
 _skill_commands: Dict[str, Dict[str, Any]] = {}
 _skill_commands_platform: Optional[str] = None
+_last_reload_policy_evidence: Dict[str, Any] = {
+    "scan_dirs": [],
+    "affected_skills": [],
+    "disabled_tools_by_skill": {},
+    "conflicts": [],
+    "errors": [],
+}
 # Patterns for sanitizing skill names into clean hyphen-separated slugs.
 _SKILL_INVALID_CHARS = re.compile(r"[^a-z0-9-]")
 _SKILL_MULTI_HYPHEN = re.compile(r"-{2,}")
@@ -260,18 +268,149 @@ def _build_skill_message(
     return "\n".join(parts)
 
 
+def _is_cross_profile_skill_path(skill_md: Path, active_skills_dir: Path) -> bool:
+    """Return True for skills discovered from another Hermes profile tree."""
+    try:
+        skill_md.resolve().relative_to(active_skills_dir.resolve())
+        return False
+    except Exception:
+        pass
+    parts = skill_md.resolve().parts
+    return "profiles" in parts and "skills" in parts
+
+
+def _as_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1]
+        return [part.strip().strip("'\"") for part in text.split(",") if part.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _resolve_disallowed_tools(frontmatter: dict[str, Any], skill_name: str) -> tuple[list[str], list[dict[str, Any]]]:
+    """Resolve skill frontmatter disallowed-tools declarations to tool names."""
+    raw_entries = _as_list(
+        frontmatter.get("disallowed-tools", frontmatter.get("disallowed_tools"))
+    )
+    if not raw_entries:
+        return [], []
+
+    try:
+        from model_tools import get_all_tool_names
+        from toolsets import resolve_toolset, validate_toolset
+    except Exception as exc:
+        return [], [{"skill": skill_name, "code": "tool_policy_unavailable", "error": str(exc)}]
+
+    all_tool_names = set(get_all_tool_names())
+    resolved: set[str] = set()
+    errors: list[dict[str, Any]] = []
+    for raw in raw_entries:
+        if raw in all_tool_names:
+            resolved.add(raw)
+        elif validate_toolset(raw):
+            resolved.update(resolve_toolset(raw))
+        else:
+            errors.append({
+                "skill": skill_name,
+                "tool": raw,
+                "code": "unknown_tool_or_toolset",
+                "error": f"Unknown disallowed tool/toolset: {raw}",
+            })
+    return sorted(resolved), errors
+
+
+def _new_policy_evidence(scan_dirs: list[Path]) -> Dict[str, Any]:
+    return {
+        "scan_dirs": [str(path) for path in scan_dirs],
+        "affected_skills": [],
+        "disabled_tools_by_skill": {},
+        "conflicts": [],
+        "errors": [],
+    }
+
+
+def build_reload_tool_policy_sections(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Render reload-time tool-policy evidence for user output and notes."""
+    disabled_by_skill = result.get("disabled_tools_by_skill") or {}
+    conflicts = result.get("conflicts") or []
+    errors = result.get("errors") or []
+    scan_dirs = [str(path) for path in (result.get("scan_dirs") or []) if str(path).strip()]
+
+    summary_lines: list[str] = []
+    note_lines: list[str] = []
+
+    if scan_dirs:
+        summary_lines.append("Tool policy scan dirs:")
+        for path in scan_dirs:
+            summary_lines.append(f"    - {path}")
+
+    if disabled_by_skill:
+        summary_lines.append("Tool policy declarations:")
+        note_lines.append("")
+        note_lines.append("Tool Policy Declarations:")
+        for skill_name in sorted(disabled_by_skill):
+            tools = ", ".join(disabled_by_skill.get(skill_name) or []) or "(none)"
+            line = f"    - {skill_name}: disables {tools}"
+            summary_lines.append(line)
+            note_lines.append(line)
+
+    if conflicts:
+        summary_lines.append("Tool policy conflicts:")
+        note_lines.append("")
+        note_lines.append("Tool Policy Conflicts:")
+        for item in conflicts:
+            if isinstance(item, dict):
+                skill = item.get("skill") or item.get("path") or "unknown"
+                detail = item.get("error") or item.get("message") or str(item)
+            else:
+                skill = "unknown"
+                detail = str(item)
+            line = f"    - {skill}: {detail}"
+            summary_lines.append(line)
+            note_lines.append(line)
+
+    if errors:
+        summary_lines.append("Tool policy errors:")
+        note_lines.append("")
+        note_lines.append("Tool Policy Errors:")
+        for item in errors:
+            if isinstance(item, dict):
+                skill = item.get("skill") or item.get("path") or "unknown"
+                detail = item.get("error") or item.get("message") or str(item)
+                tool = item.get("tool")
+                if tool:
+                    detail = f"{detail} ({tool})"
+            else:
+                skill = "unknown"
+                detail = str(item)
+            line = f"    - {skill}: {detail}"
+            summary_lines.append(line)
+            note_lines.append(line)
+
+    return {
+        "has_meaningful_changes": bool(disabled_by_skill or conflicts or errors),
+        "summary_lines": summary_lines,
+        "note_lines": note_lines,
+    }
+
+
 def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
     """Scan ~/.hermes/skills/ and return a mapping of /command -> skill info.
 
     Returns:
         Dict mapping "/skill-name" to {name, description, skill_md_path, skill_dir}.
     """
-    global _skill_commands, _skill_commands_platform
+    global _skill_commands, _skill_commands_platform, _last_reload_policy_evidence
     _skill_commands_platform = _resolve_skill_commands_platform()
     _skill_commands = {}
     try:
         from tools.skills_tool import SKILLS_DIR, _parse_frontmatter, skill_matches_platform, _get_disabled_skill_names
-        from agent.skill_utils import get_external_skills_dirs, iter_skill_index_files
+        from agent.skill_utils import iter_skill_index_files
         disabled = _get_disabled_skill_names()
         seen_names: set = set()
 
@@ -280,6 +419,7 @@ def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
         if SKILLS_DIR.exists():
             dirs_to_scan.append(SKILLS_DIR)
         dirs_to_scan.extend(get_external_skills_dirs())
+        _last_reload_policy_evidence = _new_policy_evidence(dirs_to_scan)
 
         for scan_dir in dirs_to_scan:
             for skill_md in iter_skill_index_files(scan_dir, "SKILL.md"):
@@ -288,10 +428,19 @@ def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
                 try:
                     content = skill_md.read_text(encoding='utf-8')
                     frontmatter, body = _parse_frontmatter(content)
+                    name = frontmatter.get('name', skill_md.parent.name)
+                    if _is_cross_profile_skill_path(skill_md, SKILLS_DIR):
+                        if frontmatter.get("disallowed-tools") or frontmatter.get("disallowed_tools"):
+                            _last_reload_policy_evidence["errors"].append({
+                                "skill": name,
+                                "path": str(skill_md),
+                                "code": "cross_profile_boundary",
+                                "error": "Refusing tool policy declared by a skill from another Hermes profile",
+                            })
+                        continue
                     # Skip skills incompatible with the current OS platform
                     if not skill_matches_platform(frontmatter):
                         continue
-                    name = frontmatter.get('name', skill_md.parent.name)
                     if name in seen_names:
                         continue
                     # Respect user's disabled skills config
@@ -305,6 +454,12 @@ def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
                                 description = line[:80]
                                 break
                     seen_names.add(name)
+                    disallowed_tools, policy_errors = _resolve_disallowed_tools(frontmatter, name)
+                    if policy_errors:
+                        _last_reload_policy_evidence["errors"].extend(policy_errors)
+                    if disallowed_tools and not policy_errors:
+                        _last_reload_policy_evidence["affected_skills"].append(name)
+                        _last_reload_policy_evidence["disabled_tools_by_skill"][name] = disallowed_tools
                     # Normalize to hyphen-separated slug, stripping
                     # non-alnum chars (e.g. +, /) to avoid invalid
                     # Telegram command names downstream.
@@ -318,12 +473,50 @@ def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
                         "description": description or f"Invoke the {name} skill",
                         "skill_md_path": str(skill_md),
                         "skill_dir": str(skill_md.parent),
+                        "disallowed_tools": disallowed_tools if not policy_errors else [],
+                        "tool_policy_errors": policy_errors,
                     }
                 except Exception:
                     continue
     except Exception:
         pass
     return _skill_commands
+
+
+def get_tool_policy_for_command(cmd_key: str) -> Dict[str, Any]:
+    """Return structured tool-policy evidence for a skill slash command."""
+    commands = get_skill_commands()
+    info = commands.get(cmd_key) or {}
+    disabled_tools = list(info.get("disallowed_tools") or [])
+    if not disabled_tools:
+        return {
+            "status": "noop",
+            "command": cmd_key,
+            "skill": info.get("name"),
+            "disabled_tools": [],
+            "errors": list(info.get("tool_policy_errors") or []),
+        }
+    return {
+        "status": "pending",
+        "command": cmd_key,
+        "skill": info.get("name"),
+        "disabled_tools": disabled_tools,
+        "errors": list(info.get("tool_policy_errors") or []),
+    }
+
+
+def activate_tool_policy_for_command(cmd_key: str) -> Dict[str, Any]:
+    """Apply a skill slash command's disallowed-tools policy to this session."""
+    evidence = get_tool_policy_for_command(cmd_key)
+    disabled_tools = list(evidence.get("disabled_tools") or [])
+    if not disabled_tools:
+        return evidence
+    from model_tools import add_active_disallowed_tools
+
+    active = sorted(add_active_disallowed_tools(disabled_tools))
+    evidence["status"] = "applied"
+    evidence["active_disallowed_tools"] = active
+    return evidence
 
 
 def get_skill_commands() -> Dict[str, Dict[str, Any]]:
@@ -397,13 +590,20 @@ def reload_skills() -> Dict[str, Any]:
     # (the skill file is gone so we can't re-read it).
     removed = [{"name": n, "description": before[n]} for n in removed_names]
 
-    return {
+    result = {
         "added": added,
         "removed": removed,
         "unchanged": unchanged,
         "total": len(after),
         "commands": len(new_commands),
     }
+    # Surface tool-policy evidence from the rescan for /reload-skills callers.
+    # This is intentionally additive so existing CLI/gateway renderers that only
+    # understand added/removed/total remain compatible, while tests and control
+    # plane consumers can assert exactly which directories and skills affected
+    # the active negative tool policy.
+    result.update(_last_reload_policy_evidence)
+    return result
 
 
 def resolve_skill_command_key(command: str) -> Optional[str]:
@@ -475,14 +675,15 @@ def build_skill_invocation_message(
 def build_preloaded_skills_prompt(
     skill_identifiers: list[str],
     task_id: str | None = None,
-) -> tuple[str, list[str], list[str]]:
+) -> tuple[str, list[str], list[str], list[str]]:
     """Load one or more skills for session-wide CLI preloading.
 
-    Returns (prompt_text, loaded_skill_names, missing_identifiers).
+    Returns (prompt_text, loaded_skill_names, missing_identifiers, disallowed_tools).
     """
     prompt_parts: list[str] = []
     loaded_names: list[str] = []
     missing: list[str] = []
+    disallowed_tools: set[str] = set()
 
     seen: set[str] = set()
     for raw_identifier in skill_identifiers:
@@ -497,6 +698,17 @@ def build_preloaded_skills_prompt(
             continue
 
         loaded_skill, skill_dir, skill_name = loaded
+
+        try:
+            from tools.skills_tool import _parse_frontmatter
+
+            raw_content = str(loaded_skill.get("raw_content") or loaded_skill.get("content") or "")
+            if raw_content:
+                frontmatter, _ = _parse_frontmatter(raw_content)
+                skill_disallowed, _policy_errors = _resolve_disallowed_tools(frontmatter, skill_name)
+                disallowed_tools.update(skill_disallowed)
+        except Exception:
+            pass
 
         # Track active usage for Curator lifecycle management (#17782)
         try:
@@ -520,4 +732,4 @@ def build_preloaded_skills_prompt(
         )
         loaded_names.append(skill_name)
 
-    return "\n\n".join(prompt_parts), loaded_names, missing
+    return "\n\n".join(prompt_parts), loaded_names, missing, sorted(disallowed_tools)

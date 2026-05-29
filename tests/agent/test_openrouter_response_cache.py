@@ -239,13 +239,23 @@ class TestDefaultConfig:
 class TestCheckOpenrouterCacheStatus:
     """Test the _check_openrouter_cache_status method on AIAgent."""
 
-    def _make_agent(self):
+    def _make_agent(self, *, cache_enabled=True, ttl="600"):
         """Create a minimal AIAgent-like object with just the method under test."""
         from run_agent import AIAgent
 
         # Use object.__new__ to skip __init__, then set the attributes we need
         agent = object.__new__(AIAgent)
         agent._or_cache_hits = 0
+        agent._openrouter_cache_observations = []
+        agent.provider = "openrouter"
+        agent.model = "openai/gpt-5.5"
+        agent.base_url = "https://openrouter.ai/api/v1"
+        headers = {}
+        if cache_enabled:
+            headers["X-OpenRouter-Cache"] = "true"
+        if ttl is not None:
+            headers["X-OpenRouter-Cache-TTL"] = ttl
+        agent._client_kwargs = {"default_headers": headers}
         return agent
 
     def test_hit_increments_counter(self):
@@ -263,11 +273,41 @@ class TestCheckOpenrouterCacheStatus:
         agent._check_openrouter_cache_status(resp)
         assert getattr(agent, "_or_cache_hits", 0) == 0
 
+    def test_records_structured_observation_with_strategy_and_route(self):
+        agent = self._make_agent(ttl="900")
+        resp = SimpleNamespace(headers={
+            "x-openrouter-cache-status": "MISS",
+            "x-openrouter-provider": "anthropic",
+            "x-openrouter-model": "claude-sonnet-4",
+            "x-openrouter-cache-status-reason": "request_changed",
+        })
+
+        agent._check_openrouter_cache_status(resp)
+        summary = agent.get_openrouter_cache_summary()
+
+        assert summary["hits"] == 0
+        assert summary["strategy"] == {"enabled": True, "ttl_seconds": 900}
+        assert summary["last_observation"]["status"] == "MISS"
+        assert summary["last_observation"]["route_provider"] == "anthropic"
+        assert summary["last_observation"]["route_model"] == "claude-sonnet-4"
+        assert summary["last_observation"]["invalidation_reason"] == "request_changed"
+
+    def test_disabled_strategy_inferrs_cache_disabled_reason(self):
+        agent = self._make_agent(cache_enabled=False, ttl=None)
+        resp = SimpleNamespace(headers={"x-openrouter-cache-status": "MISS"})
+
+        agent._check_openrouter_cache_status(resp)
+        summary = agent.get_openrouter_cache_summary()
+
+        assert summary["strategy"] == {"enabled": False, "ttl_seconds": None}
+        assert summary["last_observation"]["invalidation_reason"] == "cache_disabled"
+
     def test_no_header_is_noop(self):
         agent = self._make_agent()
         resp = SimpleNamespace(headers={})
         agent._check_openrouter_cache_status(resp)
         assert getattr(agent, "_or_cache_hits", 0) == 0
+        assert agent.get_openrouter_cache_summary()["last_observation"] is None
 
     def test_none_response_is_safe(self):
         agent = self._make_agent()
@@ -282,3 +322,18 @@ class TestCheckOpenrouterCacheStatus:
         resp = SimpleNamespace(headers={"x-openrouter-cache-status": "hit"})
         agent._check_openrouter_cache_status(resp)
         assert agent._or_cache_hits == 1
+
+    def test_get_openrouter_cache_summary_estimates_saved_cost(self):
+        agent = self._make_agent()
+        agent.session_input_tokens = 1200
+        agent.session_output_tokens = 300
+        agent.session_cache_read_tokens = 0
+        agent.session_cache_write_tokens = 0
+        agent.session_api_calls = 2
+        resp = SimpleNamespace(headers={"x-openrouter-cache-status": "HIT"})
+
+        agent._check_openrouter_cache_status(resp)
+        summary = agent.get_openrouter_cache_summary()
+
+        assert summary["estimated_saved_cost_usd"] is not None
+        assert summary["estimated_saved_cost_source"] in {"estimated", "actual", "included"}

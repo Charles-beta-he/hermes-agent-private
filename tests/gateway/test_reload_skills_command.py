@@ -102,6 +102,10 @@ async def test_reload_skills_handler_queues_note_on_diff(monkeypatch):
         "unchanged": ["delta"],
         "total": 3,
         "commands": 3,
+        "scan_dirs": ["/skills/local"],
+        "disabled_tools_by_skill": {"alpha": ["terminal"]},
+        "conflicts": [{"skill": "beta", "error": "conflicts with gamma"}],
+        "errors": [{"skill": "gamma", "tool": "fake_tool", "error": "Unknown disallowed tool/toolset"}],
     }
 
     import agent.skill_commands as skill_commands_mod
@@ -118,6 +122,14 @@ async def test_reload_skills_handler_queues_note_on_diff(monkeypatch):
     assert "- beta: Run beta to do abc" in out
     assert "Removed Skills:" in out
     assert "- gamma: Old removed skill" in out
+    assert "Tool policy scan dirs:" in out
+    assert "- /skills/local" in out
+    assert "Tool policy declarations:" in out
+    assert "- alpha: disables terminal" in out
+    assert "Tool policy conflicts:" in out
+    assert "- beta: conflicts with gamma" in out
+    assert "Tool policy errors:" in out
+    assert "- gamma: Unknown disallowed tool/toolset (fake_tool)" in out
     assert "3 skill(s) available" in out
 
     # MUST NOT write to the session transcript — that would break alternation.
@@ -136,6 +148,12 @@ async def test_reload_skills_handler_queues_note_on_diff(monkeypatch):
     assert "    - beta: Run beta to do abc" in note
     assert "Removed Skills:" in note
     assert "    - gamma: Old removed skill" in note
+    assert "Tool Policy Declarations:" in note
+    assert "    - alpha: disables terminal" in note
+    assert "Tool Policy Conflicts:" in note
+    assert "    - beta: conflicts with gamma" in note
+    assert "Tool Policy Errors:" in note
+    assert "    - gamma: Unknown disallowed tool/toolset (fake_tool)" in note
 
 
 @pytest.mark.asyncio
@@ -164,6 +182,44 @@ async def test_reload_skills_handler_reports_no_changes(monkeypatch):
     # No queued note when nothing changed.
     pending = getattr(runner, "_pending_skills_reload_notes", None)
     assert not pending  # None or empty dict
+
+
+@pytest.mark.asyncio
+async def test_reload_skills_handler_reports_policy_evidence_without_skill_diff(monkeypatch):
+    import agent.skill_commands as skill_commands_mod
+
+    monkeypatch.setattr(
+        skill_commands_mod,
+        "reload_skills",
+        lambda: {
+            "added": [],
+            "removed": [],
+            "unchanged": ["alpha"],
+            "total": 1,
+            "commands": 1,
+            "scan_dirs": ["/skills/local"],
+            "disabled_tools_by_skill": {"alpha": ["terminal"]},
+            "conflicts": [],
+            "errors": [],
+        },
+    )
+
+    runner = _make_runner()
+    event = _make_event("/reload-skills")
+    out = await runner._handle_reload_skills_command(event)
+
+    assert "No new skills detected" in out
+    assert "Tool policy scan dirs:" in out
+    assert "Tool policy declarations:" in out
+    assert "- alpha: disables terminal" in out
+    assert "1 skill(s) available" in out
+    runner.session_store.append_to_transcript.assert_not_called()
+    pending = getattr(runner, "_pending_skills_reload_notes", None)
+    assert pending is not None
+    session_key = runner._session_key_for_source(event.source)
+    note = pending[session_key]
+    assert "Tool Policy Declarations:" in note
+    assert "    - alpha: disables terminal" in note
 
 
 @pytest.mark.asyncio

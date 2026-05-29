@@ -1704,6 +1704,7 @@ class GatewayRunner:
         # preserve the queue.
         self._queued_events: Dict[str, List[MessageEvent]] = {}
         self._pending_native_image_paths_by_session: Dict[str, List[str]] = {}
+        self._pending_turn_disallowed_tools: Dict[str, List[str]] = {}
         self._busy_ack_ts: Dict[str, float] = {}  # last busy-ack timestamp per session (debounce)
         self._session_run_generation: Dict[str, int] = {}
         # LRU cache of live SessionSources keyed by session_key. Used by
@@ -7600,10 +7601,12 @@ class GatewayRunner:
         if command and not locals().get("_bundle_handled", False):
             try:
                 from agent.skill_commands import (
-                    get_skill_commands,
                     build_skill_invocation_message,
+                    get_skill_commands,
                     resolve_skill_command_key,
+                    get_tool_policy_for_command,
                 )
+
                 skill_cmds = get_skill_commands()
                 cmd_key = resolve_skill_command_key(command)
                 if cmd_key is not None:
@@ -7625,6 +7628,9 @@ class GatewayRunner:
                         cmd_key, user_instruction, task_id=_quick_key
                     )
                     if msg:
+                        self._pending_turn_disallowed_tools[_quick_key] = list(
+                            get_tool_policy_for_command(cmd_key).get("disabled_tools") or []
+                        )
                         event.text = msg
                         # Fall through to normal message processing with skill content
                 else:
@@ -13031,6 +13037,38 @@ class GatewayRunner:
             except Exception:
                 pass
 
+            try:
+                cache_summary = agent.get_openrouter_cache_summary()
+            except Exception:
+                cache_summary = None
+            if cache_summary and (
+                cache_summary.get("hits")
+                or cache_summary.get("last_observation")
+                or (cache_summary.get("strategy") or {}).get("enabled")
+            ):
+                strategy = cache_summary.get("strategy") or {}
+                last_obs = cache_summary.get("last_observation") or {}
+                ttl_display = strategy.get("ttl_seconds")
+                lines.append(
+                    "OpenRouter response cache: "
+                    f"enabled={bool(strategy.get('enabled'))} ttl={ttl_display if ttl_display is not None else 'n/a'} "
+                    f"hits={cache_summary.get('hits', 0)}"
+                )
+                if last_obs:
+                    lines.append(
+                        "  last observed: "
+                        f"status={last_obs.get('status') or 'unknown'} "
+                        f"route={last_obs.get('route_provider') or '?'}"
+                        f"/{last_obs.get('route_model') or '?'} "
+                        f"reason={last_obs.get('invalidation_reason') or 'n/a'}"
+                    )
+                if cache_summary.get("estimated_saved_cost_usd") is not None:
+                    prefix = "~" if cache_summary.get("estimated_saved_cost_source") == "estimated" else ""
+                    lines.append(
+                        "  estimated cache savings: "
+                        f"{prefix}${float(cache_summary['estimated_saved_cost_usd']):.4f}"
+                    )
+
             # Context window and compressions
             ctx = agent.context_compressor
             if ctx.last_prompt_tokens:
@@ -13267,12 +13305,17 @@ class GatewayRunner:
         """
         loop = asyncio.get_running_loop()
         try:
-            from agent.skill_commands import reload_skills
+            from agent.skill_commands import (
+                build_reload_tool_policy_sections,
+                reload_skills,
+            )
 
             result = await loop.run_in_executor(None, reload_skills)
             added = result.get("added", [])      # [{"name", "description"}, ...]
             removed = result.get("removed", [])  # [{"name", "description"}, ...]
             total = result.get("total", 0)
+            policy_sections = build_reload_tool_policy_sections(result)
+            has_policy_signal = bool(policy_sections.get("has_meaningful_changes"))
 
             # Let each connected adapter refresh any platform-side state
             # that cached the skill list at startup. Today that's the
@@ -13297,11 +13340,6 @@ class GatewayRunner:
                     )
 
             lines = [t("gateway.reload_skills.header")]
-            if not added and not removed:
-                lines.append(t("gateway.reload_skills.no_new"))
-                lines.append(t("gateway.reload_skills.total", count=total))
-                return "\n".join(lines)
-
             def _fmt_line(item: dict) -> str:
                 nm = item.get("name", "")
                 desc = item.get("description", "")
@@ -13309,15 +13347,23 @@ class GatewayRunner:
                     return t("gateway.reload_skills.item_with_desc", name=nm, desc=desc)
                 return t("gateway.reload_skills.item_no_desc", name=nm)
 
-            if added:
-                lines.append(t("gateway.reload_skills.added_header"))
-                for item in added:
-                    lines.append(_fmt_line(item))
-            if removed:
-                lines.append(t("gateway.reload_skills.removed_header"))
-                for item in removed:
-                    lines.append(_fmt_line(item))
-            lines.append(t("gateway.reload_skills.total", count=total))
+            if not added and not removed:
+                lines.append(t("gateway.reload_skills.no_new"))
+                lines.extend(policy_sections.get("summary_lines", []))
+                lines.append(t("gateway.reload_skills.total", count=total))
+                if not has_policy_signal:
+                    return "\n".join(lines)
+            else:
+                if added:
+                    lines.append(t("gateway.reload_skills.added_header"))
+                    for item in added:
+                        lines.append(_fmt_line(item))
+                if removed:
+                    lines.append(t("gateway.reload_skills.removed_header"))
+                    for item in removed:
+                        lines.append(_fmt_line(item))
+                lines.extend(policy_sections.get("summary_lines", []))
+                lines.append(t("gateway.reload_skills.total", count=total))
 
             # Queue the one-shot note for the next user turn in this session.
             # Format matches how the system prompt renders pre-existing
@@ -13334,6 +13380,7 @@ class GatewayRunner:
                 sections.append("Removed Skills:")
                 for item in removed:
                     sections.append(_fmt_line(item))
+            sections.extend(policy_sections.get("note_lines", []))
             sections.append("")
             sections.append("Use skills_list to see the updated catalog.]")
             note = "\n".join(sections)
@@ -16927,6 +16974,11 @@ class GatewayRunner:
                     "conversation_history": agent_history,
                     "task_id": session_id,
                 }
+                _turn_disallowed_tools = list(
+                    self._pending_turn_disallowed_tools.pop(session_key, []) or []
+                )
+                if _turn_disallowed_tools:
+                    _conversation_kwargs["turn_disallowed_tools"] = _turn_disallowed_tools
                 if observed_group_context:
                     _conversation_kwargs["persist_user_message"] = message
                 result = agent.run_conversation(_api_run_message, **_conversation_kwargs)

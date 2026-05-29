@@ -54,6 +54,15 @@ class TestCodexBuildKwargs:
         assert "input" in kw
         assert kw["store"] is False
 
+    def test_omits_tools_when_no_tools_are_available(self, transport):
+        messages = [{"role": "user", "content": "Hello"}]
+        kw = transport.build_kwargs(
+            model="gpt-5.5",
+            messages=messages,
+            tools=[],
+        )
+        assert "tools" not in kw
+
     def test_system_extracted_from_messages(self, transport):
         messages = [
             {"role": "system", "content": "Custom system prompt"},

@@ -90,6 +90,7 @@ Do not import the upstream `SKILL.md` verbatim. Instead, absorb it as a Hermes c
    - tests or verification were defined before/with implementation.
 3. Add negative space:
    - trivial typo/one-line edits should not require heavy ceremony,
+   - non-coding tasks should not be forced through coding workflow skills,
    - user-explicit broad refactors may intentionally touch larger surfaces,
    - existing project-specific red lines override generic simplicity advice.
 4. Verify by applying the checklist to one Hermes code task and one uvisa-style project task.

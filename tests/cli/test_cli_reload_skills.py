@@ -38,6 +38,10 @@ class TestReloadSkillsCLI:
                 "unchanged": ["delta"],
                 "total": 3,
                 "commands": 3,
+                "scan_dirs": ["/skills/local"],
+                "disabled_tools_by_skill": {"alpha": ["terminal"]},
+                "conflicts": [{"skill": "beta", "error": "conflicts with gamma"}],
+                "errors": [{"skill": "gamma", "tool": "fake_tool", "error": "Unknown disallowed tool/toolset"}],
             },
         ):
             cli._reload_skills()
@@ -49,6 +53,14 @@ class TestReloadSkillsCLI:
         assert "Removed Skills:" in out
         assert "- gamma: Old removed skill" in out
         assert "3 skill(s) available" in out
+        assert "Tool policy scan dirs:" in out
+        assert "- /skills/local" in out
+        assert "Tool policy declarations:" in out
+        assert "- alpha: disables terminal" in out
+        assert "Tool policy conflicts:" in out
+        assert "- beta: conflicts with gamma" in out
+        assert "Tool policy errors:" in out
+        assert "- gamma: Unknown disallowed tool/toolset (fake_tool)" in out
 
         # Must NOT pollute conversation_history — alternation-safe.
         assert cli.conversation_history == []
@@ -63,6 +75,12 @@ class TestReloadSkillsCLI:
         assert "    - beta: Run beta to do abc" in note
         assert "Removed Skills:" in note
         assert "    - gamma: Old removed skill" in note
+        assert "Tool Policy Declarations:" in note
+        assert "    - alpha: disables terminal" in note
+        assert "Tool Policy Conflicts:" in note
+        assert "    - beta: conflicts with gamma" in note
+        assert "Tool Policy Errors:" in note
+        assert "    - gamma: Unknown disallowed tool/toolset (fake_tool)" in note
 
     def test_reports_no_changes_and_queues_nothing(self, capsys):
         cli = _make_cli()
@@ -83,6 +101,36 @@ class TestReloadSkillsCLI:
         assert "1 skill(s) available" in out
         assert cli.conversation_history == []
         assert getattr(cli, "_pending_skills_reload_note", None) is None
+
+    def test_reports_no_changes_but_policy_evidence_and_queues_note(self, capsys):
+        cli = _make_cli()
+        with patch(
+            "agent.skill_commands.reload_skills",
+            return_value={
+                "added": [],
+                "removed": [],
+                "unchanged": ["alpha"],
+                "total": 1,
+                "commands": 1,
+                "scan_dirs": ["/skills/local"],
+                "disabled_tools_by_skill": {"alpha": ["terminal"]},
+                "conflicts": [],
+                "errors": [],
+            },
+        ):
+            cli._reload_skills()
+
+        out = capsys.readouterr().out
+        assert "No new skills detected" in out
+        assert "Tool policy scan dirs:" in out
+        assert "Tool policy declarations:" in out
+        assert "- alpha: disables terminal" in out
+        assert "1 skill(s) available" in out
+        assert cli.conversation_history == []
+        note = getattr(cli, "_pending_skills_reload_note", None)
+        assert note is not None
+        assert "Tool Policy Declarations:" in note
+        assert "    - alpha: disables terminal" in note
 
     def test_handles_reload_failure_gracefully(self, capsys):
         cli = _make_cli()

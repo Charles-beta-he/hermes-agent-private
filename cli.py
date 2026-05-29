@@ -3159,6 +3159,8 @@ class HermesCLI:
         self._attached_images: list[Path] = []
         self._image_counter = 0
         self.preloaded_skills: list[str] = []
+        self.preloaded_disallowed_tools: list[str] = []
+        self._pending_turn_disallowed_tools: list[str] | None = None
         self._startup_skills_line_shown = False
 
         # Voice mode state (also reinitialized inside run() for interactive TUI).
@@ -4862,6 +4864,7 @@ class HermesCLI:
                 tool_complete_callback=self._on_tool_complete if self._inline_diffs_enabled else None,
                 stream_delta_callback=self._stream_delta if self.streaming_enabled else None,
                 tool_gen_callback=self._on_tool_gen_start if self.streaming_enabled else None,
+                default_disallowed_tools=self.preloaded_disallowed_tools,
             )
             # Store reference for atexit memory provider shutdown
             global _active_agent_ref
@@ -8518,10 +8521,15 @@ class HermesCLI:
             # Check for skill slash commands (/gif-search, /axolotl, etc.)
             elif base_cmd in skill_commands:
                 user_instruction = cmd_original[len(base_cmd):].strip()
+                from agent.skill_commands import get_tool_policy_for_command
+
                 msg = build_skill_invocation_message(
                     base_cmd, user_instruction, task_id=self.session_id
                 )
                 if msg:
+                    self._pending_turn_disallowed_tools = list(
+                        get_tool_policy_for_command(base_cmd).get("disabled_tools") or []
+                    )
                     skill_name = skill_commands[base_cmd]["name"]
                     print(f"\n⚡ Loading skill: {skill_name}")
                     if hasattr(self, '_pending_input'):
@@ -10228,7 +10236,11 @@ class HermesCLI:
         prompt caching intact.
         """
         try:
-            from agent.skill_commands import reload_skills, get_skill_commands
+            from agent.skill_commands import (
+                build_reload_tool_policy_sections,
+                reload_skills,
+                get_skill_commands,
+            )
 
             if not self._command_running:
                 print("🔄 Reloading skills...")
@@ -10243,26 +10255,33 @@ class HermesCLI:
             added = result.get("added", [])      # [{"name", "description"}, ...]
             removed = result.get("removed", [])  # [{"name", "description"}, ...]
             total = result.get("total", 0)
-
-            if not added and not removed:
-                print("  No new skills detected.")
-                print(f"  📚 {total} skill(s) available")
-                return
+            policy_sections = build_reload_tool_policy_sections(result)
+            has_policy_signal = bool(policy_sections.get("has_meaningful_changes"))
 
             def _fmt_line(item: dict) -> str:
                 nm = item.get("name", "")
                 desc = item.get("description", "")
                 return f"    - {nm}: {desc}" if desc else f"    - {nm}"
 
-            if added:
-                print("  ➕ Added Skills:")
-                for item in added:
-                    print(f"  {_fmt_line(item)}")
-            if removed:
-                print("  ➖ Removed Skills:")
-                for item in removed:
-                    print(f"  {_fmt_line(item)}")
-            print(f"  📚 {total} skill(s) available")
+            if not added and not removed:
+                print("  No new skills detected.")
+                for line in policy_sections.get("summary_lines", []):
+                    print(f"  {line}")
+                print(f"  📚 {total} skill(s) available")
+                if not has_policy_signal:
+                    return
+            else:
+                if added:
+                    print("  ➕ Added Skills:")
+                    for item in added:
+                        print(f"  {_fmt_line(item)}")
+                if removed:
+                    print("  ➖ Removed Skills:")
+                    for item in removed:
+                        print(f"  {_fmt_line(item)}")
+                for line in policy_sections.get("summary_lines", []):
+                    print(f"  {line}")
+                print(f"  📚 {total} skill(s) available")
 
             # Queue a one-shot note for the NEXT user turn. The CLI's agent
             # loop prepends ``_pending_skills_reload_note`` (if set) to the
@@ -10285,6 +10304,7 @@ class HermesCLI:
                 sections.append("Removed Skills:")
                 for item in removed:
                     sections.append(_fmt_line(item))
+            sections.extend(policy_sections.get("note_lines", []))
             sections.append("")
             sections.append("Use skills_list to see the updated catalog.]")
             self._pending_skills_reload_note = "\n".join(sections)
@@ -11560,12 +11580,17 @@ class HermesCLI:
                     agent_message = _srn + "\n\n" + agent_message
                     self._pending_skills_reload_note = None
                 try:
+                    _turn_disallowed_tools = list(
+                        getattr(self, '_pending_turn_disallowed_tools', None) or []
+                    )
+                    self._pending_turn_disallowed_tools = None
                     result = self.agent.run_conversation(
                         user_message=agent_message,
                         conversation_history=self.conversation_history[:-1],  # Exclude the message we just added
                         stream_callback=stream_callback,
                         task_id=self.session_id,
                         persist_user_message=message if _voice_prefix else None,
+                        turn_disallowed_tools=_turn_disallowed_tools,
                     )
                 except Exception as exc:
                     logging.error("run_conversation raised: %s", exc, exc_info=True)
@@ -14657,18 +14682,23 @@ def main(
     )
 
     if parsed_skills:
-        skills_prompt, loaded_skills, missing_skills = build_preloaded_skills_prompt(
+        preload_result = build_preloaded_skills_prompt(
             parsed_skills,
             task_id=cli.session_id,
         )
+        if len(preload_result) == 3:
+            skills_prompt, loaded_skills, missing_skills = preload_result
+            disallowed_tools = []
+        else:
+            skills_prompt, loaded_skills, missing_skills, disallowed_tools = preload_result
         if missing_skills:
-            missing_display = ", ".join(missing_skills)
-            raise ValueError(f"Unknown skill(s): {missing_display}")
+            raise ValueError(f"Unknown skill(s): {', '.join(missing_skills)}")
         if skills_prompt:
             cli.system_prompt = "\n\n".join(
                 part for part in (cli.system_prompt, skills_prompt) if part
             ).strip()
             cli.preloaded_skills = loaded_skills
+            cli.preloaded_disallowed_tools = disallowed_tools
 
     # Inject worktree context into agent's system prompt
     if wt_info:
