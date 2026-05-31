@@ -823,6 +823,83 @@ class TestGetDueJobs:
             recovered_dt = recovered_dt.replace(tzinfo=timezone.utc)
         assert recovered_dt > now
 
+    def test_legacy_every_expr_misstored_as_cron_is_repaired_not_global_stall(self, tmp_cron_dir, monkeypatch):
+        """A single malformed legacy schedule must not stop the whole scheduler.
+
+        Some persisted jobs had schedule={kind: cron, expr: "every 180m"}.
+        get_due_jobs() used to call croniter("every 180m") while fast-forwarding
+        stale jobs, raising CroniterBadCronError and preventing every other cron
+        from advancing. The scheduler should normalize that legacy record into
+        a real interval schedule and continue processing the rest of the pool.
+        """
+        now = datetime(2026, 3, 18, 10, 0, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+        stale = (now - timedelta(hours=4)).isoformat()
+
+        save_jobs([
+            {
+                "id": "legacy-every-cron",
+                "name": "Legacy every-as-cron",
+                "prompt": "...",
+                "schedule": {"kind": "cron", "expr": "every 180m", "display": "every 180m"},
+                "schedule_display": "every 180m",
+                "repeat": {"times": None, "completed": 0},
+                "enabled": True,
+                "state": "scheduled",
+                "created_at": "2026-03-18T01:00:00+00:00",
+                "next_run_at": stale,
+                "last_run_at": None,
+                "last_status": None,
+                "last_error": None,
+                "deliver": "local",
+                "origin": None,
+            },
+            {
+                "id": "healthy-daily",
+                "name": "Healthy daily",
+                "prompt": "...",
+                "schedule": {"kind": "cron", "expr": "0 12 * * *", "display": "0 12 * * *"},
+                "schedule_display": "0 12 * * *",
+                "repeat": {"times": None, "completed": 0},
+                "enabled": True,
+                "state": "scheduled",
+                "created_at": "2026-03-18T01:00:00+00:00",
+                "next_run_at": stale,
+                "last_run_at": None,
+                "last_status": None,
+                "last_error": None,
+                "deliver": "local",
+                "origin": None,
+            },
+            {
+                "name": "Legacy missing id",
+                "prompt": "...",
+                "schedule": {"kind": "cron", "expr": "0 13 * * *", "display": "0 13 * * *"},
+                "schedule_display": "0 13 * * *",
+                "repeat": {"times": None, "completed": 0},
+                "enabled": True,
+                "state": "scheduled",
+                "created_at": "2026-03-18T01:00:00+00:00",
+                "next_run_at": stale,
+                "last_run_at": None,
+                "last_status": None,
+                "last_error": None,
+                "deliver": "local",
+                "origin": None,
+            },
+        ])
+
+        due = get_due_jobs()
+
+        assert due == []
+        repaired = get_job("legacy-every-cron")
+        assert repaired is not None
+        assert repaired["schedule"] == {"kind": "interval", "minutes": 180, "display": "every 180m"}
+        assert datetime.fromisoformat(repaired["next_run_at"]) > now
+        assert datetime.fromisoformat(get_job("healthy-daily")["next_run_at"]) > now
+        stored = load_jobs()
+        assert all(job.get("id") for job in stored)
+
 
 class TestEnabledToolsets:
     def test_enabled_toolsets_stored(self, tmp_cron_dir):

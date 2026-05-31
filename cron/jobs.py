@@ -351,12 +351,34 @@ def _compute_grace_seconds(schedule: dict) -> int:
     return MIN_GRACE
 
 
+def _repair_legacy_misstored_schedule(schedule: Dict[str, Any]) -> Dict[str, Any]:
+    """Repair legacy persisted schedule shapes that would crash croniter.
+
+    A historical update path stored raw strings such as ``"every 180m"`` as a
+    cron expression instead of parsing them into ``kind=interval``.  Treat this
+    as data drift and normalize it before scheduler code calls croniter.  Return
+    the original object when no repair is needed so callers can cheaply compare.
+    """
+    if not isinstance(schedule, dict):
+        return schedule
+    if schedule.get("kind") != "cron":
+        return schedule
+    expr = str(schedule.get("expr") or "").strip()
+    if not expr.lower().startswith("every "):
+        return schedule
+    try:
+        return parse_schedule(expr)
+    except ValueError:
+        return schedule
+
+
 def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None) -> Optional[str]:
     """
     Compute the next run time for a schedule.
 
     Returns ISO timestamp string, or None if no more runs.
     """
+    schedule = _repair_legacy_misstored_schedule(schedule)
     now = _hermes_now()
 
     if schedule["kind"] == "once":
@@ -976,9 +998,35 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
     due = []
     needs_save = False
 
-    for job in jobs:
+    for idx, job in enumerate(jobs):
+        if not job.get("id"):
+            new_id = uuid.uuid4().hex[:12]
+            job["id"] = new_id
+            raw_jobs[idx]["id"] = new_id
+            needs_save = True
+            logger.warning(
+                "Cron job '%s' had no id; assigned %s",
+                job.get("name") or job.get("prompt") or "unknown",
+                new_id,
+            )
+
         if not job.get("enabled", True):
             continue
+
+        schedule = job.get("schedule", {})
+        repaired_schedule = _repair_legacy_misstored_schedule(schedule)
+        if repaired_schedule != schedule:
+            job["schedule"] = repaired_schedule
+            job["schedule_display"] = repaired_schedule.get("display", job.get("schedule_display"))
+            raw_jobs[idx]["schedule"] = repaired_schedule
+            raw_jobs[idx]["schedule_display"] = repaired_schedule.get("display", raw_jobs[idx].get("schedule_display"))
+            needs_save = True
+            logger.warning(
+                "Job '%s' had legacy malformed schedule %r; repaired to %r",
+                job.get("name") or job.get("id", "unknown"),
+                schedule,
+                repaired_schedule,
+            )
 
         next_run = job.get("next_run_at")
         if not next_run:
