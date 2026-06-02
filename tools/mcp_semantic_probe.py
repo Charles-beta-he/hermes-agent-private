@@ -14,6 +14,17 @@ validate that MCP tools are *actually usable* from a real client perspective:
    arguments returns a structured error, not a hang or crash.
 5. **Resource/Prompt availability** — if the server advertises resources or
    prompts, listing them succeeds.
+6. **Tool roundtrip** — calls each tool with minimal valid arguments
+   generated from its schema and verifies the response is structured
+   content (not a hang, crash, or empty response).
+7. **Description injection** — scans tool descriptions for prompt injection
+   patterns that could manipulate the agent.
+8. **Provider schema compatibility** — checks that tool schemas don't use
+   JSON Schema features that providers (OpenAI, Anthropic) reject.
+9. **Tool name collisions** — detects MCP tools whose names collide with
+   built-in Hermes tools, which would cause registration failures.
+10. **MCP loop health** — verifies the background event loop is alive and
+    responsive, not stuck or crashed.
 
 Usage::
 
@@ -488,6 +499,558 @@ def _probe_prompt_listing(
 
 
 # ---------------------------------------------------------------------------
+# Minimal valid argument generation from JSON Schema
+# ---------------------------------------------------------------------------
+
+def _generate_minimal_args(schema: Any, depth: int = 0) -> Any:
+    """Generate minimal valid arguments from a JSON Schema.
+
+    Returns a dict with valid values for all ``required`` fields.  For
+    non-required fields, returns an empty dict.  Handles nested objects,
+    arrays, and common type constraints.  Stops recursing at depth 10 to
+    avoid infinite loops on self-referential schemas.
+    """
+    if not isinstance(schema, dict) or depth > 10:
+        return {}
+
+    schema_type = schema.get("type", "object")
+
+    if schema_type == "object":
+        result = {}
+        properties = schema.get("properties", {})
+        required = set(schema.get("required", []))
+
+        for prop_name, prop_schema in properties.items():
+            if prop_name in required:
+                result[prop_name] = _generate_minimal_value(prop_schema, depth)
+        return result
+    elif schema_type == "array":
+        # Arrays as top-level schema — return empty list
+        return []
+    else:
+        return _generate_minimal_value(schema, depth)
+
+
+def _generate_minimal_value(schema: Any, depth: int = 0) -> Any:
+    """Generate a single minimal valid value for a schema node."""
+    if not isinstance(schema, dict) or depth > 10:
+        return "probe"
+
+    # Handle anyOf/oneOf — pick the first branch
+    for key in ("anyOf", "oneOf"):
+        branches = schema.get(key)
+        if isinstance(branches, list) and branches:
+            return _generate_minimal_value(branches[0], depth + 1)
+
+    schema_type = schema.get("type", "string")
+
+    # Handle enum — pick first value
+    enum_vals = schema.get("enum")
+    if isinstance(enum_vals, list) and enum_vals:
+        return enum_vals[0]
+
+    # Handle const
+    if "const" in schema:
+        return schema["const"]
+
+    # Handle default
+    if "default" in schema:
+        return schema["default"]
+
+    if schema_type == "string":
+        return schema.get("default", "probe")
+    elif schema_type in ("integer", "number"):
+        minimum = schema.get("minimum", 1)
+        return minimum
+    elif schema_type == "boolean":
+        return True
+    elif schema_type == "array":
+        items_schema = schema.get("items", {"type": "string"})
+        return [_generate_minimal_value(items_schema, depth + 1)]
+    elif schema_type == "object":
+        return _generate_minimal_args(schema, depth + 1)
+    elif schema_type == "null":
+        return None
+    else:
+        return "probe"
+
+
+# ---------------------------------------------------------------------------
+# Real-client probes
+# ---------------------------------------------------------------------------
+
+def _probe_tool_roundtrip(
+    server: Any, server_name: str, findings: List[Finding],
+    timeout: float = 15.0, max_tools: int = 5,
+) -> None:
+    """Probe: call each tool with minimal valid args and verify response.
+
+    This is the real-client semantic test — it generates valid arguments
+    from the tool's input schema and calls the tool through the MCP session,
+    verifying that:
+    - The tool responds within the timeout
+    - The response has ``content`` (not just empty)
+    - The response is not an error (unless we generated bad args)
+
+    At most ``max_tools`` tools are tested to keep probe time bounded.
+    """
+    tools = getattr(server, "_tools", [])
+    if not tools:
+        return
+
+    session = getattr(server, "session", None)
+    if session is None:
+        findings.append(Finding(
+            probe_name="tool_roundtrip",
+            severity=FindingSeverity.ERROR,
+            message="No session available for tool roundtrip test",
+        ))
+        return
+
+    tested = 0
+    for tool in tools:
+        if tested >= max_tools:
+            break
+
+        tool_name = getattr(tool, "name", "unknown")
+        schema = getattr(tool, "inputSchema", None)
+
+        # Generate minimal valid args
+        if schema and isinstance(schema, dict):
+            args = _generate_minimal_args(schema)
+        else:
+            args = {}
+
+        try:
+            start = time.monotonic()
+            result = asyncio.get_event_loop().run_until_complete(
+                asyncio.wait_for(
+                    session.call_tool(tool_name, arguments=args),
+                    timeout=timeout,
+                )
+            )
+            elapsed = (time.monotonic() - start) * 1000
+
+            # Check response structure
+            if hasattr(result, "content") and result.content:
+                # Tool returned structured content — good
+                content_types = [
+                    type(c).__name__ for c in result.content
+                ]
+                findings.append(Finding(
+                    probe_name="tool_roundtrip",
+                    severity=FindingSeverity.INFO,
+                    message=f"Tool '{tool_name}' roundtrip OK ({elapsed:.0f}ms, {len(result.content)} block(s))",
+                    details={
+                        "tool": tool_name,
+                        "latency_ms": round(elapsed, 1),
+                        "content_blocks": len(result.content),
+                        "content_types": content_types,
+                    },
+                ))
+            elif hasattr(result, "isError") and result.isError:
+                # Tool returned an error — this is acceptable for a probe
+                # since our minimal args may not be semantically valid
+                err_text = ""
+                if hasattr(result, "content") and result.content:
+                    err_text = getattr(result.content[0], "text", "")[:100]
+                findings.append(Finding(
+                    probe_name="tool_roundtrip",
+                    severity=FindingSeverity.INFO,
+                    message=f"Tool '{tool_name}' responded with error (args may be insufficient): {err_text}",
+                    details={
+                        "tool": tool_name,
+                        "latency_ms": round(elapsed, 1),
+                        "is_error": True,
+                    },
+                ))
+            else:
+                # Empty or unexpected response
+                findings.append(Finding(
+                    probe_name="tool_roundtrip",
+                    severity=FindingSeverity.WARNING,
+                    message=f"Tool '{tool_name}' returned empty/unexpected response",
+                    details={
+                        "tool": tool_name,
+                        "latency_ms": round(elapsed, 1),
+                    },
+                ))
+
+            tested += 1
+
+        except asyncio.TimeoutError:
+            findings.append(Finding(
+                probe_name="tool_roundtrip",
+                severity=FindingSeverity.ERROR,
+                message=f"Tool '{tool_name}' timed out on roundtrip ({timeout}s)",
+                details={"tool": tool_name},
+            ))
+            tested += 1
+        except Exception as exc:
+            findings.append(Finding(
+                probe_name="tool_roundtrip",
+                severity=FindingSeverity.WARNING,
+                message=f"Tool '{tool_name}' roundtrip failed: {type(exc).__name__}",
+                details={"tool": tool_name, "error": str(exc)[:200]},
+            ))
+            tested += 1
+
+
+def _probe_description_injection(
+    tools: List[Any], server_name: str, findings: List[Finding],
+) -> int:
+    """Probe: scan tool descriptions for prompt injection patterns.
+
+    Returns the number of tools with suspicious descriptions.
+    Uses the same patterns as ``mcp_tool._scan_mcp_description`` but
+    operates on already-parsed tool objects rather than requiring import.
+    """
+    injection_patterns = [
+        (re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.I),
+         "prompt override attempt"),
+        (re.compile(r"you\s+are\s+now\s+a", re.I),
+         "identity override attempt"),
+        (re.compile(r"your\s+new\s+(task|role|instructions?)\s+(is|are)", re.I),
+         "task override attempt"),
+        (re.compile(r"system\s*:\s*", re.I),
+         "system prompt injection"),
+        (re.compile(r"<\s*(system|human|assistant)\s*>", re.I),
+         "role tag injection"),
+        (re.compile(r"do\s+not\s+(tell|inform|mention|reveal)", re.I),
+         "concealment instruction"),
+        (re.compile(r"(curl|wget|fetch)\s+https?://", re.I),
+         "network command in description"),
+        (re.compile(r"exec\s*\(|eval\s*\(", re.I),
+         "code execution reference"),
+    ]
+
+    flagged = 0
+    for tool in tools:
+        name = getattr(tool, "name", "unknown")
+        desc = getattr(tool, "description", "") or ""
+        if not desc:
+            continue
+
+        reasons = []
+        for pattern, reason in injection_patterns:
+            if pattern.search(desc):
+                reasons.append(reason)
+
+        if reasons:
+            flagged += 1
+            findings.append(Finding(
+                probe_name="description_injection",
+                severity=FindingSeverity.WARNING,
+                message=f"Tool '{name}' description contains suspicious patterns: {'; '.join(reasons)}",
+                details={"tool": name, "reasons": reasons},
+            ))
+
+    if flagged == 0 and tools:
+        findings.append(Finding(
+            probe_name="description_injection",
+            severity=FindingSeverity.INFO,
+            message=f"All {len(tools)} tool descriptions clean",
+        ))
+
+    return flagged
+
+
+# Provider-specific schema constraints that cause silent failures or
+# rejections at definition time.
+#
+# OpenAI function calling constraints (as of 2025-03):
+#   - Schema must be type: object at root
+#   - No `not`, `if`/`then`/`else`, `patternProperties`
+#   - `$ref` only within `$defs` at root level
+#   - `additionalProperties` accepted but not deeply nested
+#   - Max depth ~10 levels
+#
+# Anthropic tool constraints (as of 2025-03):
+#   - Schema must be type: object at root
+#   - No `not`, `if`/`then`/`else`
+#   - `$ref` not supported
+#   - `additionalProperties: false` recommended
+
+_PROVIDER_UNSUPPORTED_KEYWORDS = {"not", "if", "then", "else", "patternProperties"}
+_PROVIDER_MAX_SCHEMA_DEPTH = 12
+
+
+def _check_schema_depth(node: Any, current: int = 0) -> int:
+    """Return the maximum nesting depth of a JSON Schema node."""
+    if not isinstance(node, dict) or current > 20:
+        return current
+    max_d = current
+    for key in ("properties", "$defs", "definitions", "patternProperties"):
+        sub = node.get(key)
+        if isinstance(sub, dict):
+            for v in sub.values():
+                max_d = max(max_d, _check_schema_depth(v, current + 1))
+    if "items" in node:
+        max_d = max(max_d, _check_schema_depth(node["items"], current + 1))
+    for key in ("anyOf", "oneOf", "allOf"):
+        sub = node.get(key)
+        if isinstance(sub, list):
+            for item in sub:
+                max_d = max(max_d, _check_schema_depth(item, current + 1))
+    return max_d
+
+
+def _probe_provider_schema_compat(
+    tools: List[Any], server_name: str, findings: List[Finding],
+) -> int:
+    """Probe: check tool schemas against provider constraints.
+
+    OpenAI and Anthropic both reject certain JSON Schema features at
+    tool-definition time.  This probe flags schemas that would cause
+    silent tool drops or API errors when the agent tries to use them.
+
+    Returns the number of tools with compatibility issues.
+    """
+    issues = 0
+    for tool in tools:
+        name = getattr(tool, "name", "unknown")
+        schema = getattr(tool, "inputSchema", None)
+        if not schema or not isinstance(schema, dict):
+            continue
+
+        tool_issues = []
+
+        # Check root type
+        if schema.get("type") and schema["type"] != "object":
+            tool_issues.append(f"root type is '{schema['type']}' (providers expect 'object')")
+
+        # Check for unsupported keywords (walk the whole schema)
+        def _find_keywords(node: Any, path: str) -> None:
+            if not isinstance(node, dict):
+                return
+            for kw in _PROVIDER_UNSUPPORTED_KEYWORDS:
+                if kw in node:
+                    tool_issues.append(f"unsupported keyword '{kw}' at {path}")
+            for key in ("properties", "$defs", "definitions"):
+                sub = node.get(key)
+                if isinstance(sub, dict):
+                    for k, v in sub.items():
+                        _find_keywords(v, f"{path}.{key}.{k}")
+            if "items" in node:
+                _find_keywords(node["items"], f"{path}.items")
+            for key in ("anyOf", "oneOf", "allOf"):
+                sub = node.get(key)
+                if isinstance(sub, list):
+                    for i, item in enumerate(sub):
+                        _find_keywords(item, f"{path}.{key}[{i}]")
+
+        _find_keywords(schema, f"tool:{name}")
+
+        # Check depth
+        depth = _check_schema_depth(schema)
+        if depth > _PROVIDER_MAX_SCHEMA_DEPTH:
+            tool_issues.append(f"schema depth {depth} exceeds provider limit ({_PROVIDER_MAX_SCHEMA_DEPTH})")
+
+        # Check for $ref outside $defs (OpenAI rejects these)
+        def _find_bad_refs(node: Any, path: str) -> None:
+            if not isinstance(node, dict):
+                return
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/") and not ref.startswith("#/$defs/"):
+                tool_issues.append(f"non-standard $ref '{ref}' at {path}")
+            for key in ("properties", "$defs", "definitions"):
+                sub = node.get(key)
+                if isinstance(sub, dict):
+                    for k, v in sub.items():
+                        _find_bad_refs(v, f"{path}.{key}.{k}")
+            if "items" in node:
+                _find_bad_refs(node["items"], f"{path}.items")
+
+        _find_bad_refs(schema, f"tool:{name}")
+
+        if tool_issues:
+            issues += 1
+            findings.append(Finding(
+                probe_name="provider_schema_compat",
+                severity=FindingSeverity.WARNING,
+                message=f"Tool '{name}' has {len(tool_issues)} provider compatibility issue(s)",
+                details={"tool": name, "issues": tool_issues[:5]},  # cap for readability
+            ))
+
+    if issues == 0 and tools:
+        findings.append(Finding(
+            probe_name="provider_schema_compat",
+            severity=FindingSeverity.INFO,
+            message=f"All {len(tools)} tool schemas provider-compatible",
+        ))
+
+    return issues
+
+
+def _probe_tool_name_collisions(
+    tools: List[Any], server_name: str, findings: List[Finding],
+) -> int:
+    """Probe: detect MCP tools whose names collide with built-in Hermes tools.
+
+    Name collisions cause registration failures — the MCP tool silently
+    overwrites (or is overwritten by) the built-in, which breaks agent
+    behavior in subtle ways.
+
+    Returns the number of collisions detected.
+    """
+    # Get built-in tool names from the registry
+    builtin_names: set = set()
+    try:
+        from tools.registry import registry
+        builtin_names = set(registry._tools.keys()) if hasattr(registry, "_tools") else set()
+    except (ImportError, AttributeError):
+        # Fallback: check toolsets module for known core tools
+        try:
+            from toolsets import _HERMES_CORE_TOOLS
+            builtin_names = set(_HERMES_CORE_TOOLS)
+        except ImportError:
+            pass
+
+    if not builtin_names:
+        # Can't check — not an error, just note it
+        findings.append(Finding(
+            probe_name="name_collisions",
+            severity=FindingSeverity.INFO,
+            message="Skipped collision check (builtin tool list unavailable)",
+        ))
+        return 0
+
+    collisions = 0
+    for tool in tools:
+        name = getattr(tool, "name", "unknown")
+        if name in builtin_names:
+            collisions += 1
+            findings.append(Finding(
+                probe_name="name_collisions",
+                severity=FindingSeverity.ERROR,
+                message=f"Tool '{name}' collides with built-in Hermes tool",
+                details={"tool": name, "server": server_name},
+            ))
+
+    if collisions == 0:
+        findings.append(Finding(
+            probe_name="name_collisions",
+            severity=FindingSeverity.INFO,
+            message=f"No name collisions with {len(builtin_names)} built-in tools",
+        ))
+
+    return collisions
+
+
+def _probe_mcp_loop_health(
+    server_name: str, findings: List[Finding],
+) -> None:
+    """Probe: verify the MCP background event loop is alive and responsive.
+
+    The MCP subsystem runs a dedicated background event loop in a daemon
+    thread.  If this loop is stuck or crashed, all MCP tool calls will
+    hang silently.  This probe checks:
+    1. The loop thread exists and is alive
+    2. The loop is running (not stopped)
+    3. A trivial coroutine completes within 5 seconds
+    """
+    try:
+        from tools.mcp_tool import _mcp_loop, _mcp_thread
+    except ImportError:
+        findings.append(Finding(
+            probe_name="mcp_loop_health",
+            severity=FindingSeverity.INFO,
+            message="MCP module not importable — loop health check skipped",
+        ))
+        return
+
+    # Check thread liveness
+    if _mcp_thread is None:
+        findings.append(Finding(
+            probe_name="mcp_loop_health",
+            severity=FindingSeverity.INFO,
+            message="MCP loop thread not started (no servers configured?)",
+        ))
+        return
+
+    if not _mcp_thread.is_alive():
+        findings.append(Finding(
+            probe_name="mcp_loop_health",
+            severity=FindingSeverity.CRITICAL,
+            message="MCP loop thread is dead — all MCP tools will be unresponsive",
+        ))
+        return
+
+    # Check loop state
+    if _mcp_loop is None:
+        findings.append(Finding(
+            probe_name="mcp_loop_health",
+            severity=FindingSeverity.CRITICAL,
+            message="MCP loop reference is None despite thread being alive",
+        ))
+        return
+
+    if _mcp_loop.is_closed():
+        findings.append(Finding(
+            probe_name="mcp_loop_health",
+            severity=FindingSeverity.CRITICAL,
+            message="MCP event loop is closed — all MCP tools will fail",
+        ))
+        return
+
+    if not _mcp_loop.is_running():
+        findings.append(Finding(
+            probe_name="mcp_loop_health",
+            severity=FindingSeverity.WARNING,
+            message="MCP event loop exists but is not running",
+        ))
+        return
+
+    # Responsiveness check — schedule a trivial coroutine
+    try:
+        import concurrent.futures  # noqa: F811 — local import for error handling
+
+        async def _ping():
+            return "pong"
+
+        start = time.monotonic()
+        future = asyncio.run_coroutine_threadsafe(_ping(), _mcp_loop)
+        result = future.result(timeout=5.0)
+        elapsed = (time.monotonic() - start) * 1000
+
+        if result == "pong":
+            if elapsed > 1000:
+                findings.append(Finding(
+                    probe_name="mcp_loop_health",
+                    severity=FindingSeverity.WARNING,
+                    message=f"MCP loop responsive but slow ({elapsed:.0f}ms)",
+                    details={"latency_ms": round(elapsed, 1)},
+                ))
+            else:
+                findings.append(Finding(
+                    probe_name="mcp_loop_health",
+                    severity=FindingSeverity.INFO,
+                    message=f"MCP loop healthy and responsive ({elapsed:.0f}ms)",
+                    details={"latency_ms": round(elapsed, 1)},
+                ))
+        else:
+            findings.append(Finding(
+                probe_name="mcp_loop_health",
+                severity=FindingSeverity.WARNING,
+                message=f"MCP loop returned unexpected value: {result!r}",
+            ))
+    except Exception as exc:
+        err_name = type(exc).__name__
+        if err_name == "TimeoutError" or "timeout" in str(exc).lower():
+            findings.append(Finding(
+                probe_name="mcp_loop_health",
+                severity=FindingSeverity.ERROR,
+                message="MCP loop ping timed out (5s) — loop may be stuck",
+            ))
+        else:
+            findings.append(Finding(
+                probe_name="mcp_loop_health",
+                severity=FindingSeverity.WARNING,
+                message=f"MCP loop ping failed: {err_name}: {exc}",
+            ))
+
+
+# ---------------------------------------------------------------------------
 # Main probe orchestrator
 # ---------------------------------------------------------------------------
 
@@ -632,6 +1195,27 @@ def run_semantic_probe_for_server(
             probes_run.append("prompt_listing")
             prompt_count = _probe_prompt_listing(server, server_name, findings)
 
+        # Phase 8: Description injection scan
+        probes_run.append("description_injection")
+        _probe_description_injection(tools, server_name, findings)
+
+        # Phase 9: Provider schema compatibility
+        probes_run.append("provider_schema_compat")
+        _probe_provider_schema_compat(tools, server_name, findings)
+
+        # Phase 10: Tool name collision detection
+        probes_run.append("name_collisions")
+        _probe_tool_name_collisions(tools, server_name, findings)
+
+        # Phase 11: MCP loop health
+        probes_run.append("mcp_loop_health")
+        _probe_mcp_loop_health(server_name, findings)
+
+        # Phase 12: Tool roundtrip (optional — has side effects)
+        if include_error_probe:
+            probes_run.append("tool_roundtrip")
+            _probe_tool_roundtrip(server, server_name, findings)
+
         total_elapsed = (time.monotonic() - start) * 1000
 
         return ProbeResult(
@@ -748,6 +1332,22 @@ def probe_connected_server(server_name: str) -> Optional[ProbeResult]:
     # Prompt listing
     probes_run.append("prompt_listing")
     prompt_count = _probe_prompt_listing(server, server_name, findings)
+
+    # Description injection scan
+    probes_run.append("description_injection")
+    _probe_description_injection(tools, server_name, findings)
+
+    # Provider schema compatibility
+    probes_run.append("provider_schema_compat")
+    _probe_provider_schema_compat(tools, server_name, findings)
+
+    # Tool name collision detection
+    probes_run.append("name_collisions")
+    _probe_tool_name_collisions(tools, server_name, findings)
+
+    # MCP loop health
+    probes_run.append("mcp_loop_health")
+    _probe_mcp_loop_health(server_name, findings)
 
     elapsed = (time.monotonic() - start) * 1000
 
