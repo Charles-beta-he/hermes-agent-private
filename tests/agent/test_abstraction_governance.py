@@ -1,4 +1,5 @@
 import json
+from typing import cast
 
 from agent.abstraction_governance import (
     classify_durable_write_path,
@@ -188,6 +189,27 @@ def test_classify_durable_write_path_recognizes_governance_surfaces(tmp_path):
     ) is None
 
 
+def test_classify_durable_write_path_handles_empty_and_unresolvable_paths(tmp_path):
+    class BrokenPath:
+        def __bool__(self):
+            return True
+
+        def __str__(self):
+            raise RuntimeError("cannot stringify path")
+
+    assert classify_durable_write_path("", hermes_home=tmp_path) is None
+    assert classify_durable_write_path(cast(str, BrokenPath()), hermes_home=tmp_path) is None
+
+
+def test_classify_durable_write_path_resolves_relative_paths_from_cwd(tmp_path):
+    cwd = tmp_path / "workspace"
+    assert classify_durable_write_path(
+        "../project-profiles/demo.yml",
+        hermes_home=tmp_path,
+        cwd=cwd,
+    ) == "project_profile"
+
+
 def test_mcp_filesystem_write_blocks_task_progress_in_project_profile(monkeypatch, tmp_path):
     monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path)
     decision = review_filesystem_tool_call(
@@ -233,6 +255,35 @@ def test_mcp_filesystem_move_into_governed_surface_is_blocked(monkeypatch, tmp_p
 
     assert decision.ok is False
     assert decision.reason == "opaque_move_into_project_profile"
+
+
+def test_mcp_filesystem_move_ignores_ordinary_project_files(monkeypatch, tmp_path):
+    monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path / "hermes-home")
+    decision = review_filesystem_tool_call(
+        tool_name="mcp_filesystem_move_file",
+        args={
+            "source": str(tmp_path / "scratch.md"),
+            "destination": str(tmp_path / "ordinary.md"),
+        },
+    )
+
+    assert decision.ok is True
+    assert decision.reason == "unclassified_path"
+
+
+def test_mcp_filesystem_gate_disabled_allows_governed_move(monkeypatch, tmp_path):
+    monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path)
+    monkeypatch.setenv("HERMES_ABSTRACTION_GOVERNANCE_GATE", "0")
+    decision = review_filesystem_tool_call(
+        tool_name="mcp_filesystem_move_file",
+        args={
+            "source": str(tmp_path / "scratch.json"),
+            "destination": str(tmp_path / "project-profiles" / "demo.json"),
+        },
+    )
+
+    assert decision.ok is True
+    assert decision.reason == "disabled"
 
 
 def test_mcp_filesystem_write_ignores_ordinary_project_files(monkeypatch, tmp_path):

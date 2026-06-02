@@ -1,6 +1,7 @@
 import json
 
 import hermes_constants
+import tools.file_tools as file_tools
 from tools.file_tools import patch_tool, write_file_tool
 
 
@@ -25,6 +26,12 @@ def test_write_file_does_not_gate_ordinary_project_files(monkeypatch, tmp_path):
 
     assert result.get("error") in (None, "")
     assert target.read_text() == "PR #123 is mentioned in an ordinary project note.\n"
+
+
+def test_file_gate_classification_defers_when_governance_import_unavailable(monkeypatch, tmp_path):
+    monkeypatch.setattr(file_tools, "classify_durable_write_path", None)
+
+    assert file_tools._classify_abstraction_governance_path(str(tmp_path / "note.md")) is None
 
 
 def test_patch_blocks_context_coupled_adr_without_scope(monkeypatch, tmp_path):
