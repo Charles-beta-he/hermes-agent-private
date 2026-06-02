@@ -3372,11 +3372,15 @@ def is_mcp_tool_parallel_safe(tool_name: str) -> bool:
         return bool(server_name and server_name in _parallel_safe_servers)
 
 
-def get_mcp_status() -> List[dict]:
+def get_mcp_status(include_semantic: bool = False) -> List[dict]:
     """Return status of all configured MCP servers for banner display.
 
     Returns a list of dicts with keys: name, transport, tools, connected.
     Includes both successfully connected servers and configured-but-failed ones.
+
+    When *include_semantic* is True, each connected server also gets a
+    ``semantic_health`` field from :mod:`tools.mcp_semantic_probe`
+    containing per-probe findings, latency, and overall status.
     """
     result: List[dict] = []
 
@@ -3400,6 +3404,15 @@ def get_mcp_status() -> List[dict]:
             }
             if server._sampling:
                 entry["sampling"] = dict(server._sampling.metrics)
+            # Semantic health probe (on-demand)
+            if include_semantic:
+                try:
+                    from tools.mcp_semantic_probe import probe_connected_server
+                    probe = probe_connected_server(name)
+                    if probe is not None:
+                        entry["semantic_health"] = probe.to_dict()
+                except Exception as exc:
+                    entry["semantic_health"] = {"status": "error", "error": str(exc)}
             result.append(entry)
         else:
             result.append({
