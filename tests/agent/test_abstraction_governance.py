@@ -1,7 +1,9 @@
 import json
 
 from agent.abstraction_governance import (
+    classify_durable_write_path,
     review_durable_write,
+    review_filesystem_tool_call,
     review_memory_write,
     review_skill_mutation,
     should_apply_abstraction_gate,
@@ -165,3 +167,80 @@ Anti-conditions: do not apply outside this repository.
 
     assert decision.ok is True
     assert decision.reason == "accepted"
+
+
+def test_classify_durable_write_path_recognizes_governance_surfaces(tmp_path):
+    assert classify_durable_write_path(
+        str(tmp_path / "project-profiles" / "demo.yaml"),
+        hermes_home=tmp_path,
+    ) == "project_profile"
+    assert classify_durable_write_path(
+        str(tmp_path / "docs" / "adrs" / "branching.md"),
+        hermes_home=tmp_path,
+    ) == "adr"
+    assert classify_durable_write_path(
+        str(tmp_path / "experience-ratchet" / "atoms" / "one.md"),
+        hermes_home=tmp_path,
+    ) == "experience"
+    assert classify_durable_write_path(
+        str(tmp_path / "ordinary-project" / "note.md"),
+        hermes_home=tmp_path,
+    ) is None
+
+
+def test_mcp_filesystem_write_blocks_task_progress_in_project_profile(monkeypatch, tmp_path):
+    monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path)
+    decision = review_filesystem_tool_call(
+        tool_name="mcp_filesystem_write_file",
+        args={
+            "path": str(tmp_path / "project-profiles" / "demo.json"),
+            "content": '{"note":"PR #123 was merged and this task is complete"}',
+        },
+    )
+
+    assert decision.ok is False
+    assert decision.reason == "task_progress_not_project_profile"
+
+
+def test_mcp_filesystem_edit_blocks_context_coupled_adr(monkeypatch, tmp_path):
+    monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path)
+    decision = review_filesystem_tool_call(
+        tool_name="mcp_filesystem_edit_file",
+        args={
+            "path": str(tmp_path / "docs" / "adr" / "branching.md"),
+            "edits": [
+                {
+                    "oldText": "# Branching\n",
+                    "newText": "# Branching\nAlways use feat/uvisa-2.0 as integration branch.\n",
+                }
+            ],
+        },
+    )
+
+    assert decision.ok is False
+    assert decision.reason == "context_coupled_adr"
+
+
+def test_mcp_filesystem_move_into_governed_surface_is_blocked(monkeypatch, tmp_path):
+    monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path)
+    decision = review_filesystem_tool_call(
+        tool_name="mcp_filesystem_move_file",
+        args={
+            "source": str(tmp_path / "scratch.json"),
+            "destination": str(tmp_path / "project-profiles" / "demo.json"),
+        },
+    )
+
+    assert decision.ok is False
+    assert decision.reason == "opaque_move_into_project_profile"
+
+
+def test_mcp_filesystem_write_ignores_ordinary_project_files(monkeypatch, tmp_path):
+    monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path / "hermes-home")
+    decision = review_filesystem_tool_call(
+        tool_name="mcp_filesystem_write_file",
+        args={"path": str(tmp_path / "ordinary.md"), "content": "PR #123 was merged"},
+    )
+
+    assert decision.ok is True
+    assert decision.reason == "unclassified_path"

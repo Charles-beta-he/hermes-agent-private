@@ -268,6 +268,30 @@ class TestPreToolCallBlocking:
             f"expected exactly 1. hook_calls={hook_calls}"
         )
 
+    def test_blocks_mcp_filesystem_governance_write_before_dispatch(self, monkeypatch, tmp_path):
+        """External MCP filesystem writes hit abstraction governance before registry dispatch."""
+        import hermes_constants
+
+        monkeypatch.setattr(hermes_constants, "get_hermes_home", lambda: tmp_path)
+
+        def _dispatch_should_not_run(*args, **kwargs):  # pragma: no cover - failure path
+            raise AssertionError("registry.dispatch should not run for blocked governance writes")
+
+        monkeypatch.setattr("model_tools.registry.dispatch", _dispatch_should_not_run)
+
+        result = handle_function_call(
+            "mcp_filesystem_write_file",
+            {
+                "path": str(tmp_path / "project-profiles" / "demo.json"),
+                "content": '{"note":"PR #123 was merged and this task is complete"}',
+            },
+            skip_pre_tool_call_hook=True,
+        )
+        payload = json.loads(result)
+
+        assert "error" in payload
+        assert payload["abstraction_governance"]["reason"] == "task_progress_not_project_profile"
+
 
 # =========================================================================
 # Legacy toolset map

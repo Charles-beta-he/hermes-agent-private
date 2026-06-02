@@ -846,6 +846,31 @@ def handle_function_call(
             if block_message is not None:
                 return json.dumps({"error": block_message}, ensure_ascii=False)
 
+        # Defense-in-depth for external MCP filesystem tools. First-party
+        # write_file/patch have their own wrappers; MCP tools are dispatched
+        # through the generic registry and would otherwise bypass Hermes'
+        # durable abstraction-governance surfaces.
+        try:
+            from agent.abstraction_governance import review_filesystem_tool_call
+
+            abstraction_decision = review_filesystem_tool_call(
+                tool_name=function_name,
+                args=function_args,
+            )
+            if not abstraction_decision.ok:
+                return json.dumps(
+                    {
+                        "error": (
+                            "Blocked by abstraction-governance gate: "
+                            f"{abstraction_decision.message or abstraction_decision.reason}"
+                        ),
+                        "abstraction_governance": abstraction_decision.to_payload(),
+                    },
+                    ensure_ascii=False,
+                )
+        except Exception as _abstraction_err:
+            logger.debug("abstraction-governance filesystem gate error: %s", _abstraction_err)
+
         # ACP/Zed edit approval runs before any file mutation.  The requester
         # is bound via ContextVar only for ACP sessions, so CLI/gateway paths
         # are unaffected when it is unset.

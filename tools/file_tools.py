@@ -28,9 +28,10 @@ except Exception:  # pragma: no cover - keep file tools available during partial
     file_content_hash = None
 
 try:
-    from agent.abstraction_governance import review_durable_write
-except Exception:  # pragma: no cover - keep file tools available during partial installs
-    review_durable_write = None
+    from agent.abstraction_governance import classify_durable_write_path, review_durable_write
+except Exception:  # pragma: no cover - defensive for standalone tool imports
+    classify_durable_write_path = None  # type: ignore[assignment]
+    review_durable_write = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -211,27 +212,13 @@ def _classify_abstraction_governance_path(filepath: str, task_id: str = "default
     Only narrow Hermes governance paths are classified. Ordinary project files
     remain outside this gate so code/docs edits are not unexpectedly blocked.
     """
+    if classify_durable_write_path is None:
+        return None
     try:
-        from hermes_constants import get_hermes_home
         resolved = _resolve_path_for_task(filepath, task_id)
-        home = Path(get_hermes_home()).expanduser().resolve()
+        return classify_durable_write_path(str(resolved))
     except Exception:
         return None
-
-    def _under(child: Path, parent: Path) -> bool:
-        try:
-            child.relative_to(parent)
-            return True
-        except ValueError:
-            return False
-
-    if _under(resolved, home / "project-profiles") and resolved.suffix.lower() == ".json":
-        return "project_profile"
-    if _under(resolved, home / "experience-ratchet"):
-        return "experience"
-    if _under(resolved, home / "docs" / "adr") or _under(resolved, home / "docs" / "adrs"):
-        return "adr"
-    return None
 
 
 def _run_abstraction_governance_file_gate(

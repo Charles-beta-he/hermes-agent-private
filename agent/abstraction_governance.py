@@ -7,9 +7,11 @@ Hermes durable-state boundaries before they become sticky prompt context.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable
 
 
@@ -112,6 +114,125 @@ def _has_scope_marker(content: str) -> bool:
 
 def _candidate_text(*parts: str | None) -> str:
     return "\n".join(part.strip() for part in parts if part and part.strip())
+
+
+def _under(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def classify_durable_write_path(
+    filepath: str,
+    *,
+    hermes_home: str | Path | None = None,
+    cwd: str | Path | None = None,
+) -> str | None:
+    """Return the governed durable-write surface for a filesystem path.
+
+    Only narrow Hermes governance paths are classified.  Ordinary project files
+    remain outside this gate so normal code/docs edits are not unexpectedly
+    blocked.  This helper is side-effect free and shared by first-party file
+    tools plus external MCP filesystem tools.
+    """
+
+    if not filepath:
+        return None
+    try:
+        raw = Path(str(filepath)).expanduser()
+        if not raw.is_absolute():
+            raw = Path(cwd or os.getcwd()).expanduser() / raw
+        resolved = raw.resolve()
+        if hermes_home is None:
+            from hermes_constants import get_hermes_home
+
+            hermes_home = get_hermes_home()
+        home = Path(hermes_home).expanduser().resolve()
+    except Exception:
+        return None
+
+    if _under(resolved, home / "project-profiles") and resolved.suffix.lower() in {".json", ".yaml", ".yml"}:
+        return "project_profile"
+    if _under(resolved, home / "experience-ratchet"):
+        return "experience"
+    if _under(resolved, home / "docs" / "adr") or _under(resolved, home / "docs" / "adrs"):
+        return "adr"
+    return None
+
+
+def review_filesystem_tool_call(
+    *,
+    tool_name: str,
+    args: Dict[str, Any] | None,
+    cwd: str | Path | None = None,
+) -> AbstractionGateDecision:
+    """Review external filesystem-like tool calls before dispatch.
+
+    First-party ``write_file`` / ``patch`` are already wrapped inside
+    ``tools.file_tools``.  This adapter catches common MCP filesystem write
+    tools that otherwise bypass those wrappers while still landing in Hermes
+    durable governance surfaces.
+    """
+
+    args = args if isinstance(args, dict) else {}
+    normalized_name = (tool_name or "").strip()
+    if normalized_name not in {
+        "mcp_filesystem_write_file",
+        "mcp_filesystem_edit_file",
+        "mcp_filesystem_move_file",
+    }:
+        return AbstractionGateDecision(ok=True, reason="unsupported_tool_deferred")
+
+    if normalized_name == "mcp_filesystem_move_file":
+        destination = args.get("destination")
+        kind = classify_durable_write_path(str(destination or ""), cwd=cwd)
+        if kind is None:
+            return AbstractionGateDecision(ok=True, reason="unclassified_path")
+        if not should_apply_abstraction_gate():
+            return AbstractionGateDecision(ok=True, reason="disabled")
+        return AbstractionGateDecision(
+            ok=False,
+            reason=f"opaque_move_into_{kind}",
+            recommended_landing_zone=kind,
+            message=(
+                "Moving a file into a Hermes governance surface via an external "
+                "filesystem tool is blocked because the destination content cannot "
+                "be reviewed in the hot path. Read the file and rewrite it through "
+                "write_file/patch with explicit scoped content instead."
+            ),
+        )
+
+    path = args.get("path")
+    kind = classify_durable_write_path(str(path or ""), cwd=cwd)
+    if kind is None:
+        return AbstractionGateDecision(ok=True, reason="unclassified_path")
+
+    if normalized_name == "mcp_filesystem_write_file":
+        content = args.get("content")
+        content_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False, default=str)
+        return review_durable_write(kind=kind, target=str(path), action="mcp_filesystem_write_file", content=content_text)
+
+    edits = args.get("edits")
+    new_texts: list[str] = []
+    old_texts: list[str] = []
+    if isinstance(edits, list):
+        for edit in edits:
+            if isinstance(edit, dict):
+                new_value = edit.get("newText")
+                old_value = edit.get("oldText")
+                if isinstance(new_value, str):
+                    new_texts.append(new_value)
+                if isinstance(old_value, str):
+                    old_texts.append(old_value)
+    return review_durable_write(
+        kind=kind,
+        target=str(path),
+        action="mcp_filesystem_edit_file",
+        old_string="\n".join(old_texts),
+        new_string="\n".join(new_texts),
+    )
 
 
 def review_skill_mutation(
