@@ -268,6 +268,61 @@ class TestPreToolCallBlocking:
             f"expected exactly 1. hook_calls={hook_calls}"
         )
 
+    def test_blocks_mcp_filesystem_governance_write_before_dispatch(self, monkeypatch, tmp_path):
+        """External MCP filesystem writes hit abstraction governance before registry dispatch."""
+        import hermes_constants
+
+        monkeypatch.setattr(hermes_constants, "get_hermes_home", lambda: tmp_path)
+
+        def _dispatch_should_not_run(*args, **kwargs):  # pragma: no cover - failure path
+            raise AssertionError("registry.dispatch should not run for blocked governance writes")
+
+        monkeypatch.setattr("model_tools.registry.dispatch", _dispatch_should_not_run)
+
+        result = handle_function_call(
+            "mcp_filesystem_write_file",
+            {
+                "path": str(tmp_path / "project-profiles" / "demo.json"),
+                "content": '{"note":"PR #123 was merged and this task is complete"}',
+            },
+            skip_pre_tool_call_hook=True,
+        )
+        payload = json.loads(result)
+
+        assert "error" in payload
+        assert payload["abstraction_governance"]["reason"] == "task_progress_not_project_profile"
+
+    def test_abstraction_governance_filesystem_gate_failure_falls_back_to_dispatch(self, monkeypatch):
+        """The defense-in-depth MCP gate must not crash unrelated tool dispatch."""
+        import agent.abstraction_governance as governance
+
+        def _raise_gate_error(*args, **kwargs):
+            raise RuntimeError("gate unavailable")
+
+        dispatch_calls = []
+
+        def _dispatch(function_name, function_args, **kwargs):
+            dispatch_calls.append((function_name, function_args, kwargs))
+            return json.dumps({"ok": True})
+
+        monkeypatch.setattr(governance, "review_filesystem_tool_call", _raise_gate_error)
+        monkeypatch.setattr("model_tools.registry.dispatch", _dispatch)
+
+        result = handle_function_call(
+            "mcp_filesystem_write_file",
+            {"path": "/tmp/ordinary.md", "content": "hello"},
+            skip_pre_tool_call_hook=True,
+        )
+
+        assert json.loads(result) == {"ok": True}
+        assert dispatch_calls == [
+            (
+                "mcp_filesystem_write_file",
+                {"path": "/tmp/ordinary.md", "content": "hello"},
+                {"task_id": None, "user_task": None},
+            )
+        ]
+
 
 # =========================================================================
 # Legacy toolset map

@@ -49,6 +49,11 @@ except Exception:  # pragma: no cover - keep memory available during partial ins
     conflict_payload = None
     durable_write_guard = None
 
+try:
+    from agent.abstraction_governance import review_memory_write
+except Exception:  # pragma: no cover - keep memory available during partial installs
+    review_memory_write = None
+
 # fcntl is Unix-only; on Windows use msvcrt for file locking
 msvcrt = None
 try:
@@ -645,6 +650,15 @@ def memory_tool(
     if target not in {"memory", "user"}:
         return tool_error(f"Invalid target '{target}'. Use 'memory' or 'user'.", success=False)
 
+    if action in {"add", "replace"} and content and review_memory_write is not None:
+        decision = review_memory_write(target=target, content=content)
+        if not decision.ok:
+            return tool_error(
+                f"Blocked by abstraction-governance gate: {decision.message or decision.reason}",
+                success=False,
+                abstraction_governance=decision.to_payload(),
+            )
+
     gate_error = _maybe_apply_memory_gate(
         action=action,
         target=target,
@@ -744,6 +758,10 @@ MEMORY_SCHEMA = {
         "The most valuable memory prevents the user from having to repeat themselves.\n\n"
         "Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO "
         "state to memory; use session_search to recall those from past transcripts.\n"
+        "Runtime abstraction-governance gate blocks high-confidence task-progress and "
+        "procedure/checklist writes: project facts must stay scoped, reusable procedures "
+        "belong in skills or experience-ratchet proposals, and stable user preferences "
+        "should be compact declarative facts.\n"
         "If you've discovered a new way to do something, solved a problem that could be "
         "necessary later, save it as a skill with the skill tool.\n\n"
         "TWO TARGETS:\n"

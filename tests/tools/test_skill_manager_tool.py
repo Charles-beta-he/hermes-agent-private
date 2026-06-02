@@ -530,6 +530,63 @@ class TestSkillManageDispatcher:
         result = json.loads(raw)
         assert result["success"] is False
 
+    def test_create_blocks_task_progress_in_skill(self, tmp_path):
+        content = """---
+name: bad-progress
+description: Bad skill with task progress.
+---
+
+# Bad Progress
+
+PR #789 was merged today and phase 2 is done in this session.
+"""
+        with _skill_dir(tmp_path):
+            raw = skill_manage(action="create", name="bad-progress", content=content)
+
+        result = json.loads(raw)
+        assert result["success"] is False
+        assert result["abstraction_governance"]["reason"] == "task_progress_not_skill"
+        assert not (tmp_path / "bad-progress" / "SKILL.md").exists()
+
+    def test_create_blocks_context_coupled_global_skill(self, tmp_path):
+        content = """---
+name: uvisa-branch-rule
+description: Badly globalized project rule.
+---
+
+# Rule
+
+Always treat feat/uvisa-2.0 as the integration branch before merge.
+"""
+        with _skill_dir(tmp_path):
+            raw = skill_manage(action="create", name="uvisa-branch-rule", content=content)
+
+        result = json.loads(raw)
+        assert result["success"] is False
+        assert result["abstraction_governance"]["reason"] == "context_coupled_skill"
+        assert result["abstraction_governance"]["recommended_landing_zone"] == "project_profile_or_scoped_reference"
+        assert not (tmp_path / "uvisa-branch-rule" / "SKILL.md").exists()
+
+    def test_write_file_allows_scoped_project_reference(self, tmp_path):
+        reference = """# UVISA Reference
+
+Scope: project uvisa-app-2.0 only.
+Project fact: feat/uvisa-2.0 is the integration branch.
+Anti-conditions: do not apply to other repositories.
+"""
+        with _skill_dir(tmp_path):
+            skill_manage(action="create", name="scoped-reference", content=VALID_SKILL_CONTENT)
+            raw = skill_manage(
+                action="write_file",
+                name="scoped-reference",
+                file_path="references/uvisa.md",
+                file_content=reference,
+            )
+
+        result = json.loads(raw)
+        assert result["success"] is True
+        assert (tmp_path / "scoped-reference" / "references" / "uvisa.md").exists()
+
     def test_full_create_via_dispatcher(self, tmp_path):
         """Foreground create does NOT mark the skill as agent-created.
 

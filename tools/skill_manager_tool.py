@@ -52,6 +52,11 @@ except Exception:  # pragma: no cover - keep skill management available during p
     conflict_payload = None
     durable_write_guard = None
 
+try:
+    from agent.abstraction_governance import review_durable_write
+except Exception:  # pragma: no cover - keep skill management available during partial installs
+    review_durable_write = None
+
 logger = logging.getLogger(__name__)
 
 # Import security scanner — external hub installs always get scanned;
@@ -840,6 +845,23 @@ def _skill_manage_dispatch(
     replace_all: bool = False,
     absorbed_into: Optional[str] = None,
 ) -> str:
+    if action in {"create", "edit", "patch", "write_file"} and review_durable_write is not None:
+        gate_content = file_content if action == "write_file" else content
+        decision = review_durable_write(
+            kind="skill",
+            target=name,
+            action=action,
+            content=gate_content,
+            old_string=old_string,
+            new_string=new_string,
+        )
+        if not decision.ok:
+            return tool_error(
+                f"Blocked by abstraction-governance gate: {decision.message or decision.reason}",
+                success=False,
+                abstraction_governance=decision.to_payload(),
+            )
+
     if action == "create":
         if not content:
             return tool_error("content is required for 'create'. Provide the full SKILL.md text (frontmatter + body).", success=False)
