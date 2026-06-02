@@ -1,0 +1,13 @@
+{
+  "task_id": "sample-provider-routing-cost-quality-missing",
+  "provider": "openrouter",
+  "routing_outcome": {
+    "status": "policy_missing",
+    "selected_provider": null,
+    "selected_model": null,
+    "selection_reason": "No cost_quality_policy was attached to the task candidate or evidence bundle, so the default provider routing cannot be claimed as governed.",
+    "observed_via": "none",
+    "unsupported_fields": [],
+    "missing_fields": ["cost_quality_policy"]
+  }
+}

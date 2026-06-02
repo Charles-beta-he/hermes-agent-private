@@ -1,0 +1,32 @@
+{
+  "task_id": "sample-provider-routing-cost-quality-applied",
+  "provider": "openrouter",
+  "cost_quality_policy": {
+    "mode": "balanced",
+    "budget": {
+      "max_usd": 1.5,
+      "scope": "task"
+    },
+    "refuse_providers": ["Together"],
+    "refuse_models": ["openrouter/experimental-preview"],
+    "require_zdr": true,
+    "dlp_tier": "strict",
+    "data_retention": "deny"
+  },
+  "routing_preferences_snapshot": {
+    "sort": "price",
+    "ignore": ["Together"],
+    "require_parameters": true,
+    "data_collection": "deny",
+    "openrouter_min_coding_score": 0.72
+  },
+  "routing_outcome": {
+    "status": "policy_applied",
+    "selected_provider": "anthropic",
+    "selected_model": "claude-sonnet-4",
+    "selection_reason": "Balanced mode plus ZDR/DLP constraints kept Anthropic in-policy while the price sort and refusal lists excluded cheaper non-compliant routes.",
+    "observed_via": "openrouter_headers",
+    "unsupported_fields": [],
+    "missing_fields": []
+  }
+}
