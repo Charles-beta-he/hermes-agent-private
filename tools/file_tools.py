@@ -27,6 +27,11 @@ except Exception:  # pragma: no cover - keep file tools available during partial
     durable_write_guard = None
     file_content_hash = None
 
+try:
+    from agent.abstraction_governance import review_durable_write
+except Exception:  # pragma: no cover - keep file tools available during partial installs
+    review_durable_write = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -198,6 +203,65 @@ def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None
     if resolved in _SENSITIVE_EXACT_PATHS or normalized in _SENSITIVE_EXACT_PATHS:
         return _err
     return None
+
+
+def _classify_abstraction_governance_path(filepath: str, task_id: str = "default") -> str | None:
+    """Return the durable governance surface for path-based write tools.
+
+    Only narrow Hermes governance paths are classified. Ordinary project files
+    remain outside this gate so code/docs edits are not unexpectedly blocked.
+    """
+    try:
+        from hermes_constants import get_hermes_home
+        resolved = _resolve_path_for_task(filepath, task_id)
+        home = Path(get_hermes_home()).expanduser().resolve()
+    except Exception:
+        return None
+
+    def _under(child: Path, parent: Path) -> bool:
+        try:
+            child.relative_to(parent)
+            return True
+        except ValueError:
+            return False
+
+    if _under(resolved, home / "project-profiles") and resolved.suffix.lower() == ".json":
+        return "project_profile"
+    if _under(resolved, home / "experience-ratchet"):
+        return "experience"
+    if _under(resolved, home / "docs" / "adr") or _under(resolved, home / "docs" / "adrs"):
+        return "adr"
+    return None
+
+
+def _run_abstraction_governance_file_gate(
+    *,
+    path: str,
+    content: str | None,
+    task_id: str,
+    action: str,
+    old_string: str | None = None,
+    new_string: str | None = None,
+) -> str | None:
+    if review_durable_write is None:
+        return None
+    kind = _classify_abstraction_governance_path(path, task_id)
+    if kind is None:
+        return None
+    decision = review_durable_write(
+        kind=kind,
+        target=path,
+        action=action,
+        content=content,
+        old_string=old_string,
+        new_string=new_string,
+    )
+    if decision.ok:
+        return None
+    return tool_error(
+        f"Blocked by abstraction-governance gate: {decision.message or decision.reason}",
+        abstraction_governance=decision.to_payload(),
+    )
 
 
 def _check_cross_profile_path(filepath: str, task_id: str = "default") -> str | None:
@@ -874,6 +938,14 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
             "Refusing to write internal read_file status text as file content. "
             "Re-read the file or reconstruct the intended file contents before writing."
         )
+    governance_error = _run_abstraction_governance_file_gate(
+        path=path,
+        content=content,
+        task_id=task_id,
+        action="write_file",
+    )
+    if governance_error:
+        return governance_error
     try:
         # Resolve once for the registry lock + stale check.  Failures here
         # fall back to the legacy path — write proceeds, per-task staleness
@@ -969,6 +1041,16 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
             cross_warning = _check_cross_profile_path(_p, task_id)
             if cross_warning:
                 return tool_error(cross_warning)
+        governance_error = _run_abstraction_governance_file_gate(
+            path=_p,
+            content=patch if mode == "patch" else None,
+            task_id=task_id,
+            action=f"patch:{mode}",
+            old_string=old_string,
+            new_string=new_string,
+        )
+        if governance_error:
+            return governance_error
     try:
         # Resolve paths for locking.  Ordered + deduplicated so concurrent
         # callers lock in the same order — prevents deadlock on overlapping

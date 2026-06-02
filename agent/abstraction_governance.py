@@ -64,6 +64,30 @@ _STABLE_MEMORY_ALLOW_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     )
 )
 
+_PROJECT_ENTITY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bfeat/[A-Za-z0-9_.-]+\b",
+        r"\b[A-Za-z0-9_.-]+/(app|admin|backend|frontend|service|worker)[A-Za-z0-9_.-]*\b",
+        r"/Users/[A-Za-z0-9_.-]+/[^\n` ]+",
+        r"\bPR\s*#?\d+\b",
+        r"\bissue\s*#?\d+\b",
+    )
+)
+
+_SCOPE_MARKER_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bScope\s*:\s*(project|repo|domain|user|global|task|session)\b",
+        r"\bAnti-conditions?\s*:",
+        r"\bApplicability\s*:",
+        r"\bProject fact\s*:",
+        r"适用范围[:：]",
+        r"反条件[:：]",
+        r"仅适用于",
+    )
+)
+
 
 def _truthy_env(name: str, default: bool = True) -> bool:
     raw = os.environ.get(name)
@@ -80,6 +104,122 @@ def should_apply_abstraction_gate() -> bool:
 
 def _matches_any(content: str, patterns: Iterable[re.Pattern[str]]) -> bool:
     return any(pattern.search(content) for pattern in patterns)
+
+
+def _has_scope_marker(content: str) -> bool:
+    return _matches_any(content, _SCOPE_MARKER_PATTERNS)
+
+
+def _candidate_text(*parts: str | None) -> str:
+    return "\n".join(part.strip() for part in parts if part and part.strip())
+
+
+def review_skill_mutation(
+    *,
+    action: str,
+    name: str,
+    content: str | None = None,
+    old_string: str | None = None,
+    new_string: str | None = None,
+) -> AbstractionGateDecision:
+    """Review a skill create/edit/patch/write_file mutation before persisting.
+
+    Skills are the landing zone for reusable procedures, so this gate does not
+    block procedural language.  It blocks two high-confidence boundary errors:
+    session/task progress being preserved as a skill, and project-specific
+    entity rules being promoted without explicit scope/anti-condition markers.
+    """
+
+    if not should_apply_abstraction_gate():
+        return AbstractionGateDecision(ok=True, reason="disabled_or_empty")
+
+    text = _candidate_text(content, new_string)
+    if not text:
+        return AbstractionGateDecision(ok=True, reason="empty_deferred_to_skill_tool")
+
+    if _matches_any(text, _TASK_PROGRESS_PATTERNS):
+        return AbstractionGateDecision(
+            ok=False,
+            reason="task_progress_not_skill",
+            recommended_landing_zone="session_log_or_workpad",
+            message=(
+                "Skills may not store PR/issue/commit status, session outcomes, "
+                "or active task progress. Keep those facts in the transcript, "
+                "Workpad, incident log, or session_search."
+            ),
+        )
+
+    if _matches_any(text, _PROJECT_ENTITY_PATTERNS) and not _has_scope_marker(text):
+        return AbstractionGateDecision(
+            ok=False,
+            reason="context_coupled_skill",
+            recommended_landing_zone="project_profile_or_scoped_reference",
+            message=(
+                "This skill mutation contains project-specific entities but no "
+                "explicit scope/applicability/anti-condition marker. Strip entities "
+                "for global skills, or land the fact in a project profile/scoped "
+                "reference with clear boundaries."
+            ),
+        )
+
+    return AbstractionGateDecision(ok=True, reason="accepted")
+
+
+def review_durable_write(
+    *,
+    kind: str,
+    target: str,
+    content: str | None = None,
+    action: str = "",
+    old_string: str | None = None,
+    new_string: str | None = None,
+) -> AbstractionGateDecision:
+    """Route durable-write reviews by governance surface.
+
+    This is intentionally side-effect free so tools, hooks, and future profile / ADR /
+    experience-promotion paths can share the same deterministic boundary checks.
+    Unknown kinds are accepted to avoid surprising unrelated write paths.
+    """
+
+    normalized = (kind or "").strip().lower()
+    if normalized == "memory":
+        return review_memory_write(target=target, content=content)
+    if normalized == "skill":
+        return review_skill_mutation(
+            action=action,
+            name=target,
+            content=content,
+            old_string=old_string,
+            new_string=new_string,
+        )
+    if normalized in {"project_profile", "adr", "experience"}:
+        text = _candidate_text(content, new_string)
+        if not should_apply_abstraction_gate() or not text:
+            return AbstractionGateDecision(ok=True, reason="disabled_or_empty")
+        if _matches_any(text, _TASK_PROGRESS_PATTERNS):
+            return AbstractionGateDecision(
+                ok=False,
+                reason=f"task_progress_not_{normalized}",
+                recommended_landing_zone="session_log_or_workpad",
+                message=(
+                    "Durable governance/profile/ADR/experience writes may not store "
+                    "active task progress, PR/issue/commit status, or session outcomes. "
+                    "Keep those facts in the transcript, Workpad, proof log, or session_search."
+                ),
+            )
+        if normalized in {"adr", "experience"} and _matches_any(text, _PROJECT_ENTITY_PATTERNS) and not _has_scope_marker(text):
+            return AbstractionGateDecision(
+                ok=False,
+                reason=f"context_coupled_{normalized}",
+                recommended_landing_zone="project_profile_or_scoped_reference",
+                message=(
+                    "This durable write contains project-specific entities but no explicit "
+                    "scope/applicability/anti-condition marker. Add boundaries or land the "
+                    "fact in the scoped project profile/reference instead."
+                ),
+            )
+        return AbstractionGateDecision(ok=True, reason="accepted")
+    return AbstractionGateDecision(ok=True, reason="unsupported_kind_deferred")
 
 
 def review_memory_write(*, target: str, content: str | None) -> AbstractionGateDecision:
