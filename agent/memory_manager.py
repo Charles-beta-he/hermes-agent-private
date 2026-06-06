@@ -282,23 +282,36 @@ class MemoryManager:
         self._providers.append(provider)
 
         # Index tool names → provider for routing
-        for schema in provider.get_tool_schemas():
-            tool_name = schema.get("name", "")
-            if tool_name and tool_name not in self._tool_to_provider:
-                self._tool_to_provider[tool_name] = provider
-            elif tool_name in self._tool_to_provider:
-                logger.warning(
-                    "Memory tool name conflict: '%s' already registered by %s, "
-                    "ignoring from %s",
-                    tool_name,
-                    self._tool_to_provider[tool_name].name,
-                    provider.name,
-                )
+        # If get_tool_schemas() fails (dirty/uninitialized provider),
+        # roll back the registration to prevent global state pollution.
+        try:
+            schemas = list(provider.get_tool_schemas())
+            for schema in schemas:
+                tool_name = schema.get("name", "")
+                if tool_name and tool_name not in self._tool_to_provider:
+                    self._tool_to_provider[tool_name] = provider
+                elif tool_name in self._tool_to_provider:
+                    logger.warning(
+                        "Memory tool name conflict: '%s' already registered by %s, "
+                        "ignoring from %s",
+                        tool_name,
+                        self._tool_to_provider[tool_name].name,
+                        provider.name,
+                    )
+        except Exception:
+            logger.error(
+                "Memory provider '%s' failed get_tool_schemas(), rolling back registration",
+                provider.name,
+            )
+            self._providers.remove(provider)
+            if not is_builtin:
+                self._has_external = False
+            return
 
         logger.info(
             "Memory provider '%s' registered (%d tools)",
             provider.name,
-            len(provider.get_tool_schemas()),
+            len(schemas),
         )
 
     @property

@@ -2534,6 +2534,26 @@ def _interpolate_env_vars(value):
     return value
 
 
+_MCP_SAFETY_NET_SEC = 30.0  # Default safety net timeout
+
+def _mcp_rpc_call(server, coro_factory, timeout: float = None):
+    """Centralized MCP RPC call with lock + timeout + safety net.
+
+    Args:
+        server: MCP server instance with _rpc_lock
+        coro_factory: zero-arg callable returning the coroutine to execute
+        timeout: override timeout; defaults to _MCP_SAFETY_NET_SEC
+    """
+    if timeout is None:
+        timeout = _MCP_SAFETY_NET_SEC
+
+    async def _guarded():
+        async with server._rpc_lock:
+            return await coro_factory()
+
+    return _run_on_mcp_loop(_guarded, timeout=timeout)
+
+
 def _load_mcp_config() -> Dict[str, dict]:
     """Read ``mcp_servers`` from the Hermes config file.
 
@@ -2630,8 +2650,7 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
             }, ensure_ascii=False)
 
         async def _call():
-            async with server._rpc_lock:
-                result = await server.session.call_tool(tool_name, arguments=args)
+            result = await server.session.call_tool(tool_name, arguments=args)
             # MCP CallToolResult has .content (list of content blocks) and .isError
             if result.isError:
                 error_text = ""
@@ -2680,7 +2699,7 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
             return json.dumps({"result": text_result}, ensure_ascii=False)
 
         def _call_once():
-            return _run_on_mcp_loop(_call, timeout=tool_timeout)
+            return _mcp_rpc_call(server, _call, timeout=tool_timeout)
 
         try:
             result = _call_once()
@@ -2743,8 +2762,7 @@ def _make_list_resources_handler(server_name: str, tool_timeout: float):
             }, ensure_ascii=False)
 
         async def _call():
-            async with server._rpc_lock:
-                result = await server.session.list_resources()
+            result = await server.session.list_resources()
             resources = []
             for r in (result.resources if hasattr(result, "resources") else []):
                 entry = {}
@@ -2760,7 +2778,7 @@ def _make_list_resources_handler(server_name: str, tool_timeout: float):
             return json.dumps({"resources": resources}, ensure_ascii=False)
 
         def _call_once():
-            return _run_on_mcp_loop(_call, timeout=tool_timeout)
+            return _mcp_rpc_call(server, _call, timeout=tool_timeout)
 
         try:
             return _call_once()
@@ -2807,8 +2825,7 @@ def _make_read_resource_handler(server_name: str, tool_timeout: float):
             return tool_error("Missing required parameter 'uri'")
 
         async def _call():
-            async with server._rpc_lock:
-                result = await server.session.read_resource(uri)
+            result = await server.session.read_resource(uri)
             # read_resource returns ReadResourceResult with .contents list
             parts: List[str] = []
             contents = result.contents if hasattr(result, "contents") else []
@@ -2820,7 +2837,7 @@ def _make_read_resource_handler(server_name: str, tool_timeout: float):
             return json.dumps({"result": "\n".join(parts) if parts else ""}, ensure_ascii=False)
 
         def _call_once():
-            return _run_on_mcp_loop(_call, timeout=tool_timeout)
+            return _mcp_rpc_call(server, _call, timeout=tool_timeout)
 
         try:
             return _call_once()
@@ -2861,8 +2878,7 @@ def _make_list_prompts_handler(server_name: str, tool_timeout: float):
             }, ensure_ascii=False)
 
         async def _call():
-            async with server._rpc_lock:
-                result = await server.session.list_prompts()
+            result = await server.session.list_prompts()
             prompts = []
             for p in (result.prompts if hasattr(result, "prompts") else []):
                 entry = {}
@@ -2883,7 +2899,7 @@ def _make_list_prompts_handler(server_name: str, tool_timeout: float):
             return json.dumps({"prompts": prompts}, ensure_ascii=False)
 
         def _call_once():
-            return _run_on_mcp_loop(_call, timeout=tool_timeout)
+            return _mcp_rpc_call(server, _call, timeout=tool_timeout)
 
         try:
             return _call_once()
@@ -2931,8 +2947,7 @@ def _make_get_prompt_handler(server_name: str, tool_timeout: float):
         arguments = args.get("arguments", {})
 
         async def _call():
-            async with server._rpc_lock:
-                result = await server.session.get_prompt(name, arguments=arguments)
+            result = await server.session.get_prompt(name, arguments=arguments)
             # GetPromptResult has .messages list
             messages = []
             for msg in (result.messages if hasattr(result, "messages") else []):
@@ -2954,7 +2969,7 @@ def _make_get_prompt_handler(server_name: str, tool_timeout: float):
             return json.dumps(resp, ensure_ascii=False)
 
         def _call_once():
-            return _run_on_mcp_loop(_call, timeout=tool_timeout)
+            return _mcp_rpc_call(server, _call, timeout=tool_timeout)
 
         try:
             return _call_once()

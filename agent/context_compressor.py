@@ -1354,6 +1354,13 @@ NEW TURNS TO INCORPORATE:
 
 Update the summary using this exact structure. PRESERVE all existing information that is still relevant. ADD new completed actions to the numbered list (continue numbering). Move items from "In Progress" to "Completed Actions" when done. Move answered questions to "Resolved Questions". Update "Active State" to reflect current state. Remove information only if it is clearly obsolete. CRITICAL: Update "## Active Task" to reflect the user's most recent unfulfilled input — this includes any question, decision request, or discussion turn that the assistant has not yet answered. Only write "None" if the last exchange was fully resolved.
 
+CRITICAL — ANTI-GHOST RULES:
+1. REMOVE any numeric counters or stats that refer to memory usage, token counts, or session-local state — these are ALWAYS stale
+2. REMOVE any sentence that says "This session..." or "Currently working on..." — rewrite to describe what was DONE, not what "is" happening
+3. TIMESTAMPS from the previous summary are ALWAYS outdated — drop them unless they refer to permanent external events
+4. If the PREVIOUS SUMMARY describes work now COMPLETE (confirmed by new turns), move it to "Completed Actions"
+5. NEVER carry forward "Memory at" or system metrics — they are now misleading
+
 {_template_sections}"""
         else:
             # First compaction: summarize from scratch

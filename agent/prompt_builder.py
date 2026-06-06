@@ -160,7 +160,12 @@ MEMORY_GUIDANCE = (
     "'Project uses pytest with xdist' ✓ — 'Run tests with pytest -n 4' ✗. "
     "Imperative phrasing gets re-read as a directive in later sessions and can "
     "cause repeated work or override the user's current request. Procedures and "
-    "workflows belong in skills, not memory."
+    "workflows belong in skills, not memory.\n"
+    "GHOST PREVENTION: Never save WIP status, session-local state, or \"this session\" "
+    "context to memory. These become stale ghosts after context compression — "
+    "they survive as past-tense entries that future sessions treat as current. "
+    "Before memory.write, ask: \"Will this fact still be true in 10 sessions?\" "
+    "If no, don't save it."
 )
 
 SESSION_SEARCH_GUIDANCE = (

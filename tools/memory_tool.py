@@ -35,6 +35,12 @@ from typing import Dict, Any, List, Optional
 
 from utils import atomic_replace
 
+try:
+    from agent.openclaw_control_plane import load_experimental_config, memory_write_gate
+except Exception:  # pragma: no cover - fail-soft import guard
+    load_experimental_config = None
+    memory_write_gate = None
+
 # fcntl is Unix-only; on Windows use msvcrt for file locking
 msvcrt = None
 try:
@@ -599,12 +605,60 @@ class MemoryStore:
             raise RuntimeError(f"Failed to write memory file {path}: {e}")
 
 
+def _memory_gate_enabled_from_cognitive_state(cognitive_state: Any) -> Optional[bool]:
+    policy = getattr(cognitive_state, "policy", None) if cognitive_state is not None else None
+    memory_gate = getattr(policy, "memory_gate", None) if policy is not None else None
+    if isinstance(memory_gate, dict) and "enabled" in memory_gate:
+        return bool(memory_gate.get("enabled"))
+    return None
+
+
+def _memory_gate_enabled_from_config() -> bool:
+    if load_experimental_config is None:
+        return False
+    try:
+        cfg = load_experimental_config() or {}
+    except Exception:
+        return False
+    ocp = cfg.get("openclaw_control_plane") or {}
+    return bool(ocp.get("memory_write_gate", False))
+
+
+def _maybe_apply_memory_gate(
+    *,
+    action: str,
+    target: str,
+    content: Optional[str],
+    cognitive_state: Any = None,
+) -> Optional[str]:
+    if action not in {"add", "replace"} or not content:
+        return None
+    enabled = _memory_gate_enabled_from_cognitive_state(cognitive_state)
+    if enabled is None:
+        enabled = _memory_gate_enabled_from_config()
+    if not enabled or memory_write_gate is None:
+        return None
+    try:
+        gate = memory_write_gate(source="semantic_memory", content=content, durable_days=30)
+    except Exception as exc:
+        logger.warning("memory write gate failed soft: %s", exc)
+        return None
+    if gate.get("ok"):
+        return None
+    return tool_error(
+        f"Blocked by control-plane gate: {gate.get('reason') or 'memory write rejected'}",
+        success=False,
+        gate=gate,
+    )
+
+
 def memory_tool(
     action: str,
     target: str = "memory",
     content: str = None,
     old_text: str = None,
     store: Optional[MemoryStore] = None,
+    cognitive_state: Any = None,
 ) -> str:
     """
     Single entry point for the memory tool. Dispatches to MemoryStore methods.
@@ -616,6 +670,15 @@ def memory_tool(
 
     if target not in {"memory", "user"}:
         return tool_error(f"Invalid target '{target}'. Use 'memory' or 'user'.", success=False)
+
+    gate_error = _maybe_apply_memory_gate(
+        action=action,
+        target=target,
+        content=content,
+        cognitive_state=cognitive_state,
+    )
+    if gate_error is not None:
+        return gate_error
 
     if action == "add":
         if not content:
@@ -713,7 +776,8 @@ registry.register(
         target=args.get("target", "memory"),
         content=args.get("content"),
         old_text=args.get("old_text"),
-        store=kw.get("store")),
+        store=kw.get("store"),
+        cognitive_state=kw.get("cognitive_state")),
     check_fn=check_memory_requirements,
     emoji="🧠",
 )

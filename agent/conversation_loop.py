@@ -64,6 +64,31 @@ from utils import base_url_host_matches, env_var_enabled
 logger = logging.getLogger(__name__)
 
 
+def _run_conductor_intent_router(agent: Any, user_message: str, *, active_tasks: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
+    """Run the optional conductor intent router for a user turn.
+
+    The conductor path is default-off and fail-soft.  This helper is kept
+    importable so local overlay regression tests can verify the wiring boundary
+    after upstream updates without enabling runtime behavior by default.
+    """
+    config = getattr(agent, "_conductor_config", None) or {}
+    conductor = config.get("conductor") if isinstance(config, dict) else {}
+    conductor = conductor if isinstance(conductor, dict) else {}
+    router_config = conductor.get("intent_router") if isinstance(conductor, dict) else {}
+    router_config = router_config if isinstance(router_config, dict) else {}
+    if not router_config.get("enabled"):
+        return None
+
+    try:
+        from agent.conductor_runtime import ConversationIntentRouter
+
+        router = ConversationIntentRouter(default_model_name=getattr(agent, "model", "") or "unknown")
+        return router.classify(user_message or "", active_tasks=active_tasks or [])
+    except Exception as exc:  # pragma: no cover - defensive fail-soft boundary
+        logger.debug("conductor intent router unavailable: %s", exc)
+        return None
+
+
 def _ollama_context_limit_error(agent: Any, request_tokens: int) -> Optional[str]:
     """Return a user-facing error when Ollama is loaded with too little context."""
     if not getattr(agent, "tools", None):
