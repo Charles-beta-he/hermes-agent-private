@@ -105,15 +105,20 @@ def _translate_tool_call_to_gemini(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _translate_tool_result_to_gemini(message: Dict[str, Any]) -> Dict[str, Any]:
+def _translate_tool_result_to_gemini(
+    message: Dict[str, Any],
+    tool_name_by_call_id: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """OpenAI tool-role message -> Gemini functionResponse part.
 
-    The function name isn't in the OpenAI tool message directly; it must be
-    passed via the assistant message that issued the call. For simplicity we
-    look up ``name`` on the message (OpenAI SDK copies it there) or on the
-    ``tool_call_id`` cross-reference.
+    The function name usually lives on the assistant tool_call that issued the
+    call, while the later tool result often carries only ``tool_call_id``.
+    Preserve the real function name when we can map it; fall back to explicit
+    ``name``, then the call id, then a generic safe name.
     """
-    name = str(message.get("name") or message.get("tool_call_id") or "tool")
+    tool_call_id = str(message.get("tool_call_id") or "").strip()
+    mapped_name = (tool_name_by_call_id or {}).get(tool_call_id) if tool_call_id else None
+    name = str(mapped_name or message.get("name") or tool_call_id or "tool")
     content = _coerce_content_to_text(message.get("content"))
     # Gemini expects the response as a dict under `response`. We wrap plain
     # text in {"output": "..."}.
@@ -136,8 +141,12 @@ def _build_gemini_contents(
     """Convert OpenAI messages[] to Gemini contents[] + systemInstruction."""
     system_text_parts: List[str] = []
     contents: List[Dict[str, Any]] = []
+    tool_name_by_call_id: Dict[str, str] = {}
 
-    for msg in messages:
+    idx = 0
+    while idx < len(messages):
+        msg = messages[idx]
+        idx += 1
         if not isinstance(msg, dict):
             continue
         role = str(msg.get("role") or "user")
@@ -146,12 +155,22 @@ def _build_gemini_contents(
             system_text_parts.append(_coerce_content_to_text(msg.get("content")))
             continue
 
-        # Tool result message — emit a user-role turn with functionResponse
-        if role == "tool" or role == "function":
-            contents.append({
-                "role": "user",
-                "parts": [_translate_tool_result_to_gemini(msg)],
-            })
+        # Consecutive tool/function result messages belong to the same OpenAI
+        # tool-response turn. Gemini expects those functionResponse parts to be
+        # batched into one user-role turn, not split across multiple turns.
+        if role in {"tool", "function"}:
+            parts = [_translate_tool_result_to_gemini(msg, tool_name_by_call_id)]
+            while idx < len(messages):
+                next_msg = messages[idx]
+                if not isinstance(next_msg, dict):
+                    idx += 1
+                    continue
+                next_role = str(next_msg.get("role") or "user")
+                if next_role not in {"tool", "function"}:
+                    break
+                parts.append(_translate_tool_result_to_gemini(next_msg, tool_name_by_call_id))
+                idx += 1
+            contents.append({"role": "user", "parts": parts})
             continue
 
         gemini_role = _ROLE_MAP_OPENAI_TO_GEMINI.get(role, "user")
@@ -166,6 +185,10 @@ def _build_gemini_contents(
         if isinstance(tool_calls, list):
             for tc in tool_calls:
                 if isinstance(tc, dict):
+                    call_id = str(tc.get("id") or "").strip()
+                    fn = tc.get("function") or {}
+                    if call_id and isinstance(fn, dict) and fn.get("name"):
+                        tool_name_by_call_id[call_id] = str(fn["name"])
                     parts.append(_translate_tool_call_to_gemini(tc))
 
         if not parts:

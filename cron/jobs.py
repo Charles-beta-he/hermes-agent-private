@@ -118,6 +118,34 @@ def _schedule_display_for_job(job: Dict[str, Any]) -> str:
     return "?"
 
 
+def _repair_legacy_misstored_schedule(schedule: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
+    """Repair legacy jobs that stored ``every X`` as a cron expression.
+
+    A historical scheduler bug persisted interval schedules like ``every 180m``
+    as ``{"kind": "cron", "expr": "every 180m"}``. Feeding that shape to
+    croniter raises and can stall due-job scanning. Repair only that narrow,
+    human-readable legacy shape; leave all other invalid cron expressions to
+    existing validation/error handling.
+    """
+    if not isinstance(schedule, dict):
+        return schedule, False
+    if schedule.get("kind") != "cron":
+        return schedule, False
+    expr = _coerce_job_text(schedule.get("expr")).strip()
+    if not expr.lower().startswith("every "):
+        return schedule, False
+    try:
+        minutes = parse_duration(expr[6:].strip())
+    except ValueError:
+        return schedule, False
+    repaired = dict(schedule)
+    repaired.pop("expr", None)
+    repaired["kind"] = "interval"
+    repaired["minutes"] = minutes
+    repaired["display"] = f"every {minutes}m"
+    return repaired, True
+
+
 def _normalize_job_record(job: Dict[str, Any]) -> Dict[str, Any]:
     """Return a read-safe cron job shape for UI/API/tool/scheduler consumers.
 
@@ -380,6 +408,7 @@ def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None
     Returns ISO timestamp string, or None if no more runs.
     """
     now = _hermes_now()
+    schedule, _ = _repair_legacy_misstored_schedule(schedule)
 
     if schedule["kind"] == "once":
         return _recoverable_oneshot_run_at(schedule, now, last_run_at=last_run_at)
@@ -1034,8 +1063,20 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
             continue
 
         next_run = job.get("next_run_at")
+        schedule = job.get("schedule", {})
+        schedule, repaired_schedule = _repair_legacy_misstored_schedule(schedule)
+        if repaired_schedule:
+            job["schedule"] = schedule
+            job["schedule_display"] = schedule.get("display", _schedule_display_for_job(job))
+            job_id = job.get("id")
+            if job_id:
+                for rj in raw_jobs:
+                    if rj.get("id") == job_id:
+                        rj["schedule"] = dict(schedule)
+                        rj["schedule_display"] = job["schedule_display"]
+                        needs_save = True
+                        break
         if not next_run:
-            schedule = job.get("schedule", {})
             kind = schedule.get("kind")
 
             # One-shot jobs use a small grace window via the dedicated helper.
@@ -1059,16 +1100,24 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
             if not recovered_next:
                 continue
 
+            job_id = job.get("id")
+            if not job_id:
+                logger.warning(
+                    "Job '%s' has no id; refusing to persist recovered next_run_at",
+                    job.get("name", "<unnamed>"),
+                )
+                continue
+
             job["next_run_at"] = recovered_next
             next_run = recovered_next
             logger.info(
                 "Job '%s' had no next_run_at; recovering %s run at %s",
-                job.get("name", job["id"]),
+                job.get("name", job_id),
                 recovery_kind,
                 recovered_next,
             )
             for rj in raw_jobs:
-                if rj["id"] == job["id"]:
+                if rj.get("id") == job_id:
                     rj["next_run_at"] = recovered_next
                     needs_save = True
                     break
@@ -1090,17 +1139,19 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
                     logger.info(
                         "Job '%s' missed its scheduled time (%s, grace=%ds). "
                         "Fast-forwarding to next run: %s",
-                        job.get("name", job["id"]),
+                        job.get("name", job.get("id", "<unnamed>")),
                         next_run,
                         grace,
                         new_next,
                     )
-                    # Update the job in storage
-                    for rj in raw_jobs:
-                        if rj["id"] == job["id"]:
-                            rj["next_run_at"] = new_next
-                            needs_save = True
-                            break
+            # Update the job in storage
+                    job_id = job.get("id")
+                    if job_id:
+                        for rj in raw_jobs:
+                            if rj.get("id") == job_id:
+                                rj["next_run_at"] = new_next
+                                needs_save = True
+                                break
                     continue  # Skip this run
 
             due.append(job)

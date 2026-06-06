@@ -633,6 +633,74 @@ class TestBuildGeminiRequest:
         assert fr_part["functionResponse"]["name"] == "get_weather"
         assert fr_part["functionResponse"]["response"] == {"temp": 72}
 
+    def test_tool_result_uses_assistant_tool_call_name_when_result_lacks_name(self):
+        from agent.gemini_cloudcode_adapter import build_gemini_request
+
+        req = build_gemini_request(messages=[
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "tool_calls": [{
+                "id": "call_weather", "type": "function",
+                "function": {"name": "get_weather", "arguments": "{}"},
+            }]},
+            {
+                "role": "tool",
+                "tool_call_id": "call_weather",
+                "content": '{"temp": 72}',
+            },
+        ])
+
+        last = req["contents"][-1]
+        fr_part = next(p for p in last["parts"] if "functionResponse" in p)
+        assert fr_part["functionResponse"]["name"] == "get_weather"
+        assert fr_part["functionResponse"]["response"] == {"temp": 72}
+
+    def test_tool_result_prefers_assistant_tool_call_name_over_stale_result_name(self):
+        from agent.gemini_cloudcode_adapter import build_gemini_request
+
+        req = build_gemini_request(messages=[
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "tool_calls": [{
+                "id": "call_weather", "type": "function",
+                "function": {"name": "get_weather", "arguments": "{}"},
+            }]},
+            {
+                "role": "tool",
+                "name": "call_weather",
+                "tool_call_id": "call_weather",
+                "content": '{"temp": 72}',
+            },
+        ])
+
+        last = req["contents"][-1]
+        fr_part = next(p for p in last["parts"] if "functionResponse" in p)
+        assert fr_part["functionResponse"]["name"] == "get_weather"
+
+    def test_consecutive_tool_results_are_batched_into_one_user_turn(self):
+        from agent.gemini_cloudcode_adapter import build_gemini_request
+
+        req = build_gemini_request(messages=[
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "tool_calls": [
+                {
+                    "id": "call_weather", "type": "function",
+                    "function": {"name": "get_weather", "arguments": "{}"},
+                },
+                {
+                    "id": "call_time", "type": "function",
+                    "function": {"name": "get_time", "arguments": "{}"},
+                },
+            ]},
+            {"role": "tool", "tool_call_id": "call_weather", "content": '{"temp": 72}'},
+            {"role": "tool", "tool_call_id": "call_time", "content": '{"time": "10:00"}'},
+        ])
+
+        last = req["contents"][-1]
+        assert last["role"] == "user"
+        responses = [p["functionResponse"] for p in last["parts"]]
+        assert [r["name"] for r in responses] == ["get_weather", "get_time"]
+        assert responses[0]["response"] == {"temp": 72}
+        assert responses[1]["response"] == {"time": "10:00"}
+
     def test_tools_translated_to_function_declarations(self):
         from agent.gemini_cloudcode_adapter import build_gemini_request
 

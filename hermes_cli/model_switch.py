@@ -1204,7 +1204,7 @@ def list_authenticated_providers(
         fetch_models_dev,
         get_provider_info as _mdev_pinfo,
     )
-    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.auth import PROVIDER_REGISTRY, get_auth_status
     from hermes_cli.models import (
         OPENROUTER_MODELS, _PROVIDER_MODELS,
         _MODELS_DEV_PREFERRED, _merge_with_models_dev, cached_provider_model_ids,
@@ -1446,6 +1446,19 @@ def list_authenticated_providers(
                     if any(os.environ.get(ev) for ev in pcfg.api_key_env_vars):
                         has_creds = True
                         break
+        # Gemini CLI OAuth is authenticated via provider-specific status even
+        # when it has no env vars, auth.json entry, or credential-pool record.
+        # Keep this shortcut narrow: generic external_process status can mean
+        # only "command exists", not "usable authenticated provider".
+        if not has_creds and hermes_slug == "google-gemini-cli" and overlay.auth_type == "oauth_external":
+            for _key in (hermes_slug, pid):
+                try:
+                    status = get_auth_status(_key)
+                    if isinstance(status, dict) and status.get("logged_in"):
+                        has_creds = True
+                        break
+                except Exception as exc:
+                    logger.debug("Auth status check failed for %s: %s", _key, exc)
         # Check auth store and credential pool for non-env-var credentials.
         # This applies to OAuth providers AND api_key providers that also
         # support OAuth (e.g. anthropic supports both API key and Claude Code

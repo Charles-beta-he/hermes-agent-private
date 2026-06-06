@@ -814,6 +814,143 @@ class TestGetDueJobs:
             recovered_dt = recovered_dt.replace(tzinfo=timezone.utc)
         assert recovered_dt > now
 
+    def test_legacy_every_expr_misstored_as_cron_is_repaired_not_global_stall(self, tmp_cron_dir, monkeypatch):
+        now = datetime(2026, 3, 18, 10, 0, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        save_jobs([
+            {
+                "id": "legacy-every-as-cron",
+                "name": "Legacy interval",
+                "prompt": "...",
+                "schedule": {"kind": "cron", "expr": "every 180m", "display": "every 180m"},
+                "schedule_display": "every 180m",
+                "repeat": {"times": None, "completed": 0},
+                "enabled": True,
+                "state": "scheduled",
+                "paused_at": None,
+                "paused_reason": None,
+                "created_at": "2026-03-18T09:00:00+00:00",
+                "next_run_at": None,
+                "last_run_at": None,
+                "last_status": None,
+                "last_error": None,
+                "deliver": "local",
+                "origin": None,
+            },
+            {
+                "id": "healthy-due",
+                "name": "Healthy due job",
+                "prompt": "...",
+                "schedule": {"kind": "interval", "minutes": 60, "display": "every 60m"},
+                "schedule_display": "every 60m",
+                "repeat": {"times": None, "completed": 0},
+                "enabled": True,
+                "state": "scheduled",
+                "paused_at": None,
+                "paused_reason": None,
+                "created_at": "2026-03-18T09:00:00+00:00",
+                "next_run_at": "2026-03-18T09:55:00+00:00",
+                "last_run_at": None,
+                "last_status": None,
+                "last_error": None,
+                "deliver": "local",
+                "origin": None,
+            },
+        ])
+
+        due = get_due_jobs()
+
+        assert [job["id"] for job in due] == ["healthy-due"]
+        repaired = get_job("legacy-every-as-cron")
+        assert repaired["schedule"] == {"kind": "interval", "minutes": 180, "display": "every 180m"}
+        assert repaired["schedule_display"] == "every 180m"
+        assert repaired["next_run_at"] is not None
+
+    def test_legacy_every_expr_missing_id_is_not_repaired_by_none_match(self, tmp_cron_dir, monkeypatch):
+        now = datetime(2026, 3, 18, 10, 0, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+        original = [
+            {
+                "name": "Malformed legacy interval",
+                "prompt": "...",
+                "schedule": {"kind": "cron", "expr": "every 180m", "display": "every 180m"},
+                "schedule_display": "every 180m",
+                "repeat": {"times": None, "completed": 0},
+                "enabled": True,
+                "state": "scheduled",
+                "created_at": "2026-03-18T09:00:00+00:00",
+                "next_run_at": None,
+                "last_run_at": None,
+                "last_status": None,
+                "last_error": None,
+                "deliver": "local",
+                "origin": None,
+            },
+            {
+                "name": "Second malformed job",
+                "prompt": "...",
+                "schedule": {"kind": "interval", "minutes": 60, "display": "every 60m"},
+                "schedule_display": "every 60m",
+                "repeat": {"times": None, "completed": 0},
+                "enabled": True,
+                "state": "scheduled",
+                "created_at": "2026-03-18T09:00:00+00:00",
+                "next_run_at": None,
+                "last_run_at": None,
+                "last_status": None,
+                "last_error": None,
+                "deliver": "local",
+                "origin": None,
+            },
+        ]
+        save_jobs(original)
+
+        assert get_due_jobs() == []
+        assert load_jobs() == original
+
+    def test_stale_missing_id_job_is_not_fast_forwarded_by_none_match(self, tmp_cron_dir, monkeypatch):
+        now = datetime(2026, 3, 18, 10, 0, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+        original = [
+            {
+                "name": "Malformed stale interval",
+                "prompt": "...",
+                "schedule": {"kind": "interval", "minutes": 60, "display": "every 60m"},
+                "schedule_display": "every 60m",
+                "repeat": {"times": None, "completed": 0},
+                "enabled": True,
+                "state": "scheduled",
+                "created_at": "2026-03-18T08:00:00+00:00",
+                "next_run_at": "2026-03-18T08:00:00+00:00",
+                "last_run_at": None,
+                "last_status": None,
+                "last_error": None,
+                "deliver": "local",
+                "origin": None,
+            },
+            {
+                "name": "Second malformed job",
+                "prompt": "...",
+                "schedule": {"kind": "interval", "minutes": 120, "display": "every 120m"},
+                "schedule_display": "every 120m",
+                "repeat": {"times": None, "completed": 0},
+                "enabled": True,
+                "state": "scheduled",
+                "created_at": "2026-03-18T08:00:00+00:00",
+                "next_run_at": "2026-03-18T08:30:00+00:00",
+                "last_run_at": None,
+                "last_status": None,
+                "last_error": None,
+                "deliver": "local",
+                "origin": None,
+            },
+        ]
+        save_jobs(original)
+
+        assert get_due_jobs() == []
+        assert load_jobs() == original
+
     def test_broken_interval_without_next_run_is_recovered(self, tmp_cron_dir, monkeypatch):
         now = datetime(2026, 3, 18, 10, 0, 0, tzinfo=timezone.utc)
         monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
