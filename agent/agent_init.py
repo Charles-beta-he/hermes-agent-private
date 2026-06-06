@@ -50,7 +50,7 @@ from agent.tool_guardrails import (
 from hermes_cli.config import cfg_get
 from hermes_cli.timeouts import get_provider_request_timeout
 from hermes_constants import get_hermes_home
-from utils import base_url_host_matches
+from utils import base_url_host_matches, is_truthy_value
 
 # Use the same logger name as run_agent so tests patching ``run_agent.logger``
 # capture our warnings.  (run_agent.py also does
@@ -258,6 +258,12 @@ def init_agent(
     # Shared iteration budget — parent creates, children inherit.
     # Consumed by every LLM turn across parent + all subagents.
     agent.iteration_budget = iteration_budget or IterationBudget(max_iterations)
+    # Budget/iteration auto-relay is config-driven and default-safe. Defaults
+    # are initialized here before config is loaded later in this constructor.
+    agent.auto_relay_enabled = True
+    agent.max_relay_count = 3
+    agent._relay_count = 0
+    agent._auto_relay_active = False
     agent.tool_delay = tool_delay
     agent.save_trajectories = save_trajectories
     agent.verbose_logging = verbose_logging
@@ -1060,6 +1066,18 @@ def init_agent(
         _agent_cfg = _load_agent_config()
     except Exception:
         _agent_cfg = {}
+    try:
+        _delegation_cfg = _agent_cfg.get("delegation", {})
+        if not isinstance(_delegation_cfg, dict):
+            _delegation_cfg = {}
+        agent.auto_relay_enabled = is_truthy_value(
+            _delegation_cfg.get("auto_relay"),
+            default=bool(agent.auto_relay_enabled),
+        )
+        agent.max_relay_count = max(0, int(_delegation_cfg.get("max_relay_count", agent.max_relay_count) or 0))
+    except Exception:
+        agent.auto_relay_enabled = True
+        agent.max_relay_count = 3
     try:
         agent._tool_guardrails = ToolCallGuardrailController(
             ToolCallGuardrailConfig.from_mapping(

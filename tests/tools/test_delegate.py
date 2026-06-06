@@ -391,6 +391,56 @@ class TestDelegateTask(unittest.TestCase):
 
         self.assertIs(mock_child._print_fn, sink)
 
+    def test_child_inherits_auto_relay_settings(self):
+        parent = _make_mock_parent(depth=0)
+        parent.auto_relay_enabled = False
+        parent.max_relay_count = 7
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            mock_child = MagicMock()
+            mock_child.auto_relay_enabled = True
+            mock_child.max_relay_count = 3
+            MockAgent.return_value = mock_child
+
+            _build_child_agent(
+                task_index=0,
+                goal="Preserve relay semantics",
+                context=None,
+                toolsets=None,
+                model=None,
+                max_iterations=10,
+                parent_agent=parent,
+                task_count=1,
+            )
+
+        self.assertIs(mock_child.auto_relay_enabled, False)
+        self.assertEqual(mock_child.max_relay_count, 7)
+
+    def test_child_inherits_string_false_auto_relay_setting(self):
+        parent = _make_mock_parent(depth=0)
+        parent.auto_relay_enabled = "false"
+        parent.max_relay_count = 7
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            mock_child = MagicMock()
+            mock_child.auto_relay_enabled = True
+            mock_child.max_relay_count = 3
+            MockAgent.return_value = mock_child
+
+            _build_child_agent(
+                task_index=0,
+                goal="Preserve relay semantics",
+                context=None,
+                toolsets=None,
+                model=None,
+                max_iterations=10,
+                parent_agent=parent,
+                task_count=1,
+            )
+
+        self.assertIs(mock_child.auto_relay_enabled, False)
+        self.assertEqual(mock_child.max_relay_count, 7)
+
     def test_child_uses_thinking_callback_when_progress_callback_available(self):
         parent = _make_mock_parent(depth=0)
         parent.tool_progress_callback = MagicMock()
@@ -1813,7 +1863,14 @@ class TestDelegateHeartbeat(unittest.TestCase):
 
         parent = _make_mock_parent()
         touch_calls = []
-        parent._touch_activity = lambda desc: touch_calls.append(desc)
+        enough_heartbeats = threading.Event()
+
+        def touch(desc):
+            touch_calls.append(desc)
+            if len(touch_calls) >= 3:
+                enough_heartbeats.set()
+
+        parent._touch_activity = touch
 
         child = MagicMock()
         # Child is stuck inside a single terminal call for the whole run.
@@ -1826,20 +1883,21 @@ class TestDelegateHeartbeat(unittest.TestCase):
         }
 
         def slow_run(**kwargs):
-            # Long enough to exceed the OLD idle threshold (5 cycles) at
-            # the patched interval, but shorter than the new in-tool
-            # threshold.
-            time.sleep(0.4)
+            # Wait until the heartbeat proves it can continue past the tight
+            # idle ceiling while current_tool is set. If the old idle threshold
+            # is incorrectly used for in-tool work, the heartbeat exits after
+            # the first stale cycle and this event is never set.
+            enough_heartbeats.wait(timeout=1.0)
             return {"final_response": "done", "completed": True, "api_calls": 1}
 
         child.run_conversation.side_effect = slow_run
 
-        # Patch both the interval AND the idle ceiling so the test proves
-        # the in-tool branch takes effect: with a 0.05s interval and the
-        # default _HEARTBEAT_STALE_CYCLES_IDLE=5, the old behavior would
-        # trip after 0.25s and stop firing. We should see heartbeats
-        # continuing through the full 0.4s run.
-        with patch("tools.delegate_tool._HEARTBEAT_INTERVAL", 0.05):
+        # Make the idle threshold tiny so using it for an in-tool child would
+        # fail deterministically; the high in-tool threshold should keep
+        # touching the parent until slow_run observes enough heartbeats.
+        with patch("tools.delegate_tool._HEARTBEAT_INTERVAL", 0.01), patch(
+            "tools.delegate_tool._HEARTBEAT_STALE_CYCLES_IDLE", 1
+        ), patch("tools.delegate_tool._HEARTBEAT_STALE_CYCLES_IN_TOOL", 100):
             _run_single_child(
                 task_index=0,
                 goal="Test long-running tool",
@@ -1847,13 +1905,10 @@ class TestDelegateHeartbeat(unittest.TestCase):
                 parent_agent=parent,
             )
 
-        # With the old idle threshold (5 cycles = 0.25s), touch_calls
-        # would cap at ~5. With the in-tool threshold (20 cycles = 1.0s),
-        # we should see substantially more heartbeats over 0.4s.
-        self.assertGreater(
-            len(touch_calls), 6,
+        self.assertTrue(
+            enough_heartbeats.is_set(),
             f"Heartbeat stopped too early while child was inside a tool; "
-            f"got {len(touch_calls)} touches over 0.4s at 0.05s interval",
+            f"got {len(touch_calls)} touches",
         )
 
 

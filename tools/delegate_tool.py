@@ -1170,6 +1170,19 @@ def _build_child_agent(
         iteration_budget=None,  # fresh budget per subagent
     )
     child._print_fn = getattr(parent_agent, "_print_fn", None)
+    setattr(
+        child,
+        "auto_relay_enabled",
+        is_truthy_value(
+            getattr(parent_agent, "auto_relay_enabled", getattr(child, "auto_relay_enabled", True)),
+            default=bool(getattr(child, "auto_relay_enabled", True)),
+        ),
+    )
+    setattr(
+        child,
+        "max_relay_count",
+        max(0, int(getattr(parent_agent, "max_relay_count", getattr(child, "max_relay_count", 0)) or 0)),
+    )
     # Set delegation depth so children can't spawn grandchildren
     child._delegate_depth = child_depth
     # Stash the post-degrade role for introspection (leaf if the

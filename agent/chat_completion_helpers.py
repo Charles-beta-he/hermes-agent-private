@@ -1265,6 +1265,7 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
 def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
     """Request a summary when max iterations are reached. Returns the final response text."""
     print(f"⚠️  Reached maximum iterations ({agent.max_iterations}). Requesting summary...")
+    agent._last_iteration_summary_authoritative = False
 
     summary_request = (
         "You've reached the maximum number of tool-calling iterations allowed. "
@@ -1435,6 +1436,7 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
             if "<think>" in final_response:
                 final_response = re.sub(r'<think>.*?</think>\s*', '', final_response, flags=re.DOTALL).strip()
             if final_response:
+                agent._last_iteration_summary_authoritative = True
                 messages.append({"role": "assistant", "content": final_response})
             else:
                 final_response = "I reached the iteration limit and couldn't generate a summary."
@@ -1478,6 +1480,7 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
                 if "<think>" in final_response:
                     final_response = re.sub(r'<think>.*?</think>\s*', '', final_response, flags=re.DOTALL).strip()
                 if final_response:
+                    agent._last_iteration_summary_authoritative = True
                     messages.append({"role": "assistant", "content": final_response})
                 else:
                     final_response = "I reached the iteration limit and couldn't generate a summary."

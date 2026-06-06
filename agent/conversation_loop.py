@@ -25,10 +25,17 @@ import ssl
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent.codex_responses_adapter import _summarize_user_message_for_log
 from agent.display import KawaiiSpinner
+from agent.continuation import (
+    build_continuation_packet,
+    continuation_root,
+    write_continuation_packet,
+    write_legacy_relay_packet,
+)
 from agent.error_classifier import FailoverReason, classify_api_error
 from agent.iteration_budget import IterationBudget
 from agent.memory_manager import build_memory_context_block
@@ -62,6 +69,209 @@ from tools.skill_provenance import set_current_write_origin
 from utils import base_url_host_matches, env_var_enabled
 
 logger = logging.getLogger(__name__)
+
+
+def _relay_packet_dir() -> Path:
+    return Path(os.environ.get("HERMES_RELAY_PACKET_DIR", str(Path.home() / ".hermes" / "state" / "relay-packets"))).expanduser()
+
+
+def _continuation_packet_root() -> Path:
+    return continuation_root()
+
+
+def _is_auto_relay_exit_reason(reason: str | None) -> bool:
+    text = str(reason or "")
+    return text == "budget_exhausted" or text.startswith("max_iterations_reached")
+
+
+def _should_auto_relay(agent: Any, *, final_response: str | None, interrupted: bool, turn_exit_reason: str | None) -> bool:
+    if interrupted:
+        return False
+    if not final_response or not str(final_response).strip():
+        return False
+    if not getattr(agent, "auto_relay_enabled", False):
+        return False
+    if int(getattr(agent, "_relay_count", 0) or 0) >= int(getattr(agent, "max_relay_count", 0) or 0):
+        return False
+    return _is_auto_relay_exit_reason(turn_exit_reason)
+
+
+def _capture_auto_relay_summary(agent: Any, final_response: str | None) -> str:
+    """Return only authoritative exhausted-turn summaries for auto-relay.
+
+    ``_handle_max_iterations`` may synthesize user-facing fallback text when the
+    model failed to produce a real summary. That fallback is useful for humans
+    but must not become relay input; bounded auto-relay requires a genuine
+    model-authored handoff.
+    """
+    if not getattr(agent, "_last_iteration_summary_authoritative", False):
+        return ""
+    return str(final_response or "")
+
+
+def _reset_auto_relay_count_for_root_turn(agent: Any) -> None:
+    """Reset relay capacity for a user-initiated root turn.
+
+    Recursive auto-relay successor turns preserve the count so
+    ``max_relay_count`` limits one exhausted root turn instead of resetting on
+    each recursive hop. The count must not leak into the next human/root turn.
+    """
+    if getattr(agent, "_auto_relay_active", False):
+        return
+    agent._relay_count = 0
+
+
+def _write_auto_relay_packet(agent: Any, *, reason: str, summary: str, messages: list[dict[str, Any]], api_call_count: int) -> Path:
+    relay_index = int(getattr(agent, "_relay_count", 0) or 0) + 1
+    packet = build_continuation_packet(
+        scope="conversation",
+        reason=reason,
+        summary=summary,
+        session_id=getattr(agent, "session_id", None) or "no-session",
+        parent_session_id=getattr(agent, "parent_session_id", None),
+        task_id=getattr(agent, "task_id", None),
+        model=getattr(agent, "model", ""),
+        provider=getattr(agent, "provider", ""),
+        remaining_work=["continue the user task from the exhausted-turn summary"],
+        evidence=[{"kind": "exhausted_turn_summary", "status": "available"}],
+        resume={
+            "mode": "immediate",
+            "executor": "conversation_loop",
+            "max_retries": int(getattr(agent, "max_relay_count", 0) or 0),
+        },
+        limits={
+            "relay_index": relay_index,
+            "max_relay_count": int(getattr(agent, "max_relay_count", 0) or 0),
+            "budget_used": getattr(getattr(agent, "iteration_budget", None), "used", api_call_count),
+            "budget_max": getattr(getattr(agent, "iteration_budget", None), "max_total", getattr(agent, "max_iterations", 0)),
+            "api_calls": api_call_count,
+        },
+        metadata={
+            "legacy_schema": "hermes_auto_relay_packet_v1",
+            "turn_exit_reason": reason,
+            "messages_snapshot": list(messages[-20:]),
+        },
+    )
+    write_continuation_packet(packet, root=_continuation_packet_root(), state="active")
+    return write_legacy_relay_packet(packet, legacy_dir=_relay_packet_dir(), relay_index=relay_index)
+
+
+def _build_auto_relay_prompt(*, relay_index: int, max_relay_count: int, reason: str, summary: str) -> str:
+    return (
+        f"[Auto-relay {relay_index}/{max_relay_count}] Previous turn stopped because {reason}.\n"
+        f"Summary from the exhausted turn:\n{summary}\n\n"
+        "Continue the task from that handoff. Use tools as needed, verify results, "
+        "and only provide a final answer after the work is complete."
+    )
+
+
+def _try_auto_relay(
+    agent: Any,
+    *,
+    final_response: str | None,
+    interrupted: bool,
+    turn_exit_reason: str | None,
+    messages: list[dict[str, Any]],
+    api_call_count: int,
+    task_id: str | None,
+    stream_callback: Any = None,
+) -> Optional[dict[str, Any]]:
+    """Start a successor turn when the current turn only produced a budget handoff."""
+    if not _should_auto_relay(
+        agent,
+        final_response=final_response,
+        interrupted=interrupted,
+        turn_exit_reason=turn_exit_reason,
+    ):
+        return None
+
+    relay_index = int(getattr(agent, "_relay_count", 0) or 0) + 1
+    try:
+        packet_path = _write_auto_relay_packet(
+            agent,
+            reason=turn_exit_reason or "budget_exhausted",
+            summary=final_response or "",
+            messages=messages,
+            api_call_count=api_call_count,
+        )
+    except Exception as exc:
+        logger.warning("auto-relay packet write failed; returning summary: %s", exc)
+        return None
+
+    if not getattr(agent, "quiet_mode", False):
+        agent._safe_print(
+            f"↻ Auto-relay {relay_index}/{getattr(agent, 'max_relay_count', 0)} after {turn_exit_reason}"
+        )
+    agent._relay_count = relay_index
+    agent.iteration_budget = IterationBudget(getattr(agent, "max_iterations", 90))
+    agent._budget_exhausted_injected = False
+    agent._budget_grace_call = False
+    relay_prompt = _build_auto_relay_prompt(
+        relay_index=relay_index,
+        max_relay_count=int(getattr(agent, "max_relay_count", 0) or 0),
+        reason=turn_exit_reason or "budget_exhausted",
+        summary=final_response or "",
+    )
+    previous_auto_relay_active = getattr(agent, "_auto_relay_active", False)
+    agent._auto_relay_active = True
+    try:
+        relay_result = run_conversation(
+            agent,
+            relay_prompt,
+            "",
+            list(messages),
+            task_id or "",
+            stream_callback,
+            persist_user_message=relay_prompt,
+        )
+    finally:
+        agent._auto_relay_active = previous_auto_relay_active
+    if isinstance(relay_result, dict):
+        relay_result.setdefault("auto_relay", {})
+        relay_result["auto_relay"].update({
+            "triggered": True,
+            "relay_index": relay_index,
+            "packet_path": str(packet_path),
+            "parent_turn_exit_reason": turn_exit_reason,
+        })
+    return relay_result
+
+
+def _record_kanban_budget_failure(agent: Any, *, task_id: str, api_call_count: int) -> None:
+    try:
+        from hermes_cli import kanban_db as _kb
+        conn = _kb.connect()
+        try:
+            _kb._record_task_failure(
+                conn,
+                task_id,
+                error=(
+                    f"Iteration budget exhausted ({api_call_count}/{agent.max_iterations}) — "
+                    "task could not complete within the allowed iterations"
+                ),
+                outcome="timed_out",
+                release_claim=True,
+                end_run=True,
+                event_payload_extra={
+                    "budget_used": api_call_count,
+                    "budget_max": agent.max_iterations,
+                },
+            )
+            logger.info(
+                "recorded budget-exhausted failure for task %s (%d/%d)",
+                task_id, api_call_count, agent.max_iterations,
+            )
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except Exception:
+        logger.warning(
+            "Failed to record budget-exhausted failure for task %s",
+            task_id,
+            exc_info=True,
+        )
 
 
 def _run_conductor_intent_router(agent: Any, user_message: str, *, active_tasks: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
@@ -477,6 +687,11 @@ def run_conversation(
     agent._current_turn_id = turn_id
     agent._current_api_request_id = ""
     
+    # Reset relay capacity for human/root turns only. Recursive auto-relay
+    # successor turns preserve the count so max_relay_count applies to one
+    # exhausted root turn, not every recursive hop.
+    _reset_auto_relay_count_for_root_turn(agent)
+
     # Reset retry counters and iteration budget at the start of each turn
     # so subagent usage from a previous turn doesn't eat into the next one.
     agent._invalid_tool_retries = 0
@@ -774,6 +989,8 @@ def run_conversation(
     truncated_response_parts: List[str] = []
     compression_attempts = 0
     _turn_exit_reason = "unknown"  # Diagnostic: why the loop ended
+    _auto_relay_summary = ""
+    _kanban_budget_task = ""
 
     # Per-turn file-mutation verifier state.  Keyed by resolved path;
     # each failed ``write_file`` / ``patch`` call records the error
@@ -4566,58 +4783,17 @@ def run_conversation(
                 "— requesting summary..."
             )
         final_response = agent._handle_max_iterations(messages, api_call_count)
+        # Preserve only authoritative model-generated exhausted-turn handoffs
+        # before user-facing footers, explainers, and transform hooks mutate
+        # ``final_response``. Synthetic fallback text from _handle_max_iterations
+        # must not become relay input.
+        _auto_relay_summary = _capture_auto_relay_summary(agent, final_response)
 
-        # If running as a kanban worker, signal the dispatcher that the
-        # worker could not complete (rather than treating it as a
-        # protocol violation).  The agent loop strips tools before calling
-        # _handle_max_iterations, so the model cannot call kanban_block
-        # itself — we must do it on its behalf.
-        #
-        # We route through ``_record_task_failure(outcome="timed_out")``
-        # rather than ``kanban_block`` so this counts toward the
-        # ``consecutive_failures`` counter and the dispatcher's
-        # ``failure_limit`` circuit breaker (#29747 gap 2).  Without this,
-        # a task whose worker keeps exhausting its budget would block
-        # silently each run, get auto-promoted by the operator (or never
-        # surface), and re-block in an endless loop with no signal.
-        _kanban_task = os.environ.get("HERMES_KANBAN_TASK")
-        if _kanban_task:
-            try:
-                from hermes_cli import kanban_db as _kb
-                _conn = _kb.connect()
-                try:
-                    _kb._record_task_failure(
-                        _conn,
-                        _kanban_task,
-                        error=(
-                            f"Iteration budget exhausted "
-                            f"({api_call_count}/{agent.max_iterations}) — "
-                            "task could not complete within the allowed "
-                            "iterations"
-                        ),
-                        outcome="timed_out",
-                        release_claim=True,
-                        end_run=True,
-                        event_payload_extra={
-                            "budget_used": api_call_count,
-                            "budget_max": agent.max_iterations,
-                        },
-                    )
-                    logger.info(
-                        "recorded budget-exhausted failure for task %s (%d/%d)",
-                        _kanban_task, api_call_count, agent.max_iterations,
-                    )
-                finally:
-                    try:
-                        _conn.close()
-                    except Exception:
-                        pass
-            except Exception:
-                logger.warning(
-                    "Failed to record budget-exhausted failure for task %s",
-                    _kanban_task,
-                    exc_info=True,
-                )
+        # If running as a kanban worker, defer the timeout failure record until
+        # after the auto-relay gate below. Kanban workers get the same chance to
+        # continue from a bounded exhausted-turn handoff as other long-running
+        # turns; only a non-relayed/cap-exhausted turn is marked timed_out.
+        _kanban_budget_task = os.environ.get("HERMES_KANBAN_TASK") or ""
 
     # Determine if conversation completed successfully
     completed = (
@@ -4885,6 +5061,44 @@ def run_conversation(
         interrupted=interrupted,
         messages=messages,
     )
+
+    # Auto-relay tool/iteration budget exhaustion into a fresh turn before
+    # surfacing a partial summary. This path runs after persistence/cleanup for
+    # the exhausted turn and before background review, so the successor turn owns
+    # final delivery and review. Kanban timeout failure is recorded only if the
+    # bounded relay gate declines or exhausts its cap.
+    relay_result = _try_auto_relay(
+        agent,
+        final_response=_auto_relay_summary,
+        interrupted=interrupted,
+        turn_exit_reason=_turn_exit_reason,
+        messages=messages,
+        api_call_count=api_call_count,
+        task_id=task_id,
+        stream_callback=stream_callback,
+    )
+    if relay_result is not None:
+        if (
+            _kanban_budget_task
+            and _is_auto_relay_exit_reason(_turn_exit_reason)
+            and not relay_result.get("completed", False)
+            and not relay_result.get("interrupted", False)
+            and not relay_result.get("kanban_failure_recorded", False)
+        ):
+            _record_kanban_budget_failure(
+                agent,
+                task_id=_kanban_budget_task,
+                api_call_count=api_call_count,
+            )
+            relay_result["kanban_failure_recorded"] = True
+        return relay_result
+    if _kanban_budget_task and _is_auto_relay_exit_reason(_turn_exit_reason):
+        _record_kanban_budget_failure(
+            agent,
+            task_id=_kanban_budget_task,
+            api_call_count=api_call_count,
+        )
+        result["kanban_failure_recorded"] = True
 
     # Background memory/skill review — runs AFTER the response is delivered
     # so it never competes with the user's task for model attention.
