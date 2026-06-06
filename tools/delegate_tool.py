@@ -309,6 +309,95 @@ def _looks_like_error_output(content: str) -> bool:
     )
 
 
+def _build_role_boundary_handoff(
+    *,
+    task_index: int,
+    status: str,
+    exit_reason: str,
+    duration_seconds: float,
+    api_calls: Any,
+    model: Optional[str],
+    input_tokens: Any,
+    output_tokens: Any,
+    cost_usd: Any = None,
+    summary: Optional[str] = None,
+    tool_trace: Optional[List[Dict[str, Any]]] = None,
+    files_read: Optional[List[str]] = None,
+    files_written: Optional[List[str]] = None,
+    output_tail: Optional[List[Dict[str, Any]]] = None,
+    diagnostic_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a structured handoff that separates lifecycle from proof.
+
+    The parent historically only saw a free-form summary plus a few top-level
+    counters. This contract gives downstream orchestrators a stable place to
+    distinguish orchestration/lifecycle facts from self-reported implementation
+    evidence without changing existing status gates.
+    """
+    tool_trace = list(tool_trace or [])
+    files_read = list(files_read or [])
+    files_written = list(files_written or [])
+    output_tail = list(output_tail or [])
+
+    evidence_labels: List[str] = []
+    if summary:
+        evidence_labels.append("proof:summary")
+    if tool_trace:
+        evidence_labels.append("proof:tool_trace")
+    if output_tail:
+        evidence_labels.append("proof:output_tail")
+    for path in files_written[:20]:
+        evidence_labels.append(f"artifact:{path}")
+    if diagnostic_path:
+        evidence_labels.append(f"artifact:{diagnostic_path}")
+
+    verification_scope = (
+        "self_reported_subagent"
+        if evidence_labels
+        else "no_implementation_proof"
+    )
+
+    provider_accounting: Dict[str, Any] = {
+        "model": model,
+        "input_tokens": int(input_tokens) if isinstance(input_tokens, (int, float)) else 0,
+        "output_tokens": int(output_tokens) if isinstance(output_tokens, (int, float)) else 0,
+    }
+    try:
+        if cost_usd is not None:
+            provider_accounting["cost_usd"] = float(cost_usd)
+    except (TypeError, ValueError):
+        pass
+
+    return {
+        "schema": "delegate_role_boundary_handoff_v1",
+        "orchestration_ledger": {
+            "task_index": task_index,
+            "status": status,
+            "exit_reason": exit_reason,
+            "duration_seconds": duration_seconds,
+            "api_calls": int(api_calls) if isinstance(api_calls, (int, float)) else 0,
+            "provider_accounting": provider_accounting,
+        },
+        "implementation_proof": {
+            "verification_scope": verification_scope,
+            "summary": summary or None,
+            "evidence_labels": evidence_labels,
+            "tool_trace_digest": [
+                {
+                    "tool": item.get("tool"),
+                    "status": item.get("status"),
+                }
+                for item in tool_trace[:12]
+                if isinstance(item, dict)
+            ],
+            "files_read": files_read[:40],
+            "files_written": files_written[:40],
+            "output_tail": output_tail[:8],
+            "diagnostic_path": diagnostic_path,
+        },
+    }
+
+
 def _normalize_role(r: Optional[str]) -> str:
     """Normalise a caller-provided role to 'leaf' or 'orchestrator'.
 
@@ -1602,6 +1691,10 @@ def _run_single_child(
             else:
                 _err = str(_timeout_exc)
 
+            _model = getattr(child, "model", None)
+            _input_tokens = getattr(child, "session_prompt_tokens", 0)
+            _output_tokens = getattr(child, "session_completion_tokens", 0)
+            _cost_usd = getattr(child, "session_estimated_cost_usd", None)
             return {
                 "task_index": task_index,
                 "status": "timeout" if is_timeout else "error",
@@ -1612,6 +1705,18 @@ def _run_single_child(
                 "duration_seconds": duration,
                 "_child_role": getattr(child, "_delegate_role", None),
                 "diagnostic_path": diagnostic_path,
+                "handoff": _build_role_boundary_handoff(
+                    task_index=task_index,
+                    status="timeout" if is_timeout else "error",
+                    exit_reason="timeout" if is_timeout else "error",
+                    duration_seconds=duration,
+                    api_calls=child_api_calls,
+                    model=_model if isinstance(_model, str) else None,
+                    input_tokens=_input_tokens,
+                    output_tokens=_output_tokens,
+                    cost_usd=_cost_usd,
+                    diagnostic_path=diagnostic_path,
+                ),
             }
         finally:
             # Shut down executor without waiting — if the child thread
@@ -1789,6 +1894,22 @@ def _run_single_child(
         )[:40]
 
         _output_tail = _extract_output_tail(result, max_entries=8, max_chars=600)
+        entry["handoff"] = _build_role_boundary_handoff(
+            task_index=task_index,
+            status=status,
+            exit_reason=exit_reason,
+            duration_seconds=duration,
+            api_calls=api_calls,
+            model=_model if isinstance(_model, str) else None,
+            input_tokens=_input_tokens,
+            output_tokens=_output_tokens,
+            cost_usd=_cost_usd,
+            summary=summary,
+            tool_trace=tool_trace,
+            files_read=_files_read,
+            files_written=_files_written,
+            output_tail=_output_tail,
+        )
 
         complete_kwargs: Dict[str, Any] = {
             "preview": summary[:160] if summary else entry.get("error", ""),
@@ -1847,6 +1968,21 @@ def _run_single_child(
             "api_calls": 0,
             "duration_seconds": duration,
             "_child_role": getattr(child, "_delegate_role", None),
+            "handoff": _build_role_boundary_handoff(
+                task_index=task_index,
+                status="error",
+                exit_reason="error",
+                duration_seconds=duration,
+                api_calls=0,
+                model=(
+                    getattr(child, "model", None)
+                    if isinstance(getattr(child, "model", None), str)
+                    else None
+                ),
+                input_tokens=getattr(child, "session_prompt_tokens", 0),
+                output_tokens=getattr(child, "session_completion_tokens", 0),
+                cost_usd=getattr(child, "session_estimated_cost_usd", None),
+            ),
         }
 
     finally:

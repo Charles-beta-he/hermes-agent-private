@@ -555,6 +555,31 @@ class TestDelegateObservability(unittest.TestCase):
             self.assertIn("result_bytes", entry["tool_trace"][0])
             self.assertEqual(entry["tool_trace"][0]["status"], "ok")
 
+            # Structured handoff separates orchestration state from proof.
+            self.assertEqual(entry["handoff"]["schema"], "delegate_role_boundary_handoff_v1")
+            self.assertEqual(
+                entry["handoff"]["orchestration_ledger"]["status"], "completed"
+            )
+            self.assertEqual(
+                entry["handoff"]["orchestration_ledger"]["provider_accounting"]["model"],
+                "claude-sonnet-4-6",
+            )
+            self.assertEqual(
+                entry["handoff"]["implementation_proof"]["summary"], "done"
+            )
+            self.assertEqual(
+                entry["handoff"]["implementation_proof"]["tool_trace_digest"][0]["tool"],
+                "web_search",
+            )
+            self.assertIn(
+                "proof:summary",
+                entry["handoff"]["implementation_proof"]["evidence_labels"],
+            )
+            self.assertIn(
+                "proof:tool_trace",
+                entry["handoff"]["implementation_proof"]["evidence_labels"],
+            )
+
     def test_tool_trace_detects_error(self):
         """Tool results containing 'error' should be marked as error status."""
         parent = _make_mock_parent(depth=0)
@@ -672,6 +697,45 @@ class TestDelegateObservability(unittest.TestCase):
 
             result = json.loads(delegate_task(goal="Test max iter", parent_agent=parent))
             self.assertEqual(result["results"][0]["exit_reason"], "max_iterations")
+
+    def test_timeout_handoff_keeps_lifecycle_timeout(self):
+        """Timeouts should surface a handoff contract without degrading timeout semantics."""
+        from tools.delegate_tool import _run_single_child
+
+        parent = _make_mock_parent(depth=0)
+        child = MagicMock()
+        child.model = "claude-sonnet-4-6"
+        child.session_prompt_tokens = 0
+        child.session_completion_tokens = 0
+
+        def slow_run(**kwargs):
+            time.sleep(0.05)
+            return {"final_response": "late", "completed": True, "api_calls": 0}
+
+        child.run_conversation.side_effect = slow_run
+
+        with patch("tools.delegate_tool._get_child_timeout", return_value=0.01):
+            entry = _run_single_child(
+                task_index=0,
+                goal="Test timeout handoff",
+                child=child,
+                parent_agent=parent,
+            )
+
+        self.assertEqual(entry["status"], "timeout")
+        self.assertEqual(entry["exit_reason"], "timeout")
+        self.assertIn("handoff", entry)
+        self.assertEqual(
+            entry["handoff"]["orchestration_ledger"]["status"], "timeout"
+        )
+        self.assertEqual(
+            entry["handoff"]["orchestration_ledger"]["exit_reason"], "timeout"
+        )
+        self.assertIsNone(entry["handoff"]["implementation_proof"]["summary"])
+        self.assertEqual(
+            entry["handoff"]["implementation_proof"]["verification_scope"],
+            "no_implementation_proof",
+        )
 
 
 class TestSubagentCostRollup(unittest.TestCase):
