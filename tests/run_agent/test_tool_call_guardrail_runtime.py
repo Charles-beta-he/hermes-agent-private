@@ -296,6 +296,8 @@ def test_config_enabled_hard_stop_run_conversation_returns_controlled_guardrail_
     assert "error" not in result
     assert result["completed"] is True
     assert "stopped retrying" in result["final_response"]
+    assert "Last failure:" in result["final_response"]
+    assert "Suggested next steps:" in result["final_response"]
     assert result["guardrail"]["code"] == "repeated_exact_failure_block"
     assert result["guardrail"]["tool_name"] == "web_search"
 

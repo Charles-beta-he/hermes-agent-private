@@ -433,7 +433,7 @@ class ProcessRegistry:
         return session
 
     @staticmethod
-    def _terminate_host_pid(pid: int) -> None:
+    def _terminate_host_pid(pid: int, grace_timeout: float = 3.0) -> None:
         """Terminate a host-visible PID and its descendants.
 
         POSIX: walks the process tree with ``psutil`` and SIGTERMs
@@ -483,12 +483,32 @@ class ProcessRegistry:
         import psutil
         try:
             parent = psutil.Process(pid)
-            for child in parent.children(recursive=True):
+            children = parent.children(recursive=True)
+            targets = [*children, parent]
+            for proc in targets:
                 try:
-                    child.terminate()
+                    proc.terminate()
                 except psutil.NoSuchProcess:
                     pass
-            parent.terminate()
+
+            # Overmind-style stop ladder: polite terminate, bounded wait, then
+            # force-kill anything that ignored the first signal.  This prevents
+            # process(action="kill") from claiming success while TERM-ignoring
+            # children are still alive.
+            try:
+                _, alive = psutil.wait_procs(targets, timeout=grace_timeout)
+            except Exception:
+                alive = []
+            for proc in alive:
+                try:
+                    proc.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            if alive:
+                try:
+                    psutil.wait_procs(alive, timeout=1.0)
+                except Exception:
+                    pass
         except psutil.NoSuchProcess:
             return
         except (OSError, PermissionError):
@@ -1151,24 +1171,17 @@ class ProcessRegistry:
                     if session.pid:
                         os.kill(session.pid, signal.SIGTERM)
             elif session.process:
-                # Local process -- kill the process tree
+                # Local process -- terminate the process tree with a bounded
+                # TERM->KILL escalation ladder, then record the observed exit
+                # code instead of blindly claiming SIGTERM succeeded.
                 try:
-                    if _IS_WINDOWS:
-                        session.process.terminate()
-                    else:
-                        import psutil
-                        try:
-                            parent = psutil.Process(session.process.pid)
-                            for child in parent.children(recursive=True):
-                                try:
-                                    child.terminate()
-                                except psutil.NoSuchProcess:
-                                    pass
-                            parent.terminate()
-                        except psutil.NoSuchProcess:
-                            pass
+                    self._terminate_host_pid(session.process.pid)
                 except (ProcessLookupError, PermissionError):
                     session.process.kill()
+                try:
+                    session.process.wait(timeout=1)
+                except Exception:
+                    pass
             elif session.env_ref and session.pid:
                 # Non-local -- kill inside sandbox
                 session.env_ref.execute(f"kill {session.pid} 2>/dev/null", timeout=5)
@@ -1183,6 +1196,12 @@ class ProcessRegistry:
                         "exit_code": session.exit_code,
                     }
                 self._terminate_host_pid(session.pid)
+                if self._is_host_pid_alive(session.pid):
+                    return {
+                        "status": "error",
+                        "error": "process still running after kill escalation",
+                        "session_id": session.id,
+                    }
             else:
                 return {
                     "status": "error",
@@ -1191,11 +1210,23 @@ class ProcessRegistry:
                         "its original runtime handle is no longer available"
                     ),
                 }
+            observed_exit = getattr(session.process, "returncode", None) if session.process else None
+            if observed_exit is None and session.process:
+                try:
+                    observed_exit = session.process.poll()
+                except Exception:
+                    observed_exit = None
+                if observed_exit is None and self._is_host_pid_alive(getattr(session.process, "pid", None)):
+                    return {
+                        "status": "error",
+                        "error": "process still running after kill escalation",
+                        "session_id": session.id,
+                    }
             session.exited = True
-            session.exit_code = -15  # SIGTERM
+            session.exit_code = observed_exit if observed_exit is not None else -15
             self._move_to_finished(session)
             self._write_checkpoint()
-            return {"status": "killed", "session_id": session.id}
+            return {"status": "killed", "session_id": session.id, "exit_code": session.exit_code}
         except Exception as e:
             return {"status": "error", "error": str(e)}
 

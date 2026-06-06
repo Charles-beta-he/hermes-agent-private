@@ -45,6 +45,18 @@ from typing import Dict, Any, List, Optional, Tuple
 from utils import atomic_replace, is_truthy_value
 from hermes_cli.config import cfg_get
 
+try:
+    from agent.norm_write_guard import WriteGuardConflict, conflict_payload, durable_write_guard
+except Exception:  # pragma: no cover - keep skill management available during partial installs
+    WriteGuardConflict = None
+    conflict_payload = None
+    durable_write_guard = None
+
+try:
+    from agent.abstraction_governance import review_durable_write
+except Exception:  # pragma: no cover - keep skill management available during partial installs
+    review_durable_write = None
+
 logger = logging.getLogger(__name__)
 
 # Import security scanner — external hub installs always get scanned;
@@ -830,6 +842,23 @@ def skill_manage(
 
     Returns JSON string with results.
     """
+    if action in {"create", "edit", "patch", "write_file"} and review_durable_write is not None:
+        gate_content = file_content if action == "write_file" else content
+        decision = review_durable_write(
+            kind="skill",
+            target=name,
+            action=action,
+            content=gate_content,
+            old_string=old_string,
+            new_string=new_string,
+        )
+        if not decision.ok:
+            return tool_error(
+                f"Blocked by abstraction-governance gate: {decision.message or decision.reason}",
+                success=False,
+                abstraction_governance=decision.to_payload(),
+            )
+
     if action == "create":
         if not content:
             return tool_error("content is required for 'create'. Provide the full SKILL.md text (frontmatter + body).", success=False)

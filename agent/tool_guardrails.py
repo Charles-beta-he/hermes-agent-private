@@ -151,6 +151,7 @@ class ToolGuardrailDecision:
     tool_name: str = ""
     count: int = 0
     signature: ToolCallSignature | None = None
+    last_failure_summary: str = ""
 
     @property
     def allows_execution(self) -> bool:
@@ -170,7 +171,59 @@ class ToolGuardrailDecision:
         }
         if self.signature is not None:
             data["signature"] = self.signature.to_metadata()
+        if self.last_failure_summary:
+            data["last_failure_summary"] = self.last_failure_summary
         return data
+
+
+def summarize_tool_failure(
+    tool_name: str,
+    args: Mapping[str, Any] | None,
+    result: str | None,
+    *,
+    max_chars: int = 600,
+) -> str:
+    """Return a compact, operator-readable failure summary for halt UX."""
+    args = _coerce_args(args)
+    parsed = safe_json_loads(result or "")
+    parts: list[str] = [f"{tool_name} failed"]
+
+    if tool_name == "terminal":
+        command = _compact_text(args.get("command"), 160)
+        workdir = _compact_text(args.get("workdir"), 120)
+        if command:
+            parts.append(f"command={command}")
+        if workdir:
+            parts.append(f"workdir={workdir}")
+        if isinstance(parsed, Mapping):
+            exit_code = parsed.get("exit_code")
+            if exit_code is not None:
+                parts.append(f"exit_code={exit_code}")
+            error = _compact_text(parsed.get("error"), 220)
+            output = _compact_text(parsed.get("output"), 260)
+            if error:
+                parts.append(f"error={error}")
+            if output:
+                parts.append(f"output={output}")
+        else:
+            text = _compact_text(result, 360)
+            if text:
+                parts.append(f"result={text}")
+    elif isinstance(parsed, Mapping):
+        error = _compact_text(parsed.get("error"), 280)
+        output = _compact_text(parsed.get("output"), 280)
+        if error:
+            parts.append(f"error={error}")
+        elif output:
+            parts.append(f"output={output}")
+        else:
+            parts.append(f"result={_compact_text(json.dumps(parsed, ensure_ascii=False, sort_keys=True), 360)}")
+    else:
+        text = _compact_text(result, 420)
+        if text:
+            parts.append(f"result={text}")
+
+    return _compact_text("; ".join(part for part in parts if part), max_chars)
 
 
 def canonical_tool_args(args: Mapping[str, Any]) -> str:
@@ -232,6 +285,7 @@ class ToolCallGuardrailController:
         self._exact_failure_counts: dict[ToolCallSignature, int] = {}
         self._same_tool_failure_counts: dict[str, int] = {}
         self._no_progress: dict[ToolCallSignature, tuple[str, int]] = {}
+        self._last_failure_summaries: dict[ToolCallSignature, str] = {}
         self._halt_decision: ToolGuardrailDecision | None = None
 
     @property
@@ -256,6 +310,7 @@ class ToolCallGuardrailController:
                 tool_name=tool_name,
                 count=exact_count,
                 signature=signature,
+                last_failure_summary=self._last_failure_summaries.get(signature, ""),
             )
             self._halt_decision = decision
             return decision
@@ -298,6 +353,7 @@ class ToolCallGuardrailController:
         if failed:
             exact_count = self._exact_failure_counts.get(signature, 0) + 1
             self._exact_failure_counts[signature] = exact_count
+            self._last_failure_summaries[signature] = summarize_tool_failure(tool_name, args, result)
             self._no_progress.pop(signature, None)
 
             same_count = self._same_tool_failure_counts.get(tool_name, 0) + 1
@@ -314,6 +370,7 @@ class ToolCallGuardrailController:
                     tool_name=tool_name,
                     count=same_count,
                     signature=signature,
+                    last_failure_summary=self._last_failure_summaries.get(signature, ""),
                 )
                 self._halt_decision = decision
                 return decision
@@ -345,6 +402,7 @@ class ToolCallGuardrailController:
             return ToolGuardrailDecision(tool_name=tool_name, count=exact_count, signature=signature)
 
         self._exact_failure_counts.pop(signature, None)
+        self._last_failure_summaries.pop(signature, None)
         self._same_tool_failure_counts.pop(tool_name, None)
 
         if not self._is_idempotent(tool_name):
@@ -425,6 +483,16 @@ def _tool_failure_recovery_hint(tool_name: str, count: int) -> str:
 
 def _coerce_args(args: Mapping[str, Any] | None) -> Mapping[str, Any]:
     return args if isinstance(args, Mapping) else {}
+
+
+def _compact_text(value: Any, max_chars: int) -> str:
+    if value is None:
+        return ""
+    text = str(value).replace("\r", " ").replace("\n", " | ").strip()
+    text = " ".join(text.split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 1)].rstrip() + "…"
 
 
 def _result_hash(result: str | None) -> str:

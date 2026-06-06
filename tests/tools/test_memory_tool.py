@@ -300,6 +300,34 @@ class TestMemoryStoreAdd:
         assert "Blocked" in result["error"]
 
 
+class TestMemoryToolAbstractionGate:
+    def test_memory_tool_blocks_task_progress_before_persisting(self, store):
+        result = json.loads(memory_tool(
+            action="add",
+            target="memory",
+            content="PR #456 was merged and the bug is fixed in this session.",
+            store=store,
+        ))
+
+        assert result["success"] is False
+        assert result["abstraction_governance"]["reason"] == "task_progress_not_memory"
+        assert result["abstraction_governance"]["recommended_landing_zone"] == "session_log_or_workpad"
+        assert store.memory_entries == []
+
+    def test_memory_tool_blocks_procedure_before_persisting(self, store):
+        result = json.loads(memory_tool(
+            action="add",
+            target="memory",
+            content="SOP: run pytest, inspect logs, and promote the result to memory.",
+            store=store,
+        ))
+
+        assert result["success"] is False
+        assert result["abstraction_governance"]["reason"] == "procedure_belongs_in_skill"
+        assert result["abstraction_governance"]["recommended_landing_zone"] == "skill_or_experience_atom"
+        assert store.memory_entries == []
+
+
 class TestMemoryStoreReplace:
     def test_replace_entry(self, store):
         store.add("memory", "Python 3.11 project")

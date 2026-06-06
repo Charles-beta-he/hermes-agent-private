@@ -293,6 +293,7 @@ class TestStdinHelpers:
         pty.sendeof.assert_called_once()
         assert result["status"] == "ok"
 
+    @pytest.mark.skipif(sys.platform == "darwin", reason="macOS PTY canonical EOF echoes ^D but may not unblock sys.stdin.read")
     def test_close_stdin_allows_eof_driven_process_to_finish(self, registry, tmp_path):
         """PTY mode: writing data + sending EOF lets an EOF-driven child finish.
 
@@ -871,11 +872,138 @@ class TestKillProcess:
         result = registry.kill_process("nonexistent")
         assert result["status"] == "not_found"
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX psutil wait_procs semantics")
+    def test_terminate_host_pid_escalates_after_grace_timeout(self, registry, monkeypatch):
+        """Host-PID cleanup should be TERM -> bounded wait -> KILL, not blind TERM."""
+        import psutil
+
+        events = []
+
+        class FakeProcess:
+            def __init__(self, pid):
+                self.pid = pid
+
+            def children(self, recursive=False):
+                assert recursive is True
+                return [FakeProcess(1002)] if self.pid == 1001 else []
+
+            def terminate(self):
+                events.append(("terminate", self.pid))
+
+            def kill(self):
+                events.append(("kill", self.pid))
+
+        def fake_wait_procs(procs, timeout):
+            events.append(("wait", tuple(p.pid for p in procs), timeout))
+            return [], procs  # every process ignored SIGTERM
+
+        monkeypatch.setattr(psutil, "Process", lambda pid: FakeProcess(pid))
+        monkeypatch.setattr(psutil, "wait_procs", fake_wait_procs)
+
+        registry._terminate_host_pid(1001, grace_timeout=0.01)
+
+        assert ("terminate", 1002) in events
+        assert ("terminate", 1001) in events
+        assert ("wait", (1002, 1001), 0.01) in events
+        assert ("kill", 1002) in events
+        assert ("kill", 1001) in events
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX local process semantics")
+    def test_kill_local_process_does_not_report_killed_until_process_exits(self, registry, monkeypatch):
+        """A TERM-ignoring local process must be force-killed before status becomes killed."""
+        import psutil
+
+        session = _make_session(sid="proc_local_stubborn", command="sleep stubborn")
+        proc = MagicMock()
+        proc.pid = 2001
+        proc.poll.side_effect = [None, -9]
+        proc.returncode = None
+
+        def fake_wait(timeout=None):
+            events.append(("subprocess_wait", timeout))
+            proc.returncode = -9
+            return -9
+
+        proc.wait.side_effect = fake_wait
+        session.process = proc
+        registry._running[session.id] = session
+
+        events = []
+
+        class FakeProcess:
+            def __init__(self, pid):
+                self.pid = pid
+
+            def children(self, recursive=False):
+                return []
+
+            def terminate(self):
+                events.append(("terminate", self.pid))
+
+            def kill(self):
+                events.append(("kill", self.pid))
+                proc.returncode = -9
+
+        def fake_wait_procs(procs, timeout):
+            events.append(("wait", tuple(p.pid for p in procs), timeout))
+            return [], procs
+
+        monkeypatch.setattr(psutil, "Process", lambda pid: FakeProcess(pid))
+        monkeypatch.setattr(psutil, "wait_procs", fake_wait_procs)
+
+        result = registry.kill_process(session.id)
+
+        assert result["status"] == "killed"
+        assert result["exit_code"] == -9
+        assert session.exited is True
+        assert session.exit_code == -9
+        assert ("kill", 2001) in events
+        assert ("subprocess_wait", 1) in events
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX local process semantics")
+    def test_kill_local_process_still_alive_does_not_mark_exited(self, registry, monkeypatch):
+        """If the OS still reports the process alive, kill_process must fail closed."""
+        session = _make_session(sid="proc_local_still_alive", command="sleep forever")
+        proc = MagicMock()
+        proc.pid = 3001
+        proc.returncode = None
+        proc.poll.return_value = None
+        proc.wait.side_effect = subprocess.TimeoutExpired(cmd="sleep forever", timeout=1)
+        session.process = proc
+        registry._running[session.id] = session
+
+        monkeypatch.setattr(registry, "_terminate_host_pid", lambda pid: None)
+        monkeypatch.setattr(registry, "_is_host_pid_alive", lambda pid: True)
+
+        result = registry.kill_process(session.id)
+
+        assert result["status"] == "error"
+        assert "still running" in result["error"]
+        assert session.exited is False
+        assert session.id in registry._running
+
     def test_kill_already_exited(self, registry):
         s = _make_session(exited=True, exit_code=0)
         registry._finished[s.id] = s
         result = registry.kill_process(s.id)
         assert result["status"] == "already_exited"
+
+    def test_kill_detached_session_still_alive_does_not_mark_exited(self, registry, monkeypatch):
+        s = _make_session(sid="proc_detached_stubborn", command="sleep 999")
+        s.pid = 525252
+        s.detached = True
+        s.pid_scope = "host"
+        registry._running[s.id] = s
+
+        monkeypatch.setattr(registry, "_is_host_pid_alive", lambda pid: True)
+        monkeypatch.setattr(registry, "_terminate_host_pid", lambda pid: None)
+
+        result = registry.kill_process(s.id)
+
+        assert result["status"] == "error"
+        assert "still running" in result["error"]
+        assert s.exited is False
+        assert s.id in registry._running
 
     def test_kill_detached_session_uses_host_pid(self, registry):
         s = _make_session(sid="proc_detached", command="sleep 999")
@@ -900,8 +1028,9 @@ class TestKillProcess:
             # ``ProcessRegistry._is_host_pid_alive`` (→
             # ``gateway.status._pid_exists``), and the actual kill on POSIX
             # routes through ``psutil.Process(pid).terminate()``. Neither
-            # touches ``os.kill`` directly. Mock both seams.
-            with patch("gateway.status._pid_exists", return_value=True), \
+            # touches ``os.kill`` directly. Mock both seams.  The second
+            # liveness probe confirms termination after the stop ladder.
+            with patch("gateway.status._pid_exists", side_effect=[True, True, False]), \
                  patch.object(_psutil, "Process", side_effect=lambda pid: FakeProcess(pid)):
                 result = registry.kill_process(s.id)
 

@@ -18,6 +18,20 @@ from tools.file_operations import (
 from tools import file_state
 from agent.redact import redact_sensitive_text
 
+try:
+    from agent.norm_write_guard import WriteGuardConflict, conflict_payload, durable_write_guard, file_content_hash
+except Exception:  # pragma: no cover - keep file tools available during partial installs
+    WriteGuardConflict = None
+    conflict_payload = None
+    durable_write_guard = None
+    file_content_hash = None
+
+try:
+    from agent.abstraction_governance import classify_durable_write_path, review_durable_write
+except Exception:  # pragma: no cover - defensive for standalone tool imports
+    classify_durable_write_path = None  # type: ignore[assignment]
+    review_durable_write = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -321,6 +335,51 @@ def _get_container_mirror_prefix_for_task(task_id: str = "default") -> str | Non
     if config.get("env_type") == "docker" and config.get("container_persistent", True):
         return "/root/.hermes"
     return None
+
+
+def _classify_abstraction_governance_path(filepath: str, task_id: str = "default") -> str | None:
+    """Return the durable governance surface for path-based write tools.
+
+    Only narrow Hermes governance paths are classified. Ordinary project files
+    remain outside this gate so code/docs edits are not unexpectedly blocked.
+    """
+    if classify_durable_write_path is None:
+        return None
+    try:
+        resolved = _resolve_path_for_task(filepath, task_id)
+        return classify_durable_write_path(str(resolved))
+    except Exception:
+        return None
+
+
+def _run_abstraction_governance_file_gate(
+    *,
+    path: str,
+    content: str | None,
+    task_id: str,
+    action: str,
+    old_string: str | None = None,
+    new_string: str | None = None,
+) -> str | None:
+    if review_durable_write is None:
+        return None
+    kind = _classify_abstraction_governance_path(path, task_id)
+    if kind is None:
+        return None
+    decision = review_durable_write(
+        kind=kind,
+        target=path,
+        action=action,
+        content=content,
+        old_string=old_string,
+        new_string=new_string,
+    )
+    if decision.ok:
+        return None
+    return tool_error(
+        f"Blocked by abstraction-governance gate: {decision.message or decision.reason}",
+        abstraction_governance=decision.to_payload(),
+    )
 
 
 def _check_cross_profile_path(filepath: str, task_id: str = "default") -> str | None:
@@ -1062,6 +1121,14 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
             "Refusing to write internal read_file status text as file content. "
             "Re-read the file or reconstruct the intended file contents before writing."
         )
+    governance_error = _run_abstraction_governance_file_gate(
+        path=path,
+        content=content,
+        task_id=task_id,
+        action="write_file",
+    )
+    if governance_error:
+        return governance_error
     try:
         # Resolve once for the registry lock + stale check.  Failures here
         # fall back to the legacy path — write proceeds, per-task staleness
@@ -1159,6 +1226,16 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
             cross_warning = _check_cross_profile_path(_p, task_id)
             if cross_warning:
                 return tool_error(cross_warning)
+        governance_error = _run_abstraction_governance_file_gate(
+            path=_p,
+            content=patch if mode == "patch" else None,
+            task_id=task_id,
+            action=f"patch:{mode}",
+            old_string=old_string,
+            new_string=new_string,
+        )
+        if governance_error:
+            return governance_error
     try:
         # Resolve paths for locking.  Ordered + deduplicated so concurrent
         # callers lock in the same order — prevents deadlock on overlapping

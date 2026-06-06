@@ -8,6 +8,7 @@ from agent.tool_guardrails import (
     ToolCallSignature,
     canonical_tool_args,
     classify_tool_failure,
+    summarize_tool_failure,
 )
 
 
@@ -118,6 +119,55 @@ def test_hard_stop_enabled_blocks_repeated_exact_failure_before_next_execution()
     assert blocked.count == 2
 
 
+def test_repeated_exact_failure_block_carries_last_terminal_failure_summary():
+    controller = ToolCallGuardrailController(
+        ToolCallGuardrailConfig(
+            hard_stop_enabled=True,
+            exact_failure_warn_after=2,
+            exact_failure_block_after=2,
+            same_tool_failure_halt_after=99,
+        )
+    )
+    args = {"command": "missing-tool --flag", "workdir": "/tmp/project"}
+    result = json.dumps(
+        {
+            "output": "zsh: command not found: missing-tool\n",
+            "exit_code": 127,
+            "error": None,
+        }
+    )
+
+    controller.after_call("terminal", args, result, failed=True)
+    controller.after_call("terminal", args, result, failed=True)
+
+    blocked = controller.before_call("terminal", args)
+    assert blocked.code == "repeated_exact_failure_block"
+    assert "exit_code=127" in blocked.last_failure_summary
+    assert "zsh: command not found: missing-tool" in blocked.last_failure_summary
+    assert "missing-tool --flag" in blocked.last_failure_summary
+    assert blocked.to_metadata()["last_failure_summary"] == blocked.last_failure_summary
+
+
+def test_summarize_tool_failure_compacts_terminal_json_without_traceback_spam():
+    summary = summarize_tool_failure(
+        "terminal",
+        {"command": "python script.py", "workdir": "/tmp/project"},
+        json.dumps(
+            {
+                "output": "line 1\n" + "x" * 800,
+                "exit_code": 2,
+                "error": "Traceback\n" + "y" * 800,
+            }
+        ),
+    )
+
+    assert summary.startswith("terminal failed")
+    assert "exit_code=2" in summary
+    assert "command=python script.py" in summary
+    assert "workdir=/tmp/project" in summary
+    assert len(summary) < 700
+
+
 def test_success_resets_exact_signature_failure_streak():
     controller = ToolCallGuardrailController(
         ToolCallGuardrailConfig(hard_stop_enabled=True, exact_failure_block_after=2, same_tool_failure_halt_after=99)
@@ -182,10 +232,12 @@ def test_hard_stop_enabled_halts_same_tool_varying_args_failure_streak():
     second = controller.after_call("terminal", {"command": "cmd-2"}, '{"exit_code":1}', failed=True)
     assert second.action == "warn"
     assert second.code == "same_tool_failure_warning"
-    third = controller.after_call("terminal", {"command": "cmd-3"}, '{"exit_code":1}', failed=True)
+    third = controller.after_call("terminal", {"command": "cmd-3"}, '{"exit_code":1,"output":"third failed"}', failed=True)
     assert third.action == "halt"
     assert third.code == "same_tool_failure_halt"
     assert third.count == 3
+    assert "cmd-3" in third.last_failure_summary
+    assert "third failed" in third.last_failure_summary
 
 
 def test_idempotent_no_progress_repeated_result_warns_without_blocking_by_default():
