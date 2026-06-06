@@ -14249,6 +14249,39 @@ Examples:
         help="Run AST-level analysis on Python files (opt-in diagnostic)",
     )
 
+    skills_health = skills_subparsers.add_parser(
+        "health",
+        help="Emit a read-only JSON health audit for active-profile skills",
+        description=(
+            "Read-only deterministic skills health audit. The report is "
+            "schema-versioned JSON and fails closed for missing profile context "
+            "or cross-profile skills roots."
+        ),
+    )
+    skills_health.add_argument(
+        "--root",
+        action="append",
+        dest="roots",
+        help="Skill root to audit; may be repeated (default: active Hermes skills root)",
+    )
+    skills_health.add_argument(
+        "--max-description-chars",
+        type=int,
+        default=900,
+        help="Maximum allowed frontmatter description characters",
+    )
+    skills_health.add_argument(
+        "--max-skill-chars",
+        type=int,
+        default=32000,
+        help="Warn when a SKILL.md exceeds this many characters",
+    )
+    skills_health.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON (default; retained for explicit automation callers)",
+    )
+
     skills_uninstall = skills_subparsers.add_parser(
         "uninstall", help="Remove a hub-installed skill"
     )

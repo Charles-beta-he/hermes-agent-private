@@ -1009,6 +1009,22 @@ def do_audit(name: Optional[str] = None, console: Optional[Console] = None,
         c.print()
 
 
+def do_health(roots=None, max_description_chars: int = 900,
+              max_skill_chars: int = 32000) -> int:
+    """Emit the governed, read-only active-profile skills health audit JSON."""
+    import json
+
+    from tools.skills_health_audit import audit_skills
+
+    report = audit_skills(
+        roots,
+        max_description_chars=max_description_chars,
+        max_skill_chars=max_skill_chars,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 1 if report.get("status") == "FAIL" else 0
+
+
 def do_uninstall(name: str, console: Optional[Console] = None,
                  skip_confirm: bool = False,
                  invalidate_cache: bool = True) -> None:
@@ -1559,6 +1575,14 @@ def skills_command(args) -> None:
     elif action == "audit":
         do_audit(name=getattr(args, "name", None),
                  deep=getattr(args, "deep", False))
+    elif action == "health":
+        raise SystemExit(
+            do_health(
+                roots=getattr(args, "roots", None),
+                max_description_chars=getattr(args, "max_description_chars", 900),
+                max_skill_chars=getattr(args, "max_skill_chars", 32000),
+            )
+        )
     elif action == "uninstall":
         do_uninstall(args.name)
     elif action == "reset":
@@ -1594,7 +1618,7 @@ def skills_command(args) -> None:
             return
         do_tap(tap_action, repo=repo)
     else:
-        _console.print("Usage: hermes skills [browse|search|install|inspect|list|check|update|audit|uninstall|reset|opt-out|opt-in|publish|snapshot|tap]\n")
+        _console.print("Usage: hermes skills [browse|search|install|inspect|list|check|update|audit|health|uninstall|reset|opt-out|opt-in|publish|snapshot|tap]\n")
         _console.print("Run 'hermes skills <command> --help' for details.\n")
 
 
