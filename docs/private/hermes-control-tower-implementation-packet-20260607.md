@@ -1,7 +1,7 @@
 # Hermes Control Tower implementation packet
 
 Date: 2026-06-07
-Status: proposed / blocked on human decisions
+Status: Phase 1 read-only slice implemented; write actions remain blocked on human/policy review
 Canonical ADR: `docs/private/hermes-control-tower-adr-20260607.md`
 
 ## Purpose
@@ -173,9 +173,12 @@ Acceptance:
 
 Blocked on human:
 
-- UI host choice.
-- Initial action levels.
+- Initial action levels beyond read-only L0.
 - Integration depth for migration timing, not SSOT ownership.
+
+Resolved:
+
+- UI host: bundled dashboard plugin at `plugins/control-tower/`, mounted by the existing dashboard plugin host under `/api/plugins/control-tower/` and tab path `/control-tower`. This reuses the established `manifest.json + plugin_api.py + dist/` pattern used by Kanban, so the UI remains a projection and does not become a fact source.
 
 ### Phase 1 — Read-only Control Tower
 
@@ -198,14 +201,29 @@ Acceptance:
 
 Suggested first technical slice after approval:
 
-- Create a read-only `control_tower_snapshot` command/API that returns JSON with:
+- Implemented in Phase 1 as:
+  - `hermes_cli/control_tower.py`
+  - `plugins/control-tower/dashboard/plugin_api.py`
+  - `GET /api/plugins/control-tower/snapshot`
+  - `plugins/control-tower/dashboard/manifest.json`
+  - static placeholder UI in `plugins/control-tower/dashboard/dist/`
+- The snapshot returns JSON with:
   - `generated_at`
+  - `ledger`
+  - `ui_host`
+  - `adapters`
   - `taskpool_health`
   - `next_dispatchable`
   - `top_blockers`
   - `worker_runs`
   - `cron_watchdogs`
   - `evidence_summary`
+  - `adapter_conflicts`
+- Current adapter behavior:
+  - Observes existing Kanban tasks when `kanban.db` exists.
+  - Records deduped `adapter_observations` in the Control Tower Ledger.
+  - Emits `TaskObservedFromAdapter` events for newly observed task states.
+  - Does not mutate Kanban/task lifecycle state.
 
 ### Phase 2 — Controlled action registry
 

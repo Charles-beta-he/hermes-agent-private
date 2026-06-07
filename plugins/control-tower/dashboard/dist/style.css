@@ -1,0 +1,32 @@
+.control-tower-plugin {
+  padding: 24px;
+}
+
+.control-tower-card {
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 18px;
+  padding: 24px;
+  background: color-mix(in srgb, Canvas 92%, currentColor 8%);
+}
+
+.control-tower-eyebrow {
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+.control-tower-card h1 {
+  margin: 0 0 12px;
+  font-size: 28px;
+}
+
+.control-tower-card pre {
+  margin-top: 20px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, CanvasText 8%, transparent);
+}

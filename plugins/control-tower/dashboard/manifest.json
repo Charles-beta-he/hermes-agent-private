@@ -1,0 +1,14 @@
+{
+  "name": "control-tower",
+  "label": "Control Tower",
+  "description": "Event-driven Agent workflow control plane — read-only Phase 1 snapshot over the Control Tower Ledger",
+  "icon": "Radar",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/control-tower",
+    "position": "after:kanban"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
