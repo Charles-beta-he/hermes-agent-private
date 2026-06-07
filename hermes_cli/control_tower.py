@@ -246,6 +246,21 @@ _TABLES_SQL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS execution_policy_reviews (
+        policy_review_id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL UNIQUE,
+        command_id TEXT NOT NULL,
+        policy_status TEXT NOT NULL,
+        allowed_to_execute INTEGER NOT NULL DEFAULT 0,
+        writes_enabled INTEGER NOT NULL DEFAULT 0,
+        blocked_reason TEXT NOT NULL,
+        adapter_writes_json TEXT NOT NULL DEFAULT '[]',
+        rollback_preview_json TEXT NOT NULL DEFAULT '{}',
+        reviewed_by TEXT NOT NULL,
+        reviewed_at TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS adapter_observations (
         observation_id TEXT PRIMARY KEY,
         adapter_name TEXT NOT NULL,
@@ -869,6 +884,144 @@ def generate_executor_plan(
     }
 
 
+def _policy_review_response(
+    *,
+    created: bool,
+    row: sqlite3.Row,
+    source_surface: str,
+) -> dict[str, Any]:
+    return {
+        "created": created,
+        "policy_review_id": row["policy_review_id"],
+        "plan_id": row["plan_id"],
+        "command_id": row["command_id"],
+        "policy_status": row["policy_status"],
+        "allowed_to_execute": bool(row["allowed_to_execute"]),
+        "writes_enabled": bool(row["writes_enabled"]),
+        "blocked_reason": row["blocked_reason"],
+        "adapter_writes": json.loads(row["adapter_writes_json"]),
+        "rollback_preview": json.loads(row["rollback_preview_json"]),
+        "execution": "not_executed",
+        "source_surface": source_surface,
+        "reviewed_by": row["reviewed_by"],
+        "reviewed_at": row["reviewed_at"],
+    }
+
+
+def review_executor_plan_policy(
+    *,
+    plan_id: str,
+    actor_type: str,
+    actor_id: str,
+    source_surface: str,
+) -> dict[str, Any]:
+    """Record a non-executing policy projection for a dry-run executor plan."""
+    plan_id = plan_id.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    source_surface = source_surface.strip()
+    if not plan_id:
+        raise ValueError("plan_id is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        plan = conn.execute(
+            """
+            SELECT plan_id, command_id, command_type, status, execution, writes_enabled
+            FROM executor_plans
+            WHERE plan_id = ?
+            """,
+            (plan_id,),
+        ).fetchone()
+        if plan is None:
+            raise ValueError(f"executor plan not found: {plan_id}")
+        if plan["status"] != "planned":
+            raise ValueError(f"executor plan is not planned: {plan['status']}")
+        if plan["execution"] != "not_executed" or bool(plan["writes_enabled"]):
+            raise ValueError("executor plan is not dry-run-only")
+        existing = conn.execute(
+            """
+            SELECT policy_review_id, plan_id, command_id, policy_status,
+                   allowed_to_execute, writes_enabled, blocked_reason,
+                   adapter_writes_json, rollback_preview_json, reviewed_by, reviewed_at
+            FROM execution_policy_reviews
+            WHERE plan_id = ?
+            """,
+            (plan_id,),
+        ).fetchone()
+        if existing is not None:
+            return _policy_review_response(created=False, row=existing, source_surface=source_surface)
+
+        policy_review_id = f"policy_{uuid.uuid4().hex}"
+        reviewed_at = _now()
+        adapter_writes: list[dict[str, Any]] = []
+        rollback_preview = {
+            "available": False,
+            "reason": "no lifecycle mutation is performed in dry-run policy projection",
+        }
+        conn.execute(
+            """
+            INSERT INTO execution_policy_reviews(
+                policy_review_id, plan_id, command_id, policy_status,
+                allowed_to_execute, writes_enabled, blocked_reason,
+                adapter_writes_json, rollback_preview_json, reviewed_by, reviewed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                policy_review_id,
+                plan_id,
+                plan["command_id"],
+                "execution_blocked",
+                0,
+                0,
+                "real_executor_policy_not_enabled",
+                _canonical_json(adapter_writes),
+                _canonical_json(rollback_preview),
+                actor_id,
+                reviewed_at,
+            ),
+        )
+        _append_event(
+            conn,
+            event_type="ExecutionPolicyProjectionRecorded",
+            aggregate_type="execution_policy",
+            aggregate_id=policy_review_id,
+            command_id=plan["command_id"],
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "policy_review_id": policy_review_id,
+                "plan_id": plan_id,
+                "command_id": plan["command_id"],
+                "policy_status": "execution_blocked",
+                "allowed_to_execute": False,
+                "writes_enabled": False,
+                "blocked_reason": "real_executor_policy_not_enabled",
+                "adapter_writes": adapter_writes,
+                "rollback_preview": rollback_preview,
+                "execution": "not_executed",
+            },
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT policy_review_id, plan_id, command_id, policy_status,
+                   allowed_to_execute, writes_enabled, blocked_reason,
+                   adapter_writes_json, rollback_preview_json, reviewed_by, reviewed_at
+            FROM execution_policy_reviews
+            WHERE policy_review_id = ?
+            """,
+            (policy_review_id,),
+        ).fetchone()
+    return _policy_review_response(created=True, row=row, source_surface=source_surface)
+
+
 def record_adapter_observation(
     *,
     adapter_name: str,
@@ -1120,6 +1273,40 @@ def _executor_plans_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _execution_policy_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT policy_review_id, plan_id, command_id, policy_status,
+               allowed_to_execute, writes_enabled, blocked_reason,
+               rollback_preview_json
+        FROM execution_policy_reviews
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    recent_reviews: list[dict[str, Any]] = []
+    for row in rows:
+        rollback_preview = json.loads(row["rollback_preview_json"])
+        recent_reviews.append(
+            {
+                "policy_review_id": row["policy_review_id"],
+                "plan_id": row["plan_id"],
+                "command_id": row["command_id"],
+                "policy_status": row["policy_status"],
+                "allowed_to_execute": bool(row["allowed_to_execute"]),
+                "blocked_reason": row["blocked_reason"],
+                "rollback_available": bool(rollback_preview.get("available")),
+            }
+        )
+    return {
+        "mode": "policy_projection_only",
+        "writes_enabled": False,
+        "real_executor_enabled": False,
+        "review_count": _count(conn, "execution_policy_reviews"),
+        "recent_reviews": recent_reviews,
+    }
+
+
 def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     schema = validate_workflow_schema(CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA)
     pending = conn.execute(
@@ -1186,6 +1373,7 @@ def build_snapshot() -> dict[str, Any]:
         human_inbox = _human_inbox_snapshot(conn)
         workflow_map = _workflow_map_snapshot(conn)
         executor_plans = _executor_plans_snapshot(conn)
+        execution_policy = _execution_policy_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -1225,6 +1413,7 @@ def build_snapshot() -> dict[str, Any]:
         "human_inbox": human_inbox,
         "workflow_map": workflow_map,
         "executor_plans": executor_plans,
+        "execution_policy": execution_policy,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {

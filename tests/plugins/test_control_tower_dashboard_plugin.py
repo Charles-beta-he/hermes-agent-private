@@ -151,3 +151,42 @@ def test_control_tower_dashboard_plugin_generates_executor_plan_without_executio
     assert data["execution"] == "not_executed"
     assert data["writes_enabled"] is False
     assert data["source_surface"] == "dashboard"
+
+
+def test_control_tower_dashboard_plugin_reviews_executor_policy_without_execution(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    app = FastAPI()
+    app.include_router(_load_plugin_router(), prefix="/api/plugins/control-tower")
+    client = TestClient(app)
+
+    proposed = client.post(
+        "/api/plugins/control-tower/commands/propose",
+        json={
+            "command_type": "RefreshProjection",
+            "actor_id": "charles",
+            "target_type": "projection",
+            "target_id": "overview",
+            "risk_level": "L0",
+            "payload": {"reason": "manual policy preview"},
+            "idempotency_key": "dashboard-refresh-policy-review",
+        },
+    ).json()
+    plan = client.post(
+        f"/api/plugins/control-tower/commands/{proposed['command_id']}/executor-plan",
+        json={"actor_id": "charles"},
+    ).json()
+
+    response = client.post(
+        f"/api/plugins/control-tower/executor-plans/{plan['plan_id']}/policy-review",
+        json={"actor_id": "charles"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["policy_status"] == "execution_blocked"
+    assert data["execution"] == "not_executed"
+    assert data["writes_enabled"] is False
+    assert data["allowed_to_execute"] is False
+    assert data["blocked_reason"] == "real_executor_policy_not_enabled"
+    assert data["source_surface"] == "dashboard"

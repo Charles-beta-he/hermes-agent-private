@@ -34,6 +34,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "policy_decisions",
             "human_approvals",
             "executor_plans",
+            "execution_policy_reviews",
             "adapter_observations",
             "projection_checkpoints",
         }.issubset(tables)
@@ -648,5 +649,158 @@ def test_snapshot_includes_executor_dry_run_plan_and_no_write_boundary(tmp_path,
             "status": "planned",
             "execution": "not_executed",
             "copy_command": plan["copy_command"],
+        }
+    ]
+
+
+def test_review_executor_plan_records_policy_projection_without_execution(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="RefreshProjection",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="projection",
+        target_id="overview",
+        risk_level="L0",
+        payload={"reason": "policy preview"},
+        idempotency_key="refresh-policy-review",
+    )
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    review = control_tower.review_executor_plan_policy(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    repeated = control_tower.review_executor_plan_policy(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    assert review["created"] is True
+    assert review["plan_id"] == plan["plan_id"]
+    assert review["policy_status"] == "execution_blocked"
+    assert review["execution"] == "not_executed"
+    assert review["writes_enabled"] is False
+    assert review["allowed_to_execute"] is False
+    assert review["blocked_reason"] == "real_executor_policy_not_enabled"
+    assert review["rollback_preview"] == {
+        "available": False,
+        "reason": "no lifecycle mutation is performed in dry-run policy projection",
+    }
+    assert review["adapter_writes"] == []
+    assert repeated["created"] is False
+    assert repeated["policy_review_id"] == review["policy_review_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        command_status = ledger.execute(
+            "SELECT status FROM commands WHERE command_id = ?",
+            (proposed["command_id"],),
+        ).fetchone()[0]
+        review_rows = ledger.execute("SELECT COUNT(*) FROM execution_policy_reviews").fetchone()[0]
+        event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert command_status == "proposed"
+    assert review_rows == 1
+    assert event_types == [
+        "CommandProposed",
+        "ExecutorPlanGenerated",
+        "ExecutionPolicyProjectionRecorded",
+    ]
+
+
+def test_review_executor_plan_policy_fails_closed_for_non_planned_or_missing_plan(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="RefreshProjection",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="projection",
+        target_id="overview",
+        risk_level="L0",
+        payload={},
+        idempotency_key="refresh-non-planned-policy-review",
+    )
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            "UPDATE executor_plans SET status = 'executed' WHERE plan_id = ?",
+            (plan["plan_id"],),
+        )
+        ledger.commit()
+
+    for plan_id, expected in [
+        ("plan_missing", "executor plan not found"),
+        (plan["plan_id"], "executor plan is not planned"),
+    ]:
+        try:
+            control_tower.review_executor_plan_policy(
+                plan_id=plan_id,
+                actor_type="human",
+                actor_id="charles",
+                source_surface="dashboard",
+            )
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"expected {expected}")
+
+
+def test_snapshot_includes_execution_policy_projection_without_write_authority(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="RefreshProjection",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="projection",
+        target_id="overview",
+        risk_level="L0",
+        payload={},
+        idempotency_key="refresh-policy-snapshot",
+    )
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    review = control_tower.review_executor_plan_policy(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    snapshot = control_tower.build_snapshot()
+
+    assert snapshot["execution_policy"]["writes_enabled"] is False
+    assert snapshot["execution_policy"]["real_executor_enabled"] is False
+    assert snapshot["execution_policy"]["review_count"] == 1
+    assert snapshot["execution_policy"]["recent_reviews"] == [
+        {
+            "policy_review_id": review["policy_review_id"],
+            "plan_id": plan["plan_id"],
+            "command_id": proposed["command_id"],
+            "policy_status": "execution_blocked",
+            "allowed_to_execute": False,
+            "blocked_reason": "real_executor_policy_not_enabled",
+            "rollback_available": False,
         }
     ]

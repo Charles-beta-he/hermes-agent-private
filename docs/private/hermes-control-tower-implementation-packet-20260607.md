@@ -294,7 +294,7 @@ Acceptance:
 - Any selected command lifecycle has inspectable graph nodes and blocked reason.
 - Executor remains disabled until explicit policy approval.
 
-### Phase 4 — Executor dry-run planning and Evidence Spine enforcement
+### Phase 4 — Executor dry-run planning, policy projection, and Evidence Spine enforcement
 
 Phase 4A implemented slice:
 
@@ -320,18 +320,45 @@ Implemented slice:
 - L0/L1 proposed commands can receive dry-run plans without human approval.
 - L2+ commands require an approved Human Inbox decision before planning.
 - Pending/rejected L2+ commands fail closed.
-- Snapshot now includes `executor_plans`.
+- Snapshot includes `executor_plans`.
 - Underlying command rows remain `status = proposed`; no command is marked executed.
+
+Phase 4B implemented slice:
+
+Tasks:
+
+1. Record an execution-policy projection for a dry-run executor plan.
+2. Show whether a plan would be allowed to execute if real execution were enabled.
+3. Show adapter write intent and rollback availability before enabling any writes.
+4. Keep policy review non-executing and idempotent per plan.
+5. Surface policy reviews in the dashboard snapshot.
+
+Implemented slice:
+
+- `control_tower.review_executor_plan_policy(...)` records one idempotent policy review per executor plan.
+- Dashboard plugin exposes `POST /api/plugins/control-tower/executor-plans/{plan_id}/policy-review`.
+- Policy reviews are stored in `execution_policy_reviews` with:
+  - `policy_status = execution_blocked`
+  - `allowed_to_execute = false`
+  - `writes_enabled = false`
+  - `blocked_reason = real_executor_policy_not_enabled`
+  - `adapter_writes_json = []`
+  - rollback preview marked unavailable because no lifecycle mutation occurs
+- Policy review emits `ExecutionPolicyProjectionRecorded`.
+- Missing, non-planned, or non-dry-run plans fail closed.
+- Snapshot includes `execution_policy` with `real_executor_enabled = false` and `writes_enabled = false`.
+- Dashboard UI can review first plan policy, but this only writes the policy projection to the ledger.
 
 Acceptance:
 
-- Executor planning is visible and auditable.
-- Planning does not execute lifecycle side effects.
-- Planning does not write Kanban/taskpool/adapters.
+- Executor planning and policy review are visible and auditable.
+- Planning and policy review do not execute lifecycle side effects.
+- Planning and policy review do not write Kanban/taskpool/adapters.
 - Pending/rejected high-risk commands cannot be planned.
 - A generated plan only provides a copyable/dry-run command preview.
+- A policy review only previews execution authority and rollback/write status; it never grants execution.
 
-Phase 4B remaining Evidence Spine tasks:
+Phase 4C remaining Evidence Spine tasks:
 
 1. Implement evidence maturity model.
 2. Link evidence to acceptance criteria.
@@ -382,11 +409,13 @@ Implemented:
 4. Kanban projection adapter that records deduped observations in the Control Tower Ledger.
 5. Proposed-command registry via `POST /api/plugins/control-tower/commands/propose`.
 6. High-risk proposed commands routed to Human Inbox without execution.
-7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, human approval requests, approval decisions, workflow-map validation/projection, and executor dry-run planning.
+7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, human approval requests, approval decisions, workflow-map validation/projection, executor dry-run planning, and execution-policy projection.
 8. Approval decision endpoint via `POST /api/plugins/control-tower/approvals/{approval_id}/decision`.
 9. Ledger-backed workflow map projection with disabled executor boundary.
 10. Executor dry-run plan endpoint via `POST /api/plugins/control-tower/commands/{command_id}/executor-plan`.
 11. Executor plan projection via snapshot `executor_plans`.
+12. Execution-policy review endpoint via `POST /api/plugins/control-tower/executor-plans/{plan_id}/policy-review`.
+13. Execution-policy projection via snapshot `execution_policy`.
 
 Still intentionally not implemented:
 
@@ -396,13 +425,13 @@ Still intentionally not implemented:
 - No arbitrary shell.
 - No write-through Kanban/taskpool adapter.
 - No approval expiration / role authorization matrix yet.
-- No executor whitelist activation beyond dry-run/copy-command planning.
+- No executor whitelist activation beyond dry-run/copy-command planning and policy projection.
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, and executor dry-run plans but never executes them.
+- The system now records durable operator intent, human decisions, executor dry-run plans, and execution-policy previews but never executes them.
 - The ledger remains the only fact source.
-- The next step changes authority from "generate a dry-run plan" to "execute an approved plan", which requires explicit policy semantics and write-through adapter decisions.
+- The next step changes authority from "preview whether a plan would be executable" to "execute an approved plan", which requires explicit policy semantics, role binding, evidence requirements, and write-through adapter decisions.
 
 ## Human decisions required now
 
@@ -427,7 +456,8 @@ Remaining decisions before execution-capable implementation:
    - Still undecided for execution-capable phase: approver role matrix, expiration windows, risk-level evidence requirements, and whether approval binds to a command hash/payload digest.
 
 2. Executor boundary:
-   - Implemented for current non-executing slice: dry-run/copy-command executor plans may be generated for L0/L1 proposed commands and approved L2+ commands.
+   - Implemented for current non-executing slice: dry-run/copy-command executor plans may be generated for L0/L1 proposed commands and approved L2+ commands, then reviewed through an execution-policy projection.
+   - The projection currently always reports `execution_blocked`, `allowed_to_execute = false`, `writes_enabled = false`, and `blocked_reason = real_executor_policy_not_enabled`.
    - Still undecided for execution-capable phase: which actions may actually run, which adapters may be mutated, and what rollback/escape path is required per action.
 
 3. Write-through adapter timing:
@@ -443,4 +473,4 @@ Remaining decisions before execution-capable implementation:
 
 ## Stop condition
 
-Stop execution-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, and dry-run executor plans are now durable, audited, idempotent where safe, and non-executing. The next boundary is real executor authority plus write-through adapter policy; do not run any lifecycle-affecting action until the executor whitelist, role matrix, expiration/evidence rules, rollback/escape path, and adapter mutation contract are explicitly decided.
+Stop execution-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, and execution-policy projections are now durable, audited, idempotent where safe, and non-executing. The next boundary is real executor authority plus write-through adapter policy; do not run any lifecycle-affecting action until the executor whitelist, role matrix, expiration/evidence rules, rollback/escape path, and adapter mutation contract are explicitly decided.

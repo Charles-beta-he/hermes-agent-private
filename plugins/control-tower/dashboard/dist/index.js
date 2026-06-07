@@ -6,10 +6,10 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 4A is dry-run only: this dashboard can record operator intent,
-        human decisions, and copy-command executor plans in the Control Tower
-        Ledger, but it cannot execute lifecycle actions or write through adapters.
-        Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
+        Phase 4B is still non-executing: this dashboard can record operator intent,
+        human decisions, copy-command executor plans, and execution-policy previews
+        in the Control Tower Ledger, but it cannot execute lifecycle actions or write
+        through adapters. Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
         <button id="control-tower-refresh" type="button">Refresh snapshot</button>
@@ -24,6 +24,9 @@
         </button>
         <button id="control-tower-plan-first" type="button">
           Plan first proposed
+        </button>
+        <button id="control-tower-policy-first" type="button">
+          Review first plan policy
         </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
@@ -43,6 +46,8 @@
     const decided = data?.human_inbox?.decided_count ?? 0;
     const proposed = data?.command_registry?.proposed_count ?? 0;
     const plans = data?.executor_plans?.planned_count ?? 0;
+    const policyReviews = data?.execution_policy?.review_count ?? 0;
+    const writesEnabled = data?.execution_policy?.writes_enabled === true;
     const ready = data?.workflow_map?.ready?.length ?? 0;
     const blocked = data?.workflow_map?.blocked?.length ?? 0;
     if (summaryEl) {
@@ -51,6 +56,8 @@
         <span>Human pending: <strong>${pending}</strong></span>
         <span>Human decided: <strong>${decided}</strong></span>
         <span>Executor plans: <strong>${plans}</strong></span>
+        <span>Policy reviews: <strong>${policyReviews}</strong></span>
+        <span>Writes enabled: <strong>${writesEnabled ? 'yes' : 'no'}</strong></span>
         <span>Workflow ready: <strong>${ready}</strong></span>
         <span>Blocked gates: <strong>${blocked}</strong></span>
       `;
@@ -99,7 +106,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No pending approval to decide.';
       return;
     }
-    fetch(`/api/plugins/control-tower/approvals/${approval.approval_id}/decision`, {
+    fetch(`/api/plugins/control-tower/approvals/${encodeURIComponent(approval.approval_id)}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -122,7 +129,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No proposed command to plan.';
       return;
     }
-    fetch(`/api/plugins/control-tower/commands/${command.command_id}/executor-plan`, {
+    fetch(`/api/plugins/control-tower/commands/${encodeURIComponent(command.command_id)}/executor-plan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -140,6 +147,30 @@
       });
   };
 
+  const reviewFirstPlanPolicy = () => {
+    const plan = latestSnapshot?.executor_plans?.recent_plans?.[0];
+    if (!plan) {
+      if (snapshotEl) snapshotEl.textContent = 'No executor plan to review.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/executor-plans/${encodeURIComponent(plan.plan_id)}/policy-review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor_type: 'human',
+        actor_id: 'dashboard',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `Policy review failed: ${error}`;
+      });
+  };
+
   document.getElementById('control-tower-refresh')?.addEventListener('click', loadSnapshot);
   document
     .getElementById('control-tower-propose-refresh')
@@ -153,5 +184,8 @@
   document
     .getElementById('control-tower-plan-first')
     ?.addEventListener('click', planFirstProposed);
+  document
+    .getElementById('control-tower-policy-first')
+    ?.addEventListener('click', reviewFirstPlanPolicy);
   loadSnapshot();
 })();

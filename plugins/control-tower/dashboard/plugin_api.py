@@ -82,3 +82,14 @@ def generate_executor_plan(command_id: str, req: ExecutorPlanRequest):
         actor_id=req.actor_id,
         source_surface="dashboard",
     )
+
+
+@router.post("/executor-plans/{plan_id}/policy-review")
+def review_executor_plan_policy(plan_id: str, req: ExecutorPlanRequest):
+    """Record a non-executing policy projection for a dry-run executor plan."""
+    return control_tower.review_executor_plan_policy(
+        plan_id=plan_id,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        source_surface="dashboard",
+    )
