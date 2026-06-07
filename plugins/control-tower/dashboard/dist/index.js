@@ -6,13 +6,13 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 14 enables explicitly approved, command-digest Kanban closeout
-        write-through plus digest-bound Kanban rollback/reopen while keeping
-        taskpool write-through and conflicting evidence override disabled.
+        Phase 15 enables explicitly approved, command-digest Kanban/taskpool
+        closeout write-through plus digest-bound rollback/reopen while keeping
+        conflicting evidence override disabled.
         This dashboard can record operator intent, human decisions, read-only
         runs, evidence gates, ledger closeouts, blocked external write intents,
         readiness reviews, authorization decisions, preflights, digest-bound
-        Kanban write execution runs, and digest-bound Kanban rollback runs.
+        Kanban/taskpool write execution runs, and digest-bound rollback runs.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
@@ -66,10 +66,10 @@
           Prepare external write preflight
         </button>
         <button id="control-tower-execute-external-write" type="button">
-          Execute approved Kanban write
+          Execute approved adapter write
         </button>
         <button id="control-tower-rollback-external-write" type="button">
-          Rollback Kanban write
+          Rollback adapter write
         </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
@@ -426,12 +426,17 @@
       if (snapshotEl) snapshotEl.textContent = 'No ledger-only closeout run to prepare external write intent for.';
       return;
     }
+    const externalRef = run.external_ref || run.task_id;
+    if (!externalRef || externalRef.includes('/') || externalRef.endsWith('.md')) {
+      if (snapshotEl) snapshotEl.textContent = `Closeout run ${run.closeout_execution_id} has no safe taskpool external_ref.`;
+      return;
+    }
     fetch(`/api/plugins/control-tower/closeout-executions/${encodeURIComponent(run.closeout_execution_id)}/external-write-intent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         adapter_name: 'taskpool',
-        external_ref: `taskpool:${run.task_id}`,
+        external_ref: externalRef,
         actor_type: 'human',
         actor_id: 'dashboard',
         actor_role: 'owner',
@@ -564,10 +569,10 @@
 
   const executeFirstExternalWritePreflight = () => {
     const preflight = latestSnapshot?.external_adapter_write_execution_preflights?.recent_preflights?.find(
-      (entry) => entry.preflight_status === 'blocked_pending_external_write_executor' && entry.adapter_name === 'kanban'
+      (entry) => entry.preflight_status === 'blocked_pending_external_write_executor' && ['kanban', 'taskpool'].includes(entry.adapter_name)
     );
     if (!preflight) {
-      if (snapshotEl) snapshotEl.textContent = 'No approved Kanban external write preflight to execute.';
+      if (snapshotEl) snapshotEl.textContent = 'No approved adapter external write preflight to execute.';
       return;
     }
     fetch(`/api/plugins/control-tower/external-write-preflights/${encodeURIComponent(preflight.external_write_preflight_id)}/execute`, {
@@ -578,7 +583,7 @@
         actor_type: 'human',
         actor_id: 'dashboard',
         actor_role: 'admin',
-        reason: 'dashboard executed approved digest-bound Kanban write-through; rollback/reopen is separately digest-bound',
+        reason: 'dashboard executed approved digest-bound adapter write-through; rollback/reopen is separately digest-bound',
       }),
     })
       .then((response) => response.json())
@@ -595,10 +600,10 @@
     const rolledBack = new Set((latestSnapshot?.external_adapter_write_rollback_runs?.recent_runs ?? [])
       .map((entry) => entry.external_write_execution_id));
     const run = latestSnapshot?.external_adapter_write_execution_runs?.recent_runs?.find(
-      (entry) => entry.execution_status === 'write_completed' && entry.adapter_name === 'kanban' && !rolledBack.has(entry.external_write_execution_id)
+      (entry) => entry.execution_status === 'write_completed' && ['kanban', 'taskpool'].includes(entry.adapter_name) && !rolledBack.has(entry.external_write_execution_id)
     );
     if (!run) {
-      if (snapshotEl) snapshotEl.textContent = 'No digest-bound Kanban external write run to rollback.';
+      if (snapshotEl) snapshotEl.textContent = 'No digest-bound adapter external write run to rollback.';
       return;
     }
     fetch(`/api/plugins/control-tower/external-write-runs/${encodeURIComponent(run.external_write_execution_id)}/rollback`, {
@@ -609,7 +614,7 @@
         actor_type: 'human',
         actor_id: 'dashboard',
         actor_role: 'admin',
-        reason: 'dashboard rolled back digest-bound Kanban write-through',
+        reason: 'dashboard rolled back digest-bound adapter write-through',
       }),
     })
       .then((response) => response.json())

@@ -2950,7 +2950,7 @@ def test_external_adapter_write_execution_fails_closed_on_digest_role_and_missin
     with sqlite3.connect(home / "control_tower.db") as ledger:
         ledger.execute("PRAGMA ignore_check_constraints = ON")
         ledger.execute(
-            "UPDATE external_adapter_write_execution_preflights SET adapter_name = 'taskpool' WHERE external_write_preflight_id = ?",
+            "UPDATE external_adapter_write_execution_preflights SET adapter_name = 'unknown' WHERE external_write_preflight_id = ?",
             (preflight["external_write_preflight_id"],),
         )
         ledger.commit()
@@ -3309,7 +3309,7 @@ def test_external_adapter_write_rollback_fails_closed_on_digest_role_target_and_
     with sqlite3.connect(home / "control_tower.db") as ledger:
         ledger.execute("PRAGMA ignore_check_constraints = ON")
         ledger.execute(
-            "UPDATE external_adapter_write_execution_runs SET adapter_name = 'taskpool' WHERE external_write_execution_id = ?",
+            "UPDATE external_adapter_write_execution_runs SET adapter_name = 'unknown' WHERE external_write_execution_id = ?",
             (write_run["external_write_execution_id"],),
         )
         ledger.commit()
@@ -3318,7 +3318,7 @@ def test_external_adapter_write_rollback_fails_closed_on_digest_role_target_and_
     except ValueError as exc:
         assert "external write rollback adapter is not enabled" in str(exc)
     else:  # pragma: no cover - assertion clarity
-        raise AssertionError("taskpool rollback must remain disabled")
+        raise AssertionError("unsupported rollback adapter must remain disabled")
     with sqlite3.connect(home / "control_tower.db") as ledger:
         ledger.execute("UPDATE external_adapter_write_execution_runs SET adapter_name = 'kanban' WHERE external_write_execution_id = ?", (write_run["external_write_execution_id"],))
         ledger.execute(
@@ -3362,3 +3362,290 @@ def test_external_adapter_write_rollback_validates_required_fields(tmp_path, mon
             assert expected in str(exc)
         else:  # pragma: no cover - assertion clarity
             raise AssertionError(f"rollback validation must fail: {expected}")
+
+
+def _write_taskpool_note(vault: Path, task_id: str, *, status: str = "review") -> Path:
+    tasks_dir = vault / "05-实践与项目" / "tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    path = tasks_dir / f"{task_id}.md"
+    path.write_text(
+        "---\n"
+        f"status: {status}\n"
+        "priority: P1\n"
+        "project: hermes\n"
+        "lane: work\n"
+        "evidence:\n"
+        "  - proof:initial taskpool fixture\n"
+        "---\n\n"
+        f"# {task_id}\n\n"
+        "Taskpool fixture for Control Tower external write-through.\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _approved_taskpool_write_preflight(home: Path, task_id: str = "task:phase15-taskpool") -> dict[str, object]:
+    taskpool_ref = task_id.replace(":", "-")
+    vault = home / "brain"
+    _write_taskpool_note(vault, taskpool_ref, status="review")
+    control_tower.record_evidence(
+        task_id=task_id,
+        evidence_type="test",
+        maturity="verified",
+        source_type="pytest",
+        summary="verified evidence for external taskpool write",
+        producer_type="tester",
+        producer_id="pytest",
+        acceptance_refs=["acc"],
+        stale_status="fresh",
+    )
+    evidence_review = control_tower.evaluate_evidence_gate(
+        task_id=task_id,
+        risk_level="L2",
+        acceptance_refs=["acc"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="pytest",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            """
+            INSERT INTO tasks(task_id, external_ref, title, project, board, priority, status, risk_class, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_id,
+                taskpool_ref,
+                "Phase15 taskpool write target",
+                "pytest",
+                "control",
+                "P1",
+                "review",
+                "L2",
+                "2026-06-07T00:00:00+00:00",
+                "2026-06-07T00:00:00+00:00",
+            ),
+        )
+        ledger.commit()
+    closeout_auth = control_tower.request_closeout_authorization(
+        evidence_review_id=evidence_review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    closeout_decision = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=closeout_auth["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    closeout_run = control_tower.execute_closeout_authorization(
+        closeout_authorization_id=closeout_decision["closeout_authorization_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    intent = control_tower.prepare_external_adapter_write_intent(
+        closeout_execution_id=closeout_run["closeout_execution_id"],
+        adapter_name="taskpool",
+        external_ref=taskpool_ref,
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    review = control_tower.review_external_adapter_write_intent(
+        external_write_intent_id=intent["external_write_intent_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    write_auth = control_tower.request_external_adapter_write_authorization(
+        external_write_review_id=review["external_write_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    write_decision = control_tower.decide_external_adapter_write_authorization(
+        external_write_authorization_id=write_auth["external_write_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    preflight = control_tower.prepare_external_adapter_write_execution_preflight(
+        external_write_authorization_id=write_decision["external_write_authorization_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    preflight["taskpool_ref"] = taskpool_ref
+    preflight["taskpool_note"] = vault / "05-实践与项目" / "tasks" / f"{taskpool_ref}.md"
+    return preflight
+
+
+def test_external_adapter_write_execution_updates_taskpool_with_digest_bound_run(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_BRAIN_VAULT", str(home / "brain"))
+    preflight = _approved_taskpool_write_preflight(home)
+
+    run = control_tower.execute_external_adapter_write_preflight(
+        external_write_preflight_id=preflight["external_write_preflight_id"],
+        expected_command_execution_digest=preflight["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+
+    assert run["created"] is True
+    assert run["execution_status"] == "write_completed"
+    assert run["adapter_name"] == "taskpool"
+    assert run["adapter_result"]["status_after"] == "done"
+    assert run["rollback_snapshot"]["status_before"] == "review"
+    note = preflight["taskpool_note"].read_text(encoding="utf-8")
+    assert "status: done" in note
+    assert "control_tower_external_taskpool_closeout" in note
+
+    retry = control_tower.execute_external_adapter_write_preflight(
+        external_write_preflight_id=preflight["external_write_preflight_id"],
+        expected_command_execution_digest=preflight["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    assert retry["created"] is False
+    assert retry["external_write_execution_id"] == run["external_write_execution_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_execution_runs WHERE adapter_name = 'taskpool'").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations WHERE adapter_name = 'taskpool' AND observed_type = 'task'").fetchone()[0] == 1
+
+
+def test_external_adapter_write_rollback_reopens_taskpool_with_digest_bound_run(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_BRAIN_VAULT", str(home / "brain"))
+    preflight = _approved_taskpool_write_preflight(home, "task:phase15-taskpool-rollback")
+    write_run = control_tower.execute_external_adapter_write_preflight(
+        external_write_preflight_id=preflight["external_write_preflight_id"],
+        expected_command_execution_digest=preflight["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    assert "status: done" in preflight["taskpool_note"].read_text(encoding="utf-8")
+
+    rollback = control_tower.execute_external_adapter_write_rollback(
+        external_write_execution_id=write_run["external_write_execution_id"],
+        expected_command_execution_digest=write_run["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+
+    assert rollback["created"] is True
+    assert rollback["adapter_name"] == "taskpool"
+    assert rollback["operation"] == "reopen"
+    assert rollback["adapter_result"]["status_after"] == "review"
+    note = preflight["taskpool_note"].read_text(encoding="utf-8")
+    assert "status: review" in note
+    assert "control_tower_external_taskpool_rollback" in note
+
+
+def test_external_adapter_write_execution_fails_closed_on_taskpool_symlink_escape(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_BRAIN_VAULT", str(home / "brain"))
+    preflight = _approved_taskpool_write_preflight(home, "task:phase15-taskpool-symlink")
+    escaped = tmp_path / "escaped-task.md"
+    escaped.write_text("---\nstatus: review\n---\n\n# escaped\n", encoding="utf-8")
+    note_path = preflight["taskpool_note"]
+    assert isinstance(note_path, Path)
+    note_path.unlink()
+    note_path.symlink_to(escaped)
+
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=preflight["external_write_preflight_id"],
+            expected_command_execution_digest=preflight["command_execution_digest"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "taskpool task note symlinks are not writable" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("taskpool symlink target must fail closed before write")
+    assert "status: review" in escaped.read_text(encoding="utf-8")
+
+
+def test_external_adapter_write_execution_fails_closed_on_taskpool_directory_symlink_escape(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_BRAIN_VAULT", str(home / "brain"))
+    preflight = _approved_taskpool_write_preflight(home, "task:phase15-taskpool-dir-symlink")
+    note_path = preflight["taskpool_note"]
+    assert isinstance(note_path, Path)
+    tasks_dir = note_path.parent
+    outside_tasks = tmp_path / "outside-tasks"
+    tasks_dir.rename(outside_tasks)
+    tasks_dir.symlink_to(outside_tasks, target_is_directory=True)
+
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=preflight["external_write_preflight_id"],
+            expected_command_execution_digest=preflight["command_execution_digest"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "taskpool task directory symlinks are not writable" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("taskpool directory symlink target must fail closed before write")
+    assert "status: review" in (outside_tasks / note_path.name).read_text(encoding="utf-8")
+
+
+def test_external_adapter_write_execution_fails_closed_on_taskpool_target_drift(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_BRAIN_VAULT", str(home / "brain"))
+    preflight = _approved_taskpool_write_preflight(home, "task:phase15-taskpool-drift")
+    alternate_ref = "task-phase15-taskpool-drift-other"
+    _write_taskpool_note(home / "brain", alternate_ref, status="review")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute("PRAGMA ignore_check_constraints = ON")
+        ledger.execute(
+            "UPDATE external_adapter_write_execution_preflights SET external_ref = ? WHERE external_write_preflight_id = ?",
+            (alternate_ref, preflight["external_write_preflight_id"]),
+        )
+        ledger.commit()
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=preflight["external_write_preflight_id"],
+            expected_command_execution_digest=preflight["command_execution_digest"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "column drift for digest-bound field: external_ref" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("taskpool target drift must fail closed before write")
+    assert "status: review" in preflight["taskpool_note"].read_text(encoding="utf-8")
+    assert "status: review" in (home / "brain" / "05-实践与项目" / "tasks" / f"{alternate_ref}.md").read_text(encoding="utf-8")

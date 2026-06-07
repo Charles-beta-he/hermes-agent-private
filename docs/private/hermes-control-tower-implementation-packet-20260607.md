@@ -728,7 +728,7 @@ Acceptance:
 
 ### Phase 13 — Digest-bound Kanban external write-through executor
 
-Phase 13 crosses the first external adapter mutation boundary, but only for a narrow, explicitly approved Kanban closeout write. It consumes a Phase 12 preflight by exact `command_execution_digest`, revalidates the source authorization/review/intent chain, writes the target Kanban task to `done`, records an adapter observation, and stores a rollback snapshot while keeping rollback/reopen disabled.
+Phase 13 crossed the first external adapter mutation boundary for a narrow, explicitly approved Kanban closeout write. Phase 14 subsequently enabled Kanban rollback/reopen for those write runs.
 
 Implemented scope:
 
@@ -746,7 +746,7 @@ Implemented scope:
 5. Mutate Kanban through `kanban_db.complete_task(...)` only after all gates pass.
 6. Insert exactly one idempotent `external_adapter_write_execution_runs` row per preflight.
 7. Record `ExternalAdapterWriteExecuted` event and one deduped `adapter_observations` row.
-8. Capture `rollback_snapshot_json` with prior Kanban status/result, but keep `rollback_available = false` and `rollback_reopen_enabled = false`.
+8. Capture `rollback_snapshot_json` with prior Kanban status/result.
 9. Dashboard API endpoint:
    - `POST /api/plugins/control-tower/external-write-preflights/{external_write_preflight_id}/execute`
 10. Snapshot `external_adapter_write_execution_runs` reports execution counts and recent runs.
@@ -756,8 +756,31 @@ Acceptance:
 - Approved digest-bound Kanban preflight can execute once and sets the Kanban task to `done`.
 - Repeating the same execution is idempotent and returns the existing run.
 - Wrong digest, insufficient actor role, unsupported adapter, stale source chain, or payload drift fail closed before adapter mutation.
-- Rollback/reopen remains explicitly disabled even though a rollback snapshot is stored.
+- Kanban rollback/reopen is covered by Phase 14.
 - Taskpool write-through and conflicting evidence override remain outside this phase.
+
+### Phase 15 — Digest-bound taskpool external write-through executor
+
+Phase 15 extends the already approved external write executor from Kanban to a narrow taskpool adapter slice. It consumes the same Phase 12 command-digest preflight and reuses the same authorization/review/intent freshness gates, but mutates only a single taskpool Markdown task frontmatter status from a writable pre-closeout state to `done`. It stores a rollback snapshot and enables digest-bound taskpool rollback/reopen back to the pre-write status.
+
+Implemented scope:
+
+1. Add `taskpool` to `EXTERNAL_WRITE_EXECUTOR_ADAPTERS` for `operation = closeout` only.
+2. Resolve taskpool targets under `HERMES_BRAIN_VAULT` / `OBSIDIAN_VAULT_PATH` / `~/Documents/brain` at `05-实践与项目/tasks/{external_ref}.md`.
+3. Require a frontmatter-backed task note with an existing `status:` field.
+4. Allow closeout only from `review`, `running`, `ready`, `blocked`, or `scheduled`.
+5. Write only frontmatter `status: done` plus an auditable HTML comment marker containing Control Tower digest metadata.
+6. Record an idempotent `external_adapter_write_execution_runs` row, `ExternalAdapterWriteExecuted` event, and deduped `adapter_observations` row with `adapter_name = taskpool`.
+7. Enable rollback/reopen only against completed digest-bound taskpool write runs with the same `command_execution_digest`.
+8. Rollback restores the stored pre-write status and appends a `control_tower_external_taskpool_rollback` audit marker.
+
+Acceptance:
+
+- Approved digest-bound taskpool preflight can execute once and sets the task note to `status: done`.
+- Repeating the same execution is idempotent and returns the existing run.
+- Wrong digest, insufficient actor role, unsupported adapter, stale source chain, payload drift, or target drift fail closed before mutation.
+- Digest-bound taskpool rollback restores the previous taskpool status.
+- Conflicting evidence override remains outside this phase.
 
 ## First implementation slice status
 
@@ -795,14 +818,13 @@ Implemented:
 30. External adapter write authorization projection via snapshot `external_adapter_write_authorizations`.
 31. External adapter write execution preflight endpoint via `POST /api/plugins/control-tower/external-write-authorizations/{external_write_authorization_id}/execution-preflight`.
 32. External adapter write execution preflight projection via snapshot `external_adapter_write_execution_preflights`.
-33. Digest-bound Kanban external write execution endpoint via `POST /api/plugins/control-tower/external-write-preflights/{external_write_preflight_id}/execute`.
-34. Digest-bound Kanban external write execution projection via snapshot `external_adapter_write_execution_runs`.
-35. Digest-bound Kanban rollback/reopen endpoint via `POST /api/plugins/control-tower/external-write-runs/{external_write_execution_id}/rollback`.
-36. Digest-bound Kanban rollback/reopen projection via snapshot `external_adapter_write_rollback_runs`.
+33. Digest-bound Kanban/taskpool external write execution endpoint via `POST /api/plugins/control-tower/external-write-preflights/{external_write_preflight_id}/execute`.
+34. Digest-bound Kanban/taskpool external write execution projection via snapshot `external_adapter_write_execution_runs`.
+35. Digest-bound Kanban/taskpool rollback/reopen endpoint via `POST /api/plugins/control-tower/external-write-runs/{external_write_execution_id}/rollback`.
+36. Digest-bound Kanban/taskpool rollback/reopen projection via snapshot `external_adapter_write_rollback_runs`.
 
 Still intentionally not implemented:
 
-- No taskpool adapter write-through.
 - No conflicting-evidence human override; evidence changes after authorization fail closed.
 - Read-only executor whitelist is now executable only through the bounded
   read-only consumer; it still cannot write adapters or mutate external task lifecycle.
@@ -817,19 +839,17 @@ Still intentionally not implemented:
   but they remain non-executing and keep `write_through_allowed = false`.
 - External adapter write execution preflights bind a canonical command execution
   payload/digest and still keep their own preflight flags disabled.
-- Kanban closeout write-through is executable only by consuming an approved
+- Kanban/taskpool closeout write-through is executable only by consuming an approved
   preflight with the exact `command_execution_digest`.
-- Kanban rollback/reopen is executable only against a completed digest-bound
+- Kanban/taskpool rollback/reopen is executable only against a completed digest-bound
   write run with the exact same `command_execution_digest`; it uses the stored
-  rollback snapshot and restores the pre-write Kanban status/result.
-- Taskpool write-through remains disabled until a taskpool-specific mutation
-  contract and rollback/escape path are implemented.
+  rollback snapshot and restores the pre-write adapter status/result where supported.
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, blocked external adapter write intents with mutation digests, blocked readiness reviews for those intents, external write authorization decisions, command-digest preflights, digest-bound Kanban write execution runs, and digest-bound Kanban rollback/reopen runs.
+- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, blocked external adapter write intents with mutation digests, blocked readiness reviews for those intents, external write authorization decisions, command-digest preflights, digest-bound Kanban/taskpool write execution runs, and digest-bound Kanban/taskpool rollback/reopen runs.
 - The ledger remains the only fact source.
-- The next step changes authority from "Kanban closeout write-through with Kanban rollback" to "taskpool write-through / conflicting evidence override", which requires taskpool-specific adapter mutation semantics, evidence override policy, and taskpool rollback/escape paths.
+- The next step changes authority from "digest-bound adapter closeout write-through with rollback" to "conflicting evidence override / broader adapter operations", which requires explicit evidence override policy and per-operation rollback/escape paths.
 
 ## Human decisions required now
 

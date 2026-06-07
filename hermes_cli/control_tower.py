@@ -3461,7 +3461,7 @@ def prepare_external_adapter_write_execution_preflight(
     return _external_write_preflight_response(created=True, row=row, source_surface=source_surface)
 
 
-EXTERNAL_WRITE_EXECUTOR_ADAPTERS = frozenset({"kanban"})
+EXTERNAL_WRITE_EXECUTOR_ADAPTERS = frozenset({"kanban", "taskpool"})
 
 
 def _select_external_write_execution_run(conn: sqlite3.Connection, external_write_execution_id: str) -> sqlite3.Row | None:
@@ -3630,6 +3630,123 @@ def _execute_kanban_closeout_write(preflight: sqlite3.Row, *, actor_id: str) -> 
     return adapter_result, rollback_snapshot
 
 
+def _taskpool_tasks_dir() -> Path:
+    import os
+
+    vault = Path(os.environ.get("HERMES_BRAIN_VAULT", os.environ.get("OBSIDIAN_VAULT_PATH", str(Path.home() / "Documents" / "brain")))).expanduser()
+    return vault / "05-实践与项目" / "tasks"
+
+
+def _taskpool_task_path(external_ref: str) -> Path:
+    if not external_ref or "/" in external_ref or external_ref in {".", ".."} or external_ref.endswith(".md"):
+        raise ValueError("taskpool external_ref must be a task id slug without path separators or suffix")
+    return _taskpool_tasks_dir() / f"{external_ref}.md"
+
+
+def _assert_taskpool_path_safe(path: Path) -> None:
+    configured_tasks_dir = _taskpool_tasks_dir()
+    configured_vault = configured_tasks_dir.parent.parent
+    for ancestor in (configured_vault, configured_tasks_dir.parent, configured_tasks_dir):
+        if ancestor.exists() and ancestor.is_symlink():
+            raise ValueError("taskpool task directory symlinks are not writable")
+    if path.parent != configured_tasks_dir:
+        raise ValueError("taskpool task note escapes tasks directory")
+    if path.is_symlink():
+        raise ValueError("taskpool task note symlinks are not writable")
+    tasks_dir = configured_tasks_dir.resolve()
+    resolved = path.resolve()
+    if resolved.parent != tasks_dir:
+        raise ValueError("taskpool task note escapes tasks directory")
+    if not resolved.is_file():
+        raise ValueError("taskpool task note is not a regular file")
+
+
+def _read_taskpool_note(external_ref: str) -> tuple[Path, str, str]:
+    path = _taskpool_task_path(external_ref)
+    if not path.exists():
+        raise ValueError(f"taskpool task note not found: {external_ref}")
+    _assert_taskpool_path_safe(path)
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        raise ValueError("taskpool task note missing frontmatter")
+    end = text.find("\n---", 4)
+    if end < 0:
+        raise ValueError("taskpool task note frontmatter is not closed")
+    frontmatter = text[4:end]
+    body = text[end + 4 :]
+    return path, frontmatter, body
+
+
+def _frontmatter_status(frontmatter: str) -> str:
+    for line in frontmatter.splitlines():
+        if line.startswith("status:"):
+            return line.split(":", 1)[1].strip().strip('"\'')
+    raise ValueError("taskpool task note missing status")
+
+
+def _replace_frontmatter_status(frontmatter: str, status: str) -> str:
+    lines = frontmatter.splitlines()
+    for idx, line in enumerate(lines):
+        if line.startswith("status:"):
+            lines[idx] = f"status: {status}"
+            return "\n".join(lines) + ("\n" if frontmatter.endswith("\n") else "")
+    raise ValueError("taskpool task note missing status")
+
+
+def _append_taskpool_control_tower_event(body: str, *, kind: str, payload: dict[str, Any]) -> str:
+    suffix = "\n" if body.endswith("\n") else "\n\n"
+    return body + suffix + f"<!-- {kind}: {_canonical_json(payload)} -->\n"
+
+
+def _write_taskpool_status(external_ref: str, *, target_status: str, event_kind: str, payload: dict[str, Any]) -> tuple[str, str, Path]:
+    path, frontmatter, body = _read_taskpool_note(external_ref)
+    before_status = _frontmatter_status(frontmatter)
+    updated_frontmatter = _replace_frontmatter_status(frontmatter, target_status)
+    updated_body = _append_taskpool_control_tower_event(body, kind=event_kind, payload=payload)
+    separator = "" if updated_frontmatter.endswith("\n") else "\n"
+    path.write_text(f"---\n{updated_frontmatter}{separator}---{updated_body}", encoding="utf-8")
+    _, refreshed_frontmatter, _ = _read_taskpool_note(external_ref)
+    status_after = _frontmatter_status(refreshed_frontmatter)
+    if status_after != target_status:
+        raise ValueError("taskpool write did not persist target status")
+    return before_status, status_after, path
+
+
+def _execute_taskpool_closeout_write(preflight: sqlite3.Row, *, actor_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    path, frontmatter, _body = _read_taskpool_note(preflight["external_ref"])
+    before_status = _frontmatter_status(frontmatter)
+    if before_status not in {"review", "running", "ready", "blocked", "scheduled"}:
+        raise ValueError(f"taskpool task is not writable for closeout: {before_status}")
+    before_status, status_after, path = _write_taskpool_status(
+        preflight["external_ref"],
+        target_status="done",
+        event_kind="control_tower_external_taskpool_closeout",
+        payload={
+            "external_write_preflight_id": preflight["external_write_preflight_id"],
+            "command_execution_digest": preflight["command_execution_digest"],
+            "mutation_digest": preflight["mutation_digest"],
+            "executed_by": actor_id,
+        },
+    )
+    adapter_result = {
+        "adapter_name": "taskpool",
+        "external_ref": preflight["external_ref"],
+        "operation": "closeout",
+        "status_after": status_after,
+        "path": str(path),
+    }
+    rollback_snapshot = {
+        "adapter_name": "taskpool",
+        "external_ref": preflight["external_ref"],
+        "status_before": before_status,
+        "path": str(path),
+        "rollback_available": True,
+        "rollback_reopen_enabled": True,
+        "reason": "digest-bound taskpool rollback/reopen is enabled for this write run",
+    }
+    return adapter_result, rollback_snapshot
+
+
 def execute_external_adapter_write_preflight(
     *,
     external_write_preflight_id: str,
@@ -3681,7 +3798,12 @@ def execute_external_adapter_write_preflight(
         if _payload_hash(current_payload) != preflight["command_execution_digest"]:
             raise ValueError("command execution digest mismatch after source refresh")
 
-    adapter_result, rollback_snapshot = _execute_kanban_closeout_write(preflight, actor_id=actor_id)
+    if preflight["adapter_name"] == "kanban":
+        adapter_result, rollback_snapshot = _execute_kanban_closeout_write(preflight, actor_id=actor_id)
+    elif preflight["adapter_name"] == "taskpool":
+        adapter_result, rollback_snapshot = _execute_taskpool_closeout_write(preflight, actor_id=actor_id)
+    else:  # pragma: no cover - guarded by _assert_external_write_preflight_executable
+        raise ValueError(f"external write adapter executor is not enabled: {preflight['adapter_name']}")
 
     external_write_execution_id = f"extwrite_{uuid.uuid4().hex}"
     executed_at = _now()
@@ -3926,6 +4048,45 @@ def _execute_kanban_closeout_rollback(write_run: sqlite3.Row, *, actor_id: str) 
     return adapter_result, current_snapshot
 
 
+def _execute_taskpool_closeout_rollback(write_run: sqlite3.Row, *, actor_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    rollback_snapshot = json.loads(write_run["rollback_snapshot_json"])
+    if rollback_snapshot.get("adapter_name") != "taskpool" or rollback_snapshot.get("external_ref") != write_run["external_ref"]:
+        raise ValueError("rollback snapshot target mismatch")
+    before_status = str(rollback_snapshot.get("status_before") or "").strip()
+    if before_status not in {"review", "running", "ready", "blocked", "scheduled"}:
+        raise ValueError(f"rollback target status is not enabled: {before_status}")
+    _path, frontmatter, _body = _read_taskpool_note(write_run["external_ref"])
+    current_status = _frontmatter_status(frontmatter)
+    if current_status != "done":
+        raise ValueError(f"taskpool rollback requires current done status: {current_status}")
+    current_snapshot = {
+        "adapter_name": "taskpool",
+        "external_ref": write_run["external_ref"],
+        "status_before_rollback": current_status,
+        "target_status": before_status,
+        "source_write_execution_id": write_run["external_write_execution_id"],
+    }
+    _before_status, status_after, path = _write_taskpool_status(
+        write_run["external_ref"],
+        target_status=before_status,
+        event_kind="control_tower_external_taskpool_rollback",
+        payload={
+            "external_write_execution_id": write_run["external_write_execution_id"],
+            "command_execution_digest": write_run["command_execution_digest"],
+            "rolled_back_by": actor_id,
+            "status_after": before_status,
+        },
+    )
+    adapter_result = {
+        "adapter_name": "taskpool",
+        "external_ref": write_run["external_ref"],
+        "operation": "reopen",
+        "status_after": status_after,
+        "path": str(path),
+    }
+    return adapter_result, current_snapshot
+
+
 def execute_external_adapter_write_rollback(
     *,
     external_write_execution_id: str,
@@ -3972,12 +4133,17 @@ def execute_external_adapter_write_rollback(
             raise ValueError("command execution digest mismatch for external adapter write rollback")
         if write_run["execution_status"] != "write_completed":
             raise ValueError(f"external write execution is not rollbackable: {write_run['execution_status']}")
-        if write_run["adapter_name"] != "kanban":
+        if write_run["adapter_name"] not in EXTERNAL_WRITE_EXECUTOR_ADAPTERS:
             raise ValueError(f"external write rollback adapter is not enabled: {write_run['adapter_name']}")
         if write_run["operation"] != "closeout":
             raise ValueError(f"external write rollback operation is not enabled: {write_run['operation']}")
 
-    adapter_result, rollback_snapshot = _execute_kanban_closeout_rollback(write_run, actor_id=actor_id)
+    if write_run["adapter_name"] == "kanban":
+        adapter_result, rollback_snapshot = _execute_kanban_closeout_rollback(write_run, actor_id=actor_id)
+    elif write_run["adapter_name"] == "taskpool":
+        adapter_result, rollback_snapshot = _execute_taskpool_closeout_rollback(write_run, actor_id=actor_id)
+    else:  # pragma: no cover - guarded above
+        raise ValueError(f"external write rollback adapter is not enabled: {write_run['adapter_name']}")
     rollback_run_id = f"extrollback_{uuid.uuid4().hex}"
     rolled_back_at = _now()
     with _connect() as conn:
@@ -4468,12 +4634,14 @@ def _closeout_authorizations_snapshot(conn: sqlite3.Connection) -> dict[str, Any
 def _closeout_execution_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute(
         """
-        SELECT closeout_execution_id, closeout_authorization_id, task_id,
-               risk_level, evidence_review_id, execution_status, task_status,
-               external_adapter_write_through_enabled, executed_by, executed_role,
-               executed_at
-        FROM closeout_execution_runs
-        ORDER BY rowid ASC
+        SELECT r.closeout_execution_id, r.closeout_authorization_id, r.task_id,
+               t.external_ref AS external_ref,
+               r.risk_level, r.evidence_review_id, r.execution_status, r.task_status,
+               r.external_adapter_write_through_enabled, r.executed_by, r.executed_role,
+               r.executed_at
+        FROM closeout_execution_runs r
+        LEFT JOIN tasks t ON t.task_id = r.task_id
+        ORDER BY r.rowid ASC
         LIMIT 20
         """
     ).fetchall()
@@ -4487,6 +4655,7 @@ def _closeout_execution_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
                 "closeout_execution_id": row["closeout_execution_id"],
                 "closeout_authorization_id": row["closeout_authorization_id"],
                 "task_id": row["task_id"],
+                "external_ref": row["external_ref"],
                 "risk_level": row["risk_level"],
                 "evidence_review_id": row["evidence_review_id"],
                 "execution_status": row["execution_status"],
