@@ -288,6 +288,34 @@ _TABLES_SQL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS external_adapter_write_intents (
+        external_write_intent_id TEXT PRIMARY KEY,
+        closeout_execution_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        adapter_name TEXT NOT NULL,
+        external_ref TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        intent_status TEXT NOT NULL,
+        mutation_payload_json TEXT NOT NULL DEFAULT '{}',
+        mutation_digest TEXT NOT NULL,
+        writes_enabled INTEGER NOT NULL DEFAULT 0,
+        external_adapter_write_through_enabled INTEGER NOT NULL DEFAULT 0,
+        rollback_required INTEGER NOT NULL DEFAULT 1,
+        rollback_available INTEGER NOT NULL DEFAULT 0,
+        rollback_plan_json TEXT NOT NULL DEFAULT '{}',
+        prepared_by TEXT NOT NULL,
+        prepared_role TEXT NOT NULL,
+        prepared_at TEXT NOT NULL,
+        reason TEXT,
+        CHECK(intent_status = 'blocked_pending_adapter_contract'),
+        CHECK(writes_enabled = 0),
+        CHECK(external_adapter_write_through_enabled = 0),
+        CHECK(rollback_required = 1),
+        CHECK(rollback_available = 0),
+        UNIQUE(closeout_execution_id, adapter_name, external_ref)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS policy_decisions (
         policy_decision_id TEXT PRIMARY KEY,
         command_id TEXT,
@@ -2244,6 +2272,239 @@ def execute_closeout_authorization(
     return _closeout_execution_response(created=True, row=row, source_surface=source_surface)
 
 
+EXTERNAL_WRITE_INTENT_ADAPTERS = frozenset({"taskpool", "kanban"})
+
+
+def _external_adapter_write_intent_response(
+    *,
+    created: bool,
+    row: sqlite3.Row,
+    source_surface: str,
+) -> dict[str, Any]:
+    return {
+        "created": created,
+        "external_write_intent_id": row["external_write_intent_id"],
+        "closeout_execution_id": row["closeout_execution_id"],
+        "task_id": row["task_id"],
+        "adapter_name": row["adapter_name"],
+        "external_ref": row["external_ref"],
+        "operation": row["operation"],
+        "intent_status": row["intent_status"],
+        "mutation_payload": json.loads(row["mutation_payload_json"]),
+        "mutation_digest": row["mutation_digest"],
+        "writes_enabled": bool(row["writes_enabled"]),
+        "external_adapter_write_through_enabled": bool(row["external_adapter_write_through_enabled"]),
+        "rollback_required": bool(row["rollback_required"]),
+        "rollback_available": bool(row["rollback_available"]),
+        "rollback_plan": json.loads(row["rollback_plan_json"]),
+        "source_surface": source_surface,
+        "prepared_by": row["prepared_by"],
+        "prepared_role": row["prepared_role"],
+        "prepared_at": row["prepared_at"],
+    }
+
+
+def prepare_external_adapter_write_intent(
+    *,
+    closeout_execution_id: str,
+    adapter_name: str,
+    external_ref: str,
+    actor_type: str,
+    actor_id: str,
+    actor_role: str,
+    source_surface: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Prepare an exact external closeout write intent without executing it."""
+    closeout_execution_id = closeout_execution_id.strip()
+    adapter_name = adapter_name.strip().lower()
+    external_ref = external_ref.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    actor_role = actor_role.strip().lower()
+    source_surface = source_surface.strip()
+    reason = reason.strip()
+    if not closeout_execution_id:
+        raise ValueError("closeout_execution_id is required")
+    if not adapter_name:
+        raise ValueError("adapter_name is required")
+    if adapter_name not in EXTERNAL_WRITE_INTENT_ADAPTERS:
+        raise ValueError(f"adapter is not enabled for external write intent: {adapter_name}")
+    if not external_ref:
+        raise ValueError("external_ref is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if actor_role not in ROLE_RANK:
+        raise ValueError("unsupported actor_role")
+    if not _role_allows(actor_role, "owner"):
+        raise ValueError("actor role cannot prepare external adapter write intent")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        existing = conn.execute(
+            """
+            SELECT external_write_intent_id, closeout_execution_id, task_id,
+                   adapter_name, external_ref, operation, intent_status,
+                   mutation_payload_json, mutation_digest, writes_enabled,
+                   external_adapter_write_through_enabled, rollback_required,
+                   rollback_available, rollback_plan_json, prepared_by,
+                   prepared_role, prepared_at
+            FROM external_adapter_write_intents
+            WHERE closeout_execution_id = ? AND adapter_name = ? AND external_ref = ?
+            """,
+            (closeout_execution_id, adapter_name, external_ref),
+        ).fetchone()
+        if existing is not None:
+            return _external_adapter_write_intent_response(
+                created=False,
+                row=existing,
+                source_surface=source_surface,
+            )
+
+        execution = conn.execute(
+            """
+            SELECT closeout_execution_id, task_id, risk_level, evidence_review_id,
+                   evidence_state_hash, execution_status, task_status
+            FROM closeout_execution_runs
+            WHERE closeout_execution_id = ?
+            """,
+            (closeout_execution_id,),
+        ).fetchone()
+        if execution is None:
+            raise ValueError(f"closeout execution not found: {closeout_execution_id}")
+        if execution["execution_status"] != "closeout_completed" or execution["task_status"] != "closed":
+            raise ValueError("closeout execution is not completed")
+        task = conn.execute(
+            "SELECT task_id, external_ref, status FROM tasks WHERE task_id = ?",
+            (execution["task_id"],),
+        ).fetchone()
+        if task is None:
+            raise ValueError("Control Tower task row is required before external write intent")
+        if task["status"] != "closed":
+            raise ValueError(f"Control Tower task is not closed: {task['status']}")
+        if task["external_ref"] and task["external_ref"] != external_ref:
+            raise ValueError("external_ref does not match Control Tower task external_ref")
+
+        mutation_payload = {
+            "operation": "closeout",
+            "adapter_name": adapter_name,
+            "external_ref": external_ref,
+            "task_id": execution["task_id"],
+            "target_status": "closed",
+            "source": "control_tower_closeout_execution",
+            "closeout_execution_id": closeout_execution_id,
+            "evidence_review_id": execution["evidence_review_id"],
+            "evidence_state_hash": execution["evidence_state_hash"],
+        }
+        mutation_digest = _payload_hash(mutation_payload)
+        rollback_plan = {
+            "available": False,
+            "required_before_write_through": True,
+            "reason": "external adapter write-through remains disabled until rollback/reopen contract is approved",
+        }
+        external_write_intent_id = f"extintent_{uuid.uuid4().hex}"
+        prepared_at = _now()
+        try:
+            conn.execute(
+                """
+                INSERT INTO external_adapter_write_intents(
+                    external_write_intent_id, closeout_execution_id, task_id,
+                    adapter_name, external_ref, operation, intent_status,
+                    mutation_payload_json, mutation_digest, writes_enabled,
+                    external_adapter_write_through_enabled, rollback_required,
+                    rollback_available, rollback_plan_json, prepared_by,
+                    prepared_role, prepared_at, reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    external_write_intent_id,
+                    closeout_execution_id,
+                    execution["task_id"],
+                    adapter_name,
+                    external_ref,
+                    "closeout",
+                    "blocked_pending_adapter_contract",
+                    _canonical_json(mutation_payload),
+                    mutation_digest,
+                    0,
+                    0,
+                    1,
+                    0,
+                    _canonical_json(rollback_plan),
+                    actor_id,
+                    actor_role,
+                    prepared_at,
+                    reason,
+                ),
+            )
+        except sqlite3.IntegrityError:  # pragma: no cover - defensive concurrent retry
+            existing = conn.execute(
+                """
+                SELECT external_write_intent_id, closeout_execution_id, task_id,
+                       adapter_name, external_ref, operation, intent_status,
+                       mutation_payload_json, mutation_digest, writes_enabled,
+                       external_adapter_write_through_enabled, rollback_required,
+                       rollback_available, rollback_plan_json, prepared_by,
+                       prepared_role, prepared_at
+                FROM external_adapter_write_intents
+                WHERE closeout_execution_id = ? AND adapter_name = ? AND external_ref = ?
+                """,
+                (closeout_execution_id, adapter_name, external_ref),
+            ).fetchone()
+            if existing is None:
+                raise
+            return _external_adapter_write_intent_response(
+                created=False,
+                row=existing,
+                source_surface=source_surface,
+            )
+        _append_event(
+            conn,
+            event_type="ExternalAdapterWriteIntentPrepared",
+            aggregate_type="external_adapter_write_intent",
+            aggregate_id=external_write_intent_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "external_write_intent_id": external_write_intent_id,
+                "closeout_execution_id": closeout_execution_id,
+                "task_id": execution["task_id"],
+                "adapter_name": adapter_name,
+                "external_ref": external_ref,
+                "operation": "closeout",
+                "intent_status": "blocked_pending_adapter_contract",
+                "mutation_digest": mutation_digest,
+                "writes_enabled": False,
+                "external_adapter_write_through_enabled": False,
+                "rollback_required": True,
+                "rollback_available": False,
+            },
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT external_write_intent_id, closeout_execution_id, task_id,
+                   adapter_name, external_ref, operation, intent_status,
+                   mutation_payload_json, mutation_digest, writes_enabled,
+                   external_adapter_write_through_enabled, rollback_required,
+                   rollback_available, rollback_plan_json, prepared_by,
+                   prepared_role, prepared_at
+            FROM external_adapter_write_intents
+            WHERE external_write_intent_id = ?
+            """,
+            (external_write_intent_id,),
+        ).fetchone()
+    return _external_adapter_write_intent_response(
+        created=True,
+        row=row,
+        source_surface=source_surface,
+    )
+
+
 def record_adapter_observation(
     *,
     adapter_name: str,
@@ -2664,6 +2925,50 @@ def _closeout_execution_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _external_adapter_write_intents_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT external_write_intent_id, closeout_execution_id, task_id,
+               adapter_name, external_ref, operation, intent_status,
+               mutation_digest, writes_enabled, external_adapter_write_through_enabled,
+               rollback_required, rollback_available, prepared_by, prepared_role,
+               prepared_at
+        FROM external_adapter_write_intents
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "external_adapter_write_intent_projection_only",
+        "external_adapter_write_through_enabled": False,
+        "writes_enabled": False,
+        "rollback_reopen_enabled": False,
+        "allowed_adapters": sorted(EXTERNAL_WRITE_INTENT_ADAPTERS),
+        "intent_count": _count(conn, "external_adapter_write_intents"),
+        "blocked_count": _count(conn, "external_adapter_write_intents", "intent_status = 'blocked_pending_adapter_contract'"),
+        "recent_intents": [
+            {
+                "external_write_intent_id": row["external_write_intent_id"],
+                "closeout_execution_id": row["closeout_execution_id"],
+                "task_id": row["task_id"],
+                "adapter_name": row["adapter_name"],
+                "external_ref": row["external_ref"],
+                "operation": row["operation"],
+                "intent_status": row["intent_status"],
+                "mutation_digest": row["mutation_digest"],
+                "writes_enabled": bool(row["writes_enabled"]),
+                "external_adapter_write_through_enabled": bool(row["external_adapter_write_through_enabled"]),
+                "rollback_required": bool(row["rollback_required"]),
+                "rollback_available": bool(row["rollback_available"]),
+                "prepared_by": row["prepared_by"],
+                "prepared_role": row["prepared_role"],
+                "prepared_at": row["prepared_at"],
+            }
+            for row in rows
+        ],
+    }
+
+
 def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     schema = validate_workflow_schema(CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA)
     pending = conn.execute(
@@ -2735,6 +3040,7 @@ def build_snapshot() -> dict[str, Any]:
         evidence_policy = _evidence_policy_snapshot(conn)
         closeout_authorizations = _closeout_authorizations_snapshot(conn)
         closeout_execution = _closeout_execution_snapshot(conn)
+        external_adapter_write_intents = _external_adapter_write_intents_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -2779,6 +3085,7 @@ def build_snapshot() -> dict[str, Any]:
         "evidence_policy": evidence_policy,
         "closeout_authorizations": closeout_authorizations,
         "closeout_execution": closeout_execution,
+        "external_adapter_write_intents": external_adapter_write_intents,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {

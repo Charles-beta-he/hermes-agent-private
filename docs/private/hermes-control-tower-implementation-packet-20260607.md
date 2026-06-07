@@ -586,6 +586,41 @@ Acceptance:
 - Adapter observations remain unchanged; no external taskpool/Kanban write occurs.
 - Dashboard can trigger the ledger-only closeout endpoint.
 
+### Phase 9 — External adapter write intent projection
+
+Phase 9 advances to the edge of external taskpool/Kanban write-through without crossing it. It prepares an exact, digest-bound external adapter closeout mutation intent after a completed Control Tower Ledger closeout, but the intent remains blocked until adapter mutation contracts and rollback/reopen semantics are explicitly approved.
+
+Implemented scope:
+
+1. Add `external_adapter_write_intents` ledger table.
+2. Add `prepare_external_adapter_write_intent(...)`.
+3. Require all gates before preparing an intent:
+   - a completed `closeout_execution_runs` row exists;
+   - the Control Tower task row exists and is already `closed`;
+   - actor role is at least `owner`;
+   - adapter is in the narrow intent allow-list (`taskpool`, `kanban`);
+   - provided `external_ref` matches the task `external_ref` when one is present.
+4. The prepared intent stores:
+   - adapter name and external ref;
+   - operation `closeout`;
+   - canonical mutation payload;
+   - `mutation_digest`;
+   - `writes_enabled = false`;
+   - `external_adapter_write_through_enabled = false`;
+   - `rollback_required = true`;
+   - `rollback_available = false`.
+5. A successful preparation appends `ExternalAdapterWriteIntentPrepared` and is idempotent by `(closeout_execution_id, adapter_name, external_ref)`.
+6. Snapshot `external_adapter_write_intents` reports intent count/recent intents and explicitly keeps write-through disabled.
+7. Dashboard API endpoint:
+   - `POST /api/plugins/control-tower/closeout-executions/{closeout_execution_id}/external-write-intent`
+
+Acceptance:
+
+- A completed ledger closeout can produce an exact blocked external write intent.
+- The intent records a stable mutation digest and rollback requirement.
+- No external adapter row or taskpool/Kanban state is written.
+- Missing execution, unsupported adapter, role mismatch, or external ref mismatch fail closed.
+
 ## First implementation slice status
 
 Implemented:
@@ -613,6 +648,8 @@ Implemented:
 21. Read-only executor projection via snapshot `read_only_executor`.
 22. Closeout execution endpoint via `POST /api/plugins/control-tower/closeout-authorizations/{closeout_authorization_id}/execute`.
 23. Closeout execution projection via snapshot `closeout_execution`.
+24. External adapter write intent endpoint via `POST /api/plugins/control-tower/closeout-executions/{closeout_execution_id}/external-write-intent`.
+25. External adapter write intent projection via snapshot `external_adapter_write_intents`.
 
 Still intentionally not implemented:
 
@@ -623,10 +660,13 @@ Still intentionally not implemented:
   read-only consumer; it still cannot write adapters or mutate external task lifecycle.
 - Closeout execution is limited to Control Tower Ledger task rows and keeps
   `external_adapter_write_through_enabled = false`.
+- External adapter write intents are digest-bound blocked projections only;
+  they do not write taskpool/Kanban and keep `writes_enabled = false` until the
+  adapter contract plus rollback/reopen semantics are explicitly approved.
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, and approved Control Tower Ledger closeout executions.
+- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, and blocked external adapter write intents with mutation digests.
 - The ledger remains the only fact source.
 - The next step changes authority from "Control Tower ledger closeout" to "external adapter write-through / rollback-reopen", which requires explicit adapter contracts, rollback/escape paths, evidence override semantics, and command-execution approval digests.
 

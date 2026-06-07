@@ -392,3 +392,82 @@ def test_control_tower_dashboard_plugin_executes_closeout_to_control_tower_ledge
     with sqlite3.connect(home / "control_tower.db") as ledger:
         assert ledger.execute("SELECT status FROM tasks WHERE task_id = ?", (task_id,)).fetchone()[0] == "closed"
         assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
+
+
+def test_control_tower_dashboard_plugin_prepares_external_write_intent_without_adapter_write(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    app = FastAPI()
+    app.include_router(_load_plugin_router(), prefix="/api/plugins/control-tower")
+    client = TestClient(app)
+    task_id = "task:dashboard-external-intent"
+
+    client.post(
+        "/api/plugins/control-tower/evidence",
+        json={
+            "task_id": task_id,
+            "evidence_type": "proof",
+            "maturity": "verified",
+            "source_type": "pytest",
+            "summary": "Dashboard submitted verified proof",
+            "producer_type": "human",
+            "producer_id": "charles",
+            "acceptance_refs": ["AC-1"],
+        },
+    )
+    review = client.post(
+        "/api/plugins/control-tower/evidence-gates/evaluate",
+        json={"task_id": task_id, "risk_level": "L2", "acceptance_refs": ["AC-1"], "actor_id": "charles"},
+    ).json()
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            """
+            INSERT INTO tasks(task_id, external_ref, title, status, risk_class, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_id,
+                f"taskpool:{task_id}",
+                "Dashboard external intent target",
+                "review",
+                "L2",
+                "2026-06-07T00:00:00+00:00",
+                "2026-06-07T00:00:00+00:00",
+            ),
+        )
+        ledger.commit()
+    requested = client.post(
+        f"/api/plugins/control-tower/evidence-gates/{review['evidence_review_id']}/closeout-authorization",
+        json={"actor_id": "charles", "actor_role": "owner"},
+    ).json()
+    decided = client.post(
+        f"/api/plugins/control-tower/closeout-authorizations/{requested['closeout_authorization_id']}/decision",
+        json={"decision": "approved", "actor_id": "charles", "actor_role": "owner"},
+    ).json()
+    execution = client.post(
+        f"/api/plugins/control-tower/closeout-authorizations/{decided['closeout_authorization_id']}/execute",
+        json={"actor_id": "charles", "actor_role": "owner"},
+    ).json()
+
+    response = client.post(
+        f"/api/plugins/control-tower/closeout-executions/{execution['closeout_execution_id']}/external-write-intent",
+        json={
+            "adapter_name": "taskpool",
+            "external_ref": f"taskpool:{task_id}",
+            "actor_id": "charles",
+            "actor_role": "owner",
+            "reason": "prepare intent only",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["intent_status"] == "blocked_pending_adapter_contract"
+    assert data["writes_enabled"] is False
+    assert data["external_adapter_write_through_enabled"] is False
+    assert data["rollback_required"] is True
+    assert data["rollback_available"] is False
+    assert data["source_surface"] == "dashboard"
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intents").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0

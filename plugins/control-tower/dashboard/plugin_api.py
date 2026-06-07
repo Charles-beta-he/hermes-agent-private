@@ -88,6 +88,15 @@ class CloseoutExecutionRequest(BaseModel):
     reason: str = Field(default="", min_length=0)
 
 
+class ExternalAdapterWriteIntentRequest(BaseModel):
+    adapter_name: str = Field(min_length=1)
+    external_ref: str = Field(min_length=1)
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    actor_role: str = Field(default="operator", min_length=1)
+    reason: str = Field(default="", min_length=0)
+
+
 @router.get("/snapshot")
 def get_snapshot():
     """Return the read-only Control Tower Phase 1 snapshot."""
@@ -196,6 +205,24 @@ def execute_closeout_authorization(
     """Execute approved evidence-bound closeout inside the Control Tower ledger only."""
     return control_tower.execute_closeout_authorization(
         closeout_authorization_id=closeout_authorization_id,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        source_surface="dashboard",
+        reason=req.reason,
+    )
+
+
+@router.post("/closeout-executions/{closeout_execution_id}/external-write-intent")
+def prepare_external_adapter_write_intent(
+    closeout_execution_id: str,
+    req: ExternalAdapterWriteIntentRequest,
+):
+    """Prepare a digest-bound external adapter write intent without adapter writes."""
+    return control_tower.prepare_external_adapter_write_intent(
+        closeout_execution_id=closeout_execution_id,
+        adapter_name=req.adapter_name,
+        external_ref=req.external_ref,
         actor_type=req.actor_type,
         actor_id=req.actor_id,
         actor_role=req.actor_role,

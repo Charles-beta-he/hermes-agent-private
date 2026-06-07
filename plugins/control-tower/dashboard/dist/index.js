@@ -6,12 +6,13 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 8 enables bounded evidence-bound closeout inside the Control Tower
-        Ledger after explicit approval: this dashboard can record operator
-        intent, human decisions, copy-command executor plans, read-only executor
-        runs, evidence gates, closeout authorizations, and approved Control Tower
-        ledger closeouts. External taskpool/Kanban adapter write-through remains
-        disabled.
+        Phase 9 prepares digest-bound external adapter write intents after
+        bounded evidence-bound closeout inside the Control Tower Ledger. This
+        dashboard can record operator intent, human decisions, copy-command
+        executor plans, read-only executor runs, evidence gates, closeout
+        authorizations, ledger closeouts, and blocked external write intents.
+        External taskpool/Kanban adapter write-through remains disabled until
+        adapter contract and rollback/reopen semantics are approved.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
@@ -49,6 +50,9 @@
         <button id="control-tower-execute-closeout" type="button">
           Execute approved closeout
         </button>
+        <button id="control-tower-prepare-external-intent" type="button">
+          Prepare external write intent
+        </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
@@ -76,6 +80,8 @@
     const closeoutDecided = data?.closeout_authorizations?.decided_count ?? 0;
     const closeoutExpired = data?.closeout_authorizations?.expired_count ?? 0;
     const closeoutRuns = data?.closeout_execution?.run_count ?? 0;
+    const externalWriteIntents = data?.external_adapter_write_intents?.intent_count ?? 0;
+    const externalWriteIntentBlocked = data?.external_adapter_write_intents?.blocked_count ?? 0;
     const externalCloseoutWrites = data?.closeout_execution?.external_adapter_write_through_enabled === true;
     const writesEnabled = data?.execution_policy?.writes_enabled === true;
     const closeoutEnabled = data?.closeout_execution?.mode === 'control_tower_ledger_closeout_consumer';
@@ -96,6 +102,8 @@
         <span>Closeout auth decided: <strong>${closeoutDecided}</strong></span>
         <span>Closeout auth expired: <strong>${closeoutExpired}</strong></span>
         <span>Closeout runs: <strong>${closeoutRuns}</strong></span>
+        <span>External write intents: <strong>${externalWriteIntents}</strong></span>
+        <span>External intent blocked: <strong>${externalWriteIntentBlocked}</strong></span>
         <span>Writes enabled: <strong>${writesEnabled ? 'yes' : 'no'}</strong></span>
         <span>External closeout writes: <strong>${externalCloseoutWrites ? 'yes' : 'no'}</strong></span>
         <span>Closeout enabled: <strong>${closeoutEnabled ? 'ledger-only' : 'no'}</strong></span>
@@ -366,6 +374,36 @@
       });
   };
 
+  const prepareFirstExternalWriteIntent = () => {
+    const run = latestSnapshot?.closeout_execution?.recent_runs?.find(
+      (entry) => entry.execution_status === 'closeout_completed' && entry.external_adapter_write_through_enabled === false
+    );
+    if (!run) {
+      if (snapshotEl) snapshotEl.textContent = 'No ledger-only closeout run to prepare external write intent for.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/closeout-executions/${encodeURIComponent(run.closeout_execution_id)}/external-write-intent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        adapter_name: 'taskpool',
+        external_ref: `taskpool:${run.task_id}`,
+        actor_type: 'human',
+        actor_id: 'dashboard',
+        actor_role: 'owner',
+        reason: 'dashboard prepared digest-bound external write intent; adapter write-through remains disabled',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `External write intent preparation failed: ${error}`;
+      });
+  };
+
   document.getElementById('control-tower-refresh')?.addEventListener('click', loadSnapshot);
   document
     .getElementById('control-tower-propose-refresh')
@@ -400,5 +438,8 @@
   document
     .getElementById('control-tower-execute-closeout')
     ?.addEventListener('click', executeFirstCloseoutAuthorization);
+  document
+    .getElementById('control-tower-prepare-external-intent')
+    ?.addEventListener('click', prepareFirstExternalWriteIntent);
   loadSnapshot();
 })();

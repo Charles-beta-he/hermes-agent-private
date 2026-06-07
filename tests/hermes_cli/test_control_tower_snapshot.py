@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -38,6 +39,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "execution_policy_reviews",
             "read_only_executor_runs",
             "closeout_execution_runs",
+            "external_adapter_write_intents",
             "evidence_gate_reviews",
             "closeout_authorizations",
             "adapter_observations",
@@ -1894,15 +1896,20 @@ def test_execute_read_only_executor_rejects_reviewed_plan_when_command_tuple_cha
         assert ledger.execute("SELECT status FROM commands WHERE command_id = ?", (proposed["command_id"],)).fetchone()[0] == "proposed"
 
 
-def _insert_control_tower_task(home, task_id: str, status: str = "review") -> None:
+def _insert_control_tower_task(
+    home,
+    task_id: str,
+    status: str = "review",
+    external_ref: str | None = None,
+) -> None:
     now = "2026-06-07T00:00:00+00:00"
     with sqlite3.connect(home / "control_tower.db") as ledger:
         ledger.execute(
             """
-            INSERT INTO tasks(task_id, title, status, risk_class, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks(task_id, external_ref, title, status, risk_class, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (task_id, f"Closeout target {task_id}", status, "L2", now, now),
+            (task_id, external_ref, f"Closeout target {task_id}", status, "L2", now, now),
         )
         ledger.commit()
 
@@ -2179,3 +2186,113 @@ def test_execute_closeout_authorization_rejects_expired_missing_task_and_closed_
         assert "task is already closed" in str(exc)
     else:  # pragma: no cover - assertion clarity
         raise AssertionError("closed task without execution row must fail closed")
+
+
+def _execute_ledger_closeout_for_adapter_intent(home, task_id: str = "task:phase9-closeout") -> dict[str, object]:
+    review = _record_verified_closeout_evidence(task_id)
+    _insert_control_tower_task(home, task_id, external_ref=f"taskpool:{task_id}")
+    request = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    decision = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=request["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    return control_tower.execute_closeout_authorization(
+        closeout_authorization_id=decision["closeout_authorization_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+
+
+def test_prepare_external_adapter_write_intent_records_digest_without_write_through(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    execution = _execute_ledger_closeout_for_adapter_intent(home)
+
+    intent = control_tower.prepare_external_adapter_write_intent(
+        closeout_execution_id=execution["closeout_execution_id"],
+        adapter_name="taskpool",
+        external_ref="taskpool:task:phase9-closeout",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+        reason="prepare exact external write intent but do not execute",
+    )
+    repeated = control_tower.prepare_external_adapter_write_intent(
+        closeout_execution_id=execution["closeout_execution_id"],
+        adapter_name="taskpool",
+        external_ref="taskpool:task:phase9-closeout",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+
+    assert intent["created"] is True
+    assert intent["intent_status"] == "blocked_pending_adapter_contract"
+    assert intent["writes_enabled"] is False
+    assert intent["external_adapter_write_through_enabled"] is False
+    assert intent["adapter_name"] == "taskpool"
+    assert intent["operation"] == "closeout"
+    assert intent["mutation_payload"]["target_status"] == "closed"
+    expected_digest = hashlib.sha256(
+        json.dumps(intent["mutation_payload"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert intent["mutation_digest"] == expected_digest
+    assert intent["rollback_required"] is True
+    assert intent["rollback_available"] is False
+    assert repeated["created"] is False
+    assert repeated["external_write_intent_id"] == intent["external_write_intent_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        rows = ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intents").fetchone()[0]
+        adapter_rows = ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0]
+        task_status = ledger.execute("SELECT status FROM tasks WHERE task_id = ?", (execution["task_id"],)).fetchone()[0]
+        event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert rows == 1
+    assert adapter_rows == 0
+    assert task_status == "closed"
+    assert event_types[-1] == "ExternalAdapterWriteIntentPrepared"
+    snapshot = control_tower.build_snapshot()
+    assert snapshot["external_adapter_write_intents"]["intent_count"] == 1
+    assert snapshot["external_adapter_write_intents"]["external_adapter_write_through_enabled"] is False
+    assert snapshot["external_adapter_write_intents"]["blocked_count"] == 1
+
+
+def test_prepare_external_adapter_write_intent_fails_closed_before_adapter_boundary(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    execution = _execute_ledger_closeout_for_adapter_intent(home, "task:phase9-fail")
+
+    invalid_cases = [
+        {"closeout_execution_id": "", "adapter_name": "taskpool", "external_ref": "taskpool:1", "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "closeout_execution_id is required"},
+        {"closeout_execution_id": execution["closeout_execution_id"], "adapter_name": "", "external_ref": "taskpool:1", "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "adapter_name is required"},
+        {"closeout_execution_id": execution["closeout_execution_id"], "adapter_name": "unknown", "external_ref": "taskpool:1", "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "adapter is not enabled"},
+        {"closeout_execution_id": execution["closeout_execution_id"], "adapter_name": "taskpool", "external_ref": "", "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "external_ref is required"},
+        {"closeout_execution_id": "closeexec_missing", "adapter_name": "taskpool", "external_ref": "taskpool:1", "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "closeout execution not found"},
+        {"closeout_execution_id": execution["closeout_execution_id"], "adapter_name": "taskpool", "external_ref": "taskpool:wrong-ref", "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "external_ref does not match"},
+        {"closeout_execution_id": execution["closeout_execution_id"], "adapter_name": "taskpool", "external_ref": "taskpool:1", "actor_type": "human", "actor_id": "charles", "actor_role": "operator", "source_surface": "pytest", "expected": "cannot prepare"},
+    ]
+    for case in invalid_cases:
+        expected = case.pop("expected")
+        try:
+            control_tower.prepare_external_adapter_write_intent(**case)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"expected ValueError containing {expected!r}")
+
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intents").fetchone()[0] == 0
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
