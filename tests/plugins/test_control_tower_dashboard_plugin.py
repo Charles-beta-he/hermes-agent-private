@@ -482,7 +482,35 @@ def test_control_tower_dashboard_plugin_prepares_external_write_intent_without_a
     assert review["write_through_allowed"] is False
     assert review["external_adapter_write_through_enabled"] is False
     assert "rollback_unavailable" in review["blocked_reasons"]
+    auth_response = client.post(
+        f"/api/plugins/control-tower/external-write-reviews/{review['external_write_review_id']}/authorization",
+        json={
+            "actor_id": "charles",
+            "actor_role": "admin",
+            "reason": "request external write auth only",
+        },
+    )
+    assert auth_response.status_code == 200, auth_response.text
+    auth = auth_response.json()
+    assert auth["status"] == "requested"
+    assert auth["write_through_allowed"] is False
+    assert auth["external_adapter_write_through_enabled"] is False
+    decision_response = client.post(
+        f"/api/plugins/control-tower/external-write-authorizations/{auth['external_write_authorization_id']}/decision",
+        json={
+            "decision": "approved",
+            "actor_id": "charles",
+            "actor_role": "admin",
+            "reason": "approve authorization record only",
+        },
+    )
+    assert decision_response.status_code == 200, decision_response.text
+    decision = decision_response.json()
+    assert decision["status"] == "approved"
+    assert decision["write_through_allowed"] is False
+    assert decision["writes_enabled"] is False
     with sqlite3.connect(home / "control_tower.db") as ledger:
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intents").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intent_reviews").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_authorizations").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0

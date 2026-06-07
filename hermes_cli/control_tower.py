@@ -345,6 +345,41 @@ _TABLES_SQL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS external_adapter_write_authorizations (
+        external_write_authorization_id TEXT PRIMARY KEY,
+        external_write_review_id TEXT NOT NULL UNIQUE,
+        external_write_intent_id TEXT NOT NULL,
+        closeout_execution_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        adapter_name TEXT NOT NULL,
+        external_ref TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        adapter_contract_version TEXT NOT NULL,
+        mutation_digest TEXT NOT NULL,
+        status TEXT NOT NULL,
+        required_role TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        requested_role TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        decided_by TEXT,
+        decided_role TEXT,
+        decided_at TEXT,
+        reason TEXT,
+        writes_enabled INTEGER NOT NULL DEFAULT 0,
+        external_adapter_write_through_enabled INTEGER NOT NULL DEFAULT 0,
+        rollback_required INTEGER NOT NULL DEFAULT 1,
+        rollback_available INTEGER NOT NULL DEFAULT 0,
+        write_through_allowed INTEGER NOT NULL DEFAULT 0,
+        CHECK(status IN ('requested', 'approved', 'denied', 'expired')),
+        CHECK(writes_enabled = 0),
+        CHECK(external_adapter_write_through_enabled = 0),
+        CHECK(rollback_required = 1),
+        CHECK(rollback_available = 0),
+        CHECK(write_through_allowed = 0)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS policy_decisions (
         policy_decision_id TEXT PRIMARY KEY,
         command_id TEXT,
@@ -2747,6 +2782,311 @@ def review_external_adapter_write_intent(
     return _external_write_review_response(created=True, row=row, source_surface=source_surface)
 
 
+EXTERNAL_WRITE_AUTHORIZATION_REQUIRED_ROLE = "admin"
+EXTERNAL_WRITE_AUTHORIZATION_TTL_HOURS = 24
+
+
+def _external_write_authorization_response(
+    *,
+    created: bool,
+    row: sqlite3.Row,
+    source_surface: str,
+) -> dict[str, Any]:
+    return {
+        "created": created,
+        "external_write_authorization_id": row["external_write_authorization_id"],
+        "external_write_review_id": row["external_write_review_id"],
+        "external_write_intent_id": row["external_write_intent_id"],
+        "closeout_execution_id": row["closeout_execution_id"],
+        "task_id": row["task_id"],
+        "adapter_name": row["adapter_name"],
+        "external_ref": row["external_ref"],
+        "operation": row["operation"],
+        "adapter_contract_version": row["adapter_contract_version"],
+        "mutation_digest": row["mutation_digest"],
+        "status": row["status"],
+        "required_role": row["required_role"],
+        "requested_by": row["requested_by"],
+        "requested_role": row["requested_role"],
+        "requested_at": row["requested_at"],
+        "expires_at": row["expires_at"],
+        "decided_by": row["decided_by"],
+        "decided_role": row["decided_role"],
+        "decided_at": row["decided_at"],
+        "writes_enabled": bool(row["writes_enabled"]),
+        "external_adapter_write_through_enabled": bool(row["external_adapter_write_through_enabled"]),
+        "rollback_required": bool(row["rollback_required"]),
+        "rollback_available": bool(row["rollback_available"]),
+        "write_through_allowed": bool(row["write_through_allowed"]),
+        "source_surface": source_surface,
+    }
+
+
+def _select_external_write_authorization(conn: sqlite3.Connection, external_write_authorization_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT external_write_authorization_id, external_write_review_id,
+               external_write_intent_id, closeout_execution_id, task_id,
+               adapter_name, external_ref, operation, adapter_contract_version,
+               mutation_digest, status, required_role, requested_by,
+               requested_role, requested_at, expires_at, decided_by,
+               decided_role, decided_at, writes_enabled,
+               external_adapter_write_through_enabled, rollback_required,
+               rollback_available, write_through_allowed
+        FROM external_adapter_write_authorizations
+        WHERE external_write_authorization_id = ?
+        """,
+        (external_write_authorization_id,),
+    ).fetchone()
+
+
+def _external_write_review_with_intent(conn: sqlite3.Connection, external_write_review_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT r.external_write_review_id, r.external_write_intent_id,
+               r.closeout_execution_id, r.task_id, r.adapter_name,
+               r.external_ref, r.operation, r.adapter_contract_version,
+               r.review_status, r.mutation_digest, r.writes_enabled,
+               r.external_adapter_write_through_enabled, r.rollback_required,
+               r.rollback_available, r.write_through_allowed,
+               i.mutation_payload_json, i.mutation_digest AS current_mutation_digest,
+               i.intent_status
+        FROM external_adapter_write_intent_reviews r
+        JOIN external_adapter_write_intents i
+          ON i.external_write_intent_id = r.external_write_intent_id
+        WHERE r.external_write_review_id = ?
+        """,
+        (external_write_review_id,),
+    ).fetchone()
+
+
+def _assert_external_write_review_fresh(review: sqlite3.Row) -> None:
+    if review["review_status"] != "blocked":
+        raise ValueError(f"external write review is not blocked: {review['review_status']}")
+    if review["intent_status"] != "blocked_pending_adapter_contract":
+        raise ValueError(f"external write intent is not blocked: {review['intent_status']}")
+    if bool(review["writes_enabled"]):
+        raise ValueError("external write review unexpectedly has writes_enabled=true")
+    if bool(review["external_adapter_write_through_enabled"]):
+        raise ValueError("external write review unexpectedly has adapter write-through enabled")
+    if bool(review["write_through_allowed"]):
+        raise ValueError("external write review unexpectedly allows write-through")
+    if bool(review["rollback_available"]):
+        raise ValueError("external write review unexpectedly has rollback available before boundary approval")
+    mutation_payload = json.loads(review["mutation_payload_json"])
+    recomputed_digest = _payload_hash(mutation_payload)
+    if recomputed_digest != review["mutation_digest"] or recomputed_digest != review["current_mutation_digest"]:
+        raise ValueError("mutation digest mismatch for external write authorization")
+
+
+def request_external_adapter_write_authorization(
+    *,
+    external_write_review_id: str,
+    actor_type: str,
+    actor_id: str,
+    actor_role: str,
+    source_surface: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Request digest-bound authorization for a blocked external write review."""
+    external_write_review_id = external_write_review_id.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    actor_role = actor_role.strip().lower()
+    source_surface = source_surface.strip()
+    reason = reason.strip()
+    if not external_write_review_id:
+        raise ValueError("external_write_review_id is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if actor_role not in ROLE_RANK:
+        raise ValueError("unsupported actor_role")
+    if not _role_allows(actor_role, EXTERNAL_WRITE_AUTHORIZATION_REQUIRED_ROLE):
+        raise ValueError("actor role cannot request external adapter write authorization")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        review = _external_write_review_with_intent(conn, external_write_review_id)
+        if review is None:
+            raise ValueError(f"external write review not found: {external_write_review_id}")
+        _assert_external_write_review_fresh(review)
+        existing = conn.execute(
+            """
+            SELECT external_write_authorization_id, status, expires_at
+            FROM external_adapter_write_authorizations
+            WHERE external_write_review_id = ?
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (external_write_review_id,),
+        ).fetchone()
+        if existing is not None:
+            if existing["status"] == "expired" or datetime.fromisoformat(existing["expires_at"]) <= datetime.now(timezone.utc):
+                conn.execute(
+                    "UPDATE external_adapter_write_authorizations SET status = ? WHERE external_write_authorization_id = ?",
+                    ("expired", existing["external_write_authorization_id"]),
+                )
+                conn.commit()
+                raise ValueError("external write authorization expired; create a new external write review before requesting again")
+            row = _select_external_write_authorization(conn, existing["external_write_authorization_id"])
+            return _external_write_authorization_response(created=False, row=row, source_surface=source_surface)
+        external_write_authorization_id = f"extauth_{uuid.uuid4().hex}"
+        requested_at = _now()
+        expires_at = (datetime.fromisoformat(requested_at) + timedelta(hours=EXTERNAL_WRITE_AUTHORIZATION_TTL_HOURS)).isoformat()
+        conn.execute(
+            """
+            INSERT INTO external_adapter_write_authorizations(
+                external_write_authorization_id, external_write_review_id,
+                external_write_intent_id, closeout_execution_id, task_id,
+                adapter_name, external_ref, operation, adapter_contract_version,
+                mutation_digest, status, required_role, requested_by,
+                requested_role, requested_at, expires_at, reason,
+                writes_enabled, external_adapter_write_through_enabled,
+                rollback_required, rollback_available, write_through_allowed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                external_write_authorization_id,
+                external_write_review_id,
+                review["external_write_intent_id"],
+                review["closeout_execution_id"],
+                review["task_id"],
+                review["adapter_name"],
+                review["external_ref"],
+                review["operation"],
+                review["adapter_contract_version"],
+                review["mutation_digest"],
+                "requested",
+                EXTERNAL_WRITE_AUTHORIZATION_REQUIRED_ROLE,
+                actor_id,
+                actor_role,
+                requested_at,
+                expires_at,
+                reason,
+                0,
+                0,
+                int(bool(review["rollback_required"])),
+                int(bool(review["rollback_available"])),
+                0,
+            ),
+        )
+        _append_event(
+            conn,
+            event_type="ExternalAdapterWriteAuthorizationRequested",
+            aggregate_type="external_adapter_write_authorization",
+            aggregate_id=external_write_authorization_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "external_write_authorization_id": external_write_authorization_id,
+                "external_write_review_id": external_write_review_id,
+                "external_write_intent_id": review["external_write_intent_id"],
+                "adapter_contract_version": review["adapter_contract_version"],
+                "mutation_digest": review["mutation_digest"],
+                "required_role": EXTERNAL_WRITE_AUTHORIZATION_REQUIRED_ROLE,
+                "write_through_allowed": False,
+                "writes_enabled": False,
+                "external_adapter_write_through_enabled": False,
+                "expires_at": expires_at,
+            },
+        )
+        conn.commit()
+        row = _select_external_write_authorization(conn, external_write_authorization_id)
+    return _external_write_authorization_response(created=True, row=row, source_surface=source_surface)
+
+
+def decide_external_adapter_write_authorization(
+    *,
+    external_write_authorization_id: str,
+    decision: str,
+    actor_type: str,
+    actor_id: str,
+    actor_role: str,
+    source_surface: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Approve/deny an external write authorization without enabling write-through."""
+    external_write_authorization_id = external_write_authorization_id.strip()
+    decision = decision.strip().lower()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    actor_role = actor_role.strip().lower()
+    source_surface = source_surface.strip()
+    reason = reason.strip()
+    if not external_write_authorization_id:
+        raise ValueError("external_write_authorization_id is required")
+    if decision not in {"approved", "denied"}:
+        raise ValueError("decision must be approved or denied")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if actor_role not in ROLE_RANK:
+        raise ValueError("unsupported actor_role")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        row = _select_external_write_authorization(conn, external_write_authorization_id)
+        if row is None:
+            raise ValueError(f"external write authorization not found: {external_write_authorization_id}")
+        if row["status"] == decision:
+            return _external_write_authorization_response(created=False, row=row, source_surface=source_surface)
+        if row["status"] != "requested":
+            raise ValueError(f"external write authorization already decided: {row['status']}")
+        if not _role_allows(actor_role, row["required_role"]):
+            raise ValueError(f"actor role cannot decide external adapter write authorization: requires {row['required_role']}")
+        if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+            conn.execute(
+                "UPDATE external_adapter_write_authorizations SET status = ? WHERE external_write_authorization_id = ?",
+                ("expired", external_write_authorization_id),
+            )
+            conn.commit()
+            raise ValueError("external write authorization expired")
+        review = _external_write_review_with_intent(conn, row["external_write_review_id"])
+        if review is None:
+            raise ValueError(f"external write review not found: {row['external_write_review_id']}")
+        _assert_external_write_review_fresh(review)
+        if review["mutation_digest"] != row["mutation_digest"]:
+            raise ValueError("mutation digest mismatch for external write authorization")
+        decided_at = _now()
+        conn.execute(
+            """
+            UPDATE external_adapter_write_authorizations
+            SET status = ?, decided_by = ?, decided_role = ?, decided_at = ?, reason = ?,
+                writes_enabled = 0, external_adapter_write_through_enabled = 0,
+                write_through_allowed = 0
+            WHERE external_write_authorization_id = ?
+            """,
+            (decision, actor_id, actor_role, decided_at, reason, external_write_authorization_id),
+        )
+        _append_event(
+            conn,
+            event_type="ExternalAdapterWriteAuthorizationDecided",
+            aggregate_type="external_adapter_write_authorization",
+            aggregate_id=external_write_authorization_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "external_write_authorization_id": external_write_authorization_id,
+                "external_write_review_id": row["external_write_review_id"],
+                "decision": decision,
+                "mutation_digest": row["mutation_digest"],
+                "write_through_allowed": False,
+                "writes_enabled": False,
+                "external_adapter_write_through_enabled": False,
+            },
+        )
+        conn.commit()
+        decided = _select_external_write_authorization(conn, external_write_authorization_id)
+    return _external_write_authorization_response(created=True, row=decided, source_surface=source_surface)
+
+
 def record_adapter_observation(
     *,
     adapter_name: str,
@@ -3261,6 +3601,65 @@ def _external_adapter_write_intent_reviews_snapshot(conn: sqlite3.Connection) ->
     }
 
 
+def _external_adapter_write_authorizations_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT external_write_authorization_id, external_write_review_id,
+               external_write_intent_id, closeout_execution_id, task_id,
+               adapter_name, external_ref, operation, adapter_contract_version,
+               mutation_digest, status, required_role, requested_by,
+               requested_role, requested_at, expires_at, decided_by,
+               decided_role, decided_at, writes_enabled,
+               external_adapter_write_through_enabled, rollback_required,
+               rollback_available, write_through_allowed
+        FROM external_adapter_write_authorizations
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "external_adapter_write_authorization_projection_only",
+        "external_adapter_write_through_enabled": False,
+        "writes_enabled": False,
+        "rollback_reopen_enabled": False,
+        "authorization_count": _count(conn, "external_adapter_write_authorizations"),
+        "requested_count": _count(conn, "external_adapter_write_authorizations", "status = 'requested'"),
+        "approved_count": _count(conn, "external_adapter_write_authorizations", "status = 'approved'"),
+        "denied_count": _count(conn, "external_adapter_write_authorizations", "status = 'denied'"),
+        "expired_count": _count(conn, "external_adapter_write_authorizations", "status = 'expired'"),
+        "write_through_allowed_count": _count(conn, "external_adapter_write_authorizations", "write_through_allowed = 1"),
+        "recent_authorizations": [
+            {
+                "external_write_authorization_id": row["external_write_authorization_id"],
+                "external_write_review_id": row["external_write_review_id"],
+                "external_write_intent_id": row["external_write_intent_id"],
+                "closeout_execution_id": row["closeout_execution_id"],
+                "task_id": row["task_id"],
+                "adapter_name": row["adapter_name"],
+                "external_ref": row["external_ref"],
+                "operation": row["operation"],
+                "adapter_contract_version": row["adapter_contract_version"],
+                "mutation_digest": row["mutation_digest"],
+                "status": row["status"],
+                "required_role": row["required_role"],
+                "requested_by": row["requested_by"],
+                "requested_role": row["requested_role"],
+                "requested_at": row["requested_at"],
+                "expires_at": row["expires_at"],
+                "decided_by": row["decided_by"],
+                "decided_role": row["decided_role"],
+                "decided_at": row["decided_at"],
+                "writes_enabled": bool(row["writes_enabled"]),
+                "external_adapter_write_through_enabled": bool(row["external_adapter_write_through_enabled"]),
+                "rollback_required": bool(row["rollback_required"]),
+                "rollback_available": bool(row["rollback_available"]),
+                "write_through_allowed": bool(row["write_through_allowed"]),
+            }
+            for row in rows
+        ],
+    }
+
+
 def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     schema = validate_workflow_schema(CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA)
     pending = conn.execute(
@@ -3334,6 +3733,7 @@ def build_snapshot() -> dict[str, Any]:
         closeout_execution = _closeout_execution_snapshot(conn)
         external_adapter_write_intents = _external_adapter_write_intents_snapshot(conn)
         external_adapter_write_intent_reviews = _external_adapter_write_intent_reviews_snapshot(conn)
+        external_adapter_write_authorizations = _external_adapter_write_authorizations_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -3380,6 +3780,7 @@ def build_snapshot() -> dict[str, Any]:
         "closeout_execution": closeout_execution,
         "external_adapter_write_intents": external_adapter_write_intents,
         "external_adapter_write_intent_reviews": external_adapter_write_intent_reviews,
+        "external_adapter_write_authorizations": external_adapter_write_authorizations,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {

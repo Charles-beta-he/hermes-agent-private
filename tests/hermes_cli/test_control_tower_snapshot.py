@@ -41,6 +41,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "closeout_execution_runs",
             "external_adapter_write_intents",
             "external_adapter_write_intent_reviews",
+            "external_adapter_write_authorizations",
             "evidence_gate_reviews",
             "closeout_authorizations",
             "adapter_observations",
@@ -2402,3 +2403,178 @@ def test_review_external_adapter_write_intent_fails_closed_on_drift_and_bad_acto
         assert "mutation digest mismatch" in str(exc)
     else:  # pragma: no cover - assertion clarity
         raise AssertionError("mutation payload drift must fail closed")
+
+
+def _review_external_write_intent_for_authorization(home, task_id: str = "task:phase11-auth") -> dict[str, object]:
+    intent = _prepare_external_write_intent_for_review(home, task_id)
+    return control_tower.review_external_adapter_write_intent(
+        external_write_intent_id=intent["external_write_intent_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+
+
+def test_external_adapter_write_authorization_binds_digest_but_keeps_write_through_disabled(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    review = _review_external_write_intent_for_authorization(home)
+
+    request = control_tower.request_external_adapter_write_authorization(
+        external_write_review_id=review["external_write_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+        reason="request digest-bound write-through approval without enabling execution",
+    )
+    repeated_request = control_tower.request_external_adapter_write_authorization(
+        external_write_review_id=review["external_write_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    decision = control_tower.decide_external_adapter_write_authorization(
+        external_write_authorization_id=request["external_write_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+        reason="approve authorization record only; execution remains disabled",
+    )
+    repeated_decision = control_tower.decide_external_adapter_write_authorization(
+        external_write_authorization_id=request["external_write_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+
+    assert request["created"] is True
+    assert request["status"] == "requested"
+    assert request["required_role"] == "admin"
+    assert request["mutation_digest"] == review["mutation_digest"]
+    assert request["write_through_allowed"] is False
+    assert request["writes_enabled"] is False
+    assert request["external_adapter_write_through_enabled"] is False
+    assert repeated_request["created"] is False
+    assert repeated_request["external_write_authorization_id"] == request["external_write_authorization_id"]
+    assert decision["status"] == "approved"
+    assert decision["write_through_allowed"] is False
+    assert decision["writes_enabled"] is False
+    assert decision["external_adapter_write_through_enabled"] is False
+    assert repeated_decision["created"] is False
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_authorizations").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
+        events = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert events[-2:] == ["ExternalAdapterWriteAuthorizationRequested", "ExternalAdapterWriteAuthorizationDecided"]
+    snapshot = control_tower.build_snapshot()
+    assert snapshot["external_adapter_write_authorizations"]["authorization_count"] == 1
+    assert snapshot["external_adapter_write_authorizations"]["approved_count"] == 1
+    assert snapshot["external_adapter_write_authorizations"]["write_through_allowed_count"] == 0
+    assert snapshot["external_adapter_write_authorizations"]["external_adapter_write_through_enabled"] is False
+
+
+def test_external_adapter_write_authorization_fails_closed_on_role_ttl_and_digest_drift(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    review = _review_external_write_intent_for_authorization(home, "task:phase11-drift")
+
+    invalid_request_cases = [
+        {"external_write_review_id": "", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "pytest", "expected": "external_write_review_id is required"},
+        {"external_write_review_id": review["external_write_review_id"], "actor_type": "", "actor_id": "charles", "actor_role": "admin", "source_surface": "pytest", "expected": "actor_type is required"},
+        {"external_write_review_id": review["external_write_review_id"], "actor_type": "human", "actor_id": "", "actor_role": "admin", "source_surface": "pytest", "expected": "actor_id is required"},
+        {"external_write_review_id": review["external_write_review_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "cannot request"},
+        {"external_write_review_id": review["external_write_review_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "invalid", "source_surface": "pytest", "expected": "unsupported actor_role"},
+        {"external_write_review_id": review["external_write_review_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "", "expected": "source_surface is required"},
+        {"external_write_review_id": "extreview_missing", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "pytest", "expected": "external write review not found"},
+    ]
+    for case in invalid_request_cases:
+        expected = case.pop("expected")
+        try:
+            control_tower.request_external_adapter_write_authorization(**case)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"expected ValueError containing {expected!r}")
+
+    auth = control_tower.request_external_adapter_write_authorization(
+        external_write_review_id=review["external_write_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            "UPDATE external_adapter_write_authorizations SET expires_at = ? WHERE external_write_authorization_id = ?",
+            ("2020-01-01T00:00:00+00:00", auth["external_write_authorization_id"]),
+        )
+        ledger.commit()
+    try:
+        control_tower.decide_external_adapter_write_authorization(
+            external_write_authorization_id=auth["external_write_authorization_id"],
+            decision="approved",
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "expired" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("expired authorization must fail closed")
+    try:
+        control_tower.request_external_adapter_write_authorization(
+            external_write_review_id=review["external_write_review_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "expired" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("expired duplicate authorization request must fail closed")
+
+    fresh_review = _review_external_write_intent_for_authorization(home, "task:phase11-drift2")
+    fresh_auth = control_tower.request_external_adapter_write_authorization(
+        external_write_review_id=fresh_review["external_write_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        row = ledger.execute(
+            "SELECT external_write_intent_id FROM external_adapter_write_intent_reviews WHERE external_write_review_id = ?",
+            (fresh_review["external_write_review_id"],),
+        ).fetchone()
+        payload = json.loads(ledger.execute(
+            "SELECT mutation_payload_json FROM external_adapter_write_intents WHERE external_write_intent_id = ?",
+            (row[0],),
+        ).fetchone()[0])
+        payload["target_status"] = "archived"
+        ledger.execute(
+            "UPDATE external_adapter_write_intents SET mutation_payload_json = ? WHERE external_write_intent_id = ?",
+            (json.dumps(payload, sort_keys=True, separators=(",", ":")), row[0]),
+        )
+        ledger.commit()
+    try:
+        control_tower.decide_external_adapter_write_authorization(
+            external_write_authorization_id=fresh_auth["external_write_authorization_id"],
+            decision="approved",
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "mutation digest mismatch" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("authorization decision must fail closed on digest drift")

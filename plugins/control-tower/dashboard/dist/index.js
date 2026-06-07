@@ -6,12 +6,12 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 10 reviews digest-bound external adapter write intents for
-        readiness while still keeping external taskpool/Kanban write-through
-        disabled. This dashboard can record operator intent, human decisions,
-        read-only runs, evidence gates, ledger closeouts, blocked external write
-        intents, and blocked write-readiness reviews. Rollback/reopen and real
-        adapter mutation remain outside this boundary.
+        Phase 11 records digest-bound external adapter write authorizations
+        while still keeping external taskpool/Kanban write-through disabled.
+        This dashboard can record operator intent, human decisions, read-only
+        runs, evidence gates, ledger closeouts, blocked external write intents,
+        readiness reviews, and non-executing authorization decisions.
+        Rollback/reopen and real adapter mutation remain outside this boundary.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
@@ -55,6 +55,12 @@
         <button id="control-tower-review-external-intent" type="button">
           Review external intent readiness
         </button>
+        <button id="control-tower-request-external-auth" type="button">
+          Request external write auth
+        </button>
+        <button id="control-tower-approve-external-auth" type="button">
+          Approve external write auth
+        </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
@@ -86,6 +92,9 @@
     const externalWriteIntentBlocked = data?.external_adapter_write_intents?.blocked_count ?? 0;
     const externalWriteReviews = data?.external_adapter_write_intent_reviews?.review_count ?? 0;
     const externalWriteReviewBlocked = data?.external_adapter_write_intent_reviews?.blocked_count ?? 0;
+    const externalWriteAuths = data?.external_adapter_write_authorizations?.authorization_count ?? 0;
+    const externalWriteAuthApproved = data?.external_adapter_write_authorizations?.approved_count ?? 0;
+    const externalWriteAllowed = data?.external_adapter_write_authorizations?.write_through_allowed_count ?? 0;
     const externalCloseoutWrites = data?.closeout_execution?.external_adapter_write_through_enabled === true;
     const writesEnabled = data?.execution_policy?.writes_enabled === true;
     const closeoutEnabled = data?.closeout_execution?.mode === 'control_tower_ledger_closeout_consumer';
@@ -110,6 +119,9 @@
         <span>External intent blocked: <strong>${externalWriteIntentBlocked}</strong></span>
         <span>External intent reviews: <strong>${externalWriteReviews}</strong></span>
         <span>External review blocked: <strong>${externalWriteReviewBlocked}</strong></span>
+        <span>External write auths: <strong>${externalWriteAuths}</strong></span>
+        <span>External auth approved: <strong>${externalWriteAuthApproved}</strong></span>
+        <span>External write allowed: <strong>${externalWriteAllowed}</strong></span>
         <span>Writes enabled: <strong>${writesEnabled ? 'yes' : 'no'}</strong></span>
         <span>External closeout writes: <strong>${externalCloseoutWrites ? 'yes' : 'no'}</strong></span>
         <span>Closeout enabled: <strong>${closeoutEnabled ? 'ledger-only' : 'no'}</strong></span>
@@ -438,6 +450,63 @@
       });
   };
 
+  const requestFirstExternalWriteAuthorization = () => {
+    const review = latestSnapshot?.external_adapter_write_intent_reviews?.recent_reviews?.find(
+      (entry) => entry.review_status === 'blocked'
+    );
+    if (!review) {
+      if (snapshotEl) snapshotEl.textContent = 'No external write review to authorize.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/external-write-reviews/${encodeURIComponent(review.external_write_review_id)}/authorization`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor_type: 'human',
+        actor_id: 'dashboard',
+        actor_role: 'admin',
+        reason: 'dashboard requested external write authorization; write-through remains disabled',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `External write authorization request failed: ${error}`;
+      });
+  };
+
+  const approveFirstExternalWriteAuthorization = () => {
+    const authorization = latestSnapshot?.external_adapter_write_authorizations?.recent_authorizations?.find(
+      (entry) => entry.status === 'requested'
+    );
+    if (!authorization) {
+      if (snapshotEl) snapshotEl.textContent = 'No external write authorization to approve.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/external-write-authorizations/${encodeURIComponent(authorization.external_write_authorization_id)}/decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        decision: 'approved',
+        actor_type: 'human',
+        actor_id: 'dashboard',
+        actor_role: 'admin',
+        reason: 'dashboard approved authorization record only; write-through remains disabled',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `External write authorization decision failed: ${error}`;
+      });
+  };
+
   document.getElementById('control-tower-refresh')?.addEventListener('click', loadSnapshot);
   document
     .getElementById('control-tower-propose-refresh')
@@ -478,5 +547,11 @@
   document
     .getElementById('control-tower-review-external-intent')
     ?.addEventListener('click', reviewFirstExternalWriteIntent);
+  document
+    .getElementById('control-tower-request-external-auth')
+    ?.addEventListener('click', requestFirstExternalWriteAuthorization);
+  document
+    .getElementById('control-tower-approve-external-auth')
+    ?.addEventListener('click', approveFirstExternalWriteAuthorization);
   loadSnapshot();
 })();
