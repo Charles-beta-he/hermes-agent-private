@@ -42,6 +42,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "external_adapter_write_intents",
             "external_adapter_write_intent_reviews",
             "external_adapter_write_authorizations",
+            "external_adapter_write_execution_preflights",
             "evidence_gate_reviews",
             "closeout_authorizations",
             "adapter_observations",
@@ -2578,3 +2579,167 @@ def test_external_adapter_write_authorization_fails_closed_on_role_ttl_and_diges
         assert "mutation digest mismatch" in str(exc)
     else:  # pragma: no cover - assertion clarity
         raise AssertionError("authorization decision must fail closed on digest drift")
+
+
+def _approved_external_write_authorization_for_preflight(home, task_id: str = "task:phase12-preflight") -> dict[str, object]:
+    review = _review_external_write_intent_for_authorization(home, task_id)
+    request = control_tower.request_external_adapter_write_authorization(
+        external_write_review_id=review["external_write_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    return control_tower.decide_external_adapter_write_authorization(
+        external_write_authorization_id=request["external_write_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+
+
+def test_external_adapter_write_execution_preflight_binds_command_digest_without_writing_adapter(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    authorization = _approved_external_write_authorization_for_preflight(home)
+
+    preflight = control_tower.prepare_external_adapter_write_execution_preflight(
+        external_write_authorization_id=authorization["external_write_authorization_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+        reason="prepare command digest only",
+    )
+    repeated = control_tower.prepare_external_adapter_write_execution_preflight(
+        external_write_authorization_id=authorization["external_write_authorization_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+
+    assert preflight["created"] is True
+    assert preflight["preflight_status"] == "blocked_pending_external_write_executor"
+    assert preflight["external_write_executor_enabled"] is False
+    assert preflight["write_through_allowed"] is False
+    assert preflight["writes_enabled"] is False
+    assert preflight["rollback_available"] is False
+    assert preflight["command_execution_digest"]
+    assert preflight["command_execution_payload"]["external_write_authorization_id"] == authorization["external_write_authorization_id"]
+    assert preflight["command_execution_payload"]["mutation_digest"] == authorization["mutation_digest"]
+    assert repeated["created"] is False
+    assert repeated["external_write_preflight_id"] == preflight["external_write_preflight_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        row = ledger.execute(
+            "SELECT command_execution_payload_json, command_execution_digest FROM external_adapter_write_execution_preflights WHERE external_write_preflight_id = ?",
+            (preflight["external_write_preflight_id"],),
+        ).fetchone()
+        payload = json.loads(row[0])
+        assert hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest() == row[1]
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
+        events = [r[0] for r in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert events[-1] == "ExternalAdapterWriteExecutionPreflightPrepared"
+    snapshot = control_tower.build_snapshot()
+    assert snapshot["external_adapter_write_execution_preflights"]["preflight_count"] == 1
+    assert snapshot["external_adapter_write_execution_preflights"]["blocked_count"] == 1
+    assert snapshot["external_adapter_write_execution_preflights"]["write_through_allowed_count"] == 0
+
+
+def test_external_adapter_write_execution_preflight_fails_closed_on_auth_and_digest_drift(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    authorization = _approved_external_write_authorization_for_preflight(home, "task:phase12-drift")
+
+    invalid_cases = [
+        {"external_write_authorization_id": "", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "pytest", "expected": "external_write_authorization_id is required"},
+        {"external_write_authorization_id": authorization["external_write_authorization_id"], "actor_type": "", "actor_id": "charles", "actor_role": "admin", "source_surface": "pytest", "expected": "actor_type is required"},
+        {"external_write_authorization_id": authorization["external_write_authorization_id"], "actor_type": "human", "actor_id": "", "actor_role": "admin", "source_surface": "pytest", "expected": "actor_id is required"},
+        {"external_write_authorization_id": authorization["external_write_authorization_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "cannot prepare"},
+        {"external_write_authorization_id": authorization["external_write_authorization_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "invalid", "source_surface": "pytest", "expected": "unsupported actor_role"},
+        {"external_write_authorization_id": authorization["external_write_authorization_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "", "expected": "source_surface is required"},
+        {"external_write_authorization_id": "extauth_missing", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "pytest", "expected": "external write authorization not found"},
+    ]
+    for case in invalid_cases:
+        expected = case.pop("expected")
+        try:
+            control_tower.prepare_external_adapter_write_execution_preflight(**case)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"expected ValueError containing {expected!r}")
+
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            "UPDATE external_adapter_write_authorizations SET status = ? WHERE external_write_authorization_id = ?",
+            ("denied", authorization["external_write_authorization_id"]),
+        )
+        ledger.commit()
+    try:
+        control_tower.prepare_external_adapter_write_execution_preflight(
+            external_write_authorization_id=authorization["external_write_authorization_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "not approved" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("non-approved authorization must fail closed")
+
+    intent_flag_drift = _approved_external_write_authorization_for_preflight(home, "task:phase12-intent-flag")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        intent_id = ledger.execute(
+            "SELECT external_write_intent_id FROM external_adapter_write_authorizations WHERE external_write_authorization_id = ?",
+            (intent_flag_drift["external_write_authorization_id"],),
+        ).fetchone()[0]
+        ledger.execute("PRAGMA ignore_check_constraints = ON")
+        ledger.execute(
+            "UPDATE external_adapter_write_intents SET writes_enabled = 1 WHERE external_write_intent_id = ?",
+            (intent_id,),
+        )
+        ledger.commit()
+    try:
+        control_tower.prepare_external_adapter_write_execution_preflight(
+            external_write_authorization_id=intent_flag_drift["external_write_authorization_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "external write intent unexpectedly has writes_enabled=true" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("preflight must fail closed on source intent flag drift")
+
+    fresh = _approved_external_write_authorization_for_preflight(home, "task:phase12-drift2")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        intent_id = ledger.execute(
+            "SELECT external_write_intent_id FROM external_adapter_write_authorizations WHERE external_write_authorization_id = ?",
+            (fresh["external_write_authorization_id"],),
+        ).fetchone()[0]
+        payload = json.loads(ledger.execute(
+            "SELECT mutation_payload_json FROM external_adapter_write_intents WHERE external_write_intent_id = ?",
+            (intent_id,),
+        ).fetchone()[0])
+        payload["target_status"] = "archived"
+        ledger.execute(
+            "UPDATE external_adapter_write_intents SET mutation_payload_json = ? WHERE external_write_intent_id = ?",
+            (json.dumps(payload, sort_keys=True, separators=(",", ":")), intent_id),
+        )
+        ledger.commit()
+    try:
+        control_tower.prepare_external_adapter_write_execution_preflight(
+            external_write_authorization_id=fresh["external_write_authorization_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "mutation digest mismatch" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("preflight must fail closed on digest drift")

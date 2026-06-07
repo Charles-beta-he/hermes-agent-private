@@ -691,6 +691,41 @@ Acceptance:
 - TTL expiration, role mismatch, missing review, and digest drift fail closed.
 - Adapter observations and taskpool/Kanban state remain unchanged.
 
+### Phase 12 — External adapter write execution preflight projection
+
+Phase 12 adds one more non-executing boundary layer: a command-digest preflight for an approved external write authorization. It constructs the exact `ExternalAdapterWriteThrough` command payload and records `command_execution_digest`, but keeps the executor disabled and all write-through flags false.
+
+Implemented scope:
+
+1. Add `external_adapter_write_execution_preflights` ledger table.
+2. Add `prepare_external_adapter_write_execution_preflight(...)`.
+3. Require all gates before preflight:
+   - external write authorization exists and is `approved`;
+   - actor role is at least `admin`;
+   - authorization has not expired;
+   - source authorization, review, and intent still have writes disabled;
+   - current mutation payload recomputes to the authorization/review/intent `mutation_digest`.
+4. The preflight records:
+   - `preflight_status = blocked_pending_external_write_executor`;
+   - canonical `command_execution_payload_json`;
+   - `command_execution_digest` over that canonical payload;
+   - `write_through_allowed = false`;
+   - `writes_enabled = false`;
+   - `external_adapter_write_through_enabled = false`;
+   - `external_write_executor_enabled = false`;
+   - rollback required/unavailable state.
+5. Snapshot `external_adapter_write_execution_preflights` reports preflight counts and zero write-through-allowed count.
+6. Dashboard API endpoint:
+   - `POST /api/plugins/control-tower/external-write-authorizations/{external_write_authorization_id}/execution-preflight`
+
+Acceptance:
+
+- An approved external write authorization can produce exactly one command-digest preflight.
+- The preflight is idempotent per authorization and recomputable from canonical JSON.
+- Role mismatch, missing authorization, non-approved authorization, expired authorization, and digest drift fail closed.
+- Adapter observations and taskpool/Kanban state remain unchanged.
+- The next boundary remains enabling a real external write executor plus rollback/reopen semantics.
+
 ## First implementation slice status
 
 Implemented:
@@ -725,6 +760,8 @@ Implemented:
 28. External adapter write authorization request endpoint via `POST /api/plugins/control-tower/external-write-reviews/{external_write_review_id}/authorization`.
 29. External adapter write authorization decision endpoint via `POST /api/plugins/control-tower/external-write-authorizations/{external_write_authorization_id}/decision`.
 30. External adapter write authorization projection via snapshot `external_adapter_write_authorizations`.
+31. External adapter write execution preflight endpoint via `POST /api/plugins/control-tower/external-write-authorizations/{external_write_authorization_id}/execution-preflight`.
+32. External adapter write execution preflight projection via snapshot `external_adapter_write_execution_preflights`.
 
 Still intentionally not implemented:
 
@@ -742,12 +779,15 @@ Still intentionally not implemented:
   adapter contract projection but still keep `write_through_allowed = false`.
 - External adapter write authorizations can be requested/decided by admin role,
   but they remain non-executing and keep `write_through_allowed = false`.
+- External adapter write execution preflights bind a canonical command execution
+  payload/digest, but keep `external_write_executor_enabled = false` and never
+  mutate taskpool/Kanban.
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, blocked external adapter write intents with mutation digests, blocked readiness reviews for those intents, and non-executing external write authorization decisions.
+- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, blocked external adapter write intents with mutation digests, blocked readiness reviews for those intents, non-executing external write authorization decisions, and blocked command-digest preflights.
 - The ledger remains the only fact source.
-- The next step changes authority from "Control Tower ledger closeout" to "external adapter write-through / rollback-reopen", which requires explicit adapter contracts, rollback/escape paths, evidence override semantics, and command-execution approval digests.
+- The next step changes authority from "Control Tower ledger closeout + command preflight" to "external adapter write-through / rollback-reopen", which requires explicit executor enablement, adapter contracts, rollback/escape paths, evidence override semantics, and command-execution approval digest policy.
 
 ## Human decisions required now
 

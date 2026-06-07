@@ -302,6 +302,22 @@ def decide_external_adapter_write_authorization(
     )
 
 
+@router.post("/external-write-authorizations/{external_write_authorization_id}/execution-preflight")
+def prepare_external_adapter_write_execution_preflight(
+    external_write_authorization_id: str,
+    req: ExternalAdapterWriteAuthorizationRequest,
+):
+    """Prepare command-digest external write preflight without executing adapter writes."""
+    return control_tower.prepare_external_adapter_write_execution_preflight(
+        external_write_authorization_id=external_write_authorization_id,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        source_surface="dashboard",
+        reason=req.reason,
+    )
+
+
 @router.post("/commands/{command_id}/executor-plan")
 def generate_executor_plan(command_id: str, req: ExecutorPlanRequest):
     """Generate a dry-run/copy-command plan without executing workflow side effects."""

@@ -509,8 +509,24 @@ def test_control_tower_dashboard_plugin_prepares_external_write_intent_without_a
     assert decision["status"] == "approved"
     assert decision["write_through_allowed"] is False
     assert decision["writes_enabled"] is False
+    preflight_response = client.post(
+        f"/api/plugins/control-tower/external-write-authorizations/{decision['external_write_authorization_id']}/execution-preflight",
+        json={
+            "actor_id": "charles",
+            "actor_role": "admin",
+            "reason": "prepare command digest only",
+        },
+    )
+    assert preflight_response.status_code == 200, preflight_response.text
+    preflight = preflight_response.json()
+    assert preflight["preflight_status"] == "blocked_pending_external_write_executor"
+    assert preflight["command_execution_digest"]
+    assert preflight["write_through_allowed"] is False
+    assert preflight["external_adapter_write_through_enabled"] is False
+    assert preflight["external_write_executor_enabled"] is False
     with sqlite3.connect(home / "control_tower.db") as ledger:
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intents").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intent_reviews").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_authorizations").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_execution_preflights").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0

@@ -6,11 +6,11 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 11 records digest-bound external adapter write authorizations
+        Phase 12 records command-digest external write execution preflights
         while still keeping external taskpool/Kanban write-through disabled.
         This dashboard can record operator intent, human decisions, read-only
         runs, evidence gates, ledger closeouts, blocked external write intents,
-        readiness reviews, and non-executing authorization decisions.
+        readiness reviews, non-executing authorization decisions, and blocked preflights.
         Rollback/reopen and real adapter mutation remain outside this boundary.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
@@ -61,6 +61,9 @@
         <button id="control-tower-approve-external-auth" type="button">
           Approve external write auth
         </button>
+        <button id="control-tower-prepare-external-preflight" type="button">
+          Prepare external write preflight
+        </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
@@ -95,6 +98,9 @@
     const externalWriteAuths = data?.external_adapter_write_authorizations?.authorization_count ?? 0;
     const externalWriteAuthApproved = data?.external_adapter_write_authorizations?.approved_count ?? 0;
     const externalWriteAllowed = data?.external_adapter_write_authorizations?.write_through_allowed_count ?? 0;
+    const externalWritePreflights = data?.external_adapter_write_execution_preflights?.preflight_count ?? 0;
+    const externalWritePreflightBlocked = data?.external_adapter_write_execution_preflights?.blocked_count ?? 0;
+    const externalWriteExecutorEnabled = data?.external_adapter_write_execution_preflights?.external_write_executor_enabled === true;
     const externalCloseoutWrites = data?.closeout_execution?.external_adapter_write_through_enabled === true;
     const writesEnabled = data?.execution_policy?.writes_enabled === true;
     const closeoutEnabled = data?.closeout_execution?.mode === 'control_tower_ledger_closeout_consumer';
@@ -121,6 +127,9 @@
         <span>External review blocked: <strong>${externalWriteReviewBlocked}</strong></span>
         <span>External write auths: <strong>${externalWriteAuths}</strong></span>
         <span>External auth approved: <strong>${externalWriteAuthApproved}</strong></span>
+        <span>External write preflights: <strong>${externalWritePreflights}</strong></span>
+        <span>External preflight blocked: <strong>${externalWritePreflightBlocked}</strong></span>
+        <span>External write executor: <strong>${externalWriteExecutorEnabled ? 'yes' : 'no'}</strong></span>
         <span>External write allowed: <strong>${externalWriteAllowed}</strong></span>
         <span>Writes enabled: <strong>${writesEnabled ? 'yes' : 'no'}</strong></span>
         <span>External closeout writes: <strong>${externalCloseoutWrites ? 'yes' : 'no'}</strong></span>
@@ -507,6 +516,34 @@
       });
   };
 
+  const prepareFirstExternalWriteExecutionPreflight = () => {
+    const authorization = latestSnapshot?.external_adapter_write_authorizations?.recent_authorizations?.find(
+      (entry) => entry.status === 'approved'
+    );
+    if (!authorization) {
+      if (snapshotEl) snapshotEl.textContent = 'No approved external write authorization to preflight.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/external-write-authorizations/${encodeURIComponent(authorization.external_write_authorization_id)}/execution-preflight`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor_type: 'human',
+        actor_id: 'dashboard',
+        actor_role: 'admin',
+        reason: 'dashboard prepared external write command digest; executor and write-through remain disabled',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `External write execution preflight failed: ${error}`;
+      });
+  };
+
   document.getElementById('control-tower-refresh')?.addEventListener('click', loadSnapshot);
   document
     .getElementById('control-tower-propose-refresh')
@@ -553,5 +590,8 @@
   document
     .getElementById('control-tower-approve-external-auth')
     ?.addEventListener('click', approveFirstExternalWriteAuthorization);
+  document
+    .getElementById('control-tower-prepare-external-preflight')
+    ?.addEventListener('click', prepareFirstExternalWriteExecutionPreflight);
   loadSnapshot();
 })();
