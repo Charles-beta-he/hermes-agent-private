@@ -6,12 +6,13 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 12 records command-digest external write execution preflights
-        while still keeping external taskpool/Kanban write-through disabled.
+        Phase 13 enables explicitly approved, command-digest Kanban closeout
+        write-through while keeping taskpool write-through, rollback/reopen, and
+        conflicting evidence override disabled.
         This dashboard can record operator intent, human decisions, read-only
         runs, evidence gates, ledger closeouts, blocked external write intents,
-        readiness reviews, non-executing authorization decisions, and blocked preflights.
-        Rollback/reopen and real adapter mutation remain outside this boundary.
+        readiness reviews, authorization decisions, preflights, and digest-bound
+        Kanban write execution runs. Rollback/reopen remain outside this boundary.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
@@ -64,6 +65,9 @@
         <button id="control-tower-prepare-external-preflight" type="button">
           Prepare external write preflight
         </button>
+        <button id="control-tower-execute-external-write" type="button">
+          Execute approved Kanban write
+        </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
@@ -100,7 +104,9 @@
     const externalWriteAllowed = data?.external_adapter_write_authorizations?.write_through_allowed_count ?? 0;
     const externalWritePreflights = data?.external_adapter_write_execution_preflights?.preflight_count ?? 0;
     const externalWritePreflightBlocked = data?.external_adapter_write_execution_preflights?.blocked_count ?? 0;
-    const externalWriteExecutorEnabled = data?.external_adapter_write_execution_preflights?.external_write_executor_enabled === true;
+    const externalWriteRuns = data?.external_adapter_write_execution_runs?.run_count ?? 0;
+    const externalWriteRunsCompleted = data?.external_adapter_write_execution_runs?.completed_count ?? 0;
+    const externalWriteExecutorEnabled = data?.external_adapter_write_execution_runs?.external_write_executor_enabled === true;
     const externalCloseoutWrites = data?.closeout_execution?.external_adapter_write_through_enabled === true;
     const writesEnabled = data?.execution_policy?.writes_enabled === true;
     const closeoutEnabled = data?.closeout_execution?.mode === 'control_tower_ledger_closeout_consumer';
@@ -129,6 +135,8 @@
         <span>External auth approved: <strong>${externalWriteAuthApproved}</strong></span>
         <span>External write preflights: <strong>${externalWritePreflights}</strong></span>
         <span>External preflight blocked: <strong>${externalWritePreflightBlocked}</strong></span>
+        <span>External write runs: <strong>${externalWriteRuns}</strong></span>
+        <span>External write completed: <strong>${externalWriteRunsCompleted}</strong></span>
         <span>External write executor: <strong>${externalWriteExecutorEnabled ? 'yes' : 'no'}</strong></span>
         <span>External write allowed: <strong>${externalWriteAllowed}</strong></span>
         <span>Writes enabled: <strong>${writesEnabled ? 'yes' : 'no'}</strong></span>
@@ -544,6 +552,36 @@
       });
   };
 
+
+  const executeFirstExternalWritePreflight = () => {
+    const preflight = latestSnapshot?.external_adapter_write_execution_preflights?.recent_preflights?.find(
+      (entry) => entry.preflight_status === 'blocked_pending_external_write_executor' && entry.adapter_name === 'kanban'
+    );
+    if (!preflight) {
+      if (snapshotEl) snapshotEl.textContent = 'No approved Kanban external write preflight to execute.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/external-write-preflights/${encodeURIComponent(preflight.external_write_preflight_id)}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expected_command_execution_digest: preflight.command_execution_digest,
+        actor_type: 'human',
+        actor_id: 'dashboard',
+        actor_role: 'admin',
+        reason: 'dashboard executed approved digest-bound Kanban write-through; rollback/reopen remains disabled',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `External write execution failed: ${error}`;
+      });
+  };
+
   document.getElementById('control-tower-refresh')?.addEventListener('click', loadSnapshot);
   document
     .getElementById('control-tower-propose-refresh')
@@ -593,5 +631,8 @@
   document
     .getElementById('control-tower-prepare-external-preflight')
     ?.addEventListener('click', prepareFirstExternalWriteExecutionPreflight);
+  document
+    .getElementById('control-tower-execute-external-write')
+    ?.addEventListener('click', executeFirstExternalWritePreflight);
   loadSnapshot();
 })();

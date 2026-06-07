@@ -2,9 +2,10 @@
 
 Mounted at /api/plugins/control-tower/ by the dashboard plugin system.
 The plugin exposes ledger projections and controlled operator intent. It may
-execute narrow consumers after explicit gates: L0/L1 read-only executor runs and
-approved evidence-bound closeout inside the Control Tower ledger. It still never
-writes through external taskpool/Kanban adapters.
+execute narrow consumers after explicit gates: L0/L1 read-only executor runs,
+approved evidence-bound closeout inside the Control Tower ledger, and explicitly
+approved digest-bound Kanban closeout write-through. It still does not enable
+rollback/reopen or conflicting evidence override.
 """
 
 from __future__ import annotations
@@ -113,6 +114,14 @@ class ExternalAdapterWriteAuthorizationRequest(BaseModel):
 
 class ExternalAdapterWriteAuthorizationDecisionRequest(BaseModel):
     decision: str = Field(min_length=1)
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    actor_role: str = Field(default="operator", min_length=1)
+    reason: str = Field(default="", min_length=0)
+
+
+class ExternalAdapterWriteExecutionRequest(BaseModel):
+    expected_command_execution_digest: str = Field(min_length=1)
     actor_type: str = Field(default="human", min_length=1)
     actor_id: str = Field(default="dashboard", min_length=1)
     actor_role: str = Field(default="operator", min_length=1)
@@ -310,6 +319,23 @@ def prepare_external_adapter_write_execution_preflight(
     """Prepare command-digest external write preflight without executing adapter writes."""
     return control_tower.prepare_external_adapter_write_execution_preflight(
         external_write_authorization_id=external_write_authorization_id,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        source_surface="dashboard",
+        reason=req.reason,
+    )
+
+
+@router.post("/external-write-preflights/{external_write_preflight_id}/execute")
+def execute_external_adapter_write_preflight(
+    external_write_preflight_id: str,
+    req: ExternalAdapterWriteExecutionRequest,
+):
+    """Execute digest-bound Kanban external closeout write-through after explicit admin approval."""
+    return control_tower.execute_external_adapter_write_preflight(
+        external_write_preflight_id=external_write_preflight_id,
+        expected_command_execution_digest=req.expected_command_execution_digest,
         actor_type=req.actor_type,
         actor_id=req.actor_id,
         actor_role=req.actor_role,

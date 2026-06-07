@@ -415,6 +415,44 @@ _TABLES_SQL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS external_adapter_write_execution_runs (
+        external_write_execution_id TEXT PRIMARY KEY,
+        external_write_preflight_id TEXT NOT NULL UNIQUE,
+        external_write_authorization_id TEXT NOT NULL,
+        external_write_review_id TEXT NOT NULL,
+        external_write_intent_id TEXT NOT NULL,
+        closeout_execution_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        adapter_name TEXT NOT NULL,
+        external_ref TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        adapter_contract_version TEXT NOT NULL,
+        mutation_digest TEXT NOT NULL,
+        command_execution_digest TEXT NOT NULL,
+        execution_status TEXT NOT NULL,
+        adapter_result_json TEXT NOT NULL DEFAULT '{}',
+        rollback_snapshot_json TEXT NOT NULL DEFAULT '{}',
+        executed_by TEXT NOT NULL,
+        executed_role TEXT NOT NULL,
+        executed_at TEXT NOT NULL,
+        writes_enabled INTEGER NOT NULL DEFAULT 1,
+        external_adapter_write_through_enabled INTEGER NOT NULL DEFAULT 1,
+        external_write_executor_enabled INTEGER NOT NULL DEFAULT 1,
+        rollback_required INTEGER NOT NULL DEFAULT 1,
+        rollback_available INTEGER NOT NULL DEFAULT 0,
+        rollback_reopen_enabled INTEGER NOT NULL DEFAULT 0,
+        write_through_allowed INTEGER NOT NULL DEFAULT 1,
+        CHECK(execution_status = 'write_completed'),
+        CHECK(writes_enabled = 1),
+        CHECK(external_adapter_write_through_enabled = 1),
+        CHECK(external_write_executor_enabled = 1),
+        CHECK(rollback_required = 1),
+        CHECK(rollback_available = 0),
+        CHECK(rollback_reopen_enabled = 0),
+        CHECK(write_through_allowed = 1)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS policy_decisions (
         policy_decision_id TEXT PRIMARY KEY,
         command_id TEXT,
@@ -3383,6 +3421,333 @@ def prepare_external_adapter_write_execution_preflight(
     return _external_write_preflight_response(created=True, row=row, source_surface=source_surface)
 
 
+EXTERNAL_WRITE_EXECUTOR_ADAPTERS = frozenset({"kanban"})
+
+
+def _select_external_write_execution_run(conn: sqlite3.Connection, external_write_execution_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT external_write_execution_id, external_write_preflight_id,
+               external_write_authorization_id, external_write_review_id,
+               external_write_intent_id, closeout_execution_id, task_id,
+               adapter_name, external_ref, operation, adapter_contract_version,
+               mutation_digest, command_execution_digest, execution_status,
+               adapter_result_json, rollback_snapshot_json, executed_by,
+               executed_role, executed_at, writes_enabled,
+               external_adapter_write_through_enabled, external_write_executor_enabled,
+               rollback_required, rollback_available, rollback_reopen_enabled,
+               write_through_allowed
+        FROM external_adapter_write_execution_runs
+        WHERE external_write_execution_id = ?
+        """,
+        (external_write_execution_id,),
+    ).fetchone()
+
+
+def _select_external_write_execution_run_by_preflight(conn: sqlite3.Connection, external_write_preflight_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT external_write_execution_id, external_write_preflight_id,
+               external_write_authorization_id, external_write_review_id,
+               external_write_intent_id, closeout_execution_id, task_id,
+               adapter_name, external_ref, operation, adapter_contract_version,
+               mutation_digest, command_execution_digest, execution_status,
+               adapter_result_json, rollback_snapshot_json, executed_by,
+               executed_role, executed_at, writes_enabled,
+               external_adapter_write_through_enabled, external_write_executor_enabled,
+               rollback_required, rollback_available, rollback_reopen_enabled,
+               write_through_allowed
+        FROM external_adapter_write_execution_runs
+        WHERE external_write_preflight_id = ?
+        """,
+        (external_write_preflight_id,),
+    ).fetchone()
+
+
+def _external_write_execution_response(
+    *,
+    created: bool,
+    row: sqlite3.Row,
+    source_surface: str,
+) -> dict[str, Any]:
+    return {
+        "created": created,
+        "external_write_execution_id": row["external_write_execution_id"],
+        "external_write_preflight_id": row["external_write_preflight_id"],
+        "external_write_authorization_id": row["external_write_authorization_id"],
+        "external_write_review_id": row["external_write_review_id"],
+        "external_write_intent_id": row["external_write_intent_id"],
+        "closeout_execution_id": row["closeout_execution_id"],
+        "task_id": row["task_id"],
+        "adapter_name": row["adapter_name"],
+        "external_ref": row["external_ref"],
+        "operation": row["operation"],
+        "adapter_contract_version": row["adapter_contract_version"],
+        "mutation_digest": row["mutation_digest"],
+        "command_execution_digest": row["command_execution_digest"],
+        "execution_status": row["execution_status"],
+        "adapter_result": json.loads(row["adapter_result_json"]),
+        "rollback_snapshot": json.loads(row["rollback_snapshot_json"]),
+        "executed_by": row["executed_by"],
+        "executed_role": row["executed_role"],
+        "executed_at": row["executed_at"],
+        "writes_enabled": bool(row["writes_enabled"]),
+        "external_adapter_write_through_enabled": bool(row["external_adapter_write_through_enabled"]),
+        "external_write_executor_enabled": bool(row["external_write_executor_enabled"]),
+        "rollback_required": bool(row["rollback_required"]),
+        "rollback_available": bool(row["rollback_available"]),
+        "rollback_reopen_enabled": bool(row["rollback_reopen_enabled"]),
+        "write_through_allowed": bool(row["write_through_allowed"]),
+        "source_surface": source_surface,
+    }
+
+
+def _assert_external_write_preflight_executable(row: sqlite3.Row, expected_command_execution_digest: str) -> None:
+    if row["preflight_status"] != "blocked_pending_external_write_executor":
+        raise ValueError(f"external write preflight is not executable: {row['preflight_status']}")
+    if row["command_execution_digest"] != expected_command_execution_digest:
+        raise ValueError("command execution digest mismatch for external adapter write")
+    if bool(row["writes_enabled"]):
+        raise ValueError("external write preflight unexpectedly has writes_enabled=true")
+    if bool(row["external_adapter_write_through_enabled"]):
+        raise ValueError("external write preflight unexpectedly has adapter write-through enabled")
+    if bool(row["external_write_executor_enabled"]):
+        raise ValueError("external write preflight unexpectedly has executor enabled")
+    if bool(row["write_through_allowed"]):
+        raise ValueError("external write preflight unexpectedly allows write-through")
+    if bool(row["rollback_available"]):
+        raise ValueError("external write preflight unexpectedly has rollback available")
+    if row["adapter_name"] not in EXTERNAL_WRITE_EXECUTOR_ADAPTERS:
+        raise ValueError(f"external write adapter executor is not enabled: {row['adapter_name']}")
+    if row["operation"] != "closeout":
+        raise ValueError(f"external write operation is not enabled: {row['operation']}")
+    payload = json.loads(row["command_execution_payload_json"])
+    if _payload_hash(payload) != row["command_execution_digest"]:
+        raise ValueError("stored command execution payload digest mismatch")
+    for key in (
+        "external_write_authorization_id",
+        "external_write_review_id",
+        "external_write_intent_id",
+        "closeout_execution_id",
+        "task_id",
+        "adapter_name",
+        "external_ref",
+        "operation",
+        "adapter_contract_version",
+        "mutation_digest",
+    ):
+        if payload.get(key) != row[key]:
+            raise ValueError(f"external write preflight column drift for digest-bound field: {key}")
+    if payload.get("write_through_allowed") is not False or payload.get("external_write_executor_enabled") is not False:
+        raise ValueError("preflight payload unexpectedly crossed write-through boundary")
+
+
+def _execute_kanban_closeout_write(preflight: sqlite3.Row, *, actor_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    from hermes_cli import kanban_db
+
+    conn = kanban_db.connect()
+    try:
+        task = kanban_db.get_task(conn, preflight["external_ref"])
+        if task is None:
+            raise ValueError(f"kanban task not found: {preflight['external_ref']}")
+        rollback_snapshot = {
+            "adapter_name": "kanban",
+            "external_ref": preflight["external_ref"],
+            "status_before": task.status,
+            "result_before": task.result,
+            "rollback_available": False,
+            "rollback_reopen_enabled": False,
+            "reason": "rollback/reopen execution remains outside the enabled boundary",
+        }
+        summary = f"Control Tower external closeout {preflight['closeout_execution_id']}"
+        metadata = {
+            "control_tower_external_write_preflight_id": preflight["external_write_preflight_id"],
+            "control_tower_command_execution_digest": preflight["command_execution_digest"],
+            "control_tower_mutation_digest": preflight["mutation_digest"],
+            "executed_by": actor_id,
+        }
+        ok = kanban_db.complete_task(
+            conn,
+            preflight["external_ref"],
+            result=summary,
+            summary=summary,
+            metadata=metadata,
+        )
+        if not ok:
+            raise ValueError(f"kanban task is not writable for closeout: {preflight['external_ref']}")
+        updated = kanban_db.get_task(conn, preflight["external_ref"])
+    finally:
+        conn.close()
+    if updated is None or updated.status != "done":
+        raise ValueError("kanban closeout write did not persist done status")
+    adapter_result = {
+        "adapter_name": "kanban",
+        "external_ref": preflight["external_ref"],
+        "operation": "closeout",
+        "status_after": updated.status,
+        "result_after": updated.result,
+    }
+    return adapter_result, rollback_snapshot
+
+
+def execute_external_adapter_write_preflight(
+    *,
+    external_write_preflight_id: str,
+    expected_command_execution_digest: str,
+    actor_type: str,
+    actor_id: str,
+    actor_role: str,
+    source_surface: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Execute an approved, digest-bound external adapter closeout write."""
+    external_write_preflight_id = external_write_preflight_id.strip()
+    expected_command_execution_digest = expected_command_execution_digest.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    actor_role = actor_role.strip().lower()
+    source_surface = source_surface.strip()
+    reason = reason.strip()
+    if not external_write_preflight_id:
+        raise ValueError("external_write_preflight_id is required")
+    if not expected_command_execution_digest:
+        raise ValueError("expected_command_execution_digest is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if actor_role not in ROLE_RANK:
+        raise ValueError("unsupported actor_role")
+    if not _role_allows(actor_role, EXTERNAL_WRITE_AUTHORIZATION_REQUIRED_ROLE):
+        raise ValueError("actor role cannot execute external adapter write")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        existing = _select_external_write_execution_run_by_preflight(conn, external_write_preflight_id)
+        if existing is not None:
+            if existing["command_execution_digest"] != expected_command_execution_digest:
+                raise ValueError("command execution digest mismatch for existing external adapter write")
+            return _external_write_execution_response(created=False, row=existing, source_surface=source_surface)
+        preflight = _select_external_write_preflight(conn, external_write_preflight_id)
+        if preflight is None:
+            raise ValueError(f"external write preflight not found: {external_write_preflight_id}")
+        _assert_external_write_preflight_executable(preflight, expected_command_execution_digest)
+        auth = _external_write_authorization_with_review_and_intent(conn, preflight["external_write_authorization_id"])
+        if auth is None:
+            raise ValueError("external write authorization source not found")
+        _assert_external_write_authorization_fresh_for_preflight(auth)
+        current_payload = _external_write_command_execution_payload(auth)
+        if _payload_hash(current_payload) != preflight["command_execution_digest"]:
+            raise ValueError("command execution digest mismatch after source refresh")
+
+    adapter_result, rollback_snapshot = _execute_kanban_closeout_write(preflight, actor_id=actor_id)
+
+    external_write_execution_id = f"extwrite_{uuid.uuid4().hex}"
+    executed_at = _now()
+    with _connect() as conn:
+        existing = _select_external_write_execution_run_by_preflight(conn, external_write_preflight_id)
+        if existing is not None:
+            return _external_write_execution_response(created=False, row=existing, source_surface=source_surface)
+        conn.execute(
+            """
+            INSERT INTO external_adapter_write_execution_runs(
+                external_write_execution_id, external_write_preflight_id,
+                external_write_authorization_id, external_write_review_id,
+                external_write_intent_id, closeout_execution_id, task_id,
+                adapter_name, external_ref, operation, adapter_contract_version,
+                mutation_digest, command_execution_digest, execution_status,
+                adapter_result_json, rollback_snapshot_json, executed_by,
+                executed_role, executed_at, writes_enabled,
+                external_adapter_write_through_enabled, external_write_executor_enabled,
+                rollback_required, rollback_available, rollback_reopen_enabled,
+                write_through_allowed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                external_write_execution_id,
+                external_write_preflight_id,
+                preflight["external_write_authorization_id"],
+                preflight["external_write_review_id"],
+                preflight["external_write_intent_id"],
+                preflight["closeout_execution_id"],
+                preflight["task_id"],
+                preflight["adapter_name"],
+                preflight["external_ref"],
+                preflight["operation"],
+                preflight["adapter_contract_version"],
+                preflight["mutation_digest"],
+                preflight["command_execution_digest"],
+                "write_completed",
+                _canonical_json(adapter_result),
+                _canonical_json(rollback_snapshot),
+                actor_id,
+                actor_role,
+                executed_at,
+                1,
+                1,
+                1,
+                1,
+                0,
+                0,
+                1,
+            ),
+        )
+        observation_payload = {
+            "id": preflight["external_ref"],
+            "status": adapter_result["status_after"],
+            "result": adapter_result.get("result_after"),
+            "source": "external_adapter_write_execution",
+            "external_write_execution_id": external_write_execution_id,
+            "command_execution_digest": preflight["command_execution_digest"],
+        }
+        observed_hash = _payload_hash(observation_payload)
+        observation_id = f"obs_{uuid.uuid4().hex}"
+        try:
+            conn.execute(
+                """
+                INSERT INTO adapter_observations(
+                    observation_id, adapter_name, external_ref, observed_type,
+                    observed_hash, payload_json, observed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation_id,
+                    preflight["adapter_name"],
+                    preflight["external_ref"],
+                    "task",
+                    observed_hash,
+                    _canonical_json(observation_payload),
+                    executed_at,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            pass
+        _append_event(
+            conn,
+            event_type="ExternalAdapterWriteExecuted",
+            aggregate_type="external_adapter_write_execution",
+            aggregate_id=external_write_execution_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "external_write_execution_id": external_write_execution_id,
+                "external_write_preflight_id": external_write_preflight_id,
+                "adapter_name": preflight["adapter_name"],
+                "external_ref": preflight["external_ref"],
+                "execution_status": "write_completed",
+                "command_execution_digest": preflight["command_execution_digest"],
+                "rollback_available": False,
+                "rollback_reopen_enabled": False,
+                "reason": reason,
+            },
+        )
+        conn.commit()
+        row = _select_external_write_execution_run(conn, external_write_execution_id)
+    return _external_write_execution_response(created=True, row=row, source_surface=source_surface)
+
+
 def record_adapter_observation(
     *,
     adapter_name: str,
@@ -4009,6 +4374,64 @@ def _external_adapter_write_execution_preflights_snapshot(conn: sqlite3.Connecti
     }
 
 
+def _external_adapter_write_execution_runs_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT external_write_execution_id, external_write_preflight_id,
+               external_write_authorization_id, external_write_review_id,
+               external_write_intent_id, task_id, adapter_name, external_ref,
+               operation, adapter_contract_version, mutation_digest,
+               command_execution_digest, execution_status, adapter_result_json,
+               rollback_snapshot_json, executed_by, executed_role, executed_at,
+               external_write_executor_enabled,
+               external_adapter_write_through_enabled, rollback_required,
+               rollback_available, rollback_reopen_enabled, write_through_allowed
+        FROM external_adapter_write_execution_runs
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "external_adapter_write_through_consumer",
+        "external_adapter_write_through_enabled": True,
+        "writes_enabled": True,
+        "external_write_executor_enabled": True,
+        "rollback_reopen_enabled": False,
+        "run_count": _count(conn, "external_adapter_write_execution_runs"),
+        "completed_count": _count(conn, "external_adapter_write_execution_runs", "execution_status = 'write_completed'"),
+        "write_through_allowed_count": _count(conn, "external_adapter_write_execution_runs", "write_through_allowed = 1"),
+        "recent_runs": [
+            {
+                "external_write_execution_id": row["external_write_execution_id"],
+                "external_write_preflight_id": row["external_write_preflight_id"],
+                "external_write_authorization_id": row["external_write_authorization_id"],
+                "external_write_review_id": row["external_write_review_id"],
+                "external_write_intent_id": row["external_write_intent_id"],
+                "task_id": row["task_id"],
+                "adapter_name": row["adapter_name"],
+                "external_ref": row["external_ref"],
+                "operation": row["operation"],
+                "adapter_contract_version": row["adapter_contract_version"],
+                "mutation_digest": row["mutation_digest"],
+                "command_execution_digest": row["command_execution_digest"],
+                "execution_status": row["execution_status"],
+                "adapter_result": json.loads(row["adapter_result_json"]),
+                "rollback_snapshot": json.loads(row["rollback_snapshot_json"]),
+                "executed_by": row["executed_by"],
+                "executed_role": row["executed_role"],
+                "executed_at": row["executed_at"],
+                "external_write_executor_enabled": bool(row["external_write_executor_enabled"]),
+                "external_adapter_write_through_enabled": bool(row["external_adapter_write_through_enabled"]),
+                "rollback_required": bool(row["rollback_required"]),
+                "rollback_available": bool(row["rollback_available"]),
+                "rollback_reopen_enabled": bool(row["rollback_reopen_enabled"]),
+                "write_through_allowed": bool(row["write_through_allowed"]),
+            }
+            for row in rows
+        ],
+    }
+
+
 def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     schema = validate_workflow_schema(CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA)
     pending = conn.execute(
@@ -4084,6 +4507,7 @@ def build_snapshot() -> dict[str, Any]:
         external_adapter_write_intent_reviews = _external_adapter_write_intent_reviews_snapshot(conn)
         external_adapter_write_authorizations = _external_adapter_write_authorizations_snapshot(conn)
         external_adapter_write_execution_preflights = _external_adapter_write_execution_preflights_snapshot(conn)
+        external_adapter_write_execution_runs = _external_adapter_write_execution_runs_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -4132,6 +4556,7 @@ def build_snapshot() -> dict[str, Any]:
         "external_adapter_write_intent_reviews": external_adapter_write_intent_reviews,
         "external_adapter_write_authorizations": external_adapter_write_authorizations,
         "external_adapter_write_execution_preflights": external_adapter_write_execution_preflights,
+        "external_adapter_write_execution_runs": external_adapter_write_execution_runs,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {

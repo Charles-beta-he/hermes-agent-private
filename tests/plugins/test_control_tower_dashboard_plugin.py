@@ -8,6 +8,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from hermes_cli import kanban_db as kb
+
 
 def _load_plugin_router():
     repo_root = Path(__file__).resolve().parents[2]
@@ -394,7 +396,7 @@ def test_control_tower_dashboard_plugin_executes_closeout_to_control_tower_ledge
         assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
 
 
-def test_control_tower_dashboard_plugin_prepares_external_write_intent_without_adapter_write(tmp_path, monkeypatch):
+def test_control_tower_dashboard_plugin_executes_digest_bound_kanban_external_write(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))
     app = FastAPI()
@@ -419,6 +421,16 @@ def test_control_tower_dashboard_plugin_prepares_external_write_intent_without_a
         "/api/plugins/control-tower/evidence-gates/evaluate",
         json={"task_id": task_id, "risk_level": "L2", "acceptance_refs": ["AC-1"], "actor_id": "charles"},
     ).json()
+    kb.init_db()
+    kanban_conn = kb.connect()
+    try:
+        kanban_task_id = kb.create_task(
+            kanban_conn,
+            title="Dashboard external write-through target",
+            assignee="default",
+        )
+    finally:
+        kanban_conn.close()
     with sqlite3.connect(home / "control_tower.db") as ledger:
         ledger.execute(
             """
@@ -427,7 +439,7 @@ def test_control_tower_dashboard_plugin_prepares_external_write_intent_without_a
             """,
             (
                 task_id,
-                f"taskpool:{task_id}",
+                kanban_task_id,
                 "Dashboard external intent target",
                 "review",
                 "L2",
@@ -452,8 +464,8 @@ def test_control_tower_dashboard_plugin_prepares_external_write_intent_without_a
     response = client.post(
         f"/api/plugins/control-tower/closeout-executions/{execution['closeout_execution_id']}/external-write-intent",
         json={
-            "adapter_name": "taskpool",
-            "external_ref": f"taskpool:{task_id}",
+            "adapter_name": "kanban",
+            "external_ref": kanban_task_id,
             "actor_id": "charles",
             "actor_role": "owner",
             "reason": "prepare intent only",
@@ -524,9 +536,34 @@ def test_control_tower_dashboard_plugin_prepares_external_write_intent_without_a
     assert preflight["write_through_allowed"] is False
     assert preflight["external_adapter_write_through_enabled"] is False
     assert preflight["external_write_executor_enabled"] is False
+    execute_response = client.post(
+        f"/api/plugins/control-tower/external-write-preflights/{preflight['external_write_preflight_id']}/execute",
+        json={
+            "expected_command_execution_digest": preflight["command_execution_digest"],
+            "actor_id": "charles",
+            "actor_role": "admin",
+            "reason": "execute approved kanban write-through",
+        },
+    )
+    assert execute_response.status_code == 200, execute_response.text
+    write_run = execute_response.json()
+    assert write_run["execution_status"] == "write_completed"
+    assert write_run["adapter_name"] == "kanban"
+    assert write_run["external_ref"] == kanban_task_id
+    assert write_run["write_through_allowed"] is True
+    assert write_run["external_write_executor_enabled"] is True
+    assert write_run["rollback_reopen_enabled"] is False
+    kanban_conn = kb.connect()
+    try:
+        kanban_task = kb.get_task(kanban_conn, kanban_task_id)
+    finally:
+        kanban_conn.close()
+    assert kanban_task is not None
+    assert kanban_task.status == "done"
     with sqlite3.connect(home / "control_tower.db") as ledger:
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intents").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intent_reviews").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_authorizations").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_execution_preflights").fetchone()[0] == 1
-        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_execution_runs").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 1

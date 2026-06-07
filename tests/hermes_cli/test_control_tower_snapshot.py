@@ -43,6 +43,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "external_adapter_write_intent_reviews",
             "external_adapter_write_authorizations",
             "external_adapter_write_execution_preflights",
+            "external_adapter_write_execution_runs",
             "evidence_gate_reviews",
             "closeout_authorizations",
             "adapter_observations",
@@ -2743,3 +2744,471 @@ def test_external_adapter_write_execution_preflight_fails_closed_on_auth_and_dig
         assert "mutation digest mismatch" in str(exc)
     else:  # pragma: no cover - assertion clarity
         raise AssertionError("preflight must fail closed on digest drift")
+
+
+def _approved_kanban_write_preflight(home, task_id: str = "task:phase13-kanban") -> dict[str, object]:
+    control_tower.record_evidence(
+        task_id=task_id,
+        evidence_type="test",
+        maturity="verified",
+        source_type="pytest",
+        summary="verified evidence for external kanban write",
+        producer_type="tester",
+        producer_id="pytest",
+        acceptance_refs=["acc"],
+        stale_status="fresh",
+    )
+    evidence_review = control_tower.evaluate_evidence_gate(
+        task_id=task_id,
+        risk_level="L2",
+        acceptance_refs=["acc"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="pytest",
+    )
+    kb.init_db()
+    kanban_conn = kb.connect()
+    try:
+        kanban_task_id = kb.create_task(
+            kanban_conn,
+            title=f"External closeout target {task_id}",
+            assignee="default",
+        )
+    finally:
+        kanban_conn.close()
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            """
+            INSERT INTO tasks(task_id, external_ref, title, project, board, priority, status, risk_class, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_id,
+                kanban_task_id,
+                "Phase13 kanban write target",
+                "pytest",
+                "control",
+                "P1",
+                "review",
+                "L2",
+                "2026-06-07T00:00:00+00:00",
+                "2026-06-07T00:00:00+00:00",
+            ),
+        )
+        ledger.commit()
+    closeout_auth = control_tower.request_closeout_authorization(
+        evidence_review_id=evidence_review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    closeout_decision = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=closeout_auth["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    closeout_run = control_tower.execute_closeout_authorization(
+        closeout_authorization_id=closeout_decision["closeout_authorization_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    intent = control_tower.prepare_external_adapter_write_intent(
+        closeout_execution_id=closeout_run["closeout_execution_id"],
+        adapter_name="kanban",
+        external_ref=kanban_task_id,
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    review = control_tower.review_external_adapter_write_intent(
+        external_write_intent_id=intent["external_write_intent_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    write_auth = control_tower.request_external_adapter_write_authorization(
+        external_write_review_id=review["external_write_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    write_decision = control_tower.decide_external_adapter_write_authorization(
+        external_write_authorization_id=write_auth["external_write_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    preflight = control_tower.prepare_external_adapter_write_execution_preflight(
+        external_write_authorization_id=write_decision["external_write_authorization_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    preflight["kanban_task_id"] = kanban_task_id
+    return preflight
+
+
+def test_external_adapter_write_execution_updates_kanban_with_digest_bound_run(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    preflight = _approved_kanban_write_preflight(home)
+
+    run = control_tower.execute_external_adapter_write_preflight(
+        external_write_preflight_id=preflight["external_write_preflight_id"],
+        expected_command_execution_digest=preflight["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+
+    assert run["created"] is True
+    assert run["execution_status"] == "write_completed"
+    assert run["adapter_name"] == "kanban"
+    assert run["external_ref"] == preflight["kanban_task_id"]
+    assert run["command_execution_digest"] == preflight["command_execution_digest"]
+    assert run["writes_enabled"] is True
+    assert run["external_adapter_write_through_enabled"] is True
+    assert run["external_write_executor_enabled"] is True
+    assert run["write_through_allowed"] is True
+    assert run["rollback_reopen_enabled"] is False
+    assert run["adapter_result"]["status_after"] == "done"
+    assert run["rollback_snapshot"]["status_before"] == "ready"
+
+    kanban_conn = kb.connect()
+    try:
+        task = kb.get_task(kanban_conn, preflight["kanban_task_id"])
+    finally:
+        kanban_conn.close()
+    assert task is not None
+    assert task.status == "done"
+    assert "Control Tower external closeout" in (task.result or "")
+
+    retry = control_tower.execute_external_adapter_write_preflight(
+        external_write_preflight_id=preflight["external_write_preflight_id"],
+        expected_command_execution_digest=preflight["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    assert retry["created"] is False
+    assert retry["external_write_execution_id"] == run["external_write_execution_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_execution_runs").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations WHERE adapter_name = 'kanban'").fetchone()[0] == 1
+        events = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert events[-1] == "ExternalAdapterWriteExecuted"
+
+
+def test_external_adapter_write_execution_fails_closed_on_digest_role_and_missing_adapter(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    preflight = _approved_kanban_write_preflight(home, "task:phase13-fail")
+
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=preflight["external_write_preflight_id"],
+            expected_command_execution_digest="sha256:wrong",
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "command execution digest mismatch" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("digest mismatch must fail closed")
+
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=preflight["external_write_preflight_id"],
+            expected_command_execution_digest=preflight["command_execution_digest"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "actor role cannot execute external adapter write" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("insufficient role must fail closed")
+
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute("PRAGMA ignore_check_constraints = ON")
+        ledger.execute(
+            "UPDATE external_adapter_write_execution_preflights SET adapter_name = 'taskpool' WHERE external_write_preflight_id = ?",
+            (preflight["external_write_preflight_id"],),
+        )
+        ledger.commit()
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=preflight["external_write_preflight_id"],
+            expected_command_execution_digest=preflight["command_execution_digest"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "external write adapter executor is not enabled" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("unsupported adapter executor must fail closed")
+
+    kanban_conn = kb.connect()
+    try:
+        task = kb.get_task(kanban_conn, preflight["kanban_task_id"])
+    finally:
+        kanban_conn.close()
+    assert task is not None
+    assert task.status == "ready"
+
+
+def test_external_adapter_write_execution_additional_fail_closed_edges(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+
+    for column, value, message in [
+        ("writes_enabled", 1, "writes_enabled=true"),
+        ("external_adapter_write_through_enabled", 1, "adapter write-through enabled"),
+        ("external_write_executor_enabled", 1, "executor enabled"),
+        ("write_through_allowed", 1, "allows write-through"),
+        ("rollback_available", 1, "rollback available"),
+    ]:
+        preflight = _approved_kanban_write_preflight(home, f"task:phase13-flag-{column}")
+        with sqlite3.connect(home / "control_tower.db") as ledger:
+            ledger.execute("PRAGMA ignore_check_constraints = ON")
+            ledger.execute(
+                f"UPDATE external_adapter_write_execution_preflights SET {column} = ? WHERE external_write_preflight_id = ?",
+                (value, preflight["external_write_preflight_id"]),
+            )
+            ledger.commit()
+        try:
+            control_tower.execute_external_adapter_write_preflight(
+                external_write_preflight_id=preflight["external_write_preflight_id"],
+                expected_command_execution_digest=preflight["command_execution_digest"],
+                actor_type="human",
+                actor_id="charles",
+                actor_role="admin",
+                source_surface="pytest",
+            )
+        except ValueError as exc:
+            assert message in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"{column} drift must fail closed")
+
+    operation = _approved_kanban_write_preflight(home, "task:phase13-operation")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute("PRAGMA ignore_check_constraints = ON")
+        ledger.execute(
+            "UPDATE external_adapter_write_execution_preflights SET operation = 'reopen' WHERE external_write_preflight_id = ?",
+            (operation["external_write_preflight_id"],),
+        )
+        ledger.commit()
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=operation["external_write_preflight_id"],
+            expected_command_execution_digest=operation["command_execution_digest"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "operation is not enabled" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("unsupported operation must fail closed")
+
+    payload = _approved_kanban_write_preflight(home, "task:phase13-payload")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute("PRAGMA ignore_check_constraints = ON")
+        ledger.execute(
+            "UPDATE external_adapter_write_execution_preflights SET command_execution_payload_json = ? WHERE external_write_preflight_id = ?",
+            ('{"changed":true}', payload["external_write_preflight_id"]),
+        )
+        ledger.commit()
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=payload["external_write_preflight_id"],
+            expected_command_execution_digest=payload["command_execution_digest"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "payload digest mismatch" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("payload drift must fail closed")
+
+    source = _approved_kanban_write_preflight(home, "task:phase13-source")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute("UPDATE external_adapter_write_authorizations SET status = 'denied' WHERE external_write_authorization_id = ?", (source["external_write_authorization_id"],))
+        ledger.commit()
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=source["external_write_preflight_id"],
+            expected_command_execution_digest=source["command_execution_digest"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "not approved" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("source auth drift must fail closed")
+
+
+def test_external_adapter_write_execution_validates_inputs_and_idempotent_digest(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+
+    base_kwargs = {
+        "external_write_preflight_id": "missing-preflight",
+        "expected_command_execution_digest": "sha256:missing",
+        "actor_type": "human",
+        "actor_id": "charles",
+        "actor_role": "admin",
+        "source_surface": "pytest",
+    }
+    for field, expected in [
+        ("external_write_preflight_id", "external_write_preflight_id is required"),
+        ("expected_command_execution_digest", "expected_command_execution_digest is required"),
+        ("actor_type", "actor_type is required"),
+        ("actor_id", "actor_id is required"),
+        ("actor_role", "unsupported actor_role"),
+        ("source_surface", "source_surface is required"),
+    ]:
+        kwargs = dict(base_kwargs)
+        kwargs[field] = ""
+        try:
+            control_tower.execute_external_adapter_write_preflight(**kwargs)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"{field} validation must fail closed")
+
+    try:
+        control_tower.execute_external_adapter_write_preflight(**base_kwargs)
+    except ValueError as exc:
+        assert "external write preflight not found" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("missing preflight must fail closed")
+
+    preflight = _approved_kanban_write_preflight(home, "task:phase13-existing-digest")
+    run = control_tower.execute_external_adapter_write_preflight(
+        external_write_preflight_id=preflight["external_write_preflight_id"],
+        expected_command_execution_digest=preflight["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    assert run["created"] is True
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=preflight["external_write_preflight_id"],
+            expected_command_execution_digest="sha256:wrong-after-existing",
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "digest mismatch for existing external adapter write" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("existing run retry with wrong digest must fail closed")
+
+
+def test_external_adapter_write_execution_fails_before_ledger_run_when_kanban_target_missing(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    preflight = _approved_kanban_write_preflight(home, "task:phase13-missing-kanban")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute("PRAGMA ignore_check_constraints = ON")
+        ledger.execute(
+            "UPDATE external_adapter_write_execution_preflights SET external_ref = 'missing-kanban-task' WHERE external_write_preflight_id = ?",
+            (preflight["external_write_preflight_id"],),
+        )
+        ledger.commit()
+
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=preflight["external_write_preflight_id"],
+            expected_command_execution_digest=preflight["command_execution_digest"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "column drift for digest-bound field: external_ref" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("missing Kanban target drift must fail closed before adapter write")
+
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_execution_runs").fetchone()[0] == 0
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
+
+
+def test_external_adapter_write_execution_fails_closed_on_digest_bound_target_drift(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    preflight = _approved_kanban_write_preflight(home, "task:phase13-target-drift")
+    kanban_conn = kb.connect()
+    try:
+        alternate_task_id = kb.create_task(
+            kanban_conn,
+            title="Alternate target that must not be closed",
+            assignee="default",
+        )
+    finally:
+        kanban_conn.close()
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute("PRAGMA ignore_check_constraints = ON")
+        ledger.execute(
+            "UPDATE external_adapter_write_execution_preflights SET external_ref = ? WHERE external_write_preflight_id = ?",
+            (alternate_task_id, preflight["external_write_preflight_id"]),
+        )
+        ledger.commit()
+
+    try:
+        control_tower.execute_external_adapter_write_preflight(
+            external_write_preflight_id=preflight["external_write_preflight_id"],
+            expected_command_execution_digest=preflight["command_execution_digest"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "column drift for digest-bound field: external_ref" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("digest-bound external_ref drift must fail closed")
+
+    kanban_conn = kb.connect()
+    try:
+        original = kb.get_task(kanban_conn, preflight["kanban_task_id"])
+        alternate = kb.get_task(kanban_conn, alternate_task_id)
+    finally:
+        kanban_conn.close()
+    assert original is not None
+    assert alternate is not None
+    assert original.status == "ready"
+    assert alternate.status == "ready"
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_execution_runs").fetchone()[0] == 0
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
