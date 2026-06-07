@@ -1,0 +1,136 @@
+{
+  "schema_version": "hermes.recall_proof_gate.fixture.v1",
+  "defaults": {
+    "min_confidence": 0.65,
+    "max_age_days": 30,
+    "require_same_scope": true,
+    "require_decision_grade": true
+  },
+  "cases": [
+    {
+      "id": "memory_fact_fresh_same_scope",
+      "fixture_class": "durable_user_memory",
+      "prompt": "Can this repo-local validation convention be used as an execution constraint?",
+      "current_scope": "project:hermes-agent",
+      "expected_winner_id": "mem_fresh",
+      "expected_admitted_candidate_ids": ["mem_fresh"],
+      "candidates": [
+        {
+          "id": "mem_fresh",
+          "source_kind": "memory",
+          "source_path": "memories/MEMORY.md",
+          "scope": "project:hermes-agent",
+          "confidence": 0.92,
+          "last_verified_at": "2026-06-05T12:00:00Z",
+          "text": "Hermes repo changes should be verified with focused pytest in the checkout."
+        }
+      ]
+    },
+    {
+      "id": "local_brain_task_boundary",
+      "fixture_class": "local_brain_task_note",
+      "prompt": "Can the current task boundary be used to reject unrelated implementation evidence?",
+      "current_scope": "project:hermes-agent",
+      "expected_winner_id": "brain_boundary",
+      "expected_rejected_candidate_ids": ["brain_unrelated_project"],
+      "candidates": [
+        {
+          "id": "brain_boundary",
+          "source_kind": "local_brain_task",
+          "source_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-07-为-hermes-local-brain-memory-建立可回放的记忆检索质量与漂移-proof-gate.md",
+          "scope": "project:hermes-agent",
+          "confidence": 0.88,
+          "last_verified_at": "2026-06-07T00:00:00Z",
+          "tags": ["drift_sensitive"],
+          "text": "Task boundary says do not weaken taskpool proof, permission, or mission-envelope gates."
+        },
+        {
+          "id": "brain_unrelated_project",
+          "source_kind": "local_brain_task",
+          "source_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/uvisa-branch-cutover.md",
+          "scope": "project:uvisa-app-2.0",
+          "confidence": 0.78,
+          "last_verified_at": "2026-06-06T00:00:00Z",
+          "text": "UVISA branch cutover status is ready for merge."
+        }
+      ]
+    },
+    {
+      "id": "mempalace_adopted_with_provenance",
+      "fixture_class": "mempalace_provider_replay",
+      "prompt": "Can a MemPalace evidence atom be adopted when it carries same-scope provenance and freshness?",
+      "current_scope": "project:hermes-agent",
+      "expected_winner_id": "mempalace_trace",
+      "expected_admitted_candidate_ids": ["mempalace_trace"],
+      "candidates": [
+        {
+          "id": "mempalace_trace",
+          "source_kind": "mempalace",
+          "artifact_path": "/Users/charles/.hermes/evidence/recall/mempalace-replay-20260607.json",
+          "scope": "project:hermes-agent",
+          "confidence": 0.87,
+          "last_verified_at": "2026-06-06T10:00:00Z",
+          "tags": ["drift_sensitive"],
+          "text": "MemPalace replay evidence says recall gates must preserve deterministic proof output."
+        }
+      ]
+    },
+    {
+      "id": "walrus_memory_rejected_without_provenance",
+      "fixture_class": "walrus_memory_provider_replay",
+      "prompt": "Should a Walrus Memory item without a durable artifact/session anchor be used as proof?",
+      "current_scope": "project:hermes-agent",
+      "expected_no_admissible": true,
+      "expected_rejected_candidate_ids": ["walrus_orphan"],
+      "candidates": [
+        {
+          "id": "walrus_orphan",
+          "source_kind": "walrus_memory",
+          "scope": "project:hermes-agent",
+          "confidence": 0.9,
+          "last_verified_at": "2026-06-06T10:00:00Z",
+          "text": "Walrus Memory summary claims the implementation already exists, but provides no artifact anchor."
+        }
+      ]
+    },
+    {
+      "id": "session_reference_only_rejected",
+      "fixture_class": "session_search_replay",
+      "prompt": "Should an old compaction summary drive the next implementation step?",
+      "current_scope": "project:hermes-agent",
+      "expected_no_admissible": true,
+      "expected_rejected_candidate_ids": ["session_reference_only"],
+      "candidates": [
+        {
+          "id": "session_reference_only",
+          "source_kind": "session_search",
+          "session_id": "20260602_110047_6e8db8",
+          "message_id": 361262,
+          "scope": "project:uvisa-app-2.0",
+          "confidence": 0.71,
+          "last_verified_at": "2026-06-02T11:00:00Z",
+          "reference_only": true,
+          "text": "REFERENCE ONLY: Active Task is UVISA branch cutover and the next step is to merge the PR."
+        }
+      ]
+    },
+    {
+      "id": "stale_branch_fact_rejected",
+      "fixture_class": "drift_sensitive_stale_fact",
+      "prompt": "Can a branch/status fact with no freshness metadata be used as proof?",
+      "current_scope": "project:hermes-agent",
+      "expected_no_admissible": true,
+      "expected_rejected_candidate_ids": ["branch_fact_without_ttl"],
+      "candidates": [
+        {
+          "id": "branch_fact_without_ttl",
+          "source_kind": "memory",
+          "source_path": "memories/MEMORY.md",
+          "scope": "project:uvisa-app-2.0",
+          "confidence": 0.81,
+          "text": "Integration branch is feat/uvisa-2.0 and the PR is ready to merge next step."
+        }
+      ]
+    }
+  ]
+}
