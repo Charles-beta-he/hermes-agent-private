@@ -4,8 +4,9 @@ Mounted at /api/plugins/control-tower/ by the dashboard plugin system.
 The plugin exposes ledger projections and controlled operator intent. It may
 execute narrow consumers after explicit gates: L0/L1 read-only executor runs,
 approved evidence-bound closeout inside the Control Tower ledger, and explicitly
-approved digest-bound Kanban closeout write-through. It still does not enable
-rollback/reopen or conflicting evidence override.
+approved digest-bound Kanban closeout write-through plus digest-bound Kanban
+rollback/reopen of that write. It still does not enable taskpool write-through or
+conflicting evidence override.
 """
 
 from __future__ import annotations
@@ -335,6 +336,23 @@ def execute_external_adapter_write_preflight(
     """Execute digest-bound Kanban external closeout write-through after explicit admin approval."""
     return control_tower.execute_external_adapter_write_preflight(
         external_write_preflight_id=external_write_preflight_id,
+        expected_command_execution_digest=req.expected_command_execution_digest,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        source_surface="dashboard",
+        reason=req.reason,
+    )
+
+
+@router.post("/external-write-runs/{external_write_execution_id}/rollback")
+def rollback_external_adapter_write_execution(
+    external_write_execution_id: str,
+    req: ExternalAdapterWriteExecutionRequest,
+):
+    """Rollback/reopen a digest-bound Kanban external write after explicit admin approval."""
+    return control_tower.execute_external_adapter_write_rollback(
+        external_write_execution_id=external_write_execution_id,
         expected_command_execution_digest=req.expected_command_execution_digest,
         actor_type=req.actor_type,
         actor_id=req.actor_id,

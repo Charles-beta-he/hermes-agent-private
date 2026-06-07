@@ -2883,7 +2883,8 @@ def test_external_adapter_write_execution_updates_kanban_with_digest_bound_run(t
     assert run["external_adapter_write_through_enabled"] is True
     assert run["external_write_executor_enabled"] is True
     assert run["write_through_allowed"] is True
-    assert run["rollback_reopen_enabled"] is False
+    assert run["rollback_available"] is True
+    assert run["rollback_reopen_enabled"] is True
     assert run["adapter_result"]["status_after"] == "done"
     assert run["rollback_snapshot"]["status_before"] == "ready"
 
@@ -3212,3 +3213,152 @@ def test_external_adapter_write_execution_fails_closed_on_digest_bound_target_dr
     with sqlite3.connect(home / "control_tower.db") as ledger:
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_execution_runs").fetchone()[0] == 0
         assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
+
+
+def test_external_adapter_write_rollback_reopens_kanban_with_digest_bound_run(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    preflight = _approved_kanban_write_preflight(home, "task:phase14-kanban-rollback")
+    write_run = control_tower.execute_external_adapter_write_preflight(
+        external_write_preflight_id=preflight["external_write_preflight_id"],
+        expected_command_execution_digest=preflight["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    kanban_conn = kb.connect()
+    try:
+        assert kb.get_task(kanban_conn, preflight["kanban_task_id"]).status == "done"
+    finally:
+        kanban_conn.close()
+
+    rollback = control_tower.execute_external_adapter_write_rollback(
+        external_write_execution_id=write_run["external_write_execution_id"],
+        expected_command_execution_digest=write_run["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+        reason="operator requested rollback smoke",
+    )
+
+    assert rollback["created"] is True
+    assert rollback["rollback_status"] == "rollback_completed"
+    assert rollback["adapter_name"] == "kanban"
+    assert rollback["operation"] == "reopen"
+    assert rollback["rollback_reopen_enabled"] is True
+    assert rollback["adapter_result"]["status_after"] == "ready"
+    kanban_conn = kb.connect()
+    try:
+        task = kb.get_task(kanban_conn, preflight["kanban_task_id"])
+    finally:
+        kanban_conn.close()
+    assert task.status == "ready"
+    assert task.result is None
+
+    retry = control_tower.execute_external_adapter_write_rollback(
+        external_write_execution_id=write_run["external_write_execution_id"],
+        expected_command_execution_digest=write_run["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    assert retry["created"] is False
+    assert retry["rollback_run_id"] == rollback["rollback_run_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_rollback_runs").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations WHERE observed_type = 'external_adapter_rollback'").fetchone()[0] == 1
+        assert ledger.execute("SELECT event_type FROM events ORDER BY sequence DESC LIMIT 1").fetchone()[0] == "ExternalAdapterWriteRollbackExecuted"
+
+
+def test_external_adapter_write_rollback_fails_closed_on_digest_role_target_and_taskpool(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    preflight = _approved_kanban_write_preflight(home, "task:phase14-kanban-rollback-fail")
+    write_run = control_tower.execute_external_adapter_write_preflight(
+        external_write_preflight_id=preflight["external_write_preflight_id"],
+        expected_command_execution_digest=preflight["command_execution_digest"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+
+    base_kwargs = {
+        "external_write_execution_id": write_run["external_write_execution_id"],
+        "expected_command_execution_digest": write_run["command_execution_digest"],
+        "actor_type": "human",
+        "actor_id": "charles",
+        "actor_role": "admin",
+        "source_surface": "pytest",
+    }
+    for patch_kwargs, expected in [
+        ({"expected_command_execution_digest": "0" * 64}, "command execution digest mismatch"),
+        ({"actor_role": "owner"}, "actor role cannot execute external adapter write rollback"),
+    ]:
+        kwargs = {**base_kwargs, **patch_kwargs}
+        try:
+            control_tower.execute_external_adapter_write_rollback(**kwargs)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"rollback must fail closed: {expected}")
+
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute("PRAGMA ignore_check_constraints = ON")
+        ledger.execute(
+            "UPDATE external_adapter_write_execution_runs SET adapter_name = 'taskpool' WHERE external_write_execution_id = ?",
+            (write_run["external_write_execution_id"],),
+        )
+        ledger.commit()
+    try:
+        control_tower.execute_external_adapter_write_rollback(**base_kwargs)
+    except ValueError as exc:
+        assert "external write rollback adapter is not enabled" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("taskpool rollback must remain disabled")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute("UPDATE external_adapter_write_execution_runs SET adapter_name = 'kanban' WHERE external_write_execution_id = ?", (write_run["external_write_execution_id"],))
+        ledger.execute(
+            "UPDATE external_adapter_write_execution_runs SET external_ref = 'other-valid-looking-target' WHERE external_write_execution_id = ?",
+            (write_run["external_write_execution_id"],),
+        )
+        ledger.commit()
+    try:
+        control_tower.execute_external_adapter_write_rollback(**base_kwargs)
+    except ValueError as exc:
+        assert "rollback snapshot target mismatch" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("rollback target drift must fail closed")
+
+
+def test_external_adapter_write_rollback_validates_required_fields(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    control_tower.init_ledger()
+    base = {
+        "external_write_execution_id": "extwrite_missing",
+        "expected_command_execution_digest": "1" * 64,
+        "actor_type": "human",
+        "actor_id": "charles",
+        "actor_role": "admin",
+        "source_surface": "pytest",
+    }
+    for patch_kwargs, expected in [
+        ({"external_write_execution_id": ""}, "external_write_execution_id is required"),
+        ({"expected_command_execution_digest": ""}, "expected_command_execution_digest is required"),
+        ({"actor_type": ""}, "actor_type is required"),
+        ({"actor_id": ""}, "actor_id is required"),
+        ({"actor_role": "bogus"}, "unsupported actor_role"),
+        ({"source_surface": ""}, "source_surface is required"),
+        ({}, "external write execution not found"),
+    ]:
+        kwargs = {**base, **patch_kwargs}
+        try:
+            control_tower.execute_external_adapter_write_rollback(**kwargs)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"rollback validation must fail: {expected}")

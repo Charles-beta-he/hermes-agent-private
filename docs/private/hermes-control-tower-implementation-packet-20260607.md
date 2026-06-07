@@ -797,11 +797,12 @@ Implemented:
 32. External adapter write execution preflight projection via snapshot `external_adapter_write_execution_preflights`.
 33. Digest-bound Kanban external write execution endpoint via `POST /api/plugins/control-tower/external-write-preflights/{external_write_preflight_id}/execute`.
 34. Digest-bound Kanban external write execution projection via snapshot `external_adapter_write_execution_runs`.
+35. Digest-bound Kanban rollback/reopen endpoint via `POST /api/plugins/control-tower/external-write-runs/{external_write_execution_id}/rollback`.
+36. Digest-bound Kanban rollback/reopen projection via snapshot `external_adapter_write_rollback_runs`.
 
 Still intentionally not implemented:
 
 - No taskpool adapter write-through.
-- No rollback/reopen consumer yet.
 - No conflicting-evidence human override; evidence changes after authorization fail closed.
 - Read-only executor whitelist is now executable only through the bounded
   read-only consumer; it still cannot write adapters or mutate external task lifecycle.
@@ -816,15 +817,19 @@ Still intentionally not implemented:
   but they remain non-executing and keep `write_through_allowed = false`.
 - External adapter write execution preflights bind a canonical command execution
   payload/digest and still keep their own preflight flags disabled.
-- Kanban closeout write-through is now executable only by consuming an approved
-  preflight with the exact `command_execution_digest`; rollback/reopen remains
-  disabled after execution.
+- Kanban closeout write-through is executable only by consuming an approved
+  preflight with the exact `command_execution_digest`.
+- Kanban rollback/reopen is executable only against a completed digest-bound
+  write run with the exact same `command_execution_digest`; it uses the stored
+  rollback snapshot and restores the pre-write Kanban status/result.
+- Taskpool write-through remains disabled until a taskpool-specific mutation
+  contract and rollback/escape path are implemented.
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, blocked external adapter write intents with mutation digests, blocked readiness reviews for those intents, external write authorization decisions, command-digest preflights, and digest-bound Kanban write execution runs.
+- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, blocked external adapter write intents with mutation digests, blocked readiness reviews for those intents, external write authorization decisions, command-digest preflights, digest-bound Kanban write execution runs, and digest-bound Kanban rollback/reopen runs.
 - The ledger remains the only fact source.
-- The next step changes authority from "approved Kanban closeout write-through" to "rollback/reopen / taskpool write-through / conflicting evidence override", which requires explicit rollback semantics, adapter-specific escape paths, evidence override policy, and command-execution approval digest policy.
+- The next step changes authority from "Kanban closeout write-through with Kanban rollback" to "taskpool write-through / conflicting evidence override", which requires taskpool-specific adapter mutation semantics, evidence override policy, and taskpool rollback/escape paths.
 
 ## Human decisions required now
 
@@ -876,4 +881,4 @@ Remaining decisions before execution-capable implementation:
 
 ## Stop condition
 
-Stop external adapter write-through implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, read-only executor eligibility projections, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization requests/decisions, and Control Tower Ledger closeout executions are now durable, audited, idempotent where safe, and expiring where required. The next boundary is external taskpool/Kanban adapter write-through plus rollback/reopen; do not mutate external adapters until the adapter mutation contract, conflicting-evidence override semantics, rollback/escape path, and command-execution approval digest semantics are explicitly decided.
+Stop taskpool write-through and conflicting evidence override implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, read-only executor eligibility projections, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization requests/decisions, Control Tower Ledger closeout executions, digest-bound Kanban closeout write-through, and digest-bound Kanban rollback/reopen are now durable, audited, idempotent where safe, and expiring where required. The next boundary is taskpool adapter write-through plus conflicting-evidence override; do not mutate taskpool or override conflicting evidence until the taskpool mutation contract, conflicting-evidence override semantics, taskpool rollback/escape path, and command-execution approval digest semantics are explicitly implemented and verified.

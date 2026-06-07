@@ -552,7 +552,8 @@ def test_control_tower_dashboard_plugin_executes_digest_bound_kanban_external_wr
     assert write_run["external_ref"] == kanban_task_id
     assert write_run["write_through_allowed"] is True
     assert write_run["external_write_executor_enabled"] is True
-    assert write_run["rollback_reopen_enabled"] is False
+    assert write_run["rollback_available"] is True
+    assert write_run["rollback_reopen_enabled"] is True
     kanban_conn = kb.connect()
     try:
         kanban_task = kb.get_task(kanban_conn, kanban_task_id)
@@ -560,10 +561,33 @@ def test_control_tower_dashboard_plugin_executes_digest_bound_kanban_external_wr
         kanban_conn.close()
     assert kanban_task is not None
     assert kanban_task.status == "done"
+    rollback_response = client.post(
+        f"/api/plugins/control-tower/external-write-runs/{write_run['external_write_execution_id']}/rollback",
+        json={
+            "expected_command_execution_digest": write_run["command_execution_digest"],
+            "actor_id": "charles",
+            "actor_role": "admin",
+            "reason": "rollback approved kanban write-through",
+        },
+    )
+    assert rollback_response.status_code == 200, rollback_response.text
+    rollback = rollback_response.json()
+    assert rollback["rollback_status"] == "rollback_completed"
+    assert rollback["adapter_name"] == "kanban"
+    assert rollback["operation"] == "reopen"
+    assert rollback["rollback_reopen_enabled"] is True
+    kanban_conn = kb.connect()
+    try:
+        kanban_task = kb.get_task(kanban_conn, kanban_task_id)
+    finally:
+        kanban_conn.close()
+    assert kanban_task is not None
+    assert kanban_task.status == "ready"
     with sqlite3.connect(home / "control_tower.db") as ledger:
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intents").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intent_reviews").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_authorizations").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_execution_preflights").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_execution_runs").fetchone()[0] == 1
-        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_rollback_runs").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 2

@@ -6,13 +6,13 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 13 enables explicitly approved, command-digest Kanban closeout
-        write-through while keeping taskpool write-through, rollback/reopen, and
-        conflicting evidence override disabled.
+        Phase 14 enables explicitly approved, command-digest Kanban closeout
+        write-through plus digest-bound Kanban rollback/reopen while keeping
+        taskpool write-through and conflicting evidence override disabled.
         This dashboard can record operator intent, human decisions, read-only
         runs, evidence gates, ledger closeouts, blocked external write intents,
-        readiness reviews, authorization decisions, preflights, and digest-bound
-        Kanban write execution runs. Rollback/reopen remain outside this boundary.
+        readiness reviews, authorization decisions, preflights, digest-bound
+        Kanban write execution runs, and digest-bound Kanban rollback runs.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
@@ -68,6 +68,9 @@
         <button id="control-tower-execute-external-write" type="button">
           Execute approved Kanban write
         </button>
+        <button id="control-tower-rollback-external-write" type="button">
+          Rollback Kanban write
+        </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
@@ -106,6 +109,9 @@
     const externalWritePreflightBlocked = data?.external_adapter_write_execution_preflights?.blocked_count ?? 0;
     const externalWriteRuns = data?.external_adapter_write_execution_runs?.run_count ?? 0;
     const externalWriteRunsCompleted = data?.external_adapter_write_execution_runs?.completed_count ?? 0;
+    const externalRollbackRuns = data?.external_adapter_write_rollback_runs?.run_count ?? 0;
+    const externalRollbackCompleted = data?.external_adapter_write_rollback_runs?.completed_count ?? 0;
+    const externalRollbackEnabled = data?.external_adapter_write_rollback_runs?.rollback_reopen_enabled === true;
     const externalWriteExecutorEnabled = data?.external_adapter_write_execution_runs?.external_write_executor_enabled === true;
     const externalCloseoutWrites = data?.closeout_execution?.external_adapter_write_through_enabled === true;
     const writesEnabled = data?.execution_policy?.writes_enabled === true;
@@ -137,6 +143,9 @@
         <span>External preflight blocked: <strong>${externalWritePreflightBlocked}</strong></span>
         <span>External write runs: <strong>${externalWriteRuns}</strong></span>
         <span>External write completed: <strong>${externalWriteRunsCompleted}</strong></span>
+        <span>External rollback runs: <strong>${externalRollbackRuns}</strong></span>
+        <span>External rollback completed: <strong>${externalRollbackCompleted}</strong></span>
+        <span>External rollback/reopen: <strong>${externalRollbackEnabled ? 'yes' : 'no'}</strong></span>
         <span>External write executor: <strong>${externalWriteExecutorEnabled ? 'yes' : 'no'}</strong></span>
         <span>External write allowed: <strong>${externalWriteAllowed}</strong></span>
         <span>Writes enabled: <strong>${writesEnabled ? 'yes' : 'no'}</strong></span>
@@ -569,7 +578,7 @@
         actor_type: 'human',
         actor_id: 'dashboard',
         actor_role: 'admin',
-        reason: 'dashboard executed approved digest-bound Kanban write-through; rollback/reopen remains disabled',
+        reason: 'dashboard executed approved digest-bound Kanban write-through; rollback/reopen is separately digest-bound',
       }),
     })
       .then((response) => response.json())
@@ -579,6 +588,37 @@
       })
       .catch((error) => {
         if (snapshotEl) snapshotEl.textContent = `External write execution failed: ${error}`;
+      });
+  };
+
+  const rollbackFirstExternalWriteRun = () => {
+    const rolledBack = new Set((latestSnapshot?.external_adapter_write_rollback_runs?.recent_runs ?? [])
+      .map((entry) => entry.external_write_execution_id));
+    const run = latestSnapshot?.external_adapter_write_execution_runs?.recent_runs?.find(
+      (entry) => entry.execution_status === 'write_completed' && entry.adapter_name === 'kanban' && !rolledBack.has(entry.external_write_execution_id)
+    );
+    if (!run) {
+      if (snapshotEl) snapshotEl.textContent = 'No digest-bound Kanban external write run to rollback.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/external-write-runs/${encodeURIComponent(run.external_write_execution_id)}/rollback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expected_command_execution_digest: run.command_execution_digest,
+        actor_type: 'human',
+        actor_id: 'dashboard',
+        actor_role: 'admin',
+        reason: 'dashboard rolled back digest-bound Kanban write-through',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `External write rollback failed: ${error}`;
       });
   };
 
@@ -634,5 +674,8 @@
   document
     .getElementById('control-tower-execute-external-write')
     ?.addEventListener('click', executeFirstExternalWritePreflight);
+  document
+    .getElementById('control-tower-rollback-external-write')
+    ?.addEventListener('click', rollbackFirstExternalWriteRun);
   loadSnapshot();
 })();
