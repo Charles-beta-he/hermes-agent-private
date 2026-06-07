@@ -6,12 +6,12 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 7 enables a narrow read-only executor consumer: this dashboard can
-        record operator intent, human decisions, copy-command executor plans,
-        read-only executor-policy reviews, read-only executor runs, evidence
-        entries, evidence-gate projections, and evidence-bound closeout
-        authorizations in the Control Tower Ledger. It still cannot execute
-        lifecycle actions, close tasks, or write through adapters.
+        Phase 8 enables bounded evidence-bound closeout inside the Control Tower
+        Ledger after explicit approval: this dashboard can record operator
+        intent, human decisions, copy-command executor plans, read-only executor
+        runs, evidence gates, closeout authorizations, and approved Control Tower
+        ledger closeouts. External taskpool/Kanban adapter write-through remains
+        disabled.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
@@ -46,6 +46,9 @@
         <button id="control-tower-approve-closeout" type="button">
           Approve closeout auth
         </button>
+        <button id="control-tower-execute-closeout" type="button">
+          Execute approved closeout
+        </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
@@ -72,8 +75,10 @@
     const closeoutPending = data?.closeout_authorizations?.pending_count ?? 0;
     const closeoutDecided = data?.closeout_authorizations?.decided_count ?? 0;
     const closeoutExpired = data?.closeout_authorizations?.expired_count ?? 0;
+    const closeoutRuns = data?.closeout_execution?.run_count ?? 0;
+    const externalCloseoutWrites = data?.closeout_execution?.external_adapter_write_through_enabled === true;
     const writesEnabled = data?.execution_policy?.writes_enabled === true;
-    const closeoutEnabled = data?.evidence_policy?.closeout_execution_enabled === true;
+    const closeoutEnabled = data?.closeout_execution?.mode === 'control_tower_ledger_closeout_consumer';
     const ready = data?.workflow_map?.ready?.length ?? 0;
     const blocked = data?.workflow_map?.blocked?.length ?? 0;
     if (summaryEl) {
@@ -90,8 +95,10 @@
         <span>Closeout auth pending: <strong>${closeoutPending}</strong></span>
         <span>Closeout auth decided: <strong>${closeoutDecided}</strong></span>
         <span>Closeout auth expired: <strong>${closeoutExpired}</strong></span>
+        <span>Closeout runs: <strong>${closeoutRuns}</strong></span>
         <span>Writes enabled: <strong>${writesEnabled ? 'yes' : 'no'}</strong></span>
-        <span>Closeout enabled: <strong>${closeoutEnabled ? 'yes' : 'no'}</strong></span>
+        <span>External closeout writes: <strong>${externalCloseoutWrites ? 'yes' : 'no'}</strong></span>
+        <span>Closeout enabled: <strong>${closeoutEnabled ? 'ledger-only' : 'no'}</strong></span>
         <span>Workflow ready: <strong>${ready}</strong></span>
         <span>Blocked gates: <strong>${blocked}</strong></span>
       `;
@@ -318,7 +325,7 @@
         actor_type: 'human',
         actor_id: 'dashboard',
         actor_role: 'owner',
-        reason: 'dashboard approved evidence-bound closeout authorization; execution remains disabled',
+        reason: 'dashboard approved evidence-bound closeout authorization; execution requires explicit execute click',
       }),
     })
       .then((response) => response.json())
@@ -328,6 +335,34 @@
       })
       .catch((error) => {
         if (snapshotEl) snapshotEl.textContent = `Closeout authorization decision failed: ${error}`;
+      });
+  };
+
+  const executeFirstCloseoutAuthorization = () => {
+    const authorization = latestSnapshot?.closeout_authorizations?.recent?.find(
+      (entry) => entry.status === 'approved' && entry.closeout_allowed === false
+    );
+    if (!authorization) {
+      if (snapshotEl) snapshotEl.textContent = 'No approved closeout authorization to execute.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/closeout-authorizations/${encodeURIComponent(authorization.closeout_authorization_id)}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor_type: 'human',
+        actor_id: 'dashboard',
+        actor_role: 'owner',
+        reason: 'dashboard executed evidence-bound closeout inside Control Tower ledger only',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `Closeout execution failed: ${error}`;
       });
   };
 
@@ -362,5 +397,8 @@
   document
     .getElementById('control-tower-approve-closeout')
     ?.addEventListener('click', approveFirstCloseoutAuthorization);
+  document
+    .getElementById('control-tower-execute-closeout')
+    ?.addEventListener('click', executeFirstCloseoutAuthorization);
   loadSnapshot();
 })();

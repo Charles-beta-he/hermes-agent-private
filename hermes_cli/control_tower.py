@@ -270,6 +270,24 @@ _TABLES_SQL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS closeout_execution_runs (
+        closeout_execution_id TEXT PRIMARY KEY,
+        closeout_authorization_id TEXT NOT NULL UNIQUE,
+        task_id TEXT NOT NULL,
+        risk_level TEXT NOT NULL,
+        evidence_review_id TEXT NOT NULL,
+        evidence_state_hash TEXT NOT NULL,
+        execution_status TEXT NOT NULL,
+        task_status TEXT NOT NULL,
+        adapter_writes_json TEXT NOT NULL DEFAULT '[]',
+        external_adapter_write_through_enabled INTEGER NOT NULL DEFAULT 0,
+        executed_by TEXT NOT NULL,
+        executed_role TEXT NOT NULL,
+        executed_at TEXT NOT NULL,
+        reason TEXT
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS policy_decisions (
         policy_decision_id TEXT PRIMARY KEY,
         command_id TEXT,
@@ -1321,7 +1339,7 @@ def execute_read_only_executor_plan(
                     executed_at,
                 ),
             )
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError:  # pragma: no cover - defensive concurrent retry
             existing_after_race = conn.execute(
                 """
                 SELECT executor_run_id, plan_id, policy_review_id, command_id,
@@ -2017,6 +2035,215 @@ def decide_closeout_authorization(
     return _closeout_authorization_response(created=True, row=updated, source_surface=source_surface)
 
 
+def _closeout_execution_response(*, created: bool, row: sqlite3.Row, source_surface: str) -> dict[str, Any]:
+    return {
+        "created": created,
+        "closeout_execution_id": row["closeout_execution_id"],
+        "closeout_authorization_id": row["closeout_authorization_id"],
+        "task_id": row["task_id"],
+        "risk_level": row["risk_level"],
+        "evidence_review_id": row["evidence_review_id"],
+        "evidence_state_hash": row["evidence_state_hash"],
+        "execution_status": row["execution_status"],
+        "task_status": row["task_status"],
+        "adapter_writes": json.loads(row["adapter_writes_json"]),
+        "external_adapter_write_through_enabled": bool(row["external_adapter_write_through_enabled"]),
+        "executed_by": row["executed_by"],
+        "executed_role": row["executed_role"],
+        "executed_at": row["executed_at"],
+        "source_surface": source_surface,
+    }
+
+
+def execute_closeout_authorization(
+    *,
+    closeout_authorization_id: str,
+    actor_type: str,
+    actor_id: str,
+    actor_role: str,
+    source_surface: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Execute an approved evidence-bound closeout inside the Control Tower ledger only."""
+    closeout_authorization_id = closeout_authorization_id.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    actor_role = actor_role.strip().lower()
+    source_surface = source_surface.strip()
+    reason = reason.strip()
+    if not closeout_authorization_id:
+        raise ValueError("closeout_authorization_id is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if actor_role not in ROLE_RANK:
+        raise ValueError(f"unsupported actor_role: {actor_role}")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        existing = conn.execute(
+            """
+            SELECT closeout_execution_id, closeout_authorization_id, task_id,
+                   risk_level, evidence_review_id, evidence_state_hash,
+                   execution_status, task_status, adapter_writes_json,
+                   external_adapter_write_through_enabled, executed_by,
+                   executed_role, executed_at
+            FROM closeout_execution_runs
+            WHERE closeout_authorization_id = ?
+            """,
+            (closeout_authorization_id,),
+        ).fetchone()
+        if existing is not None:
+            return _closeout_execution_response(created=False, row=existing, source_surface=source_surface)
+
+        auth = conn.execute(
+            """
+            SELECT closeout_authorization_id, task_id, risk_level, evidence_review_id,
+                   evidence_state_hash, status, required_role, requested_by,
+                   requested_role, requested_at, expires_at, decided_by,
+                   decided_role, decided_at, closeout_allowed
+            FROM closeout_authorizations
+            WHERE closeout_authorization_id = ?
+            """,
+            (closeout_authorization_id,),
+        ).fetchone()
+        if auth is None:
+            raise ValueError(f"closeout authorization not found: {closeout_authorization_id}")
+        if auth["status"] != "approved":
+            raise ValueError(f"closeout authorization is not approved: {auth['status']}")
+        if not _role_allows(actor_role, auth["required_role"]):
+            raise ValueError(
+                f"actor_role {actor_role} cannot execute {auth['risk_level']} closeout; requires {auth['required_role']}"
+            )
+        if datetime.fromisoformat(auth["expires_at"]) <= datetime.now(timezone.utc):
+            raise ValueError("closeout authorization expired; request a fresh evidence-bound approval")
+        current_evidence_state_hash = _evidence_state_hash_for_task(conn, auth["task_id"])
+        if current_evidence_state_hash != auth["evidence_state_hash"]:
+            raise ValueError("evidence state changed after closeout authorization; request a fresh evidence-bound approval")
+        review = conn.execute(
+            """
+            SELECT evidence_status, stale_or_conflicting_count, evidence_state_hash
+            FROM evidence_gate_reviews
+            WHERE evidence_review_id = ?
+            """,
+            (auth["evidence_review_id"],),
+        ).fetchone()
+        if review is None or review["evidence_status"] != "satisfied" or int(review["stale_or_conflicting_count"]):
+            raise ValueError("satisfied evidence gate review is required for closeout execution")
+        if review["evidence_state_hash"] != auth["evidence_state_hash"]:
+            raise ValueError("closeout authorization does not match evidence gate review")
+        task = conn.execute("SELECT task_id, status FROM tasks WHERE task_id = ?", (auth["task_id"],)).fetchone()
+        if task is None:
+            raise ValueError("Control Tower task row is required before closeout execution")
+        if task["status"] == "closed":
+            raise ValueError("task is already closed without a closeout execution run")
+
+        closeout_execution_id = f"closeexec_{uuid.uuid4().hex}"
+        executed_at = _now()
+        try:
+            conn.execute(
+                """
+                INSERT INTO closeout_execution_runs(
+                    closeout_execution_id, closeout_authorization_id, task_id,
+                    risk_level, evidence_review_id, evidence_state_hash,
+                    execution_status, task_status, adapter_writes_json,
+                    external_adapter_write_through_enabled, executed_by,
+                    executed_role, executed_at, reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    closeout_execution_id,
+                    closeout_authorization_id,
+                    auth["task_id"],
+                    auth["risk_level"],
+                    auth["evidence_review_id"],
+                    auth["evidence_state_hash"],
+                    "closeout_completed",
+                    "closed",
+                    "[]",
+                    0,
+                    actor_id,
+                    actor_role,
+                    executed_at,
+                    reason,
+                ),
+            )
+        except sqlite3.IntegrityError:  # pragma: no cover - defensive concurrent retry
+            existing_after_race = conn.execute(
+                """
+                SELECT closeout_execution_id, closeout_authorization_id, task_id,
+                       risk_level, evidence_review_id, evidence_state_hash,
+                       execution_status, task_status, adapter_writes_json,
+                       external_adapter_write_through_enabled, executed_by,
+                       executed_role, executed_at
+                FROM closeout_execution_runs
+                WHERE closeout_authorization_id = ?
+                """,
+                (closeout_authorization_id,),
+            ).fetchone()
+            if existing_after_race is not None:
+                return _closeout_execution_response(
+                    created=False,
+                    row=existing_after_race,
+                    source_surface=source_surface,
+                )
+            raise
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'closed', blocked_reason = NULL, next_action = NULL,
+                updated_at = ?, version = version + 1
+            WHERE task_id = ?
+            """,
+            (executed_at, auth["task_id"]),
+        )
+        conn.execute(
+            "UPDATE closeout_authorizations SET closeout_allowed = 1 WHERE closeout_authorization_id = ?",
+            (closeout_authorization_id,),
+        )
+        conn.execute(
+            "UPDATE evidence_gate_reviews SET closeout_allowed = 1, blocked_reason = 'closeout_executed_control_tower_ledger' WHERE evidence_review_id = ?",
+            (auth["evidence_review_id"],),
+        )
+        _append_event(
+            conn,
+            event_type="CloseoutExecutionCompleted",
+            aggregate_type="closeout_execution",
+            aggregate_id=closeout_execution_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "closeout_execution_id": closeout_execution_id,
+                "closeout_authorization_id": closeout_authorization_id,
+                "task_id": auth["task_id"],
+                "risk_level": auth["risk_level"],
+                "evidence_review_id": auth["evidence_review_id"],
+                "evidence_state_hash": auth["evidence_state_hash"],
+                "execution_status": "closeout_completed",
+                "task_status": "closed",
+                "adapter_writes": [],
+                "external_adapter_write_through_enabled": False,
+            },
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT closeout_execution_id, closeout_authorization_id, task_id,
+                   risk_level, evidence_review_id, evidence_state_hash,
+                   execution_status, task_status, adapter_writes_json,
+                   external_adapter_write_through_enabled, executed_by,
+                   executed_role, executed_at
+            FROM closeout_execution_runs
+            WHERE closeout_execution_id = ?
+            """,
+            (closeout_execution_id,),
+        ).fetchone()
+    return _closeout_execution_response(created=True, row=row, source_surface=source_surface)
+
+
 def record_adapter_observation(
     *,
     adapter_name: str,
@@ -2401,6 +2628,42 @@ def _closeout_authorizations_snapshot(conn: sqlite3.Connection) -> dict[str, Any
     }
 
 
+def _closeout_execution_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT closeout_execution_id, closeout_authorization_id, task_id,
+               risk_level, evidence_review_id, execution_status, task_status,
+               external_adapter_write_through_enabled, executed_by, executed_role,
+               executed_at
+        FROM closeout_execution_runs
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "control_tower_ledger_closeout_consumer",
+        "external_adapter_write_through_enabled": False,
+        "rollback_reopen_enabled": False,
+        "run_count": _count(conn, "closeout_execution_runs"),
+        "recent_runs": [
+            {
+                "closeout_execution_id": row["closeout_execution_id"],
+                "closeout_authorization_id": row["closeout_authorization_id"],
+                "task_id": row["task_id"],
+                "risk_level": row["risk_level"],
+                "evidence_review_id": row["evidence_review_id"],
+                "execution_status": row["execution_status"],
+                "task_status": row["task_status"],
+                "external_adapter_write_through_enabled": bool(row["external_adapter_write_through_enabled"]),
+                "executed_by": row["executed_by"],
+                "executed_role": row["executed_role"],
+                "executed_at": row["executed_at"],
+            }
+            for row in rows
+        ],
+    }
+
+
 def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     schema = validate_workflow_schema(CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA)
     pending = conn.execute(
@@ -2471,6 +2734,7 @@ def build_snapshot() -> dict[str, Any]:
         read_only_executor = _read_only_executor_snapshot(conn)
         evidence_policy = _evidence_policy_snapshot(conn)
         closeout_authorizations = _closeout_authorizations_snapshot(conn)
+        closeout_execution = _closeout_execution_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -2514,6 +2778,7 @@ def build_snapshot() -> dict[str, Any]:
         "read_only_executor": read_only_executor,
         "evidence_policy": evidence_policy,
         "closeout_authorizations": closeout_authorizations,
+        "closeout_execution": closeout_execution,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {

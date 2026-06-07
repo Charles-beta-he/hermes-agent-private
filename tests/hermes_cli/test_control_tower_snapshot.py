@@ -37,6 +37,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "executor_plans",
             "execution_policy_reviews",
             "read_only_executor_runs",
+            "closeout_execution_runs",
             "evidence_gate_reviews",
             "closeout_authorizations",
             "adapter_observations",
@@ -1891,3 +1892,290 @@ def test_execute_read_only_executor_rejects_reviewed_plan_when_command_tuple_cha
     with sqlite3.connect(home / "control_tower.db") as ledger:
         assert ledger.execute("SELECT COUNT(*) FROM read_only_executor_runs").fetchone()[0] == 0
         assert ledger.execute("SELECT status FROM commands WHERE command_id = ?", (proposed["command_id"],)).fetchone()[0] == "proposed"
+
+
+def _insert_control_tower_task(home, task_id: str, status: str = "review") -> None:
+    now = "2026-06-07T00:00:00+00:00"
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            """
+            INSERT INTO tasks(task_id, title, status, risk_class, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (task_id, f"Closeout target {task_id}", status, "L2", now, now),
+        )
+        ledger.commit()
+
+
+def test_execute_closeout_authorization_closes_control_tower_task_without_adapter_write(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    task_id = "task:phase8-closeout"
+    review = _record_verified_closeout_evidence(task_id)
+    _insert_control_tower_task(home, task_id)
+    request = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    decision = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=request["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+        reason="approved for bounded ledger closeout",
+    )
+
+    execution = control_tower.execute_closeout_authorization(
+        closeout_authorization_id=decision["closeout_authorization_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+        reason="execute bounded ledger closeout",
+    )
+    repeated = control_tower.execute_closeout_authorization(
+        closeout_authorization_id=decision["closeout_authorization_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+        reason="retry bounded ledger closeout",
+    )
+
+    assert execution["created"] is True
+    assert execution["execution_status"] == "closeout_completed"
+    assert execution["task_id"] == task_id
+    assert execution["task_status"] == "closed"
+    assert execution["adapter_writes"] == []
+    assert execution["external_adapter_write_through_enabled"] is False
+    assert repeated["created"] is False
+    assert repeated["closeout_execution_id"] == execution["closeout_execution_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        task_row = ledger.execute(
+            "SELECT status, blocked_reason, next_action FROM tasks WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        adapter_rows = ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0]
+        run_rows = ledger.execute("SELECT COUNT(*) FROM closeout_execution_runs").fetchone()[0]
+        event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert task_row == ("closed", None, None)
+    assert adapter_rows == 0
+    assert run_rows == 1
+    assert event_types[-1] == "CloseoutExecutionCompleted"
+    snapshot = control_tower.build_snapshot()
+    assert snapshot["closeout_execution"]["mode"] == "control_tower_ledger_closeout_consumer"
+    assert snapshot["closeout_execution"]["external_adapter_write_through_enabled"] is False
+    assert snapshot["closeout_execution"]["run_count"] == 1
+
+
+def test_execute_closeout_authorization_fails_closed_when_not_approved_or_evidence_stale(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    task_id = "task:phase8-stale-closeout"
+    review = _record_verified_closeout_evidence(task_id)
+    _insert_control_tower_task(home, task_id)
+    request = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    try:
+        control_tower.execute_closeout_authorization(
+            closeout_authorization_id=request["closeout_authorization_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "not approved" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("unapproved closeout authorization must fail closed")
+
+    approved = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=request["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    control_tower.record_evidence(
+        task_id=task_id,
+        evidence_type="review",
+        maturity="verified",
+        source_type="pytest",
+        summary="Later conflicting evidence before execution",
+        producer_type="human",
+        producer_id="reviewer",
+        acceptance_refs=["AC-1"],
+        stale_status="conflicting",
+    )
+
+    try:
+        control_tower.execute_closeout_authorization(
+            closeout_authorization_id=approved["closeout_authorization_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "evidence state changed after closeout authorization" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("stale evidence after approval must fail closed")
+
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        task_status = ledger.execute("SELECT status FROM tasks WHERE task_id = ?", (task_id,)).fetchone()[0]
+        run_rows = ledger.execute("SELECT COUNT(*) FROM closeout_execution_runs").fetchone()[0]
+    assert task_status == "review"
+    assert run_rows == 0
+
+
+def test_execute_closeout_authorization_rejects_invalid_actor_and_role_boundaries(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    task_id = "task:phase8-role-boundary"
+    review = _record_verified_closeout_evidence(task_id)
+    _insert_control_tower_task(home, task_id)
+    request = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    approved = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=request["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+
+    invalid_cases = [
+        {"closeout_authorization_id": "", "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "closeout_authorization_id is required"},
+        {"closeout_authorization_id": approved["closeout_authorization_id"], "actor_type": "", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "actor_type is required"},
+        {"closeout_authorization_id": approved["closeout_authorization_id"], "actor_type": "human", "actor_id": "", "actor_role": "owner", "source_surface": "pytest", "expected": "actor_id is required"},
+        {"closeout_authorization_id": approved["closeout_authorization_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "invalid", "source_surface": "pytest", "expected": "unsupported actor_role"},
+        {"closeout_authorization_id": approved["closeout_authorization_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "", "expected": "source_surface is required"},
+        {"closeout_authorization_id": approved["closeout_authorization_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "operator", "source_surface": "pytest", "expected": "cannot execute"},
+    ]
+    for case in invalid_cases:
+        expected = case.pop("expected")
+        try:
+            control_tower.execute_closeout_authorization(**case)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"expected ValueError containing {expected!r}")
+
+
+def test_execute_closeout_authorization_rejects_expired_missing_task_and_closed_task(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    expired_task = "task:phase8-expired"
+    expired_review = _record_verified_closeout_evidence(expired_task)
+    _insert_control_tower_task(home, expired_task)
+    expired_request = control_tower.request_closeout_authorization(
+        evidence_review_id=expired_review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    expired = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=expired_request["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            "UPDATE closeout_authorizations SET expires_at = ? WHERE closeout_authorization_id = ?",
+            ("2000-01-01T00:00:00+00:00", expired["closeout_authorization_id"]),
+        )
+        ledger.commit()
+    try:
+        control_tower.execute_closeout_authorization(
+            closeout_authorization_id=expired["closeout_authorization_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "expired" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("expired closeout authorization must fail closed")
+
+    missing_task = "task:phase8-missing-task"
+    missing_review = _record_verified_closeout_evidence(missing_task)
+    missing_request = control_tower.request_closeout_authorization(
+        evidence_review_id=missing_review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    missing_approved = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=missing_request["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    try:
+        control_tower.execute_closeout_authorization(
+            closeout_authorization_id=missing_approved["closeout_authorization_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "Control Tower task row is required" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("missing task row must fail closed")
+
+    closed_task = "task:phase8-closed-without-run"
+    closed_review = _record_verified_closeout_evidence(closed_task)
+    _insert_control_tower_task(home, closed_task, status="closed")
+    closed_request = control_tower.request_closeout_authorization(
+        evidence_review_id=closed_review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    closed_approved = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=closed_request["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    try:
+        control_tower.execute_closeout_authorization(
+            closeout_authorization_id=closed_approved["closeout_authorization_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "task is already closed" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("closed task without execution row must fail closed")

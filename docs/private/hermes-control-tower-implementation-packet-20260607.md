@@ -545,7 +545,46 @@ Acceptance:
 - `tasks` and `adapter_observations` remain unchanged by executor runs.
 - Write-through adapter and closeout execution remain outside this phase.
 
-### Phase 8 — Event-driven advancement
+### Phase 8 — Evidence-bound Control Tower ledger closeout
+
+Phase 8 consumes an approved closeout authorization and performs the first
+lifecycle-affecting action, but only inside the Control Tower Ledger. This is not
+external adapter write-through: taskpool/Kanban adapters remain read-only
+projections, no arbitrary shell runs, and rollback/reopen remains a separate
+future boundary.
+
+Implemented scope:
+
+1. Add `closeout_execution_runs` ledger table.
+2. Add `execute_closeout_authorization(...)`.
+3. Require all gates before a closeout execution:
+   - closeout authorization exists and is `approved`;
+   - actor role still satisfies the authorization's required role;
+   - authorization TTL has not expired;
+   - current task evidence hash exactly matches the authorization-bound hash;
+   - bound evidence-gate review still exists, is `satisfied`, has zero
+     stale/conflicting evidence, and matches the same evidence hash;
+   - a Control Tower `tasks` row exists and is not already closed.
+4. A successful run records `closeout_execution_runs`, appends
+   `CloseoutExecutionCompleted`, updates the Control Tower `tasks.status` to
+   `closed`, clears `blocked_reason`/`next_action`, and marks the corresponding
+   closeout authorization/evidence gate projection as closeout-consumed.
+5. Repeating the same authorization execution is idempotent via
+   `UNIQUE(closeout_authorization_id)` and IntegrityError recovery.
+6. Snapshot `closeout_execution` reports run count/recent runs and explicitly
+   keeps `external_adapter_write_through_enabled = false` and
+   `rollback_reopen_enabled = false`.
+7. Dashboard API endpoint:
+   - `POST /api/plugins/control-tower/closeout-authorizations/{closeout_authorization_id}/execute`
+
+Acceptance:
+
+- Approved, fresh, satisfied evidence-bound closeout can close a Control Tower
+  task row exactly once.
+- Unapproved authorizations fail closed.
+- Evidence changes after approval fail closed.
+- Adapter observations remain unchanged; no external taskpool/Kanban write occurs.
+- Dashboard can trigger the ledger-only closeout endpoint.
 
 ## First implementation slice status
 
@@ -572,22 +611,24 @@ Implemented:
 19. Closeout authorization projection via snapshot `closeout_authorizations`.
 20. Read-only executor run endpoint via `POST /api/plugins/control-tower/executor-plans/{plan_id}/execute-read-only`.
 21. Read-only executor projection via snapshot `read_only_executor`.
+22. Closeout execution endpoint via `POST /api/plugins/control-tower/closeout-authorizations/{closeout_authorization_id}/execute`.
+23. Closeout execution projection via snapshot `closeout_execution`.
 
 Still intentionally not implemented:
 
-- No lifecycle mutation.
-- No task claim/release/move/done/closeout actions.
-- No arbitrary shell.
-- No write-through Kanban/taskpool adapter.
-- No real closeout execution even after authorization approval.
+- No external taskpool/Kanban adapter write-through.
+- No rollback/reopen consumer yet.
+- No conflicting-evidence human override; evidence changes after authorization fail closed.
 - Read-only executor whitelist is now executable only through the bounded
-  read-only consumer; it still cannot write adapters or mutate task lifecycle.
+  read-only consumer; it still cannot write adapters or mutate external task lifecycle.
+- Closeout execution is limited to Control Tower Ledger task rows and keeps
+  `external_adapter_write_through_enabled = false`.
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, and evidence-bound closeout authorization decisions.
+- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, and approved Control Tower Ledger closeout executions.
 - The ledger remains the only fact source.
-- The next step changes authority from "bounded read-only execution" to "write-through adapter / closeout execution", which requires explicit adapter contracts, rollback/escape paths, evidence override semantics, and command-execution approval digests.
+- The next step changes authority from "Control Tower ledger closeout" to "external adapter write-through / rollback-reopen", which requires explicit adapter contracts, rollback/escape paths, evidence override semantics, and command-execution approval digests.
 
 ## Human decisions required now
 
@@ -609,8 +650,8 @@ Remaining decisions before execution-capable implementation:
 
 1. Approval decision semantics:
    - Implemented for Human Inbox approvals: decisions are single-use, same-decision retries are idempotent, conflicting second decisions fail closed, and decisions emit audit events.
-   - Implemented for closeout authorizations: requests bind to evidence digest, require satisfied/non-conflicting evidence, enforce role matrix and TTL, expire fail-closed, and keep `closeout_allowed = false`.
-   - Still undecided for execution-capable phase: whether command-execution approval also binds to a command hash/payload digest and which executor actions may consume an approval.
+   - Implemented for closeout authorizations: requests bind to evidence digest, require satisfied/non-conflicting evidence, enforce role matrix and TTL, expire fail-closed, and keep `closeout_allowed = false` until explicit closeout execution.
+   - Implemented for closeout execution: execution rechecks role, TTL, evidence hash freshness, and satisfied/non-conflicting evidence before closing a Control Tower Ledger task row.
 
 2. Executor boundary:
    - Implemented: dry-run/copy-command executor plans may be generated for L0/L1 proposed commands and approved L2+ commands, then reviewed through an execution-policy projection.
@@ -620,10 +661,11 @@ Remaining decisions before execution-capable implementation:
    - Still undecided for write-through phase: which adapters may be mutated, what rollback/escape path is required per action, and whether command-execution approvals bind to command payload digests.
 
 3. Evidence and closeout boundary:
-   - Implemented for current non-executing slice: evidence can be recorded and evaluated against risk-level maturity requirements and acceptance refs.
-   - Evidence-gate projection always reports `closeout_allowed = false` even when evidence is satisfied.
-   - Closeout authorization can now be requested/decided as a durable evidence-bound human projection, but an approved authorization still reports `closeout_allowed = false`.
-   - Still undecided for closeout-capable phase: which adapter receives the final done/closed mutation, whether conflicting evidence can ever be human-overridden, and what rollback/reopen path is mandatory.
+   - Implemented: evidence can be recorded and evaluated against risk-level maturity requirements and acceptance refs.
+   - Evidence-gate projection remains a pre-execution gate; closeout execution requires a separate approved authorization and rechecks evidence freshness.
+   - Closeout authorization can be requested/decided as a durable evidence-bound human projection.
+   - Closeout execution can close Control Tower Ledger task rows only; external adapter closeout/write-through remains undecided.
+   - Still undecided for external closeout-capable phase: which adapter receives the final done/closed mutation, whether conflicting evidence can ever be human-overridden, and what rollback/reopen path is mandatory.
 
 4. Write-through adapter timing:
    - Keep Kanban/taskpool read-only until command executor is stable, or
@@ -638,4 +680,4 @@ Remaining decisions before execution-capable implementation:
 
 ## Stop condition
 
-Stop write-through / closeout-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, read-only executor eligibility projections, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, and evidence-bound closeout authorization requests/decisions are now durable, audited, idempotent where safe, and expiring where required. The next boundary is adapter write-through plus closeout execution; do not run any lifecycle-affecting action until the adapter mutation contract, conflicting-evidence override semantics, rollback/escape path, closeout execution consumer, and command-execution approval digest semantics are explicitly decided.
+Stop external adapter write-through implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, read-only executor eligibility projections, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization requests/decisions, and Control Tower Ledger closeout executions are now durable, audited, idempotent where safe, and expiring where required. The next boundary is external taskpool/Kanban adapter write-through plus rollback/reopen; do not mutate external adapters until the adapter mutation contract, conflicting-evidence override semantics, rollback/escape path, and command-execution approval digest semantics are explicitly decided.

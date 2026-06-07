@@ -2,9 +2,9 @@
 
 Mounted at /api/plugins/control-tower/ by the dashboard plugin system.
 The plugin exposes ledger projections and controlled operator intent. It may
-execute the narrow read-only executor consumer for L0/L1 whitelisted commands,
-but it still never mutates task lifecycle state, performs closeout, or writes
-through adapters.
+execute narrow consumers after explicit gates: L0/L1 read-only executor runs and
+approved evidence-bound closeout inside the Control Tower ledger. It still never
+writes through external taskpool/Kanban adapters.
 """
 
 from __future__ import annotations
@@ -75,6 +75,13 @@ class CloseoutAuthorizationRequest(BaseModel):
 
 class CloseoutAuthorizationDecisionRequest(BaseModel):
     decision: str = Field(min_length=1)
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    actor_role: str = Field(default="operator", min_length=1)
+    reason: str = Field(default="", min_length=0)
+
+
+class CloseoutExecutionRequest(BaseModel):
     actor_type: str = Field(default="human", min_length=1)
     actor_id: str = Field(default="dashboard", min_length=1)
     actor_role: str = Field(default="operator", min_length=1)
@@ -173,6 +180,22 @@ def decide_closeout_authorization(
     return control_tower.decide_closeout_authorization(
         closeout_authorization_id=closeout_authorization_id,
         decision=req.decision,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        source_surface="dashboard",
+        reason=req.reason,
+    )
+
+
+@router.post("/closeout-authorizations/{closeout_authorization_id}/execute")
+def execute_closeout_authorization(
+    closeout_authorization_id: str,
+    req: CloseoutExecutionRequest,
+):
+    """Execute approved evidence-bound closeout inside the Control Tower ledger only."""
+    return control_tower.execute_closeout_authorization(
+        closeout_authorization_id=closeout_authorization_id,
         actor_type=req.actor_type,
         actor_id=req.actor_id,
         actor_role=req.actor_role,
