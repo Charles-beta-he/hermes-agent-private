@@ -40,6 +40,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "read_only_executor_runs",
             "closeout_execution_runs",
             "external_adapter_write_intents",
+            "external_adapter_write_intent_reviews",
             "evidence_gate_reviews",
             "closeout_authorizations",
             "adapter_observations",
@@ -2296,3 +2297,108 @@ def test_prepare_external_adapter_write_intent_fails_closed_before_adapter_bound
     with sqlite3.connect(home / "control_tower.db") as ledger:
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intents").fetchone()[0] == 0
         assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
+
+
+def _prepare_external_write_intent_for_review(home, task_id: str = "task:phase10-review") -> dict[str, object]:
+    execution = _execute_ledger_closeout_for_adapter_intent(home, task_id)
+    return control_tower.prepare_external_adapter_write_intent(
+        closeout_execution_id=execution["closeout_execution_id"],
+        adapter_name="taskpool",
+        external_ref=f"taskpool:{task_id}",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+
+
+def test_review_external_adapter_write_intent_blocks_execution_until_contract_and_rollback(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    intent = _prepare_external_write_intent_for_review(home)
+
+    review = control_tower.review_external_adapter_write_intent(
+        external_write_intent_id=intent["external_write_intent_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+        reason="review readiness without external write-through",
+    )
+    repeated = control_tower.review_external_adapter_write_intent(
+        external_write_intent_id=intent["external_write_intent_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+
+    assert review["created"] is True
+    assert review["review_status"] == "blocked"
+    assert review["write_through_allowed"] is False
+    assert review["writes_enabled"] is False
+    assert review["external_adapter_write_through_enabled"] is False
+    assert review["mutation_digest"] == intent["mutation_digest"]
+    assert review["adapter_contract_version"] == "taskpool.closeout.v0"
+    assert "external_write_through_disabled" in review["blocked_reasons"]
+    assert "rollback_unavailable" in review["blocked_reasons"]
+    assert repeated["created"] is False
+    assert repeated["external_write_review_id"] == review["external_write_review_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intent_reviews").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0
+        event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert event_types[-1] == "ExternalAdapterWriteIntentReviewed"
+    snapshot = control_tower.build_snapshot()
+    assert snapshot["external_adapter_write_intent_reviews"]["review_count"] == 1
+    assert snapshot["external_adapter_write_intent_reviews"]["blocked_count"] == 1
+    assert snapshot["external_adapter_write_intent_reviews"]["write_through_allowed_count"] == 0
+    assert snapshot["external_adapter_write_intent_reviews"]["external_adapter_write_through_enabled"] is False
+
+
+def test_review_external_adapter_write_intent_fails_closed_on_drift_and_bad_actor(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    intent = _prepare_external_write_intent_for_review(home, "task:phase10-drift")
+
+    invalid_cases = [
+        {"external_write_intent_id": "", "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "external_write_intent_id is required"},
+        {"external_write_intent_id": intent["external_write_intent_id"], "actor_type": "", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "actor_type is required"},
+        {"external_write_intent_id": intent["external_write_intent_id"], "actor_type": "human", "actor_id": "", "actor_role": "owner", "source_surface": "pytest", "expected": "actor_id is required"},
+        {"external_write_intent_id": intent["external_write_intent_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "invalid", "source_surface": "pytest", "expected": "unsupported actor_role"},
+        {"external_write_intent_id": intent["external_write_intent_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "operator", "source_surface": "pytest", "expected": "cannot review"},
+        {"external_write_intent_id": intent["external_write_intent_id"], "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "", "expected": "source_surface is required"},
+        {"external_write_intent_id": "extintent_missing", "actor_type": "human", "actor_id": "charles", "actor_role": "owner", "source_surface": "pytest", "expected": "external write intent not found"},
+    ]
+    for case in invalid_cases:
+        expected = case.pop("expected")
+        try:
+            control_tower.review_external_adapter_write_intent(**case)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"expected ValueError containing {expected!r}")
+
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        payload = json.loads(ledger.execute(
+            "SELECT mutation_payload_json FROM external_adapter_write_intents WHERE external_write_intent_id = ?",
+            (intent["external_write_intent_id"],),
+        ).fetchone()[0])
+        payload["target_status"] = "archived"
+        ledger.execute(
+            "UPDATE external_adapter_write_intents SET mutation_payload_json = ? WHERE external_write_intent_id = ?",
+            (json.dumps(payload, sort_keys=True, separators=(",", ":")), intent["external_write_intent_id"]),
+        )
+        ledger.commit()
+    try:
+        control_tower.review_external_adapter_write_intent(
+            external_write_intent_id=intent["external_write_intent_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "mutation digest mismatch" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("mutation payload drift must fail closed")

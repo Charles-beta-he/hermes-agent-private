@@ -316,6 +316,35 @@ _TABLES_SQL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS external_adapter_write_intent_reviews (
+        external_write_review_id TEXT PRIMARY KEY,
+        external_write_intent_id TEXT NOT NULL UNIQUE,
+        closeout_execution_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        adapter_name TEXT NOT NULL,
+        external_ref TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        adapter_contract_version TEXT NOT NULL,
+        review_status TEXT NOT NULL,
+        blocked_reasons_json TEXT NOT NULL DEFAULT '[]',
+        mutation_digest TEXT NOT NULL,
+        writes_enabled INTEGER NOT NULL DEFAULT 0,
+        external_adapter_write_through_enabled INTEGER NOT NULL DEFAULT 0,
+        rollback_required INTEGER NOT NULL DEFAULT 1,
+        rollback_available INTEGER NOT NULL DEFAULT 0,
+        write_through_allowed INTEGER NOT NULL DEFAULT 0,
+        reviewed_by TEXT NOT NULL,
+        reviewed_role TEXT NOT NULL,
+        reviewed_at TEXT NOT NULL,
+        reason TEXT,
+        CHECK(review_status = 'blocked'),
+        CHECK(writes_enabled = 0),
+        CHECK(external_adapter_write_through_enabled = 0),
+        CHECK(rollback_required = 1),
+        CHECK(write_through_allowed = 0)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS policy_decisions (
         policy_decision_id TEXT PRIMARY KEY,
         command_id TEXT,
@@ -2505,6 +2534,219 @@ def prepare_external_adapter_write_intent(
     )
 
 
+def _external_write_review_response(
+    *,
+    created: bool,
+    row: sqlite3.Row,
+    source_surface: str,
+) -> dict[str, Any]:
+    return {
+        "created": created,
+        "external_write_review_id": row["external_write_review_id"],
+        "external_write_intent_id": row["external_write_intent_id"],
+        "closeout_execution_id": row["closeout_execution_id"],
+        "task_id": row["task_id"],
+        "adapter_name": row["adapter_name"],
+        "external_ref": row["external_ref"],
+        "operation": row["operation"],
+        "adapter_contract_version": row["adapter_contract_version"],
+        "review_status": row["review_status"],
+        "blocked_reasons": json.loads(row["blocked_reasons_json"]),
+        "mutation_digest": row["mutation_digest"],
+        "writes_enabled": bool(row["writes_enabled"]),
+        "external_adapter_write_through_enabled": bool(row["external_adapter_write_through_enabled"]),
+        "rollback_required": bool(row["rollback_required"]),
+        "rollback_available": bool(row["rollback_available"]),
+        "write_through_allowed": bool(row["write_through_allowed"]),
+        "reviewed_by": row["reviewed_by"],
+        "reviewed_role": row["reviewed_role"],
+        "reviewed_at": row["reviewed_at"],
+        "source_surface": source_surface,
+    }
+
+
+def _adapter_contract_version(adapter_name: str, operation: str) -> str:
+    if adapter_name not in EXTERNAL_WRITE_INTENT_ADAPTERS:
+        raise ValueError(f"adapter is not enabled for external write review: {adapter_name}")
+    if operation != "closeout":
+        raise ValueError(f"operation is not enabled for external write review: {operation}")
+    return f"{adapter_name}.closeout.v0"
+
+
+def review_external_adapter_write_intent(
+    *,
+    external_write_intent_id: str,
+    actor_type: str,
+    actor_id: str,
+    actor_role: str,
+    source_surface: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Review a blocked external write intent without enabling external writes."""
+    external_write_intent_id = external_write_intent_id.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    actor_role = actor_role.strip().lower()
+    source_surface = source_surface.strip()
+    reason = reason.strip()
+    if not external_write_intent_id:
+        raise ValueError("external_write_intent_id is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if actor_role not in ROLE_RANK:
+        raise ValueError("unsupported actor_role")
+    if not _role_allows(actor_role, "owner"):
+        raise ValueError("actor role cannot review external adapter write intent")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        existing = conn.execute(
+            """
+            SELECT external_write_review_id, external_write_intent_id,
+                   closeout_execution_id, task_id, adapter_name, external_ref,
+                   operation, adapter_contract_version, review_status,
+                   blocked_reasons_json, mutation_digest, writes_enabled,
+                   external_adapter_write_through_enabled, rollback_required,
+                   rollback_available, write_through_allowed, reviewed_by,
+                   reviewed_role, reviewed_at
+            FROM external_adapter_write_intent_reviews
+            WHERE external_write_intent_id = ?
+            """,
+            (external_write_intent_id,),
+        ).fetchone()
+        if existing is not None:
+            return _external_write_review_response(created=False, row=existing, source_surface=source_surface)
+
+        intent = conn.execute(
+            """
+            SELECT external_write_intent_id, closeout_execution_id, task_id,
+                   adapter_name, external_ref, operation, intent_status,
+                   mutation_payload_json, mutation_digest, writes_enabled,
+                   external_adapter_write_through_enabled, rollback_required,
+                   rollback_available
+            FROM external_adapter_write_intents
+            WHERE external_write_intent_id = ?
+            """,
+            (external_write_intent_id,),
+        ).fetchone()
+        if intent is None:
+            raise ValueError(f"external write intent not found: {external_write_intent_id}")
+        if intent["intent_status"] != "blocked_pending_adapter_contract":
+            raise ValueError(f"external write intent is not blocked for review: {intent['intent_status']}")
+        mutation_payload = json.loads(intent["mutation_payload_json"])
+        recomputed_digest = _payload_hash(mutation_payload)
+        if recomputed_digest != intent["mutation_digest"]:
+            raise ValueError("mutation digest mismatch for external write intent")
+        contract_version = _adapter_contract_version(intent["adapter_name"], intent["operation"])
+        blocked_reasons = ["external_write_through_disabled"]
+        if not bool(intent["rollback_available"]):
+            blocked_reasons.append("rollback_unavailable")
+        if bool(intent["writes_enabled"]):
+            raise ValueError("external write intent unexpectedly has writes_enabled=true")
+        if bool(intent["external_adapter_write_through_enabled"]):
+            raise ValueError("external write intent unexpectedly has adapter write-through enabled")
+        if not bool(intent["rollback_required"]):
+            blocked_reasons.append("rollback_requirement_missing")
+
+        external_write_review_id = f"extreview_{uuid.uuid4().hex}"
+        reviewed_at = _now()
+        try:
+            conn.execute(
+                """
+                INSERT INTO external_adapter_write_intent_reviews(
+                    external_write_review_id, external_write_intent_id,
+                    closeout_execution_id, task_id, adapter_name, external_ref,
+                    operation, adapter_contract_version, review_status,
+                    blocked_reasons_json, mutation_digest, writes_enabled,
+                    external_adapter_write_through_enabled, rollback_required,
+                    rollback_available, write_through_allowed, reviewed_by,
+                    reviewed_role, reviewed_at, reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    external_write_review_id,
+                    external_write_intent_id,
+                    intent["closeout_execution_id"],
+                    intent["task_id"],
+                    intent["adapter_name"],
+                    intent["external_ref"],
+                    intent["operation"],
+                    contract_version,
+                    "blocked",
+                    _canonical_json(blocked_reasons),
+                    intent["mutation_digest"],
+                    0,
+                    0,
+                    int(bool(intent["rollback_required"])),
+                    int(bool(intent["rollback_available"])),
+                    0,
+                    actor_id,
+                    actor_role,
+                    reviewed_at,
+                    reason,
+                ),
+            )
+        except sqlite3.IntegrityError:  # pragma: no cover - defensive concurrent retry
+            existing = conn.execute(
+                """
+                SELECT external_write_review_id, external_write_intent_id,
+                       closeout_execution_id, task_id, adapter_name, external_ref,
+                       operation, adapter_contract_version, review_status,
+                       blocked_reasons_json, mutation_digest, writes_enabled,
+                       external_adapter_write_through_enabled, rollback_required,
+                       rollback_available, write_through_allowed, reviewed_by,
+                       reviewed_role, reviewed_at
+                FROM external_adapter_write_intent_reviews
+                WHERE external_write_intent_id = ?
+                """,
+                (external_write_intent_id,),
+            ).fetchone()
+            if existing is None:
+                raise
+            return _external_write_review_response(created=False, row=existing, source_surface=source_surface)
+        _append_event(
+            conn,
+            event_type="ExternalAdapterWriteIntentReviewed",
+            aggregate_type="external_adapter_write_intent_review",
+            aggregate_id=external_write_review_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "external_write_review_id": external_write_review_id,
+                "external_write_intent_id": external_write_intent_id,
+                "adapter_name": intent["adapter_name"],
+                "operation": intent["operation"],
+                "adapter_contract_version": contract_version,
+                "review_status": "blocked",
+                "blocked_reasons": blocked_reasons,
+                "mutation_digest": intent["mutation_digest"],
+                "write_through_allowed": False,
+                "writes_enabled": False,
+                "external_adapter_write_through_enabled": False,
+            },
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT external_write_review_id, external_write_intent_id,
+                   closeout_execution_id, task_id, adapter_name, external_ref,
+                   operation, adapter_contract_version, review_status,
+                   blocked_reasons_json, mutation_digest, writes_enabled,
+                   external_adapter_write_through_enabled, rollback_required,
+                   rollback_available, write_through_allowed, reviewed_by,
+                   reviewed_role, reviewed_at
+            FROM external_adapter_write_intent_reviews
+            WHERE external_write_review_id = ?
+            """,
+            (external_write_review_id,),
+        ).fetchone()
+    return _external_write_review_response(created=True, row=row, source_surface=source_surface)
+
+
 def record_adapter_observation(
     *,
     adapter_name: str,
@@ -2969,6 +3211,56 @@ def _external_adapter_write_intents_snapshot(conn: sqlite3.Connection) -> dict[s
     }
 
 
+def _external_adapter_write_intent_reviews_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT external_write_review_id, external_write_intent_id,
+               closeout_execution_id, task_id, adapter_name, external_ref,
+               operation, adapter_contract_version, review_status,
+               blocked_reasons_json, mutation_digest, writes_enabled,
+               external_adapter_write_through_enabled, rollback_required,
+               rollback_available, write_through_allowed, reviewed_by,
+               reviewed_role, reviewed_at
+        FROM external_adapter_write_intent_reviews
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "external_adapter_write_readiness_projection_only",
+        "external_adapter_write_through_enabled": False,
+        "writes_enabled": False,
+        "rollback_reopen_enabled": False,
+        "review_count": _count(conn, "external_adapter_write_intent_reviews"),
+        "blocked_count": _count(conn, "external_adapter_write_intent_reviews", "review_status = 'blocked'"),
+        "write_through_allowed_count": _count(conn, "external_adapter_write_intent_reviews", "write_through_allowed = 1"),
+        "recent_reviews": [
+            {
+                "external_write_review_id": row["external_write_review_id"],
+                "external_write_intent_id": row["external_write_intent_id"],
+                "closeout_execution_id": row["closeout_execution_id"],
+                "task_id": row["task_id"],
+                "adapter_name": row["adapter_name"],
+                "external_ref": row["external_ref"],
+                "operation": row["operation"],
+                "adapter_contract_version": row["adapter_contract_version"],
+                "review_status": row["review_status"],
+                "blocked_reasons": json.loads(row["blocked_reasons_json"]),
+                "mutation_digest": row["mutation_digest"],
+                "writes_enabled": bool(row["writes_enabled"]),
+                "external_adapter_write_through_enabled": bool(row["external_adapter_write_through_enabled"]),
+                "rollback_required": bool(row["rollback_required"]),
+                "rollback_available": bool(row["rollback_available"]),
+                "write_through_allowed": bool(row["write_through_allowed"]),
+                "reviewed_by": row["reviewed_by"],
+                "reviewed_role": row["reviewed_role"],
+                "reviewed_at": row["reviewed_at"],
+            }
+            for row in rows
+        ],
+    }
+
+
 def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     schema = validate_workflow_schema(CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA)
     pending = conn.execute(
@@ -3041,6 +3333,7 @@ def build_snapshot() -> dict[str, Any]:
         closeout_authorizations = _closeout_authorizations_snapshot(conn)
         closeout_execution = _closeout_execution_snapshot(conn)
         external_adapter_write_intents = _external_adapter_write_intents_snapshot(conn)
+        external_adapter_write_intent_reviews = _external_adapter_write_intent_reviews_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -3086,6 +3379,7 @@ def build_snapshot() -> dict[str, Any]:
         "closeout_authorizations": closeout_authorizations,
         "closeout_execution": closeout_execution,
         "external_adapter_write_intents": external_adapter_write_intents,
+        "external_adapter_write_intent_reviews": external_adapter_write_intent_reviews,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {

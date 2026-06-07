@@ -468,6 +468,21 @@ def test_control_tower_dashboard_plugin_prepares_external_write_intent_without_a
     assert data["rollback_required"] is True
     assert data["rollback_available"] is False
     assert data["source_surface"] == "dashboard"
+    review_response = client.post(
+        f"/api/plugins/control-tower/external-write-intents/{data['external_write_intent_id']}/review",
+        json={
+            "actor_id": "charles",
+            "actor_role": "owner",
+            "reason": "review readiness only",
+        },
+    )
+    assert review_response.status_code == 200, review_response.text
+    review = review_response.json()
+    assert review["review_status"] == "blocked"
+    assert review["write_through_allowed"] is False
+    assert review["external_adapter_write_through_enabled"] is False
+    assert "rollback_unavailable" in review["blocked_reasons"]
     with sqlite3.connect(home / "control_tower.db") as ledger:
         assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intents").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM external_adapter_write_intent_reviews").fetchone()[0] == 1
         assert ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0] == 0

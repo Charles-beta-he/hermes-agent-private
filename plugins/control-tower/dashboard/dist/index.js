@@ -6,13 +6,12 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 9 prepares digest-bound external adapter write intents after
-        bounded evidence-bound closeout inside the Control Tower Ledger. This
-        dashboard can record operator intent, human decisions, copy-command
-        executor plans, read-only executor runs, evidence gates, closeout
-        authorizations, ledger closeouts, and blocked external write intents.
-        External taskpool/Kanban adapter write-through remains disabled until
-        adapter contract and rollback/reopen semantics are approved.
+        Phase 10 reviews digest-bound external adapter write intents for
+        readiness while still keeping external taskpool/Kanban write-through
+        disabled. This dashboard can record operator intent, human decisions,
+        read-only runs, evidence gates, ledger closeouts, blocked external write
+        intents, and blocked write-readiness reviews. Rollback/reopen and real
+        adapter mutation remain outside this boundary.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
@@ -53,6 +52,9 @@
         <button id="control-tower-prepare-external-intent" type="button">
           Prepare external write intent
         </button>
+        <button id="control-tower-review-external-intent" type="button">
+          Review external intent readiness
+        </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
@@ -82,6 +84,8 @@
     const closeoutRuns = data?.closeout_execution?.run_count ?? 0;
     const externalWriteIntents = data?.external_adapter_write_intents?.intent_count ?? 0;
     const externalWriteIntentBlocked = data?.external_adapter_write_intents?.blocked_count ?? 0;
+    const externalWriteReviews = data?.external_adapter_write_intent_reviews?.review_count ?? 0;
+    const externalWriteReviewBlocked = data?.external_adapter_write_intent_reviews?.blocked_count ?? 0;
     const externalCloseoutWrites = data?.closeout_execution?.external_adapter_write_through_enabled === true;
     const writesEnabled = data?.execution_policy?.writes_enabled === true;
     const closeoutEnabled = data?.closeout_execution?.mode === 'control_tower_ledger_closeout_consumer';
@@ -104,6 +108,8 @@
         <span>Closeout runs: <strong>${closeoutRuns}</strong></span>
         <span>External write intents: <strong>${externalWriteIntents}</strong></span>
         <span>External intent blocked: <strong>${externalWriteIntentBlocked}</strong></span>
+        <span>External intent reviews: <strong>${externalWriteReviews}</strong></span>
+        <span>External review blocked: <strong>${externalWriteReviewBlocked}</strong></span>
         <span>Writes enabled: <strong>${writesEnabled ? 'yes' : 'no'}</strong></span>
         <span>External closeout writes: <strong>${externalCloseoutWrites ? 'yes' : 'no'}</strong></span>
         <span>Closeout enabled: <strong>${closeoutEnabled ? 'ledger-only' : 'no'}</strong></span>
@@ -404,6 +410,34 @@
       });
   };
 
+  const reviewFirstExternalWriteIntent = () => {
+    const intent = latestSnapshot?.external_adapter_write_intents?.recent_intents?.find(
+      (entry) => entry.intent_status === 'blocked_pending_adapter_contract'
+    );
+    if (!intent) {
+      if (snapshotEl) snapshotEl.textContent = 'No external write intent to review.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/external-write-intents/${encodeURIComponent(intent.external_write_intent_id)}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor_type: 'human',
+        actor_id: 'dashboard',
+        actor_role: 'owner',
+        reason: 'dashboard reviewed external write readiness; write-through remains disabled',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `External write intent review failed: ${error}`;
+      });
+  };
+
   document.getElementById('control-tower-refresh')?.addEventListener('click', loadSnapshot);
   document
     .getElementById('control-tower-propose-refresh')
@@ -441,5 +475,8 @@
   document
     .getElementById('control-tower-prepare-external-intent')
     ?.addEventListener('click', prepareFirstExternalWriteIntent);
+  document
+    .getElementById('control-tower-review-external-intent')
+    ?.addEventListener('click', reviewFirstExternalWriteIntent);
   loadSnapshot();
 })();

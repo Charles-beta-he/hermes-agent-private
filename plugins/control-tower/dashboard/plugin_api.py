@@ -97,6 +97,13 @@ class ExternalAdapterWriteIntentRequest(BaseModel):
     reason: str = Field(default="", min_length=0)
 
 
+class ExternalAdapterWriteIntentReviewRequest(BaseModel):
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    actor_role: str = Field(default="operator", min_length=1)
+    reason: str = Field(default="", min_length=0)
+
+
 @router.get("/snapshot")
 def get_snapshot():
     """Return the read-only Control Tower Phase 1 snapshot."""
@@ -223,6 +230,22 @@ def prepare_external_adapter_write_intent(
         closeout_execution_id=closeout_execution_id,
         adapter_name=req.adapter_name,
         external_ref=req.external_ref,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        source_surface="dashboard",
+        reason=req.reason,
+    )
+
+
+@router.post("/external-write-intents/{external_write_intent_id}/review")
+def review_external_adapter_write_intent(
+    external_write_intent_id: str,
+    req: ExternalAdapterWriteIntentReviewRequest,
+):
+    """Review external adapter write intent readiness without enabling write-through."""
+    return control_tower.review_external_adapter_write_intent(
+        external_write_intent_id=external_write_intent_id,
         actor_type=req.actor_type,
         actor_id=req.actor_id,
         actor_role=req.actor_role,

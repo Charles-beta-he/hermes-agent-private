@@ -621,6 +621,39 @@ Acceptance:
 - No external adapter row or taskpool/Kanban state is written.
 - Missing execution, unsupported adapter, role mismatch, or external ref mismatch fail closed.
 
+### Phase 10 — External adapter write readiness review projection
+
+Phase 10 confirms the best long-term path before external mutation: every write intent must pass a ledger-only readiness review that binds the exact mutation digest to an adapter contract version, but still denies execution because write-through and rollback/reopen are not enabled.
+
+Implemented scope:
+
+1. Add `external_adapter_write_intent_reviews` ledger table.
+2. Add `review_external_adapter_write_intent(...)`.
+3. Require all gates before recording a review:
+   - external write intent exists and is still `blocked_pending_adapter_contract`;
+   - actor role is at least `owner`;
+   - adapter/operation maps to a v0 contract version such as `taskpool.closeout.v0`;
+   - canonical mutation payload recomputes to the stored `mutation_digest`;
+   - intent has not unexpectedly enabled writes or adapter write-through.
+4. The review records:
+   - `adapter_contract_version`;
+   - `review_status = blocked`;
+   - blocked reasons including `external_write_through_disabled` and `rollback_unavailable`;
+   - `write_through_allowed = false`;
+   - `writes_enabled = false`;
+   - `external_adapter_write_through_enabled = false`.
+5. A successful review appends `ExternalAdapterWriteIntentReviewed` and is idempotent by `external_write_intent_id`.
+6. Snapshot `external_adapter_write_intent_reviews` reports review count, blocked count, and zero write-through-allowed count.
+7. Dashboard API endpoint:
+   - `POST /api/plugins/control-tower/external-write-intents/{external_write_intent_id}/review`
+
+Acceptance:
+
+- A digest-bound external write intent can be reviewed into a blocked readiness projection.
+- Digest drift, unsupported actor, missing intent, or malformed source fail closed.
+- Review keeps external adapter rows unchanged and write-through disabled.
+- The final boundary remains real external write execution plus rollback/reopen semantics.
+
 ## First implementation slice status
 
 Implemented:
@@ -650,6 +683,8 @@ Implemented:
 23. Closeout execution projection via snapshot `closeout_execution`.
 24. External adapter write intent endpoint via `POST /api/plugins/control-tower/closeout-executions/{closeout_execution_id}/external-write-intent`.
 25. External adapter write intent projection via snapshot `external_adapter_write_intents`.
+26. External adapter write readiness review endpoint via `POST /api/plugins/control-tower/external-write-intents/{external_write_intent_id}/review`.
+27. External adapter write readiness projection via snapshot `external_adapter_write_intent_reviews`.
 
 Still intentionally not implemented:
 
@@ -663,10 +698,12 @@ Still intentionally not implemented:
 - External adapter write intents are digest-bound blocked projections only;
   they do not write taskpool/Kanban and keep `writes_enabled = false` until the
   adapter contract plus rollback/reopen semantics are explicitly approved.
+- External adapter write readiness reviews bind the mutation digest to a v0
+  adapter contract projection but still keep `write_through_allowed = false`.
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, and blocked external adapter write intents with mutation digests.
+- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, blocked external adapter write intents with mutation digests, and blocked readiness reviews for those intents.
 - The ledger remains the only fact source.
 - The next step changes authority from "Control Tower ledger closeout" to "external adapter write-through / rollback-reopen", which requires explicit adapter contracts, rollback/escape paths, evidence override semantics, and command-execution approval digests.
 
