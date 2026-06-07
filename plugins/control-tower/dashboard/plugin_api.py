@@ -63,6 +63,22 @@ class EvidenceGateRequest(BaseModel):
     actor_id: str = Field(default="dashboard", min_length=1)
 
 
+class CloseoutAuthorizationRequest(BaseModel):
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    actor_role: str = Field(default="operator", min_length=1)
+    reason: str = Field(default="", min_length=0)
+    ttl_hours: int = control_tower.DEFAULT_CLOSEOUT_AUTH_TTL_HOURS
+
+
+class CloseoutAuthorizationDecisionRequest(BaseModel):
+    decision: str = Field(min_length=1)
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    actor_role: str = Field(default="operator", min_length=1)
+    reason: str = Field(default="", min_length=0)
+
+
 @router.get("/snapshot")
 def get_snapshot():
     """Return the read-only Control Tower Phase 1 snapshot."""
@@ -129,6 +145,37 @@ def evaluate_evidence_gate(req: EvidenceGateRequest):
         actor_type=req.actor_type,
         actor_id=req.actor_id,
         source_surface="dashboard",
+    )
+
+
+@router.post("/evidence-gates/{evidence_review_id}/closeout-authorization")
+def request_closeout_authorization(evidence_review_id: str, req: CloseoutAuthorizationRequest):
+    """Request evidence-bound closeout authorization without closing the task."""
+    return control_tower.request_closeout_authorization(
+        evidence_review_id=evidence_review_id,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        source_surface="dashboard",
+        reason=req.reason,
+        ttl_hours=req.ttl_hours,
+    )
+
+
+@router.post("/closeout-authorizations/{closeout_authorization_id}/decision")
+def decide_closeout_authorization(
+    closeout_authorization_id: str,
+    req: CloseoutAuthorizationDecisionRequest,
+):
+    """Decide closeout authorization without mutating lifecycle state."""
+    return control_tower.decide_closeout_authorization(
+        closeout_authorization_id=closeout_authorization_id,
+        decision=req.decision,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        source_surface="dashboard",
+        reason=req.reason,
     )
 
 

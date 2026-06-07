@@ -231,3 +231,62 @@ def test_control_tower_dashboard_plugin_records_evidence_and_reviews_gate_withou
     assert data["closeout_allowed"] is False
     assert data["blocked_reason"] == "closeout_requires_human_boundary"
     assert data["source_surface"] == "dashboard"
+
+
+def test_control_tower_dashboard_plugin_requests_and_decides_closeout_authorization_without_execution(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    app = FastAPI()
+    app.include_router(_load_plugin_router(), prefix="/api/plugins/control-tower")
+    client = TestClient(app)
+
+    client.post(
+        "/api/plugins/control-tower/evidence",
+        json={
+            "task_id": "task:dashboard-closeout",
+            "evidence_type": "proof",
+            "maturity": "verified",
+            "source_type": "pytest",
+            "summary": "Dashboard submitted verified proof",
+            "producer_type": "human",
+            "producer_id": "charles",
+            "acceptance_refs": ["AC-1"],
+        },
+    )
+    review = client.post(
+        "/api/plugins/control-tower/evidence-gates/evaluate",
+        json={
+            "task_id": "task:dashboard-closeout",
+            "risk_level": "L2",
+            "acceptance_refs": ["AC-1"],
+            "actor_id": "charles",
+        },
+    ).json()
+
+    request_response = client.post(
+        f"/api/plugins/control-tower/evidence-gates/{review['evidence_review_id']}/closeout-authorization",
+        json={"actor_id": "charles", "actor_role": "owner", "reason": "review evidence digest"},
+    )
+
+    assert request_response.status_code == 200, request_response.text
+    requested = request_response.json()
+    assert requested["status"] == "requested"
+    assert requested["required_role"] == "owner"
+    assert requested["closeout_allowed"] is False
+    assert requested["execution"] == "not_executed"
+
+    decision_response = client.post(
+        f"/api/plugins/control-tower/closeout-authorizations/{requested['closeout_authorization_id']}/decision",
+        json={
+            "decision": "approved",
+            "actor_id": "charles",
+            "actor_role": "owner",
+            "reason": "human approved evidence-bound closeout but execution remains disabled",
+        },
+    )
+
+    assert decision_response.status_code == 200, decision_response.text
+    decided = decision_response.json()
+    assert decided["status"] == "approved"
+    assert decided["closeout_allowed"] is False
+    assert decided["execution"] == "not_executed"

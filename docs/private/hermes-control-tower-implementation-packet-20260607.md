@@ -405,21 +405,66 @@ Acceptance:
 - Even satisfied evidence keeps `closeout_allowed = false` until the human closeout boundary is explicitly designed.
 - No task rows are marked done, and no Kanban/taskpool adapter is mutated.
 
-### Phase 5 — Event-driven advancement
+### Phase 5 — Evidence-bound closeout authorization projection
 
-Tasks:
+Phase 5 implements the minimum safe human-authorization layer before any
+execution-capable closeout/write-through adapter exists.
 
-1. Add durable event trigger registry.
-2. Wire task.created/status.changed/dependency.met/proof.added/worker.done/certification.pass/human.approved.
-3. Add missed-event repair watchdog.
-4. Mark polling-only workflows explicitly.
+Implemented scope:
+
+1. Add durable `closeout_authorizations` ledger table.
+2. Bind each closeout authorization request to an `evidence_review_id` and
+   `evidence_state_hash`.
+3. Require satisfied evidence-gate reviews before authorization can be requested.
+4. Fail closed when evidence is insufficient, stale, conflicting, when the
+   referenced evidence review is no longer the current task evidence state, or
+   when the evidence state changes between authorization request and decision.
+5. Add conservative role matrix:
+   - L0/L1: operator
+   - L2: owner
+   - L3/L4+: admin
+6. Add approval TTL (`DEFAULT_CLOSEOUT_AUTH_TTL_HOURS = 24`).
+7. Expired closeout authorization cannot be decided; it emits
+   `CloseoutAuthorizationExpired` and requires a fresh evidence-bound request.
+8. Add single-use/idempotent decision semantics:
+   - same decision retry returns existing decision;
+   - conflicting second decision fails closed.
+9. Keep `closeout_allowed = false` even after approval.
+10. Keep all closeout authorization APIs non-executing and ledger-only.
+
+New API routes:
+
+- `POST /api/plugins/control-tower/evidence-gates/{evidence_review_id}/closeout-authorization`
+- `POST /api/plugins/control-tower/closeout-authorizations/{closeout_authorization_id}/decision`
+
+New audit events:
+
+- `CloseoutAuthorizationRequested`
+- `CloseoutAuthorizationGranted`
+- `CloseoutAuthorizationRejected`
+- `CloseoutAuthorizationExpired`
+
+Snapshot adds `closeout_authorizations`:
+
+- `mode = human_authorization_projection_only`
+- `closeout_execution_enabled = false`
+- `required_role_by_risk`
+- `ttl_hours`
+- `pending_count`
+- `expired_count`
+- `decided_count`
+- recent pending/decided rows
 
 Acceptance:
 
-- Eligible work advances on events.
-- Cron remains watchdog/recovery/report only.
+- Human closeout authorization is durable, evidence-bound, role-checked,
+  expiring, and audited.
+- Approval still does not close tasks, mutate lifecycle state, execute commands,
+  or write through adapters.
+- Cron remains watchdog/recovery/report only; the control plane remains
+  event-led and ledger-backed.
 
-### Phase 6 — Multi-model governance
+### Phase 6 — Event-driven advancement
 
 Tasks:
 
@@ -454,6 +499,9 @@ Implemented:
 14. Evidence record endpoint via `POST /api/plugins/control-tower/evidence`.
 15. Evidence-gate evaluation endpoint via `POST /api/plugins/control-tower/evidence-gates/evaluate`.
 16. Evidence-policy projection via snapshot `evidence_policy`.
+17. Closeout authorization request endpoint via `POST /api/plugins/control-tower/evidence-gates/{evidence_review_id}/closeout-authorization`.
+18. Closeout authorization decision endpoint via `POST /api/plugins/control-tower/closeout-authorizations/{closeout_authorization_id}/decision`.
+19. Closeout authorization projection via snapshot `closeout_authorizations`.
 
 Still intentionally not implemented:
 
@@ -462,12 +510,12 @@ Still intentionally not implemented:
 - No task claim/release/move/done/closeout actions.
 - No arbitrary shell.
 - No write-through Kanban/taskpool adapter.
-- No approval expiration / role authorization matrix yet.
+- No real closeout execution even after authorization approval.
 - No executor whitelist activation beyond dry-run/copy-command planning and policy projection.
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy previews, evidence entries, and evidence-gate closeout projections but never executes them.
+- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy previews, evidence entries, evidence-gate closeout projections, and evidence-bound closeout authorization decisions but never executes them.
 - The ledger remains the only fact source.
 - The next step changes authority from "preview whether a plan would be executable" to "execute an approved plan", which requires explicit policy semantics, role binding, evidence requirements, and write-through adapter decisions.
 
@@ -490,8 +538,9 @@ Resolved:
 Remaining decisions before execution-capable implementation:
 
 1. Approval decision semantics:
-   - Implemented for current non-executing slice: decisions are single-use, same-decision retries are idempotent, conflicting second decisions fail closed, and decisions emit audit events.
-   - Still undecided for execution-capable phase: approver role matrix, expiration windows, risk-level evidence requirements, and whether approval binds to a command hash/payload digest.
+   - Implemented for Human Inbox approvals: decisions are single-use, same-decision retries are idempotent, conflicting second decisions fail closed, and decisions emit audit events.
+   - Implemented for closeout authorizations: requests bind to evidence digest, require satisfied/non-conflicting evidence, enforce role matrix and TTL, expire fail-closed, and keep `closeout_allowed = false`.
+   - Still undecided for execution-capable phase: whether command-execution approval also binds to a command hash/payload digest and which executor actions may consume an approval.
 
 2. Executor boundary:
    - Implemented for current non-executing slice: dry-run/copy-command executor plans may be generated for L0/L1 proposed commands and approved L2+ commands, then reviewed through an execution-policy projection.
@@ -500,8 +549,9 @@ Remaining decisions before execution-capable implementation:
 
 3. Evidence and closeout boundary:
    - Implemented for current non-executing slice: evidence can be recorded and evaluated against risk-level maturity requirements and acceptance refs.
-   - Evidence-gate projection currently always reports `closeout_allowed = false` even when evidence is satisfied.
-   - Still undecided for closeout-capable phase: who can authorize closeout, whether closeout approval binds to evidence digests, how stale/conflicting evidence is remediated, and which adapter receives the final done/closed mutation.
+   - Evidence-gate projection always reports `closeout_allowed = false` even when evidence is satisfied.
+   - Closeout authorization can now be requested/decided as a durable evidence-bound human projection, but an approved authorization still reports `closeout_allowed = false`.
+   - Still undecided for closeout-capable phase: which adapter receives the final done/closed mutation, whether conflicting evidence can ever be human-overridden, and what rollback/reopen path is mandatory.
 
 4. Write-through adapter timing:
    - Keep Kanban/taskpool read-only until command executor is stable, or
@@ -516,4 +566,4 @@ Remaining decisions before execution-capable implementation:
 
 ## Stop condition
 
-Stop execution-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, execution-policy projections, evidence entries, and evidence-gate closeout projections are now durable, audited, idempotent where safe, and non-executing. The next boundary is real executor authority plus closeout/write-through adapter policy; do not run any lifecycle-affecting action until the executor whitelist, closeout authorization model, role matrix, expiration/evidence digest rules, rollback/escape path, and adapter mutation contract are explicitly decided.
+Stop execution-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, execution-policy projections, evidence entries, evidence-gate closeout projections, and evidence-bound closeout authorization requests/decisions are now durable, audited, idempotent where safe, expiring where required, and non-executing. The next boundary is real executor authority plus closeout/write-through adapter policy; do not run any lifecycle-affecting action until the executor whitelist, adapter mutation contract, conflicting-evidence override semantics, rollback/escape path, and closeout execution consumer are explicitly decided.

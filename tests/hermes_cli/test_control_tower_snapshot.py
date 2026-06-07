@@ -36,6 +36,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "executor_plans",
             "execution_policy_reviews",
             "evidence_gate_reviews",
+            "closeout_authorizations",
             "adapter_observations",
             "projection_checkpoints",
         }.issubset(tables)
@@ -1080,3 +1081,405 @@ def test_snapshot_includes_evidence_policy_projection(tmp_path, monkeypatch):
             "blocked_reason": "closeout_requires_human_boundary",
         }
     ]
+
+
+def _record_verified_closeout_evidence(task_id: str = "task:closeout") -> dict[str, object]:
+    control_tower.record_evidence(
+        task_id=task_id,
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Acceptance verified",
+        producer_type="agent",
+        producer_id="worker-1",
+        acceptance_refs=["AC-1"],
+    )
+    return control_tower.evaluate_evidence_gate(
+        task_id=task_id,
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+
+def test_request_closeout_authorization_binds_satisfied_evidence_digest_without_writes(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    review = _record_verified_closeout_evidence()
+
+    request = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="dashboard",
+        reason="ready for human closeout review",
+    )
+    repeated = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="dashboard",
+        reason="same request",
+    )
+
+    assert request["created"] is True
+    assert request["status"] == "requested"
+    assert request["evidence_review_id"] == review["evidence_review_id"]
+    assert request["evidence_state_hash"]
+    assert request["required_role"] == "owner"
+    assert request["closeout_allowed"] is False
+    assert request["execution"] == "not_executed"
+    assert request["expires_at"] > request["requested_at"]
+    assert repeated["created"] is False
+    assert repeated["closeout_authorization_id"] == request["closeout_authorization_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        task_rows = ledger.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        auth_rows = ledger.execute("SELECT COUNT(*) FROM closeout_authorizations").fetchone()[0]
+    assert task_rows == 0
+    assert auth_rows == 1
+
+
+def test_request_closeout_authorization_fails_closed_for_insufficient_or_conflicting_evidence(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    insufficient = control_tower.evaluate_evidence_gate(
+        task_id="task:insufficient-closeout",
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    try:
+        control_tower.request_closeout_authorization(
+            evidence_review_id=insufficient["evidence_review_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "evidence gate is not satisfied" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("insufficient evidence must not request closeout")
+
+    control_tower.record_evidence(
+        task_id="task:conflicting-closeout",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Verified but later conflicted",
+        producer_type="agent",
+        producer_id="worker-1",
+        acceptance_refs=["AC-1"],
+    )
+    control_tower.record_evidence(
+        task_id="task:conflicting-closeout",
+        evidence_type="counterexample",
+        maturity="verified",
+        source_type="reviewer",
+        summary="Conflicting evidence exists",
+        producer_type="human",
+        producer_id="charles",
+        acceptance_refs=["AC-1"],
+        stale_status="conflicting",
+    )
+    conflicting = control_tower.evaluate_evidence_gate(
+        task_id="task:conflicting-closeout",
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    try:
+        control_tower.request_closeout_authorization(
+            evidence_review_id=conflicting["evidence_review_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "conflicting evidence requires remediation" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("conflicting evidence must block closeout authorization")
+
+
+def test_decide_closeout_authorization_checks_role_ttl_and_digest_without_closing_task(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    review = _record_verified_closeout_evidence("task:closeout-decision")
+    request = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="dashboard",
+    )
+
+    try:
+        control_tower.decide_closeout_authorization(
+            closeout_authorization_id=request["closeout_authorization_id"],
+            decision="approved",
+            actor_type="human",
+            actor_id="reviewer",
+            actor_role="operator",
+            source_surface="dashboard",
+            reason="operator is too weak for L2",
+        )
+    except ValueError as exc:
+        assert "actor_role operator cannot decide L2 closeout" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("weak role should fail closed")
+
+    decided = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=request["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="dashboard",
+        reason="human reviewed bound evidence digest",
+    )
+    repeated = control_tower.decide_closeout_authorization(
+        closeout_authorization_id=request["closeout_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="dashboard",
+        reason="same decision retry",
+    )
+
+    assert decided["created"] is True
+    assert decided["status"] == "approved"
+    assert decided["closeout_allowed"] is False
+    assert decided["execution"] == "not_executed"
+    assert repeated["created"] is False
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        task_rows = ledger.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        status = ledger.execute(
+            "SELECT status FROM closeout_authorizations WHERE closeout_authorization_id = ?",
+            (request["closeout_authorization_id"],),
+        ).fetchone()[0]
+    assert task_rows == 0
+    assert status == "approved"
+
+
+def test_closeout_authorization_expires_and_snapshot_reports_boundary(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    review = _record_verified_closeout_evidence("task:closeout-expiry")
+    request = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="dashboard",
+        ttl_hours=1,
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            "UPDATE closeout_authorizations SET expires_at = '2000-01-01T00:00:00+00:00' WHERE closeout_authorization_id = ?",
+            (request["closeout_authorization_id"],),
+        )
+        ledger.commit()
+
+    try:
+        control_tower.decide_closeout_authorization(
+            closeout_authorization_id=request["closeout_authorization_id"],
+            decision="approved",
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "closeout authorization expired" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("expired authorization should fail closed")
+
+    snapshot = control_tower.build_snapshot()
+    assert snapshot["closeout_authorizations"]["mode"] == "human_authorization_projection_only"
+    assert snapshot["closeout_authorizations"]["closeout_execution_enabled"] is False
+    assert snapshot["closeout_authorizations"]["pending_count"] == 0
+    assert snapshot["closeout_authorizations"]["expired_count"] == 1
+    assert snapshot["closeout_authorizations"]["decided_count"] == 0
+
+
+def test_closeout_authorization_l3_requires_admin_role(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    control_tower.record_evidence(
+        task_id="task:l3-closeout",
+        evidence_type="proof",
+        maturity="certified",
+        source_type="pytest",
+        summary="Certified proof for L3",
+        producer_type="human",
+        producer_id="charles",
+        acceptance_refs=["AC-1"],
+    )
+    review = control_tower.evaluate_evidence_gate(
+        task_id="task:l3-closeout",
+        risk_level="L3",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="pytest",
+    )
+
+    try:
+        control_tower.request_closeout_authorization(
+            evidence_review_id=review["evidence_review_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "requires admin" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("L3 closeout authorization must require admin")
+
+    request = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="pytest",
+    )
+    assert request["required_role"] == "admin"
+    assert request["status"] == "requested"
+
+
+def test_closeout_authorization_rejects_obsolete_evidence_review_after_new_conflict(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    control_tower.record_evidence(
+        task_id="task:obsolete-review",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Verified proof before conflict",
+        producer_type="human",
+        producer_id="charles",
+        acceptance_refs=["AC-1"],
+    )
+    review = control_tower.evaluate_evidence_gate(
+        task_id="task:obsolete-review",
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="pytest",
+    )
+    assert review["evidence_status"] == "satisfied"
+
+    control_tower.record_evidence(
+        task_id="task:obsolete-review",
+        evidence_type="review",
+        maturity="verified",
+        source_type="pytest",
+        summary="Later conflicting evidence",
+        producer_type="human",
+        producer_id="reviewer",
+        acceptance_refs=["AC-1"],
+        stale_status="conflicting",
+    )
+
+    try:
+        control_tower.request_closeout_authorization(
+            evidence_review_id=review["evidence_review_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "evidence state changed after review" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("obsolete evidence review must not authorize closeout")
+
+
+def test_expired_closeout_authorization_can_be_replaced_by_fresh_request(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    review = _record_verified_closeout_evidence("task:closeout-fresh-after-expiry")
+    request = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            "UPDATE closeout_authorizations SET expires_at = '2000-01-01T00:00:00+00:00' WHERE closeout_authorization_id = ?",
+            (request["closeout_authorization_id"],),
+        )
+        ledger.commit()
+
+    fresh = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+
+    assert fresh["created"] is True
+    assert fresh["status"] == "requested"
+    assert fresh["closeout_authorization_id"] != request["closeout_authorization_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        rows = ledger.execute(
+            "SELECT status, closeout_allowed FROM closeout_authorizations ORDER BY rowid"
+        ).fetchall()
+    assert rows == [("expired", 0), ("requested", 0)]
+
+
+def test_decide_closeout_authorization_rejects_stale_evidence_after_request(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    review = _record_verified_closeout_evidence("task:decision-stale-after-request")
+    request = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="pytest",
+    )
+    control_tower.record_evidence(
+        task_id="task:decision-stale-after-request",
+        evidence_type="review",
+        maturity="verified",
+        source_type="pytest",
+        summary="Later conflicting evidence before decision",
+        producer_type="human",
+        producer_id="reviewer",
+        acceptance_refs=["AC-1"],
+        stale_status="conflicting",
+    )
+
+    try:
+        control_tower.decide_closeout_authorization(
+            closeout_authorization_id=request["closeout_authorization_id"],
+            decision="approved",
+            actor_type="human",
+            actor_id="charles",
+            actor_role="owner",
+            source_surface="pytest",
+        )
+    except ValueError as exc:
+        assert "evidence state changed after authorization request" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("stale evidence-bound authorization must not be decided")
+
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        rows = ledger.execute("SELECT status, closeout_allowed FROM closeout_authorizations").fetchall()
+    assert rows == [("requested", 0)]

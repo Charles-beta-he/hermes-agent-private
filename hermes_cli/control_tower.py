@@ -12,7 +12,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,15 @@ RISK_REQUIRED_EVIDENCE_MATURITY = {
     "L4": "release_confirmed",
 }
 VALID_EVIDENCE_STALE_STATUSES = {"fresh", "stale", "conflicting"}
+CLOSEOUT_REQUIRED_ROLE_BY_RISK = {
+    "L0": "operator",
+    "L1": "operator",
+    "L2": "owner",
+    "L3": "admin",
+    "L4": "admin",
+}
+ROLE_RANK = {"operator": 0, "owner": 1, "admin": 2}
+DEFAULT_CLOSEOUT_AUTH_TTL_HOURS = 24
 
 CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA: dict[str, Any] = {
     "schema_id": "control-tower-command-lifecycle",
@@ -229,6 +238,26 @@ _TABLES_SQL: tuple[str, ...] = (
         reviewed_by TEXT NOT NULL,
         reviewed_at TEXT NOT NULL,
         UNIQUE(task_id, risk_level, acceptance_refs_json, evidence_state_hash)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS closeout_authorizations (
+        closeout_authorization_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        risk_level TEXT NOT NULL,
+        evidence_review_id TEXT NOT NULL,
+        evidence_state_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        required_role TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        requested_role TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        decided_by TEXT,
+        decided_role TEXT,
+        decided_at TEXT,
+        reason TEXT,
+        closeout_allowed INTEGER NOT NULL DEFAULT 0
     )
     """,
     """
@@ -1184,6 +1213,7 @@ def _evidence_review_response(*, created: bool, row: sqlite3.Row, source_surface
         "evidence_status": row["evidence_status"],
         "required_maturity": row["required_maturity"],
         "acceptance_refs": json.loads(row["acceptance_refs_json"]),
+        "evidence_state_hash": row["evidence_state_hash"],
         "satisfied_refs": json.loads(row["satisfied_refs_json"]),
         "missing_refs": json.loads(row["missing_refs_json"]),
         "stale_or_conflicting_count": int(row["stale_or_conflicting_count"]),
@@ -1194,6 +1224,32 @@ def _evidence_review_response(*, created: bool, row: sqlite3.Row, source_surface
         "reviewed_by": row["reviewed_by"],
         "reviewed_at": row["reviewed_at"],
     }
+
+
+def _evidence_state_hash_for_task(conn: sqlite3.Connection, task_id: str) -> str:
+    evidence_rows = conn.execute(
+        """
+        SELECT evidence_id, maturity, acceptance_refs_json, stale_status, updated_at
+        FROM evidence
+        WHERE task_id = ?
+        ORDER BY evidence_id
+        """,
+        (task_id,),
+    ).fetchall()
+    return hashlib.sha256(
+        _canonical_json(
+            [
+                {
+                    "evidence_id": row["evidence_id"],
+                    "maturity": row["maturity"],
+                    "acceptance_refs": json.loads(row["acceptance_refs_json"]),
+                    "stale_status": row["stale_status"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in evidence_rows
+            ]
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def evaluate_evidence_gate(
@@ -1236,25 +1292,12 @@ def evaluate_evidence_gate(
             """,
             (task_id,),
         ).fetchall()
-        evidence_state_hash = hashlib.sha256(
-            _canonical_json(
-                [
-                    {
-                        "evidence_id": row["evidence_id"],
-                        "maturity": row["maturity"],
-                        "acceptance_refs": json.loads(row["acceptance_refs_json"]),
-                        "stale_status": row["stale_status"],
-                        "updated_at": row["updated_at"],
-                    }
-                    for row in evidence_rows
-                ]
-            ).encode("utf-8")
-        ).hexdigest()
+        evidence_state_hash = _evidence_state_hash_for_task(conn, task_id)
         existing = conn.execute(
             """
             SELECT evidence_review_id, task_id, risk_level, evidence_status,
-                   required_maturity, acceptance_refs_json, satisfied_refs_json,
-                   missing_refs_json, stale_or_conflicting_count, closeout_allowed,
+                   required_maturity, acceptance_refs_json, evidence_state_hash,
+                   satisfied_refs_json, missing_refs_json, stale_or_conflicting_count, closeout_allowed,
                    blocked_reason, reviewed_by, reviewed_at
             FROM evidence_gate_reviews
             WHERE task_id = ? AND risk_level = ? AND acceptance_refs_json = ?
@@ -1346,8 +1389,8 @@ def evaluate_evidence_gate(
         row = conn.execute(
             """
             SELECT evidence_review_id, task_id, risk_level, evidence_status,
-                   required_maturity, acceptance_refs_json, satisfied_refs_json,
-                   missing_refs_json, stale_or_conflicting_count, closeout_allowed,
+                   required_maturity, acceptance_refs_json, evidence_state_hash,
+                   satisfied_refs_json, missing_refs_json, stale_or_conflicting_count, closeout_allowed,
                    blocked_reason, reviewed_by, reviewed_at
             FROM evidence_gate_reviews
             WHERE evidence_review_id = ?
@@ -1355,6 +1398,327 @@ def evaluate_evidence_gate(
             (evidence_review_id,),
         ).fetchone()
     return _evidence_review_response(created=True, row=row, source_surface=source_surface)
+
+
+def _required_closeout_role_for_risk(risk_level: str) -> str:
+    return CLOSEOUT_REQUIRED_ROLE_BY_RISK.get(risk_level.strip().upper(), "admin")
+
+
+def _role_allows(actor_role: str, required_role: str) -> bool:
+    return ROLE_RANK.get(actor_role.strip().lower(), -1) >= ROLE_RANK.get(required_role, 999)
+
+
+def _closeout_authorization_response(*, created: bool, row: sqlite3.Row, source_surface: str) -> dict[str, Any]:
+    return {
+        "created": created,
+        "closeout_authorization_id": row["closeout_authorization_id"],
+        "task_id": row["task_id"],
+        "risk_level": row["risk_level"],
+        "evidence_review_id": row["evidence_review_id"],
+        "evidence_state_hash": row["evidence_state_hash"],
+        "status": row["status"],
+        "required_role": row["required_role"],
+        "requested_by": row["requested_by"],
+        "requested_role": row["requested_role"],
+        "requested_at": row["requested_at"],
+        "expires_at": row["expires_at"],
+        "decided_by": row["decided_by"],
+        "decided_role": row["decided_role"],
+        "decided_at": row["decided_at"],
+        "closeout_allowed": bool(row["closeout_allowed"]),
+        "execution": "not_executed",
+        "source_surface": source_surface,
+    }
+
+
+def request_closeout_authorization(
+    *,
+    evidence_review_id: str,
+    actor_type: str,
+    actor_id: str,
+    actor_role: str,
+    source_surface: str,
+    reason: str = "",
+    ttl_hours: int = DEFAULT_CLOSEOUT_AUTH_TTL_HOURS,
+) -> dict[str, Any]:
+    """Request human closeout authorization bound to an evidence state hash.
+
+    This is a Phase 5 authorization projection only. It never closes a task and
+    never writes through to taskpool/Kanban adapters.
+    """
+    evidence_review_id = evidence_review_id.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    actor_role = actor_role.strip().lower()
+    source_surface = source_surface.strip()
+    reason = reason.strip()
+    if not evidence_review_id:
+        raise ValueError("evidence_review_id is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if actor_role not in ROLE_RANK:
+        raise ValueError(f"unsupported actor_role: {actor_role}")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+    if ttl_hours <= 0:
+        raise ValueError("ttl_hours must be positive")
+
+    with _connect() as conn:
+        review = conn.execute(
+            """
+            SELECT evidence_review_id, task_id, risk_level, evidence_status,
+                   evidence_state_hash, stale_or_conflicting_count, closeout_allowed
+            FROM evidence_gate_reviews
+            WHERE evidence_review_id = ?
+            """,
+            (evidence_review_id,),
+        ).fetchone()
+        if review is None:
+            raise ValueError(f"evidence gate review not found: {evidence_review_id}")
+        if review["evidence_status"] != "satisfied":
+            raise ValueError("evidence gate is not satisfied; closeout authorization blocked")
+        if int(review["stale_or_conflicting_count"]):
+            raise ValueError("conflicting evidence requires remediation before closeout authorization")
+        current_evidence_state_hash = _evidence_state_hash_for_task(conn, review["task_id"])
+        if current_evidence_state_hash != review["evidence_state_hash"]:
+            raise ValueError("evidence state changed after review; evaluate a fresh evidence gate before closeout authorization")
+        required_role = _required_closeout_role_for_risk(review["risk_level"])
+        if not _role_allows(actor_role, required_role):
+            raise ValueError(
+                f"actor_role {actor_role} cannot request {review['risk_level']} closeout; requires {required_role}"
+            )
+        existing = conn.execute(
+            """
+            SELECT closeout_authorization_id, task_id, risk_level, evidence_review_id,
+                   evidence_state_hash, status, required_role, requested_by, requested_role,
+                   requested_at, expires_at, decided_by, decided_role, decided_at,
+                   closeout_allowed
+            FROM closeout_authorizations
+            WHERE evidence_review_id = ? AND evidence_state_hash = ? AND status != 'expired'
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (evidence_review_id, review["evidence_state_hash"]),
+        ).fetchone()
+        if existing is not None:
+            if existing["status"] == "requested" and datetime.fromisoformat(existing["expires_at"]) <= datetime.now(timezone.utc):
+                conn.execute(
+                    "UPDATE closeout_authorizations SET status = ? WHERE closeout_authorization_id = ?",
+                    ("expired", existing["closeout_authorization_id"]),
+                )
+                _append_event(
+                    conn,
+                    event_type="CloseoutAuthorizationExpired",
+                    aggregate_type="closeout_authorization",
+                    aggregate_id=existing["closeout_authorization_id"],
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    source_surface=source_surface,
+                    payload={
+                        "closeout_authorization_id": existing["closeout_authorization_id"],
+                        "task_id": existing["task_id"],
+                        "risk_level": existing["risk_level"],
+                        "evidence_review_id": existing["evidence_review_id"],
+                        "closeout_allowed": False,
+                        "execution": "not_executed",
+                    },
+                )
+            else:
+                return _closeout_authorization_response(created=False, row=existing, source_surface=source_surface)
+
+        requested_at_dt = datetime.now(timezone.utc)
+        requested_at = requested_at_dt.isoformat()
+        expires_at = (requested_at_dt + timedelta(hours=ttl_hours)).isoformat()
+        closeout_authorization_id = f"closeout_{uuid.uuid4().hex}"
+        conn.execute(
+            """
+            INSERT INTO closeout_authorizations(
+                closeout_authorization_id, task_id, risk_level, evidence_review_id,
+                evidence_state_hash, status, required_role, requested_by, requested_role,
+                requested_at, expires_at, reason, closeout_allowed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                closeout_authorization_id,
+                review["task_id"],
+                review["risk_level"],
+                evidence_review_id,
+                review["evidence_state_hash"],
+                "requested",
+                required_role,
+                actor_id,
+                actor_role,
+                requested_at,
+                expires_at,
+                reason,
+                0,
+            ),
+        )
+        _append_event(
+            conn,
+            event_type="CloseoutAuthorizationRequested",
+            aggregate_type="closeout_authorization",
+            aggregate_id=closeout_authorization_id,
+            command_id=None,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "closeout_authorization_id": closeout_authorization_id,
+                "task_id": review["task_id"],
+                "risk_level": review["risk_level"],
+                "evidence_review_id": evidence_review_id,
+                "evidence_state_hash": review["evidence_state_hash"],
+                "required_role": required_role,
+                "status": "requested",
+                "expires_at": expires_at,
+                "closeout_allowed": False,
+                "execution": "not_executed",
+            },
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT closeout_authorization_id, task_id, risk_level, evidence_review_id,
+                   evidence_state_hash, status, required_role, requested_by, requested_role,
+                   requested_at, expires_at, decided_by, decided_role, decided_at,
+                   closeout_allowed
+            FROM closeout_authorizations
+            WHERE closeout_authorization_id = ?
+            """,
+            (closeout_authorization_id,),
+        ).fetchone()
+    return _closeout_authorization_response(created=True, row=row, source_surface=source_surface)
+
+
+def decide_closeout_authorization(
+    *,
+    closeout_authorization_id: str,
+    decision: str,
+    actor_type: str,
+    actor_id: str,
+    actor_role: str,
+    source_surface: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Decide closeout authorization without closing or mutating a task."""
+    closeout_authorization_id = closeout_authorization_id.strip()
+    decision = decision.strip().lower()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    actor_role = actor_role.strip().lower()
+    source_surface = source_surface.strip()
+    reason = reason.strip()
+    if not closeout_authorization_id:
+        raise ValueError("closeout_authorization_id is required")
+    if decision not in {"approved", "rejected"}:
+        raise ValueError("decision must be approved or rejected")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if actor_role not in ROLE_RANK:
+        raise ValueError(f"unsupported actor_role: {actor_role}")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT closeout_authorization_id, task_id, risk_level, evidence_review_id,
+                   evidence_state_hash, status, required_role, requested_by, requested_role,
+                   requested_at, expires_at, decided_by, decided_role, decided_at,
+                   closeout_allowed
+            FROM closeout_authorizations
+            WHERE closeout_authorization_id = ?
+            """,
+            (closeout_authorization_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"closeout authorization not found: {closeout_authorization_id}")
+        if not _role_allows(actor_role, row["required_role"]):
+            raise ValueError(
+                f"actor_role {actor_role} cannot decide {row['risk_level']} closeout; requires {row['required_role']}"
+            )
+        if row["status"] in {"approved", "rejected"}:
+            if row["status"] != decision:
+                raise ValueError(
+                    f"closeout authorization already decided as {row['status']}; conflicting decision {decision} rejected"
+                )
+            return _closeout_authorization_response(created=False, row=row, source_surface=source_surface)
+        if row["status"] != "requested":
+            raise ValueError(f"closeout authorization is not pending: {row['status']}")
+        current_evidence_state_hash = _evidence_state_hash_for_task(conn, row["task_id"])
+        if current_evidence_state_hash != row["evidence_state_hash"]:
+            raise ValueError("evidence state changed after authorization request; request a fresh evidence-bound approval")
+        if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+            conn.execute(
+                "UPDATE closeout_authorizations SET status = ? WHERE closeout_authorization_id = ?",
+                ("expired", closeout_authorization_id),
+            )
+            _append_event(
+                conn,
+                event_type="CloseoutAuthorizationExpired",
+                aggregate_type="closeout_authorization",
+                aggregate_id=closeout_authorization_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                source_surface=source_surface,
+                payload={
+                    "closeout_authorization_id": closeout_authorization_id,
+                    "task_id": row["task_id"],
+                    "risk_level": row["risk_level"],
+                    "evidence_review_id": row["evidence_review_id"],
+                    "closeout_allowed": False,
+                    "execution": "not_executed",
+                },
+            )
+            conn.commit()
+            raise ValueError("closeout authorization expired; request a fresh evidence-bound approval")
+        decided_at = _now()
+        conn.execute(
+            """
+            UPDATE closeout_authorizations
+            SET status = ?, decided_by = ?, decided_role = ?, decided_at = ?, reason = ?, closeout_allowed = 0
+            WHERE closeout_authorization_id = ?
+            """,
+            (decision, actor_id, actor_role, decided_at, reason, closeout_authorization_id),
+        )
+        _append_event(
+            conn,
+            event_type="CloseoutAuthorizationGranted" if decision == "approved" else "CloseoutAuthorizationRejected",
+            aggregate_type="closeout_authorization",
+            aggregate_id=closeout_authorization_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "closeout_authorization_id": closeout_authorization_id,
+                "task_id": row["task_id"],
+                "risk_level": row["risk_level"],
+                "evidence_review_id": row["evidence_review_id"],
+                "evidence_state_hash": row["evidence_state_hash"],
+                "decision": decision,
+                "reason": reason,
+                "closeout_allowed": False,
+                "execution": "not_executed",
+            },
+        )
+        conn.commit()
+        updated = conn.execute(
+            """
+            SELECT closeout_authorization_id, task_id, risk_level, evidence_review_id,
+                   evidence_state_hash, status, required_role, requested_by, requested_role,
+                   requested_at, expires_at, decided_by, decided_role, decided_at,
+                   closeout_allowed
+            FROM closeout_authorizations
+            WHERE closeout_authorization_id = ?
+            """,
+            (closeout_authorization_id,),
+        ).fetchone()
+    return _closeout_authorization_response(created=True, row=updated, source_surface=source_surface)
 
 
 def record_adapter_observation(
@@ -1672,6 +2036,41 @@ def _evidence_policy_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _closeout_authorizations_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    pending_rows = conn.execute(
+        """
+        SELECT closeout_authorization_id, task_id, risk_level, evidence_review_id,
+               status, required_role, requested_by, requested_role, requested_at, expires_at
+        FROM closeout_authorizations
+        WHERE status = 'requested'
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    decided_rows = conn.execute(
+        """
+        SELECT closeout_authorization_id, task_id, risk_level, evidence_review_id,
+               status, required_role, requested_by, requested_role, requested_at,
+               expires_at, decided_by, decided_role, decided_at, closeout_allowed
+        FROM closeout_authorizations
+        WHERE status IN ('approved', 'rejected', 'expired')
+        ORDER BY COALESCE(decided_at, expires_at) DESC, rowid DESC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "human_authorization_projection_only",
+        "closeout_execution_enabled": False,
+        "required_role_by_risk": dict(CLOSEOUT_REQUIRED_ROLE_BY_RISK),
+        "ttl_hours": DEFAULT_CLOSEOUT_AUTH_TTL_HOURS,
+        "pending_count": _count(conn, "closeout_authorizations", "status = 'requested'"),
+        "expired_count": _count(conn, "closeout_authorizations", "status = 'expired'"),
+        "pending": [dict(row) for row in pending_rows],
+        "decided_count": _count(conn, "closeout_authorizations", "status IN ('approved', 'rejected')"),
+        "recent_decided": [dict(row) for row in decided_rows],
+    }
+
+
 def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     schema = validate_workflow_schema(CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA)
     pending = conn.execute(
@@ -1740,6 +2139,7 @@ def build_snapshot() -> dict[str, Any]:
         executor_plans = _executor_plans_snapshot(conn)
         execution_policy = _execution_policy_snapshot(conn)
         evidence_policy = _evidence_policy_snapshot(conn)
+        closeout_authorizations = _closeout_authorizations_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -1781,6 +2181,7 @@ def build_snapshot() -> dict[str, Any]:
         "executor_plans": executor_plans,
         "execution_policy": execution_policy,
         "evidence_policy": evidence_policy,
+        "closeout_authorizations": closeout_authorizations,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {

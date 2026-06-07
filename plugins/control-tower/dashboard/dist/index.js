@@ -6,10 +6,11 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 4C is still non-executing: this dashboard can record operator intent,
+        Phase 5 is still non-executing: this dashboard can record operator intent,
         human decisions, copy-command executor plans, execution-policy previews,
-        evidence entries, and evidence-gate projections in the Control Tower Ledger,
-        but it cannot execute lifecycle actions, close tasks, or write through adapters.
+        evidence entries, evidence-gate projections, and evidence-bound closeout
+        authorizations in the Control Tower Ledger, but it cannot execute lifecycle
+        actions, close tasks, or write through adapters.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
@@ -35,6 +36,12 @@
         <button id="control-tower-evidence-gate" type="button">
           Evaluate evidence gate
         </button>
+        <button id="control-tower-request-closeout" type="button">
+          Request closeout auth
+        </button>
+        <button id="control-tower-approve-closeout" type="button">
+          Approve closeout auth
+        </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
@@ -55,6 +62,9 @@
     const plans = data?.executor_plans?.planned_count ?? 0;
     const policyReviews = data?.execution_policy?.review_count ?? 0;
     const evidenceReviews = data?.evidence_policy?.review_count ?? 0;
+    const closeoutPending = data?.closeout_authorizations?.pending_count ?? 0;
+    const closeoutDecided = data?.closeout_authorizations?.decided_count ?? 0;
+    const closeoutExpired = data?.closeout_authorizations?.expired_count ?? 0;
     const writesEnabled = data?.execution_policy?.writes_enabled === true;
     const closeoutEnabled = data?.evidence_policy?.closeout_execution_enabled === true;
     const ready = data?.workflow_map?.ready?.length ?? 0;
@@ -67,6 +77,9 @@
         <span>Executor plans: <strong>${plans}</strong></span>
         <span>Policy reviews: <strong>${policyReviews}</strong></span>
         <span>Evidence reviews: <strong>${evidenceReviews}</strong></span>
+        <span>Closeout auth pending: <strong>${closeoutPending}</strong></span>
+        <span>Closeout auth decided: <strong>${closeoutDecided}</strong></span>
+        <span>Closeout auth expired: <strong>${closeoutExpired}</strong></span>
         <span>Writes enabled: <strong>${writesEnabled ? 'yes' : 'no'}</strong></span>
         <span>Closeout enabled: <strong>${closeoutEnabled ? 'yes' : 'no'}</strong></span>
         <span>Workflow ready: <strong>${ready}</strong></span>
@@ -229,6 +242,61 @@
       });
   };
 
+  const requestCloseoutAuthorization = () => {
+    const review = latestSnapshot?.evidence_policy?.recent_reviews?.find(
+      (entry) => entry.evidence_status === 'satisfied'
+    );
+    if (!review) {
+      if (snapshotEl) snapshotEl.textContent = 'No satisfied evidence gate review to authorize.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/evidence-gates/${encodeURIComponent(review.evidence_review_id)}/closeout-authorization`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor_type: 'human',
+        actor_id: 'dashboard',
+        actor_role: 'owner',
+        reason: 'dashboard requested evidence-bound closeout authorization; no closeout executed',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `Closeout authorization request failed: ${error}`;
+      });
+  };
+
+  const approveFirstCloseoutAuthorization = () => {
+    const authorization = latestSnapshot?.closeout_authorizations?.pending?.[0];
+    if (!authorization) {
+      if (snapshotEl) snapshotEl.textContent = 'No pending closeout authorization to approve.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/closeout-authorizations/${encodeURIComponent(authorization.closeout_authorization_id)}/decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        decision: 'approved',
+        actor_type: 'human',
+        actor_id: 'dashboard',
+        actor_role: 'owner',
+        reason: 'dashboard approved evidence-bound closeout authorization; execution remains disabled',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `Closeout authorization decision failed: ${error}`;
+      });
+  };
+
   document.getElementById('control-tower-refresh')?.addEventListener('click', loadSnapshot);
   document
     .getElementById('control-tower-propose-refresh')
@@ -251,5 +319,11 @@
   document
     .getElementById('control-tower-evidence-gate')
     ?.addEventListener('click', evaluateEvidenceGate);
+  document
+    .getElementById('control-tower-request-closeout')
+    ?.addEventListener('click', requestCloseoutAuthorization);
+  document
+    .getElementById('control-tower-approve-closeout')
+    ?.addEventListener('click', approveFirstCloseoutAuthorization);
   loadSnapshot();
 })();
