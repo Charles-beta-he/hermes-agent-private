@@ -38,6 +38,31 @@ class ExecutorPlanRequest(BaseModel):
     actor_id: str = Field(default="dashboard", min_length=1)
 
 
+class EvidenceRecordRequest(BaseModel):
+    task_id: str = Field(min_length=1)
+    evidence_type: str = Field(min_length=1)
+    maturity: str = Field(min_length=1)
+    source_type: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    producer_type: str = Field(default="human", min_length=1)
+    producer_id: str = Field(default="dashboard", min_length=1)
+    workflow_run_id: str | None = None
+    step_run_id: str | None = None
+    artifact_uri: str | None = None
+    artifact_hash: str | None = None
+    verifier: str | None = None
+    acceptance_refs: list[str] = Field(default_factory=list)
+    stale_status: str = "fresh"
+
+
+class EvidenceGateRequest(BaseModel):
+    task_id: str = Field(min_length=1)
+    risk_level: str = "L1"
+    acceptance_refs: list[str] = Field(default_factory=list)
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+
+
 @router.get("/snapshot")
 def get_snapshot():
     """Return the read-only Control Tower Phase 1 snapshot."""
@@ -70,6 +95,40 @@ def decide_approval(approval_id: str, req: ApprovalDecisionRequest):
         actor_id=req.actor_id,
         source_surface="dashboard",
         reason=req.reason,
+    )
+
+
+@router.post("/evidence")
+def record_evidence(req: EvidenceRecordRequest):
+    """Record evidence without closing or mutating task lifecycle state."""
+    return control_tower.record_evidence(
+        task_id=req.task_id,
+        evidence_type=req.evidence_type,
+        maturity=req.maturity,
+        source_type=req.source_type,
+        summary=req.summary,
+        producer_type=req.producer_type,
+        producer_id=req.producer_id,
+        workflow_run_id=req.workflow_run_id,
+        step_run_id=req.step_run_id,
+        artifact_uri=req.artifact_uri,
+        artifact_hash=req.artifact_hash,
+        verifier=req.verifier,
+        acceptance_refs=req.acceptance_refs,
+        stale_status=req.stale_status,
+    )
+
+
+@router.post("/evidence-gates/evaluate")
+def evaluate_evidence_gate(req: EvidenceGateRequest):
+    """Evaluate evidence adequacy without closing the task."""
+    return control_tower.evaluate_evidence_gate(
+        task_id=req.task_id,
+        risk_level=req.risk_level,
+        acceptance_refs=req.acceptance_refs,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        source_surface="dashboard",
     )
 
 

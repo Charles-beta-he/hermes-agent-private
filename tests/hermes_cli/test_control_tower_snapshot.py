@@ -35,6 +35,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "human_approvals",
             "executor_plans",
             "execution_policy_reviews",
+            "evidence_gate_reviews",
             "adapter_observations",
             "projection_checkpoints",
         }.issubset(tables)
@@ -802,5 +803,280 @@ def test_snapshot_includes_execution_policy_projection_without_write_authority(t
             "allowed_to_execute": False,
             "blocked_reason": "real_executor_policy_not_enabled",
             "rollback_available": False,
+        }
+    ]
+
+
+def test_record_evidence_validates_maturity_and_records_audit_event(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+
+    evidence = control_tower.record_evidence(
+        task_id="task:evidence",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Focused proof passed",
+        producer_type="agent",
+        producer_id="hermes",
+        acceptance_refs=["AC-1"],
+        artifact_uri="command:pytest tests/hermes_cli/test_control_tower_snapshot.py",
+        artifact_hash="sha256:abc123",
+    )
+
+    assert evidence["status"] == "recorded"
+    assert evidence["execution"] == "not_executed"
+    assert evidence["evidence_id"].startswith("ev_")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        row = ledger.execute(
+            "SELECT task_id, evidence_type, maturity, stale_status FROM evidence"
+        ).fetchone()
+        event_type = ledger.execute("SELECT event_type FROM events").fetchone()[0]
+    assert row == ("task:evidence", "proof", "verified", "fresh")
+    assert event_type == "EvidenceRecorded"
+
+    try:
+        control_tower.record_evidence(
+            task_id="task:evidence",
+            evidence_type="proof",
+            maturity="rumor",
+            source_type="pytest",
+            summary="invalid",
+            producer_type="agent",
+            producer_id="hermes",
+        )
+    except ValueError as exc:
+        assert "invalid evidence maturity" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("invalid maturity should fail closed")
+
+
+def test_evidence_gate_blocks_advisory_or_stale_evidence_without_closeout(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    control_tower.record_evidence(
+        task_id="task:evidence-gate",
+        evidence_type="claim",
+        maturity="advisory",
+        source_type="agent_summary",
+        summary="Agent says it is done",
+        producer_type="agent",
+        producer_id="worker-1",
+        acceptance_refs=["AC-1"],
+    )
+    control_tower.record_evidence(
+        task_id="task:evidence-gate",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Old proof is stale",
+        producer_type="agent",
+        producer_id="worker-1",
+        acceptance_refs=["AC-2"],
+        stale_status="stale",
+    )
+
+    review = control_tower.evaluate_evidence_gate(
+        task_id="task:evidence-gate",
+        risk_level="L2",
+        acceptance_refs=["AC-1", "AC-2"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    assert review["evidence_status"] == "insufficient"
+    assert review["required_maturity"] == "verified"
+    assert review["satisfied_refs"] == []
+    assert review["missing_refs"] == ["AC-1", "AC-2"]
+    assert review["stale_or_conflicting_count"] == 1
+    assert review["closeout_allowed"] is False
+    assert review["execution"] == "not_executed"
+    assert review["blocked_reason"] == "insufficient_verified_evidence"
+
+
+def test_evidence_gate_marks_satisfied_but_still_requires_human_closeout_boundary(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    control_tower.record_evidence(
+        task_id="task:evidence-satisfied",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Acceptance AC-1 verified",
+        producer_type="agent",
+        producer_id="worker-1",
+        acceptance_refs=["AC-1"],
+    )
+    control_tower.record_evidence(
+        task_id="task:evidence-satisfied",
+        evidence_type="proof",
+        maturity="certified",
+        source_type="reviewer",
+        summary="Acceptance AC-2 certified",
+        producer_type="model_panel",
+        producer_id="reviewer-quorum",
+        acceptance_refs=["AC-2"],
+    )
+
+    review = control_tower.evaluate_evidence_gate(
+        task_id="task:evidence-satisfied",
+        risk_level="L2",
+        acceptance_refs=["AC-1", "AC-2"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    repeated = control_tower.evaluate_evidence_gate(
+        task_id="task:evidence-satisfied",
+        risk_level="L2",
+        acceptance_refs=["AC-1", "AC-2"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    assert review["created"] is True
+    assert review["evidence_status"] == "satisfied"
+    assert review["required_maturity"] == "verified"
+    assert review["satisfied_refs"] == ["AC-1", "AC-2"]
+    assert review["missing_refs"] == []
+    assert review["closeout_allowed"] is False
+    assert review["blocked_reason"] == "closeout_requires_human_boundary"
+    assert repeated["created"] is False
+    assert repeated["evidence_review_id"] == review["evidence_review_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        task_rows = ledger.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert task_rows == 0
+    assert event_types == [
+        "EvidenceRecorded",
+        "EvidenceRecorded",
+        "EvidenceGateEvaluated",
+    ]
+
+
+def test_evidence_gate_recomputes_when_evidence_state_changes(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+
+    first = control_tower.evaluate_evidence_gate(
+        task_id="task:evidence-late",
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    control_tower.record_evidence(
+        task_id="task:evidence-late",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Late proof now satisfies AC-1",
+        producer_type="agent",
+        producer_id="worker-1",
+        acceptance_refs=["AC-1"],
+    )
+    second = control_tower.evaluate_evidence_gate(
+        task_id="task:evidence-late",
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    assert first["evidence_status"] == "insufficient"
+    assert second["created"] is True
+    assert second["evidence_status"] == "satisfied"
+    assert second["missing_refs"] == []
+    assert second["evidence_review_id"] != first["evidence_review_id"]
+
+
+def test_evidence_gate_recomputes_when_conflicting_evidence_is_added(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    control_tower.record_evidence(
+        task_id="task:evidence-conflict",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Initial proof",
+        producer_type="agent",
+        producer_id="worker-1",
+        acceptance_refs=["AC-1"],
+    )
+    first = control_tower.evaluate_evidence_gate(
+        task_id="task:evidence-conflict",
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    control_tower.record_evidence(
+        task_id="task:evidence-conflict",
+        evidence_type="counterexample",
+        maturity="verified",
+        source_type="reviewer",
+        summary="Reviewer found conflicting signal",
+        producer_type="human",
+        producer_id="charles",
+        acceptance_refs=["AC-1"],
+        stale_status="conflicting",
+    )
+    second = control_tower.evaluate_evidence_gate(
+        task_id="task:evidence-conflict",
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    assert first["evidence_status"] == "satisfied"
+    assert second["created"] is True
+    assert second["evidence_status"] == "satisfied"
+    assert second["stale_or_conflicting_count"] == 1
+    assert second["evidence_review_id"] != first["evidence_review_id"]
+
+
+def test_snapshot_includes_evidence_policy_projection(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    control_tower.record_evidence(
+        task_id="task:evidence-snapshot",
+        evidence_type="proof",
+        maturity="observed",
+        source_type="smoke",
+        summary="Observed proof",
+        producer_type="agent",
+        producer_id="hermes",
+        acceptance_refs=["AC-1"],
+    )
+    review = control_tower.evaluate_evidence_gate(
+        task_id="task:evidence-snapshot",
+        risk_level="L1",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    snapshot = control_tower.build_snapshot()
+
+    assert snapshot["evidence_summary"]["observed"] == 1
+    assert snapshot["evidence_policy"]["closeout_execution_enabled"] is False
+    assert snapshot["evidence_policy"]["review_count"] == 1
+    assert snapshot["evidence_policy"]["recent_reviews"] == [
+        {
+            "evidence_review_id": review["evidence_review_id"],
+            "task_id": "task:evidence-snapshot",
+            "risk_level": "L1",
+            "evidence_status": "satisfied",
+            "required_maturity": "observed",
+            "closeout_allowed": False,
+            "blocked_reason": "closeout_requires_human_boundary",
         }
     ]

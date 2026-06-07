@@ -21,6 +21,22 @@ from hermes_constants import get_hermes_home
 SCHEMA_VERSION = 1
 LEDGER_FILENAME = "control_tower.db"
 
+EVIDENCE_MATURITY_ORDER = {
+    "advisory": 0,
+    "observed": 1,
+    "verified": 2,
+    "certified": 3,
+    "release_confirmed": 4,
+}
+RISK_REQUIRED_EVIDENCE_MATURITY = {
+    "L0": "observed",
+    "L1": "observed",
+    "L2": "verified",
+    "L3": "certified",
+    "L4": "release_confirmed",
+}
+VALID_EVIDENCE_STALE_STATUSES = {"fresh", "stale", "conflicting"}
+
 CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA: dict[str, Any] = {
     "schema_id": "control-tower-command-lifecycle",
     "version": 1,
@@ -194,6 +210,25 @@ _TABLES_SQL: tuple[str, ...] = (
         stale_status TEXT NOT NULL DEFAULT 'fresh',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS evidence_gate_reviews (
+        evidence_review_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        risk_level TEXT NOT NULL,
+        evidence_status TEXT NOT NULL,
+        required_maturity TEXT NOT NULL,
+        acceptance_refs_json TEXT NOT NULL DEFAULT '[]',
+        evidence_state_hash TEXT NOT NULL,
+        satisfied_refs_json TEXT NOT NULL DEFAULT '[]',
+        missing_refs_json TEXT NOT NULL DEFAULT '[]',
+        stale_or_conflicting_count INTEGER NOT NULL DEFAULT 0,
+        closeout_allowed INTEGER NOT NULL DEFAULT 0,
+        blocked_reason TEXT NOT NULL,
+        reviewed_by TEXT NOT NULL,
+        reviewed_at TEXT NOT NULL,
+        UNIQUE(task_id, risk_level, acceptance_refs_json, evidence_state_hash)
     )
     """,
     """
@@ -1022,6 +1057,306 @@ def review_executor_plan_policy(
     return _policy_review_response(created=True, row=row, source_surface=source_surface)
 
 
+def _normalize_acceptance_refs(acceptance_refs: list[str] | None) -> list[str]:
+    refs = acceptance_refs or []
+    normalized = sorted({ref.strip() for ref in refs if ref and ref.strip()})
+    return normalized
+
+
+def _required_maturity_for_risk(risk_level: str) -> str:
+    return RISK_REQUIRED_EVIDENCE_MATURITY.get(risk_level.strip().upper(), "release_confirmed")
+
+
+def record_evidence(
+    *,
+    task_id: str,
+    evidence_type: str,
+    maturity: str,
+    source_type: str,
+    summary: str,
+    producer_type: str,
+    producer_id: str,
+    workflow_run_id: str | None = None,
+    step_run_id: str | None = None,
+    artifact_uri: str | None = None,
+    artifact_hash: str | None = None,
+    verifier: str | None = None,
+    acceptance_refs: list[str] | None = None,
+    stale_status: str = "fresh",
+) -> dict[str, Any]:
+    """Record evidence in the ledger without closing or mutating task lifecycle."""
+    task_id = task_id.strip()
+    evidence_type = evidence_type.strip()
+    maturity = maturity.strip()
+    source_type = source_type.strip()
+    summary = summary.strip()
+    producer_type = producer_type.strip()
+    producer_id = producer_id.strip()
+    stale_status = stale_status.strip()
+    if not task_id:
+        raise ValueError("task_id is required")
+    if not evidence_type:
+        raise ValueError("evidence_type is required")
+    if maturity not in EVIDENCE_MATURITY_ORDER:
+        raise ValueError(f"invalid evidence maturity: {maturity}")
+    if stale_status not in VALID_EVIDENCE_STALE_STATUSES:
+        raise ValueError(f"invalid evidence stale_status: {stale_status}")
+    if not source_type:
+        raise ValueError("source_type is required")
+    if not summary:
+        raise ValueError("summary is required")
+    if not producer_type:
+        raise ValueError("producer_type is required")
+    if not producer_id:
+        raise ValueError("producer_id is required")
+
+    evidence_id = f"ev_{uuid.uuid4().hex}"
+    now = _now()
+    normalized_refs = _normalize_acceptance_refs(acceptance_refs)
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO evidence(
+                evidence_id, task_id, workflow_run_id, step_run_id, evidence_type,
+                maturity, source_type, artifact_uri, artifact_hash, summary,
+                producer_type, producer_id, verifier, acceptance_refs_json,
+                stale_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evidence_id,
+                task_id,
+                workflow_run_id,
+                step_run_id,
+                evidence_type,
+                maturity,
+                source_type,
+                artifact_uri,
+                artifact_hash,
+                summary,
+                producer_type,
+                producer_id,
+                verifier,
+                _canonical_json(normalized_refs),
+                stale_status,
+                now,
+                now,
+            ),
+        )
+        _append_event(
+            conn,
+            event_type="EvidenceRecorded",
+            aggregate_type="evidence",
+            aggregate_id=evidence_id,
+            command_id=None,
+            actor_type=producer_type,
+            actor_id=producer_id,
+            source_surface=source_type,
+            payload={
+                "evidence_id": evidence_id,
+                "task_id": task_id,
+                "evidence_type": evidence_type,
+                "maturity": maturity,
+                "acceptance_refs": normalized_refs,
+                "stale_status": stale_status,
+                "execution": "not_executed",
+            },
+        )
+        conn.commit()
+    return {
+        "created": True,
+        "status": "recorded",
+        "evidence_id": evidence_id,
+        "task_id": task_id,
+        "maturity": maturity,
+        "stale_status": stale_status,
+        "acceptance_refs": normalized_refs,
+        "execution": "not_executed",
+    }
+
+
+def _evidence_review_response(*, created: bool, row: sqlite3.Row, source_surface: str) -> dict[str, Any]:
+    return {
+        "created": created,
+        "evidence_review_id": row["evidence_review_id"],
+        "task_id": row["task_id"],
+        "risk_level": row["risk_level"],
+        "evidence_status": row["evidence_status"],
+        "required_maturity": row["required_maturity"],
+        "acceptance_refs": json.loads(row["acceptance_refs_json"]),
+        "satisfied_refs": json.loads(row["satisfied_refs_json"]),
+        "missing_refs": json.loads(row["missing_refs_json"]),
+        "stale_or_conflicting_count": int(row["stale_or_conflicting_count"]),
+        "closeout_allowed": bool(row["closeout_allowed"]),
+        "blocked_reason": row["blocked_reason"],
+        "execution": "not_executed",
+        "source_surface": source_surface,
+        "reviewed_by": row["reviewed_by"],
+        "reviewed_at": row["reviewed_at"],
+    }
+
+
+def evaluate_evidence_gate(
+    *,
+    task_id: str,
+    risk_level: str,
+    acceptance_refs: list[str] | None,
+    actor_type: str,
+    actor_id: str,
+    source_surface: str,
+) -> dict[str, Any]:
+    """Evaluate evidence adequacy without closing or mutating task lifecycle."""
+    task_id = task_id.strip()
+    risk_level = risk_level.strip().upper()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    source_surface = source_surface.strip()
+    acceptance_refs_normalized = _normalize_acceptance_refs(acceptance_refs)
+    if not task_id:
+        raise ValueError("task_id is required")
+    if not risk_level:
+        raise ValueError("risk_level is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    required_maturity = _required_maturity_for_risk(risk_level)
+    acceptance_json = _canonical_json(acceptance_refs_normalized)
+    required_rank = EVIDENCE_MATURITY_ORDER[required_maturity]
+    with _connect() as conn:
+        evidence_rows = conn.execute(
+            """
+            SELECT evidence_id, maturity, acceptance_refs_json, stale_status, updated_at
+            FROM evidence
+            WHERE task_id = ?
+            ORDER BY evidence_id
+            """,
+            (task_id,),
+        ).fetchall()
+        evidence_state_hash = hashlib.sha256(
+            _canonical_json(
+                [
+                    {
+                        "evidence_id": row["evidence_id"],
+                        "maturity": row["maturity"],
+                        "acceptance_refs": json.loads(row["acceptance_refs_json"]),
+                        "stale_status": row["stale_status"],
+                        "updated_at": row["updated_at"],
+                    }
+                    for row in evidence_rows
+                ]
+            ).encode("utf-8")
+        ).hexdigest()
+        existing = conn.execute(
+            """
+            SELECT evidence_review_id, task_id, risk_level, evidence_status,
+                   required_maturity, acceptance_refs_json, satisfied_refs_json,
+                   missing_refs_json, stale_or_conflicting_count, closeout_allowed,
+                   blocked_reason, reviewed_by, reviewed_at
+            FROM evidence_gate_reviews
+            WHERE task_id = ? AND risk_level = ? AND acceptance_refs_json = ?
+              AND evidence_state_hash = ?
+            """,
+            (task_id, risk_level, acceptance_json, evidence_state_hash),
+        ).fetchone()
+        if existing is not None:
+            return _evidence_review_response(created=False, row=existing, source_surface=source_surface)
+
+        stale_or_conflicting_count = sum(
+            1 for row in evidence_rows if row["stale_status"] in {"stale", "conflicting"}
+        )
+        satisfied: list[str] = []
+        refs_to_check = acceptance_refs_normalized or ["__any__"]
+        for ref in refs_to_check:
+            for row in evidence_rows:
+                if row["stale_status"] != "fresh":
+                    continue
+                if EVIDENCE_MATURITY_ORDER[row["maturity"]] < required_rank:
+                    continue
+                row_refs = json.loads(row["acceptance_refs_json"])
+                if ref == "__any__" or ref in row_refs:
+                    satisfied.append(ref)
+                    break
+        if refs_to_check == ["__any__"]:
+            missing = [] if satisfied else ["__any__"]
+            satisfied_refs = [] if not satisfied else []
+        else:
+            satisfied_refs = satisfied
+            missing = [ref for ref in refs_to_check if ref not in satisfied_refs]
+        evidence_status = "satisfied" if not missing else "insufficient"
+        blocked_reason = (
+            "closeout_requires_human_boundary"
+            if evidence_status == "satisfied"
+            else f"insufficient_{required_maturity}_evidence"
+        )
+        evidence_review_id = f"evgate_{uuid.uuid4().hex}"
+        reviewed_at = _now()
+        conn.execute(
+            """
+            INSERT INTO evidence_gate_reviews(
+                evidence_review_id, task_id, risk_level, evidence_status,
+                required_maturity, acceptance_refs_json, evidence_state_hash,
+                satisfied_refs_json, missing_refs_json, stale_or_conflicting_count, closeout_allowed,
+                blocked_reason, reviewed_by, reviewed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evidence_review_id,
+                task_id,
+                risk_level,
+                evidence_status,
+                required_maturity,
+                acceptance_json,
+                evidence_state_hash,
+                _canonical_json(satisfied_refs),
+                _canonical_json(missing),
+                stale_or_conflicting_count,
+                0,
+                blocked_reason,
+                actor_id,
+                reviewed_at,
+            ),
+        )
+        _append_event(
+            conn,
+            event_type="EvidenceGateEvaluated",
+            aggregate_type="evidence_gate",
+            aggregate_id=evidence_review_id,
+            command_id=None,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "evidence_review_id": evidence_review_id,
+                "task_id": task_id,
+                "risk_level": risk_level,
+                "evidence_status": evidence_status,
+                "required_maturity": required_maturity,
+                "satisfied_refs": satisfied_refs,
+                "missing_refs": missing,
+                "closeout_allowed": False,
+                "blocked_reason": blocked_reason,
+                "execution": "not_executed",
+            },
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT evidence_review_id, task_id, risk_level, evidence_status,
+                   required_maturity, acceptance_refs_json, satisfied_refs_json,
+                   missing_refs_json, stale_or_conflicting_count, closeout_allowed,
+                   blocked_reason, reviewed_by, reviewed_at
+            FROM evidence_gate_reviews
+            WHERE evidence_review_id = ?
+            """,
+            (evidence_review_id,),
+        ).fetchone()
+    return _evidence_review_response(created=True, row=row, source_surface=source_surface)
+
+
 def record_adapter_observation(
     *,
     adapter_name: str,
@@ -1307,6 +1642,36 @@ def _execution_policy_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _evidence_policy_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT evidence_review_id, task_id, risk_level, evidence_status,
+               required_maturity, closeout_allowed, blocked_reason
+        FROM evidence_gate_reviews
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "evidence_gate_projection_only",
+        "closeout_execution_enabled": False,
+        "review_count": _count(conn, "evidence_gate_reviews"),
+        "required_maturity_by_risk": dict(RISK_REQUIRED_EVIDENCE_MATURITY),
+        "recent_reviews": [
+            {
+                "evidence_review_id": row["evidence_review_id"],
+                "task_id": row["task_id"],
+                "risk_level": row["risk_level"],
+                "evidence_status": row["evidence_status"],
+                "required_maturity": row["required_maturity"],
+                "closeout_allowed": bool(row["closeout_allowed"]),
+                "blocked_reason": row["blocked_reason"],
+            }
+            for row in rows
+        ],
+    }
+
+
 def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     schema = validate_workflow_schema(CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA)
     pending = conn.execute(
@@ -1374,6 +1739,7 @@ def build_snapshot() -> dict[str, Any]:
         workflow_map = _workflow_map_snapshot(conn)
         executor_plans = _executor_plans_snapshot(conn)
         execution_policy = _execution_policy_snapshot(conn)
+        evidence_policy = _evidence_policy_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -1414,6 +1780,7 @@ def build_snapshot() -> dict[str, Any]:
         "workflow_map": workflow_map,
         "executor_plans": executor_plans,
         "execution_policy": execution_policy,
+        "evidence_policy": evidence_policy,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {

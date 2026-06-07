@@ -358,17 +358,52 @@ Acceptance:
 - A generated plan only provides a copyable/dry-run command preview.
 - A policy review only previews execution authority and rollback/write status; it never grants execution.
 
-Phase 4C remaining Evidence Spine tasks:
+Phase 4C implemented Evidence Spine slice:
 
-1. Implement evidence maturity model.
+Tasks:
+
+1. Implement an evidence maturity model.
 2. Link evidence to acceptance criteria.
 3. Detect stale/conflicting evidence.
-4. Block closeout without adequate evidence.
+4. Evaluate closeout readiness without closing tasks.
+5. Surface evidence policy reviews in the dashboard snapshot.
+
+Implemented slice:
+
+- `control_tower.record_evidence(...)` records evidence entries with maturity, producer, source, artifact metadata, stale/conflict status, and acceptance refs.
+- Dashboard plugin exposes `POST /api/plugins/control-tower/evidence`.
+- Evidence maturity levels are ordered as:
+  - `advisory`
+  - `observed`
+  - `verified`
+  - `certified`
+  - `release_confirmed`
+- Risk-level evidence requirements are currently:
+  - L0/L1: `observed`
+  - L2: `verified`
+  - L3: `certified`
+  - L4+: `release_confirmed`
+- `control_tower.evaluate_evidence_gate(...)` records one idempotent evidence-gate review per `(task_id, risk_level, acceptance_refs, evidence_state_hash)` so later evidence changes produce a new projection instead of freezing stale gate results.
+- Dashboard plugin exposes `POST /api/plugins/control-tower/evidence-gates/evaluate`.
+- Evidence-gate reviews are stored in `evidence_gate_reviews` with:
+  - `evidence_status = satisfied | insufficient`
+  - `required_maturity`
+  - acceptance refs / satisfied refs / missing refs
+  - stale/conflicting evidence count
+  - `closeout_allowed = false`
+  - `blocked_reason = insufficient_<maturity>_evidence | closeout_requires_human_boundary`
+- Evidence recording emits `EvidenceRecorded`.
+- Evidence gate evaluation emits `EvidenceGateEvaluated`.
+- Snapshot includes `evidence_policy` with `closeout_execution_enabled = false`.
+- Dashboard UI can record sample evidence and evaluate an evidence gate, but this only writes ledger projections; it never closes a task.
 
 Acceptance:
 
-- `advisory` evidence cannot close tasks.
-- Verified/certified evidence is required by risk class.
+- `advisory` evidence cannot satisfy L1+ closeout gates.
+- Stale/conflicting evidence is counted but not accepted as satisfying evidence.
+- Verified/certified/release-confirmed evidence is required by risk class.
+- Even satisfied evidence keeps `closeout_allowed = false` until the human closeout boundary is explicitly designed.
+- No task rows are marked done, and no Kanban/taskpool adapter is mutated.
 
 ### Phase 5 — Event-driven advancement
 
@@ -409,19 +444,22 @@ Implemented:
 4. Kanban projection adapter that records deduped observations in the Control Tower Ledger.
 5. Proposed-command registry via `POST /api/plugins/control-tower/commands/propose`.
 6. High-risk proposed commands routed to Human Inbox without execution.
-7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, human approval requests, approval decisions, workflow-map validation/projection, executor dry-run planning, and execution-policy projection.
+7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, human approval requests, approval decisions, workflow-map validation/projection, executor dry-run planning, execution-policy projection, evidence recording, and evidence-gate projection.
 8. Approval decision endpoint via `POST /api/plugins/control-tower/approvals/{approval_id}/decision`.
 9. Ledger-backed workflow map projection with disabled executor boundary.
 10. Executor dry-run plan endpoint via `POST /api/plugins/control-tower/commands/{command_id}/executor-plan`.
 11. Executor plan projection via snapshot `executor_plans`.
 12. Execution-policy review endpoint via `POST /api/plugins/control-tower/executor-plans/{plan_id}/policy-review`.
 13. Execution-policy projection via snapshot `execution_policy`.
+14. Evidence record endpoint via `POST /api/plugins/control-tower/evidence`.
+15. Evidence-gate evaluation endpoint via `POST /api/plugins/control-tower/evidence-gates/evaluate`.
+16. Evidence-policy projection via snapshot `evidence_policy`.
 
 Still intentionally not implemented:
 
 - No lifecycle mutation.
 - No command execution.
-- No task claim/release/move/done actions.
+- No task claim/release/move/done/closeout actions.
 - No arbitrary shell.
 - No write-through Kanban/taskpool adapter.
 - No approval expiration / role authorization matrix yet.
@@ -429,7 +467,7 @@ Still intentionally not implemented:
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, executor dry-run plans, and execution-policy previews but never executes them.
+- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy previews, evidence entries, and evidence-gate closeout projections but never executes them.
 - The ledger remains the only fact source.
 - The next step changes authority from "preview whether a plan would be executable" to "execute an approved plan", which requires explicit policy semantics, role binding, evidence requirements, and write-through adapter decisions.
 
@@ -460,17 +498,22 @@ Remaining decisions before execution-capable implementation:
    - The projection currently always reports `execution_blocked`, `allowed_to_execute = false`, `writes_enabled = false`, and `blocked_reason = real_executor_policy_not_enabled`.
    - Still undecided for execution-capable phase: which actions may actually run, which adapters may be mutated, and what rollback/escape path is required per action.
 
-3. Write-through adapter timing:
+3. Evidence and closeout boundary:
+   - Implemented for current non-executing slice: evidence can be recorded and evaluated against risk-level maturity requirements and acceptance refs.
+   - Evidence-gate projection currently always reports `closeout_allowed = false` even when evidence is satisfied.
+   - Still undecided for closeout-capable phase: who can authorize closeout, whether closeout approval binds to evidence digests, how stale/conflicting evidence is remediated, and which adapter receives the final done/closed mutation.
+
+4. Write-through adapter timing:
    - Keep Kanban/taskpool read-only until command executor is stable, or
    - Allow selected commands to write through adapters after approval.
 
-4. Human approval UX:
+5. Human approval UX:
    - Dashboard-only, Gateway-first with dashboard mirror, or both.
 
-5. External dependency stance:
+6. External dependency stance:
    - Hermes-native only for now, or
    - leave optional future Temporal/OpenTelemetry integration hooks.
 
 ## Stop condition
 
-Stop execution-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, and execution-policy projections are now durable, audited, idempotent where safe, and non-executing. The next boundary is real executor authority plus write-through adapter policy; do not run any lifecycle-affecting action until the executor whitelist, role matrix, expiration/evidence rules, rollback/escape path, and adapter mutation contract are explicitly decided.
+Stop execution-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, execution-policy projections, evidence entries, and evidence-gate closeout projections are now durable, audited, idempotent where safe, and non-executing. The next boundary is real executor authority plus closeout/write-through adapter policy; do not run any lifecycle-affecting action until the executor whitelist, closeout authorization model, role matrix, expiration/evidence digest rules, rollback/escape path, and adapter mutation contract are explicitly decided.

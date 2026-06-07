@@ -190,3 +190,44 @@ def test_control_tower_dashboard_plugin_reviews_executor_policy_without_executio
     assert data["allowed_to_execute"] is False
     assert data["blocked_reason"] == "real_executor_policy_not_enabled"
     assert data["source_surface"] == "dashboard"
+
+
+def test_control_tower_dashboard_plugin_records_evidence_and_reviews_gate_without_closeout(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    app = FastAPI()
+    app.include_router(_load_plugin_router(), prefix="/api/plugins/control-tower")
+    client = TestClient(app)
+
+    evidence_response = client.post(
+        "/api/plugins/control-tower/evidence",
+        json={
+            "task_id": "task:dashboard-evidence",
+            "evidence_type": "proof",
+            "maturity": "verified",
+            "source_type": "pytest",
+            "summary": "Dashboard submitted verified proof",
+            "producer_type": "human",
+            "producer_id": "charles",
+            "acceptance_refs": ["AC-1"],
+        },
+    )
+    review_response = client.post(
+        "/api/plugins/control-tower/evidence-gates/evaluate",
+        json={
+            "task_id": "task:dashboard-evidence",
+            "risk_level": "L2",
+            "acceptance_refs": ["AC-1"],
+            "actor_id": "charles",
+        },
+    )
+
+    assert evidence_response.status_code == 200, evidence_response.text
+    assert evidence_response.json()["execution"] == "not_executed"
+    assert review_response.status_code == 200, review_response.text
+    data = review_response.json()
+    assert data["evidence_status"] == "satisfied"
+    assert data["required_maturity"] == "verified"
+    assert data["closeout_allowed"] is False
+    assert data["blocked_reason"] == "closeout_requires_human_boundary"
+    assert data["source_surface"] == "dashboard"
