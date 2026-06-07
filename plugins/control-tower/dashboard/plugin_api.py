@@ -1,8 +1,9 @@
 """Control Tower dashboard plugin — read-only backend API routes.
 
 Mounted at /api/plugins/control-tower/ by the dashboard plugin system.
-The plugin is intentionally read-only in Phase 1: it exposes a snapshot over the
-Control Tower Ledger and does not mutate task lifecycle state.
+The plugin is intentionally non-executing: it exposes ledger projections and
+records controlled operator intent, policy reviews, evidence, and authorization
+decisions without mutating task lifecycle state or writing through adapters.
 """
 
 from __future__ import annotations

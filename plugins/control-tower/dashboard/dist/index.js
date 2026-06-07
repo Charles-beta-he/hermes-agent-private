@@ -6,11 +6,11 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 5 is still non-executing: this dashboard can record operator intent,
-        human decisions, copy-command executor plans, execution-policy previews,
-        evidence entries, evidence-gate projections, and evidence-bound closeout
-        authorizations in the Control Tower Ledger, but it cannot execute lifecycle
-        actions, close tasks, or write through adapters.
+        Phase 6 is still non-executing: this dashboard can record operator intent,
+        human decisions, copy-command executor plans, read-only executor-policy
+        eligibility projections, evidence entries, evidence-gate projections, and
+        evidence-bound closeout authorizations in the Control Tower Ledger, but it
+        cannot execute lifecycle actions, close tasks, or write through adapters.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
@@ -61,6 +61,8 @@
     const proposed = data?.command_registry?.proposed_count ?? 0;
     const plans = data?.executor_plans?.planned_count ?? 0;
     const policyReviews = data?.execution_policy?.review_count ?? 0;
+    const readOnlyEligible = data?.execution_policy?.read_only_eligible_count ?? 0;
+    const policyBlocked = data?.execution_policy?.blocked_count ?? 0;
     const evidenceReviews = data?.evidence_policy?.review_count ?? 0;
     const closeoutPending = data?.closeout_authorizations?.pending_count ?? 0;
     const closeoutDecided = data?.closeout_authorizations?.decided_count ?? 0;
@@ -76,6 +78,8 @@
         <span>Human decided: <strong>${decided}</strong></span>
         <span>Executor plans: <strong>${plans}</strong></span>
         <span>Policy reviews: <strong>${policyReviews}</strong></span>
+        <span>Read-only eligible: <strong>${readOnlyEligible}</strong></span>
+        <span>Policy blocked: <strong>${policyBlocked}</strong></span>
         <span>Evidence reviews: <strong>${evidenceReviews}</strong></span>
         <span>Closeout auth pending: <strong>${closeoutPending}</strong></span>
         <span>Closeout auth decided: <strong>${closeoutDecided}</strong></span>

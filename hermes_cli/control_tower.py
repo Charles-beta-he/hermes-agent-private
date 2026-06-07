@@ -45,6 +45,15 @@ CLOSEOUT_REQUIRED_ROLE_BY_RISK = {
 }
 ROLE_RANK = {"operator": 0, "owner": 1, "admin": 2}
 DEFAULT_CLOSEOUT_AUTH_TTL_HOURS = 24
+READ_ONLY_EXECUTOR_COMMAND_WHITELIST = frozenset(
+    {
+        "CopyCliCommand",
+        "RefreshProjection",
+        "RunReadOnlyProofCheck",
+        "RunReadOnlySelfCheck",
+    }
+)
+READ_ONLY_EXECUTOR_RISK_WHITELIST = frozenset({"L0", "L1"})
 
 CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA: dict[str, Any] = {
     "schema_id": "control-tower-command-lifecycle",
@@ -972,6 +981,47 @@ def _policy_review_response(
     }
 
 
+def _read_only_executor_policy_for_plan(plan_json: dict[str, Any]) -> dict[str, Any]:
+    command_type = str(plan_json.get("command_type") or "")
+    risk_level = str(plan_json.get("risk_level") or "").upper()
+    adapter_writes: list[dict[str, Any]] = []
+    if command_type not in READ_ONLY_EXECUTOR_COMMAND_WHITELIST:
+        return {
+            "policy_status": "execution_blocked",
+            "allowed_to_execute": False,
+            "writes_enabled": False,
+            "blocked_reason": "command_type_not_in_read_only_executor_whitelist",
+            "adapter_writes": adapter_writes,
+            "rollback_preview": {
+                "available": False,
+                "reason": "blocked action has no lifecycle mutation to roll back",
+            },
+        }
+    if risk_level not in READ_ONLY_EXECUTOR_RISK_WHITELIST:
+        return {
+            "policy_status": "execution_blocked",
+            "allowed_to_execute": False,
+            "writes_enabled": False,
+            "blocked_reason": "risk_level_exceeds_read_only_executor_whitelist",
+            "adapter_writes": adapter_writes,
+            "rollback_preview": {
+                "available": False,
+                "reason": "blocked action has no lifecycle mutation to roll back",
+            },
+        }
+    return {
+        "policy_status": "read_only_eligible",
+        "allowed_to_execute": True,
+        "writes_enabled": False,
+        "blocked_reason": "read_only_executor_whitelisted",
+        "adapter_writes": adapter_writes,
+        "rollback_preview": {
+            "available": False,
+            "reason": "read-only executor action has no lifecycle mutation to roll back",
+        },
+    }
+
+
 def review_executor_plan_policy(
     *,
     plan_id: str,
@@ -996,7 +1046,7 @@ def review_executor_plan_policy(
     with _connect() as conn:
         plan = conn.execute(
             """
-            SELECT plan_id, command_id, command_type, status, execution, writes_enabled
+            SELECT plan_id, command_id, command_type, status, execution, writes_enabled, plan_json
             FROM executor_plans
             WHERE plan_id = ?
             """,
@@ -1023,11 +1073,9 @@ def review_executor_plan_policy(
 
         policy_review_id = f"policy_{uuid.uuid4().hex}"
         reviewed_at = _now()
-        adapter_writes: list[dict[str, Any]] = []
-        rollback_preview = {
-            "available": False,
-            "reason": "no lifecycle mutation is performed in dry-run policy projection",
-        }
+        policy = _read_only_executor_policy_for_plan(json.loads(plan["plan_json"]))
+        adapter_writes = policy["adapter_writes"]
+        rollback_preview = policy["rollback_preview"]
         conn.execute(
             """
             INSERT INTO execution_policy_reviews(
@@ -1040,10 +1088,10 @@ def review_executor_plan_policy(
                 policy_review_id,
                 plan_id,
                 plan["command_id"],
-                "execution_blocked",
+                policy["policy_status"],
+                1 if policy["allowed_to_execute"] else 0,
                 0,
-                0,
-                "real_executor_policy_not_enabled",
+                policy["blocked_reason"],
                 _canonical_json(adapter_writes),
                 _canonical_json(rollback_preview),
                 actor_id,
@@ -1063,10 +1111,10 @@ def review_executor_plan_policy(
                 "policy_review_id": policy_review_id,
                 "plan_id": plan_id,
                 "command_id": plan["command_id"],
-                "policy_status": "execution_blocked",
-                "allowed_to_execute": False,
+                "policy_status": policy["policy_status"],
+                "allowed_to_execute": policy["allowed_to_execute"],
                 "writes_enabled": False,
-                "blocked_reason": "real_executor_policy_not_enabled",
+                "blocked_reason": policy["blocked_reason"],
                 "adapter_writes": adapter_writes,
                 "rollback_preview": rollback_preview,
                 "execution": "not_executed",
@@ -1998,10 +2046,14 @@ def _execution_policy_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             }
         )
     return {
-        "mode": "policy_projection_only",
+        "mode": "read_only_executor_policy_projection",
         "writes_enabled": False,
         "real_executor_enabled": False,
+        "read_only_whitelist": sorted(READ_ONLY_EXECUTOR_COMMAND_WHITELIST),
+        "risk_whitelist": sorted(READ_ONLY_EXECUTOR_RISK_WHITELIST),
         "review_count": _count(conn, "execution_policy_reviews"),
+        "read_only_eligible_count": _count(conn, "execution_policy_reviews", "policy_status = 'read_only_eligible'"),
+        "blocked_count": _count(conn, "execution_policy_reviews", "policy_status = 'execution_blocked'"),
         "recent_reviews": recent_reviews,
     }
 

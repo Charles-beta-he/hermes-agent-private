@@ -184,11 +184,11 @@ def test_control_tower_dashboard_plugin_reviews_executor_policy_without_executio
 
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["policy_status"] == "execution_blocked"
-    assert data["execution"] == "not_executed"
+    assert data["policy_status"] == "read_only_eligible"
+    assert data["allowed_to_execute"] is True
     assert data["writes_enabled"] is False
-    assert data["allowed_to_execute"] is False
-    assert data["blocked_reason"] == "real_executor_policy_not_enabled"
+    assert data["execution"] == "not_executed"
+    assert data["blocked_reason"] == "read_only_executor_whitelisted"
     assert data["source_surface"] == "dashboard"
 
 

@@ -691,14 +691,14 @@ def test_review_executor_plan_records_policy_projection_without_execution(tmp_pa
 
     assert review["created"] is True
     assert review["plan_id"] == plan["plan_id"]
-    assert review["policy_status"] == "execution_blocked"
+    assert review["policy_status"] == "read_only_eligible"
     assert review["execution"] == "not_executed"
     assert review["writes_enabled"] is False
-    assert review["allowed_to_execute"] is False
-    assert review["blocked_reason"] == "real_executor_policy_not_enabled"
+    assert review["allowed_to_execute"] is True
+    assert review["blocked_reason"] == "read_only_executor_whitelisted"
     assert review["rollback_preview"] == {
         "available": False,
-        "reason": "no lifecycle mutation is performed in dry-run policy projection",
+        "reason": "read-only executor action has no lifecycle mutation to roll back",
     }
     assert review["adapter_writes"] == []
     assert repeated["created"] is False
@@ -800,9 +800,9 @@ def test_snapshot_includes_execution_policy_projection_without_write_authority(t
             "policy_review_id": review["policy_review_id"],
             "plan_id": plan["plan_id"],
             "command_id": proposed["command_id"],
-            "policy_status": "execution_blocked",
-            "allowed_to_execute": False,
-            "blocked_reason": "real_executor_policy_not_enabled",
+            "policy_status": "read_only_eligible",
+            "allowed_to_execute": True,
+            "blocked_reason": "read_only_executor_whitelisted",
             "rollback_available": False,
         }
     ]
@@ -1483,3 +1483,172 @@ def test_decide_closeout_authorization_rejects_stale_evidence_after_request(tmp_
     with sqlite3.connect(home / "control_tower.db") as ledger:
         rows = ledger.execute("SELECT status, closeout_allowed FROM closeout_authorizations").fetchall()
     assert rows == [("requested", 0)]
+
+
+def test_read_only_whitelisted_executor_policy_marks_l1_eligible_without_execution(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="RunReadOnlyProofCheck",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="task",
+        target_id="task:proof",
+        risk_level="L1",
+        payload={"reason": "read-only proof check"},
+        idempotency_key="proof-check-read-only",
+    )
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    review = control_tower.review_executor_plan_policy(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    assert review["policy_status"] == "read_only_eligible"
+    assert review["allowed_to_execute"] is True
+    assert review["writes_enabled"] is False
+    assert review["execution"] == "not_executed"
+    assert review["blocked_reason"] == "read_only_executor_whitelisted"
+    assert review["adapter_writes"] == []
+    assert review["rollback_preview"] == {
+        "available": False,
+        "reason": "read-only executor action has no lifecycle mutation to roll back",
+    }
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+        command_status = ledger.execute(
+            "SELECT status FROM commands WHERE command_id = ?",
+            (proposed["command_id"],),
+        ).fetchone()[0]
+    assert command_status == "proposed"
+
+
+def test_executor_policy_blocks_non_whitelisted_or_high_risk_even_after_approval(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    non_whitelisted = control_tower.propose_command(
+        command_type="ReleaseLease",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="task",
+        target_id="task:l1-release",
+        risk_level="L1",
+        payload={},
+        idempotency_key="l1-release-not-whitelisted",
+    )
+    l2 = control_tower.propose_command(
+        command_type="RunReadOnlyProofCheck",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="task",
+        target_id="task:l2-proof",
+        risk_level="L2",
+        payload={},
+        idempotency_key="l2-proof-approved-but-blocked",
+    )
+    control_tower.decide_human_approval(
+        approval_id=l2["approval_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        reason="approved for policy preview only",
+    )
+
+    blocked_plan = control_tower.generate_executor_plan(
+        command_id=non_whitelisted["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    high_risk_plan = control_tower.generate_executor_plan(
+        command_id=l2["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    blocked_review = control_tower.review_executor_plan_policy(
+        plan_id=blocked_plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    high_risk_review = control_tower.review_executor_plan_policy(
+        plan_id=high_risk_plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    assert blocked_review["allowed_to_execute"] is False
+    assert blocked_review["blocked_reason"] == "command_type_not_in_read_only_executor_whitelist"
+    assert high_risk_review["allowed_to_execute"] is False
+    assert high_risk_review["blocked_reason"] == "risk_level_exceeds_read_only_executor_whitelist"
+    assert high_risk_review["execution"] == "not_executed"
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+
+
+def test_execution_policy_snapshot_reports_read_only_eligibility_boundary(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="RefreshProjection",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="projection",
+        target_id="overview",
+        risk_level="L0",
+        payload={},
+        idempotency_key="refresh-read-only-policy-snapshot",
+    )
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    review = control_tower.review_executor_plan_policy(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    snapshot = control_tower.build_snapshot()
+
+    assert snapshot["execution_policy"]["mode"] == "read_only_executor_policy_projection"
+    assert snapshot["execution_policy"]["real_executor_enabled"] is False
+    assert snapshot["execution_policy"]["writes_enabled"] is False
+    assert snapshot["execution_policy"]["read_only_eligible_count"] == 1
+    assert snapshot["execution_policy"]["blocked_count"] == 0
+    assert snapshot["execution_policy"]["read_only_whitelist"] == [
+        "CopyCliCommand",
+        "RefreshProjection",
+        "RunReadOnlyProofCheck",
+        "RunReadOnlySelfCheck",
+    ]
+    assert snapshot["execution_policy"]["recent_reviews"] == [
+        {
+            "policy_review_id": review["policy_review_id"],
+            "plan_id": plan["plan_id"],
+            "command_id": proposed["command_id"],
+            "policy_status": "read_only_eligible",
+            "allowed_to_execute": True,
+            "blocked_reason": "read_only_executor_whitelisted",
+            "rollback_available": False,
+        }
+    ]
