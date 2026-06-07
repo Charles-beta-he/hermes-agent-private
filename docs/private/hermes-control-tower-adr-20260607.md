@@ -32,9 +32,9 @@ The desired long-term direction is not a decorative workflow graph and not a pol
 
 Adopt **Hermes Control Tower** as the long-term architecture for visual workflow operations:
 
-> Hermes Control Tower is an event-driven Agent workflow control plane. It uses taskpool/Kanban as task state SSOT, an append-only event log as causality SSOT, evidence spine as closeout authority, policy/human gates as safety boundaries, worker runtime as execution plane, and dashboard/CLI/Kanban/workflow map as projections and controlled command surfaces.
+> Hermes Control Tower is an event-driven Agent workflow control plane with **one canonical fact source**: the Control Tower Ledger. The ledger is an append-only command/event/evidence/workflow ledger. Taskpool, Kanban, Dashboard, CLI views, worker queues, event streams, and evidence pages are projections or adapters over that ledger, not competing sources of truth.
 
-This ADR establishes the durable architectural contract before UI or execution code is added.
+This ADR establishes the durable architectural contract before UI or execution code is added. It supersedes the earlier split wording of "task state SSOT / causality SSOT / closeout SSOT" with a single-source rule: **all durable workflow facts live in the Control Tower Ledger; specialized surfaces may cache or project them but must not become independent truth.**
 
 ## 3. Foundational arguments and references
 
@@ -162,14 +162,42 @@ Execution plane owns:
 
 Workers may submit result/evidence events. Workers must not directly mark tasks done, bypass proof gates, bypass human gates, or silently mutate durable memory.
 
-### 4.2 SSOT boundaries
+### 4.2 Single fact source boundary
 
-- **Task state SSOT:** taskpool/Kanban task record.
-- **Causality SSOT:** append-only event log.
-- **Closeout SSOT:** evidence spine plus proof/certification policy.
-- **Historical context:** session DB; not current task state.
-- **Stable facts:** memory; never WIP progress.
-- **UI:** projection only; never independent truth.
+The long-term SSOT is the **Control Tower Ledger**.
+
+Canonical durable facts in the ledger:
+
+- Task identity, lifecycle state, priority, ownership, dependencies, and risk class.
+- Commands admitted or rejected by policy.
+- Events that actually occurred.
+- Evidence metadata and maturity.
+- Workflow definitions, workflow runs, current step, and gate decisions.
+- Worker runs, leases, heartbeats, results, and failures.
+- Human approval requests and decisions.
+- Policy decisions and overrides.
+- Projection rebuild checkpoints.
+
+Non-canonical derived surfaces:
+
+- Kanban columns and task cards are projections over ledger task facts.
+- Taskpool health, dispatchability, proof status, and next-action views are projections over ledger events/facts.
+- Dashboard pages are projections plus controlled command entrypoints.
+- CLI output is a projection/command surface, not independent state.
+- Event Stream is a view over ledger events, not a separate event database.
+- Evidence Spine UI is a view over ledger evidence records plus artifact files.
+- Worker queues are projections of eligible ledger state.
+- Cron watchdogs only repair/reconcile ledger-derived state; they do not own workflow truth.
+
+External context boundaries:
+
+- Session DB is historical context only, not current workflow state.
+- Memory stores stable facts only, never WIP task progress.
+- Artifact files may contain large evidence payloads, but the ledger owns their metadata, hash, maturity, and acceptance-criteria links.
+
+Migration rule:
+
+- Existing Kanban/taskpool/brain stores remain adapters during migration. When they disagree with the Control Tower Ledger, the ledger wins; adapters must reconcile from ledger events or produce explicit conflict events for human review.
 
 ### 4.3 Command / event / projection model
 
@@ -488,26 +516,27 @@ Exit criteria:
 ## 9. Invariants
 
 1. UI is projection, not truth.
-2. Taskpool/Kanban is task state SSOT.
-3. Event log is causality SSOT.
-4. Evidence spine is closeout authority.
+2. Control Tower Ledger is the only canonical workflow fact source.
+3. Kanban/taskpool/brain stores are adapters or projections during migration, not competing SSOTs.
+4. Event Stream, Evidence Spine, Worker Runtime, and Human Inbox are ledger projections.
 5. Worker completion is not task completion.
 6. High-risk actions require policy and often human approval.
 7. Cron is fallback, not primary orchestration.
 8. Memory stores stable facts only, not task progress.
-9. Every side effect has actor, idempotency key, and evidence.
-10. Every blocked state has reason and next action.
-11. Every lease can expire and be reconciled.
-12. Every projection can be rebuilt from SSOT sources.
+9. Every side effect has actor, idempotency key, and evidence metadata in the ledger.
+10. Every blocked state has reason and next action in the ledger.
+11. Every lease can expire and be reconciled through ledger events.
+12. Every projection can be rebuilt from the ledger plus referenced artifacts.
 
 ## 10. Required human decisions before implementation
 
 Implementation should stop here until these are answered:
 
-1. **Primary event store location**
-   - Option A: extend `kanban.db` / taskpool DB.
-   - Option B: new `~/.hermes/control_tower.db`.
-   - Option C: profile-scoped DB plus board-scoped projections.
+1. **Primary fact source and event store location**
+   - Decision: create a dedicated Control Tower Ledger at `~/.hermes/control_tower.db`.
+   - The ledger is the only canonical workflow fact source.
+   - Existing Kanban/taskpool/brain stores are adapters/projections during migration.
+   - Adapter conflicts are represented as ledger conflict events, not silent last-write-wins repairs.
 
 2. **Initial UI host**
    - Option A: built-in Dashboard page.

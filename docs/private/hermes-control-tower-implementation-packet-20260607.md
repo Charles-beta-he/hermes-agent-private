@@ -13,7 +13,8 @@ This packet turns the Control Tower ADR into an implementation-ready backlog wit
 Hermes Control Tower is the visual and operational control plane for Hermes workflows:
 
 - Event-driven by default.
-- Taskpool/Kanban-backed for durable task state.
+- Backed by one canonical fact source: `~/.hermes/control_tower.db` as the Control Tower Ledger.
+- Kanban/taskpool/brain/dashboard/CLI/gateway surfaces are adapters or projections, not competing sources of truth.
 - Evidence-gated for completion.
 - Human-in-command for high-risk actions.
 - Multi-agent-aware for worker execution and review.
@@ -155,23 +156,26 @@ Do not present cron as the primary workflow engine.
 
 Tasks:
 
-1. Decide event store location.
-2. Define command/event/evidence/workflow_run/worker_run/policy_decision schemas.
-3. Map existing taskpool/Kanban/cron/gateway data into read projections.
-4. Define action-level policy matrix.
-5. Define closeout evidence rules by risk class.
+1. Event store / fact source location is decided: `~/.hermes/control_tower.db`.
+2. Define command/event/evidence/workflow_run/worker_run/policy_decision schemas inside the Control Tower Ledger.
+3. Map existing taskpool/Kanban/cron/gateway data into ledger adapters and read projections without allowing them to become competing SSOTs.
+4. Define conflict-detection events for adapter mismatches.
+5. Define action-level policy matrix.
+6. Define closeout evidence rules by risk class.
 
 Acceptance:
 
 - Written schema doc exists.
+- Ledger is named as the only canonical workflow fact source.
+- Every non-ledger store is labeled adapter/projection/external context.
 - No lifecycle mutation code lands before schema review.
 - Projection sources are explicit.
 
 Blocked on human:
 
-- Event store location.
 - UI host choice.
 - Initial action levels.
+- Integration depth for migration timing, not SSOT ownership.
 
 ### Phase 1 — Read-only Control Tower
 
@@ -296,31 +300,32 @@ Why this slice:
 
 ## Human decisions required now
 
-The next non-documentation action requires explicit direction on:
+Resolved:
 
-1. Event store location:
-   - new `~/.hermes/control_tower.db`, or
-   - extend Kanban/taskpool DB, or
-   - other.
+1. Event store / fact source:
+   - Use `~/.hermes/control_tower.db` as the only canonical Control Tower Ledger.
+   - Existing taskpool/Kanban/brain stores are adapters/projections during migration.
 
-2. UI host:
+Remaining decisions before code/UI implementation:
+
+1. UI host:
    - built-in dashboard page, or
    - plugin under `plugins/control-tower/`, or
    - private profile plugin first.
 
-3. Initial permissions:
+2. Initial permissions:
    - read-only only, or
    - read-only + L1 maintenance, or
    - include selected L2 lifecycle actions.
 
-4. Integration depth:
-   - read-only aggregation first, or
-   - begin command/event write path now.
+3. Integration timing:
+   - ledger-first read-only aggregation, then adapters write through command gateway, or
+   - immediate write-through command gateway for selected flows.
 
-5. External dependency stance:
+4. External dependency stance:
    - Hermes-native only for now, or
    - leave optional future Temporal/OpenTelemetry integration hooks.
 
 ## Stop condition
 
-Stop implementation at this packet until the human decides the above. Code/schema/UI changes would otherwise risk choosing the wrong SSOT and creating another parallel control surface.
+Stop implementation at this packet until the remaining human decisions are made. The SSOT ownership is now fixed, but code/schema/UI changes still require confirmation of UI host and initial permission level.
