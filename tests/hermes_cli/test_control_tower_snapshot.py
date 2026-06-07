@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -35,6 +36,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "human_approvals",
             "executor_plans",
             "execution_policy_reviews",
+            "read_only_executor_runs",
             "evidence_gate_reviews",
             "closeout_authorizations",
             "adapter_observations",
@@ -1652,3 +1654,240 @@ def test_execution_policy_snapshot_reports_read_only_eligibility_boundary(tmp_pa
             "rollback_available": False,
         }
     ]
+
+def test_execute_read_only_executor_runs_whitelisted_policy_once_without_task_or_adapter_mutation(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="RunReadOnlyProofCheck",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="task",
+        target_id="task:proof",
+        risk_level="L1",
+        payload={"acceptance_refs": ["AC-1"]},
+        idempotency_key="phase7-read-only-proof",
+    )
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    review = control_tower.review_executor_plan_policy(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    run = control_tower.execute_read_only_executor_plan(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    repeated = control_tower.execute_read_only_executor_plan(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    assert run["created"] is True
+    assert run["executor_status"] == "read_only_completed"
+    assert run["execution"] == "read_only_completed"
+    assert run["writes_enabled"] is False
+    assert run["adapter_writes"] == []
+    assert run["policy_review_id"] == review["policy_review_id"]
+    assert run["result"]["check"] == "proof_check"
+    assert run["result"]["mutation_allowed"] is False
+    assert repeated["created"] is False
+    assert repeated["executor_run_id"] == run["executor_run_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        task_rows = ledger.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        adapter_rows = ledger.execute("SELECT COUNT(*) FROM adapter_observations").fetchone()[0]
+        plan_row = ledger.execute(
+            "SELECT status, execution, writes_enabled FROM executor_plans WHERE plan_id = ?",
+            (plan["plan_id"],),
+        ).fetchone()
+        command_status = ledger.execute(
+            "SELECT status FROM commands WHERE command_id = ?",
+            (proposed["command_id"],),
+        ).fetchone()[0]
+        run_rows = ledger.execute("SELECT COUNT(*) FROM read_only_executor_runs").fetchone()[0]
+        event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert task_rows == 0
+    assert adapter_rows == 0
+    assert plan_row == ("executed", "read_only_completed", 0)
+    assert command_status == "executed"
+    assert run_rows == 1
+    assert event_types == [
+        "CommandProposed",
+        "ExecutorPlanGenerated",
+        "ExecutionPolicyProjectionRecorded",
+        "ReadOnlyExecutorRunCompleted",
+    ]
+
+
+def test_execute_read_only_executor_fails_closed_without_allowed_policy_or_after_policy_stale(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="RunReadOnlySelfCheck",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="system",
+        target_id="control-tower",
+        risk_level="L1",
+        payload={},
+        idempotency_key="phase7-stale-policy",
+    )
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    try:
+        control_tower.execute_read_only_executor_plan(
+            plan_id=plan["plan_id"],
+            actor_type="human",
+            actor_id="charles",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "allowed execution policy review is required" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("missing policy review should fail closed")
+
+    control_tower.review_executor_plan_policy(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            "UPDATE commands SET risk_level = 'L2' WHERE command_id = ?",
+            (proposed["command_id"],),
+        )
+        ledger.commit()
+    try:
+        control_tower.execute_read_only_executor_plan(
+            plan_id=plan["plan_id"],
+            actor_type="human",
+            actor_id="charles",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "read-only executor policy is stale" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("stale policy review should fail closed")
+
+
+def test_read_only_executor_snapshot_reports_runs_without_write_authority(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="CopyCliCommand",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="command",
+        target_id="copyable",
+        risk_level="L0",
+        payload={},
+        idempotency_key="phase7-snapshot",
+    )
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    control_tower.review_executor_plan_policy(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    run = control_tower.execute_read_only_executor_plan(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    snapshot = control_tower.build_snapshot()
+
+    assert snapshot["read_only_executor"]["mode"] == "read_only_executor_consumer"
+    assert snapshot["read_only_executor"]["writes_enabled"] is False
+    assert snapshot["read_only_executor"]["adapter_write_through_enabled"] is False
+    assert snapshot["read_only_executor"]["run_count"] == 1
+    assert snapshot["read_only_executor"]["recent_runs"] == [
+        {
+            "executor_run_id": run["executor_run_id"],
+            "plan_id": plan["plan_id"],
+            "command_id": proposed["command_id"],
+            "command_type": "CopyCliCommand",
+            "executor_status": "read_only_completed",
+            "writes_enabled": False,
+        }
+    ]
+
+
+def test_execute_read_only_executor_rejects_reviewed_plan_when_command_tuple_changes_within_whitelist(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="RunReadOnlySelfCheck",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="system",
+        target_id="control-tower",
+        risk_level="L1",
+        payload={"check": "self"},
+        idempotency_key="phase7-exact-policy-freshness",
+    )
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    control_tower.review_executor_plan_policy(
+        plan_id=plan["plan_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            """
+            UPDATE commands
+            SET command_type = 'RefreshProjection', payload_json = ?
+            WHERE command_id = ?
+            """,
+            (json.dumps({"projection": "overview"}), proposed["command_id"]),
+        )
+        ledger.commit()
+
+    try:
+        control_tower.execute_read_only_executor_plan(
+            plan_id=plan["plan_id"],
+            actor_type="human",
+            actor_id="charles",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "read-only executor policy is stale" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("changed command tuple should fail closed even if still whitelisted")
+
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM read_only_executor_runs").fetchone()[0] == 0
+        assert ledger.execute("SELECT status FROM commands WHERE command_id = ?", (proposed["command_id"],)).fetchone()[0] == "proposed"

@@ -500,20 +500,52 @@ Acceptance:
 - Eligibility still does not write adapters, close tasks, or mark commands done.
 - The next boundary is adding a real executor consumer for the eligible rows.
 
-### Phase 7 — Event-driven advancement
+### Phase 7 — Read-only executor consumer
 
-Tasks:
+Phase 7 consumes the Phase 6 `read_only_eligible` policy result for the same tiny
+L0/L1 whitelist. This is the first real executor consumer, but it is deliberately
+non-mutating outside the Control Tower Ledger: no adapter writes, no task
+lifecycle changes, no closeout, and no arbitrary shell.
 
-1. Define certification packet schema.
-2. Record model votes as events.
-3. Require evidence-grounded claims.
-4. Store disagreements and non-convergence.
-5. Route repeated failures to skill/policy proposals, not memory ghosts.
+Implemented scope:
+
+1. Add `read_only_executor_runs` ledger table.
+2. Add `execute_read_only_executor_plan(...)`.
+3. Require all gates before a run:
+   - executor plan exists and is still `planned` / `not_executed`;
+   - execution-policy review exists;
+   - review is `read_only_eligible` and `allowed_to_execute = true`;
+   - `writes_enabled = false`;
+   - command is still `proposed`;
+   - current command type/risk/payload exactly matches the generated plan tuple;
+   - current command type/risk/payload still recomputes to read-only eligible, so
+     stale policies fail closed even if the command changes from one L0/L1
+     whitelist type to another.
+4. Supported command types remain:
+   - `CopyCliCommand`
+   - `RefreshProjection`
+   - `RunReadOnlyProofCheck`
+   - `RunReadOnlySelfCheck`
+5. A successful run records `ReadOnlyExecutorRunCompleted`, updates the ledger
+   command to `executed`, and updates the executor plan to
+   `execution = read_only_completed`.
+6. The run result contains only bounded read-only summaries; it does not run
+   shell commands and does not write adapters.
+7. Dashboard API endpoint:
+   - `POST /api/plugins/control-tower/executor-plans/{plan_id}/execute-read-only`
+8. Snapshot `read_only_executor` reports run count/recent runs and explicitly
+   keeps `writes_enabled = false`, `adapter_write_through_enabled = false`, and
+   `closeout_execution_enabled = false`.
 
 Acceptance:
 
-- Multi-model PASS without evidence cannot close a task.
-- Disagreement is visible and recoverable.
+- Eligible read-only plans can be consumed exactly once and retried
+  idempotently.
+- Missing/stale/blocked policy reviews fail closed.
+- `tasks` and `adapter_observations` remain unchanged by executor runs.
+- Write-through adapter and closeout execution remain outside this phase.
+
+### Phase 8 — Event-driven advancement
 
 ## First implementation slice status
 
@@ -525,7 +557,7 @@ Implemented:
 4. Kanban projection adapter that records deduped observations in the Control Tower Ledger.
 5. Proposed-command registry via `POST /api/plugins/control-tower/commands/propose`.
 6. High-risk proposed commands routed to Human Inbox without execution.
-7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, human approval requests, approval decisions, workflow-map validation/projection, executor dry-run planning, read-only executor eligibility projection, evidence recording, and evidence-gate projection.
+7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, human approval requests, approval decisions, workflow-map validation/projection, executor dry-run planning, read-only executor eligibility projection, read-only executor consumption, evidence recording, and evidence-gate projection.
 8. Approval decision endpoint via `POST /api/plugins/control-tower/approvals/{approval_id}/decision`.
 9. Ledger-backed workflow map projection with disabled executor boundary.
 10. Executor dry-run plan endpoint via `POST /api/plugins/control-tower/commands/{command_id}/executor-plan`.
@@ -538,23 +570,24 @@ Implemented:
 17. Closeout authorization request endpoint via `POST /api/plugins/control-tower/evidence-gates/{evidence_review_id}/closeout-authorization`.
 18. Closeout authorization decision endpoint via `POST /api/plugins/control-tower/closeout-authorizations/{closeout_authorization_id}/decision`.
 19. Closeout authorization projection via snapshot `closeout_authorizations`.
+20. Read-only executor run endpoint via `POST /api/plugins/control-tower/executor-plans/{plan_id}/execute-read-only`.
+21. Read-only executor projection via snapshot `read_only_executor`.
 
 Still intentionally not implemented:
 
 - No lifecycle mutation.
-- No command execution.
 - No task claim/release/move/done/closeout actions.
 - No arbitrary shell.
 - No write-through Kanban/taskpool adapter.
 - No real closeout execution even after authorization approval.
-- Read-only executor whitelist is policy-active for L0/L1 plan reviews, but there
-  is still no executor consumer that performs the action.
+- Read-only executor whitelist is now executable only through the bounded
+  read-only consumer; it still cannot write adapters or mutate task lifecycle.
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy previews, evidence entries, evidence-gate closeout projections, and evidence-bound closeout authorization decisions but never executes them.
+- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, and evidence-bound closeout authorization decisions.
 - The ledger remains the only fact source.
-- The next step changes authority from "preview whether a plan would be executable" to "execute an approved plan", which requires explicit policy semantics, role binding, evidence requirements, and write-through adapter decisions.
+- The next step changes authority from "bounded read-only execution" to "write-through adapter / closeout execution", which requires explicit adapter contracts, rollback/escape paths, evidence override semantics, and command-execution approval digests.
 
 ## Human decisions required now
 
@@ -580,10 +613,11 @@ Remaining decisions before execution-capable implementation:
    - Still undecided for execution-capable phase: whether command-execution approval also binds to a command hash/payload digest and which executor actions may consume an approval.
 
 2. Executor boundary:
-   - Implemented for current non-executing slice: dry-run/copy-command executor plans may be generated for L0/L1 proposed commands and approved L2+ commands, then reviewed through an execution-policy projection.
+   - Implemented: dry-run/copy-command executor plans may be generated for L0/L1 proposed commands and approved L2+ commands, then reviewed through an execution-policy projection.
    - The projection reports `read_only_eligible`, `allowed_to_execute = true`, `writes_enabled = false`, and `blocked_reason = read_only_executor_whitelisted` only for whitelisted L0/L1 read-only command types.
+   - Implemented: eligible rows may be consumed by `execute_read_only_executor_plan(...)`, which records a `read_only_executor_runs` row and `ReadOnlyExecutorRunCompleted` event, then marks the ledger command/plan executed.
    - Non-whitelisted command types and any command above L1 remain execution-blocked.
-   - Still undecided for execution-capable phase: which eligible rows may actually run, which adapters may be mutated, and what rollback/escape path is required per action.
+   - Still undecided for write-through phase: which adapters may be mutated, what rollback/escape path is required per action, and whether command-execution approvals bind to command payload digests.
 
 3. Evidence and closeout boundary:
    - Implemented for current non-executing slice: evidence can be recorded and evaluated against risk-level maturity requirements and acceptance refs.
@@ -604,4 +638,4 @@ Remaining decisions before execution-capable implementation:
 
 ## Stop condition
 
-Stop execution-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, read-only executor eligibility projections, evidence entries, evidence-gate closeout projections, and evidence-bound closeout authorization requests/decisions are now durable, audited, idempotent where safe, expiring where required, and non-executing. The next boundary is a real executor consumer plus closeout/write-through adapter policy; do not run any lifecycle-affecting action until the adapter mutation contract, conflicting-evidence override semantics, rollback/escape path, closeout execution consumer, and command-execution approval digest semantics are explicitly decided.
+Stop write-through / closeout-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, read-only executor eligibility projections, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, and evidence-bound closeout authorization requests/decisions are now durable, audited, idempotent where safe, and expiring where required. The next boundary is adapter write-through plus closeout execution; do not run any lifecycle-affecting action until the adapter mutation contract, conflicting-evidence override semantics, rollback/escape path, closeout execution consumer, and command-execution approval digest semantics are explicitly decided.

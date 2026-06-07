@@ -334,6 +334,20 @@ _TABLES_SQL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS read_only_executor_runs (
+        executor_run_id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL UNIQUE,
+        policy_review_id TEXT NOT NULL,
+        command_id TEXT NOT NULL,
+        command_type TEXT NOT NULL,
+        executor_status TEXT NOT NULL,
+        writes_enabled INTEGER NOT NULL DEFAULT 0,
+        result_json TEXT NOT NULL DEFAULT '{}',
+        executed_by TEXT NOT NULL,
+        executed_at TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS adapter_observations (
         observation_id TEXT PRIMARY KEY,
         adapter_name TEXT NOT NULL,
@@ -895,6 +909,7 @@ def generate_executor_plan(
             "target_type": command["target_type"],
             "target_id": command["target_id"],
             "risk_level": command["risk_level"],
+            "payload": json.loads(command["payload_json"]),
             "mode": "dry_run_copy_command_only",
             "writes_enabled": False,
             "copy_command": copy_command,
@@ -1132,6 +1147,239 @@ def review_executor_plan_policy(
             (policy_review_id,),
         ).fetchone()
     return _policy_review_response(created=True, row=row, source_surface=source_surface)
+
+
+def _read_only_executor_result(command_type: str, plan_json: dict[str, Any]) -> dict[str, Any]:
+    if command_type == "CopyCliCommand":
+        return {
+            "check": "copy_cli_command",
+            "mutation_allowed": False,
+            "copy_command": plan_json.get("copy_command", ""),
+        }
+    if command_type == "RefreshProjection":
+        return {
+            "check": "refresh_projection",
+            "mutation_allowed": False,
+            "projection": "control_tower_snapshot",
+        }
+    if command_type == "RunReadOnlySelfCheck":
+        return {
+            "check": "self_check",
+            "mutation_allowed": False,
+            "status": "passed",
+            "assertions": [
+                "writes_disabled",
+                "adapter_write_through_disabled",
+                "closeout_execution_disabled",
+            ],
+        }
+    if command_type == "RunReadOnlyProofCheck":
+        return {
+            "check": "proof_check",
+            "mutation_allowed": False,
+            "status": "passed",
+            "acceptance_refs": plan_json.get("payload", {}).get("acceptance_refs", []),
+        }
+    raise ValueError("command type is not executable by read-only executor")
+
+
+def _read_only_executor_run_response(*, created: bool, row: sqlite3.Row, source_surface: str) -> dict[str, Any]:
+    return {
+        "created": created,
+        "executor_run_id": row["executor_run_id"],
+        "plan_id": row["plan_id"],
+        "policy_review_id": row["policy_review_id"],
+        "command_id": row["command_id"],
+        "command_type": row["command_type"],
+        "executor_status": row["executor_status"],
+        "execution": row["executor_status"],
+        "writes_enabled": bool(row["writes_enabled"]),
+        "adapter_writes": [],
+        "result": json.loads(row["result_json"]),
+        "source_surface": source_surface,
+        "executed_by": row["executed_by"],
+        "executed_at": row["executed_at"],
+    }
+
+
+def execute_read_only_executor_plan(
+    *,
+    plan_id: str,
+    actor_type: str,
+    actor_id: str,
+    source_surface: str,
+) -> dict[str, Any]:
+    """Execute a whitelisted read-only executor plan without adapter or task lifecycle writes."""
+    plan_id = plan_id.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    source_surface = source_surface.strip()
+    if not plan_id:
+        raise ValueError("plan_id is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        existing = conn.execute(
+            """
+            SELECT executor_run_id, plan_id, policy_review_id, command_id,
+                   command_type, executor_status, writes_enabled, result_json,
+                   executed_by, executed_at
+            FROM read_only_executor_runs
+            WHERE plan_id = ?
+            """,
+            (plan_id,),
+        ).fetchone()
+        if existing is not None:
+            return _read_only_executor_run_response(created=False, row=existing, source_surface=source_surface)
+
+        plan = conn.execute(
+            """
+            SELECT plan_id, command_id, command_type, status, execution,
+                   writes_enabled, plan_json
+            FROM executor_plans
+            WHERE plan_id = ?
+            """,
+            (plan_id,),
+        ).fetchone()
+        if plan is None:
+            raise ValueError(f"executor plan not found: {plan_id}")
+        if plan["status"] != "planned" or plan["execution"] != "not_executed" or bool(plan["writes_enabled"]):
+            raise ValueError("executor plan is not eligible for read-only execution")
+
+        policy = conn.execute(
+            """
+            SELECT policy_review_id, policy_status, allowed_to_execute,
+                   writes_enabled, blocked_reason
+            FROM execution_policy_reviews
+            WHERE plan_id = ?
+            """,
+            (plan_id,),
+        ).fetchone()
+        if policy is None or not bool(policy["allowed_to_execute"]):
+            raise ValueError("allowed execution policy review is required")
+        if policy["policy_status"] != "read_only_eligible" or bool(policy["writes_enabled"]):
+            raise ValueError("allowed execution policy review is required")
+
+        command = conn.execute(
+            """
+            SELECT command_id, command_type, target_type, target_id, risk_level,
+                   status, payload_json
+            FROM commands
+            WHERE command_id = ?
+            """,
+            (plan["command_id"],),
+        ).fetchone()
+        if command is None:
+            raise ValueError(f"command not found: {plan['command_id']}")
+        if command["status"] != "proposed":
+            raise ValueError(f"command is not proposed: {command['status']}")
+        plan_json = json.loads(plan["plan_json"])
+        current_payload = json.loads(command["payload_json"])
+        current_plan_json = {
+            **plan_json,
+            "command_type": command["command_type"],
+            "risk_level": command["risk_level"],
+            "payload": current_payload,
+        }
+        if (
+            command["command_type"] != plan_json.get("command_type")
+            or command["risk_level"] != plan_json.get("risk_level")
+            or _canonical_json(current_payload) != _canonical_json(plan_json.get("payload", {}))
+        ):
+            raise ValueError("read-only executor policy is stale")
+        current_policy = _read_only_executor_policy_for_plan(current_plan_json)
+        if current_policy["policy_status"] != "read_only_eligible":
+            raise ValueError("read-only executor policy is stale")
+
+        executor_run_id = f"exec_{uuid.uuid4().hex}"
+        executed_at = _now()
+        result = _read_only_executor_result(plan["command_type"], current_plan_json)
+        try:
+            conn.execute(
+                """
+                INSERT INTO read_only_executor_runs(
+                    executor_run_id, plan_id, policy_review_id, command_id,
+                    command_type, executor_status, writes_enabled, result_json,
+                    executed_by, executed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    executor_run_id,
+                    plan_id,
+                    policy["policy_review_id"],
+                    plan["command_id"],
+                    plan["command_type"],
+                    "read_only_completed",
+                    0,
+                    _canonical_json(result),
+                    actor_id,
+                    executed_at,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            existing_after_race = conn.execute(
+                """
+                SELECT executor_run_id, plan_id, policy_review_id, command_id,
+                       command_type, executor_status, writes_enabled, result_json,
+                       executed_by, executed_at
+                FROM read_only_executor_runs
+                WHERE plan_id = ?
+                """,
+                (plan_id,),
+            ).fetchone()
+            if existing_after_race is not None:
+                return _read_only_executor_run_response(
+                    created=False,
+                    row=existing_after_race,
+                    source_surface=source_surface,
+                )
+            raise
+        conn.execute(
+            "UPDATE executor_plans SET status = 'executed', execution = 'read_only_completed' WHERE plan_id = ?",
+            (plan_id,),
+        )
+        conn.execute(
+            "UPDATE commands SET status = 'executed' WHERE command_id = ?",
+            (plan["command_id"],),
+        )
+        _append_event(
+            conn,
+            event_type="ReadOnlyExecutorRunCompleted",
+            aggregate_type="read_only_executor_run",
+            aggregate_id=executor_run_id,
+            command_id=plan["command_id"],
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "executor_run_id": executor_run_id,
+                "plan_id": plan_id,
+                "policy_review_id": policy["policy_review_id"],
+                "command_id": plan["command_id"],
+                "command_type": plan["command_type"],
+                "executor_status": "read_only_completed",
+                "writes_enabled": False,
+                "adapter_writes": [],
+                "result": result,
+            },
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT executor_run_id, plan_id, policy_review_id, command_id,
+                   command_type, executor_status, writes_enabled, result_json,
+                   executed_by, executed_at
+            FROM read_only_executor_runs
+            WHERE executor_run_id = ?
+            """,
+            (executor_run_id,),
+        ).fetchone()
+    return _read_only_executor_run_response(created=True, row=row, source_surface=source_surface)
 
 
 def _normalize_acceptance_refs(acceptance_refs: list[str] | None) -> list[str]:
@@ -2058,6 +2306,36 @@ def _execution_policy_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _read_only_executor_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT executor_run_id, plan_id, command_id, command_type,
+               executor_status, writes_enabled
+        FROM read_only_executor_runs
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "read_only_executor_consumer",
+        "writes_enabled": False,
+        "adapter_write_through_enabled": False,
+        "closeout_execution_enabled": False,
+        "run_count": _count(conn, "read_only_executor_runs"),
+        "recent_runs": [
+            {
+                "executor_run_id": row["executor_run_id"],
+                "plan_id": row["plan_id"],
+                "command_id": row["command_id"],
+                "command_type": row["command_type"],
+                "executor_status": row["executor_status"],
+                "writes_enabled": bool(row["writes_enabled"]),
+            }
+            for row in rows
+        ],
+    }
+
+
 def _evidence_policy_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute(
         """
@@ -2190,6 +2468,7 @@ def build_snapshot() -> dict[str, Any]:
         workflow_map = _workflow_map_snapshot(conn)
         executor_plans = _executor_plans_snapshot(conn)
         execution_policy = _execution_policy_snapshot(conn)
+        read_only_executor = _read_only_executor_snapshot(conn)
         evidence_policy = _evidence_policy_snapshot(conn)
         closeout_authorizations = _closeout_authorizations_snapshot(conn)
     blockers = [
@@ -2232,6 +2511,7 @@ def build_snapshot() -> dict[str, Any]:
         "workflow_map": workflow_map,
         "executor_plans": executor_plans,
         "execution_policy": execution_policy,
+        "read_only_executor": read_only_executor,
         "evidence_policy": evidence_policy,
         "closeout_authorizations": closeout_authorizations,
         "worker_runs": [],

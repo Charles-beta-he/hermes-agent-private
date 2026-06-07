@@ -1,9 +1,10 @@
 """Control Tower dashboard plugin — read-only backend API routes.
 
 Mounted at /api/plugins/control-tower/ by the dashboard plugin system.
-The plugin is intentionally non-executing: it exposes ledger projections and
-records controlled operator intent, policy reviews, evidence, and authorization
-decisions without mutating task lifecycle state or writing through adapters.
+The plugin exposes ledger projections and controlled operator intent. It may
+execute the narrow read-only executor consumer for L0/L1 whitelisted commands,
+but it still never mutates task lifecycle state, performs closeout, or writes
+through adapters.
 """
 
 from __future__ import annotations
@@ -193,8 +194,19 @@ def generate_executor_plan(command_id: str, req: ExecutorPlanRequest):
 
 @router.post("/executor-plans/{plan_id}/policy-review")
 def review_executor_plan_policy(plan_id: str, req: ExecutorPlanRequest):
-    """Record a non-executing policy projection for a dry-run executor plan."""
+    """Record a non-mutating read-only executor policy review."""
     return control_tower.review_executor_plan_policy(
+        plan_id=plan_id,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        source_surface="dashboard",
+    )
+
+
+@router.post("/executor-plans/{plan_id}/execute-read-only")
+def execute_read_only_executor_plan(plan_id: str, req: ExecutorPlanRequest):
+    """Run the whitelisted read-only executor consumer without adapter writes."""
+    return control_tower.execute_read_only_executor_plan(
         plan_id=plan_id,
         actor_type=req.actor_type,
         actor_id=req.actor_id,

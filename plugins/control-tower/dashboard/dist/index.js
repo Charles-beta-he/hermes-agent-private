@@ -6,11 +6,12 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 6 is still non-executing: this dashboard can record operator intent,
-        human decisions, copy-command executor plans, read-only executor-policy
-        eligibility projections, evidence entries, evidence-gate projections, and
-        evidence-bound closeout authorizations in the Control Tower Ledger, but it
-        cannot execute lifecycle actions, close tasks, or write through adapters.
+        Phase 7 enables a narrow read-only executor consumer: this dashboard can
+        record operator intent, human decisions, copy-command executor plans,
+        read-only executor-policy reviews, read-only executor runs, evidence
+        entries, evidence-gate projections, and evidence-bound closeout
+        authorizations in the Control Tower Ledger. It still cannot execute
+        lifecycle actions, close tasks, or write through adapters.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
@@ -29,6 +30,9 @@
         </button>
         <button id="control-tower-policy-first" type="button">
           Review first plan policy
+        </button>
+        <button id="control-tower-execute-read-only" type="button">
+          Execute read-only plan
         </button>
         <button id="control-tower-record-evidence" type="button">
           Record sample evidence
@@ -63,6 +67,7 @@
     const policyReviews = data?.execution_policy?.review_count ?? 0;
     const readOnlyEligible = data?.execution_policy?.read_only_eligible_count ?? 0;
     const policyBlocked = data?.execution_policy?.blocked_count ?? 0;
+    const readOnlyRuns = data?.read_only_executor?.run_count ?? 0;
     const evidenceReviews = data?.evidence_policy?.review_count ?? 0;
     const closeoutPending = data?.closeout_authorizations?.pending_count ?? 0;
     const closeoutDecided = data?.closeout_authorizations?.decided_count ?? 0;
@@ -79,6 +84,7 @@
         <span>Executor plans: <strong>${plans}</strong></span>
         <span>Policy reviews: <strong>${policyReviews}</strong></span>
         <span>Read-only eligible: <strong>${readOnlyEligible}</strong></span>
+        <span>Read-only runs: <strong>${readOnlyRuns}</strong></span>
         <span>Policy blocked: <strong>${policyBlocked}</strong></span>
         <span>Evidence reviews: <strong>${evidenceReviews}</strong></span>
         <span>Closeout auth pending: <strong>${closeoutPending}</strong></span>
@@ -196,6 +202,30 @@
       })
       .catch((error) => {
         if (snapshotEl) snapshotEl.textContent = `Policy review failed: ${error}`;
+      });
+  };
+
+  const executeFirstReadOnlyPlan = () => {
+    const review = latestSnapshot?.execution_policy?.recent_reviews?.find((item) => item.allowed_to_execute === true);
+    if (!review) {
+      if (snapshotEl) snapshotEl.textContent = 'No read-only eligible policy review to execute.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/executor-plans/${encodeURIComponent(review.plan_id)}/execute-read-only`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor_type: 'human',
+        actor_id: 'dashboard',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `Read-only executor run failed: ${error}`;
       });
   };
 
@@ -317,6 +347,9 @@
   document
     .getElementById('control-tower-policy-first')
     ?.addEventListener('click', reviewFirstPlanPolicy);
+  document
+    .getElementById('control-tower-execute-read-only')
+    ?.addEventListener('click', executeFirstReadOnlyPlan);
   document
     .getElementById('control-tower-record-evidence')
     ?.addEventListener('click', recordSampleEvidence);

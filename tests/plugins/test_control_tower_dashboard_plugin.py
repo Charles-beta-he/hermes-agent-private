@@ -290,3 +290,44 @@ def test_control_tower_dashboard_plugin_requests_and_decides_closeout_authorizat
     assert decided["status"] == "approved"
     assert decided["closeout_allowed"] is False
     assert decided["execution"] == "not_executed"
+
+def test_control_tower_dashboard_plugin_executes_read_only_executor_without_adapter_writes(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    app = FastAPI()
+    app.include_router(_load_plugin_router(), prefix="/api/plugins/control-tower")
+    client = TestClient(app)
+
+    proposed = client.post(
+        "/api/plugins/control-tower/commands/propose",
+        json={
+            "command_type": "RunReadOnlySelfCheck",
+            "actor_id": "charles",
+            "target_type": "system",
+            "target_id": "control-tower",
+            "risk_level": "L1",
+            "payload": {},
+            "idempotency_key": "dashboard-read-only-execute",
+        },
+    ).json()
+    plan = client.post(
+        f"/api/plugins/control-tower/commands/{proposed['command_id']}/executor-plan",
+        json={"actor_id": "charles"},
+    ).json()
+    client.post(
+        f"/api/plugins/control-tower/executor-plans/{plan['plan_id']}/policy-review",
+        json={"actor_id": "charles"},
+    )
+
+    response = client.post(
+        f"/api/plugins/control-tower/executor-plans/{plan['plan_id']}/execute-read-only",
+        json={"actor_id": "charles"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["executor_status"] == "read_only_completed"
+    assert data["writes_enabled"] is False
+    assert data["adapter_writes"] == []
+    assert data["result"]["check"] == "self_check"
+    assert data["source_surface"] == "dashboard"
