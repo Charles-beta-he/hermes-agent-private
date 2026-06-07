@@ -271,3 +271,190 @@ def test_snapshot_includes_proposed_commands_and_pending_human_approvals(tmp_pat
     ]
     assert snapshot["human_inbox"]["pending_count"] == 1
     assert snapshot["human_inbox"]["pending"][0]["approval_id"] == high["approval_id"]
+
+
+def test_decide_human_approval_approves_once_without_executing_command(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="ReleaseLease",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="task",
+        target_id="task:danger",
+        risk_level="L2",
+        payload={"lease_owner": "worker-1"},
+        idempotency_key="release-task-danger",
+    )
+
+    decided = control_tower.decide_human_approval(
+        approval_id=proposed["approval_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        reason="operator reviewed stale lease evidence",
+    )
+    repeated = control_tower.decide_human_approval(
+        approval_id=proposed["approval_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        reason="same approval submitted twice",
+    )
+
+    assert decided["created"] is True
+    assert decided["approval_id"] == proposed["approval_id"]
+    assert decided["status"] == "approved"
+    assert decided["execution"] == "not_executed"
+    assert repeated["created"] is False
+    assert repeated["status"] == "approved"
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        approval = ledger.execute(
+            "SELECT status, decided_by, decided_at FROM human_approvals WHERE approval_id = ?",
+            (proposed["approval_id"],),
+        ).fetchone()
+        command_status = ledger.execute(
+            "SELECT status FROM commands WHERE command_id = ?",
+            (proposed["command_id"],),
+        ).fetchone()[0]
+        event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert approval[0] == "approved"
+    assert approval[1] == "charles"
+    assert approval[2]
+    assert command_status == "proposed"
+    assert event_types == ["CommandProposed", "HumanApprovalRequested", "HumanApprovalGranted"]
+
+
+def test_decide_human_approval_rejects_and_snapshot_moves_out_of_pending(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="CancelWorkflowRun",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="workflow_run",
+        target_id="run-1",
+        risk_level="L3",
+        payload={},
+        idempotency_key="cancel-run-1",
+    )
+
+    decided = control_tower.decide_human_approval(
+        approval_id=proposed["approval_id"],
+        decision="rejected",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        reason="insufficient rollback evidence",
+    )
+    snapshot = control_tower.build_snapshot()
+
+    assert decided["status"] == "rejected"
+    assert decided["execution"] == "not_executed"
+    assert snapshot["human_inbox"]["pending_count"] == 0
+    assert snapshot["human_inbox"]["pending"] == []
+    assert snapshot["human_inbox"]["decided_count"] == 1
+    assert snapshot["human_inbox"]["recent_decided"][0]["approval_id"] == proposed["approval_id"]
+    assert snapshot["human_inbox"]["recent_decided"][0]["status"] == "rejected"
+
+
+def test_validate_workflow_schema_rejects_duplicates_missing_dependencies_and_cycles():
+    duplicate = {
+        "schema_id": "bad-duplicate",
+        "version": 1,
+        "nodes": [
+            {"id": "a", "requires": []},
+            {"id": "a", "requires": []},
+        ],
+    }
+    missing = {
+        "schema_id": "bad-missing",
+        "version": 1,
+        "nodes": [{"id": "a", "requires": ["missing"]}],
+    }
+    cyclic = {
+        "schema_id": "bad-cycle",
+        "version": 1,
+        "nodes": [
+            {"id": "a", "requires": ["b"]},
+            {"id": "b", "requires": ["a"]},
+        ],
+    }
+
+    for schema, expected in [
+        (duplicate, "duplicate workflow node id"),
+        (missing, "missing dependency"),
+        (cyclic, "workflow cycle detected"),
+    ]:
+        try:
+            control_tower.validate_workflow_schema(schema)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"expected {expected}")
+
+
+def test_snapshot_includes_ledger_backed_workflow_map_without_executor_ready(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="ReleaseLease",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="task",
+        target_id="task:danger",
+        risk_level="L2",
+        payload={"lease_owner": "worker-1"},
+        idempotency_key="release-task-danger",
+    )
+
+    snapshot = control_tower.build_snapshot()
+
+    assert snapshot["workflow_map"]["schema_id"] == "control-tower-command-lifecycle"
+    assert snapshot["workflow_map"]["source"] == "ledger_projection"
+    assert [node["id"] for node in snapshot["workflow_map"]["nodes"]] == [
+        "command_proposed",
+        "approval_requested",
+        "approval_decided",
+        "executor_eligible",
+    ]
+    assert snapshot["workflow_map"]["ready"] == [
+        {
+            "node_id": "approval_requested",
+            "approval_id": proposed["approval_id"],
+            "command_id": proposed["command_id"],
+            "action": "ReleaseLease",
+            "risk_level": "L2",
+        }
+    ]
+    assert snapshot["workflow_map"]["blocked"] == [
+        {
+            "node_id": "executor_eligible",
+            "reason": "executor_disabled_phase_boundary",
+            "required_human_decisions": 1,
+        }
+    ]
+
+    control_tower.decide_human_approval(
+        approval_id=proposed["approval_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        reason="operator approved for future executor phase",
+    )
+    decided_snapshot = control_tower.build_snapshot()
+
+    assert decided_snapshot["workflow_map"]["ready"] == []
+    assert decided_snapshot["workflow_map"]["blocked"] == [
+        {
+            "node_id": "executor_eligible",
+            "reason": "executor_disabled_phase_boundary",
+            "approved_commands_waiting": 1,
+        }
+    ]

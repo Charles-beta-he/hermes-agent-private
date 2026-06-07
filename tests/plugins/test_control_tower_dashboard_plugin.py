@@ -79,3 +79,39 @@ def test_control_tower_dashboard_plugin_proposes_command_without_execution(tmp_p
     assert data["execution"] == "not_executed"
     assert data["requires_human"] is False
     assert data["source_surface"] == "dashboard"
+
+
+def test_control_tower_dashboard_plugin_decides_approval_without_execution(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    app = FastAPI()
+    app.include_router(_load_plugin_router(), prefix="/api/plugins/control-tower")
+    client = TestClient(app)
+
+    proposed = client.post(
+        "/api/plugins/control-tower/commands/propose",
+        json={
+            "command_type": "ReleaseLease",
+            "actor_id": "charles",
+            "target_type": "task",
+            "target_id": "task:danger",
+            "risk_level": "L2",
+            "payload": {"lease_owner": "worker-1"},
+            "idempotency_key": "dashboard-release-danger",
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/plugins/control-tower/approvals/{proposed['approval_id']}/decision",
+        json={
+            "decision": "approved",
+            "actor_id": "charles",
+            "reason": "operator confirmed stale lease evidence",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "approved"
+    assert data["execution"] == "not_executed"
+    assert data["source_surface"] == "dashboard"

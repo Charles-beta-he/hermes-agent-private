@@ -26,6 +26,13 @@ class ProposedCommandRequest(BaseModel):
     idempotency_key: str | None = None
 
 
+class ApprovalDecisionRequest(BaseModel):
+    decision: str = Field(min_length=1)
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    reason: str = Field(default="", min_length=0)
+
+
 @router.get("/snapshot")
 def get_snapshot():
     """Return the read-only Control Tower Phase 1 snapshot."""
@@ -45,4 +52,17 @@ def propose_command(req: ProposedCommandRequest):
         risk_level=req.risk_level,
         payload=req.payload,
         idempotency_key=req.idempotency_key,
+    )
+
+
+@router.post("/approvals/{approval_id}/decision")
+def decide_approval(approval_id: str, req: ApprovalDecisionRequest):
+    """Record an approval decision without executing the underlying command."""
+    return control_tower.decide_human_approval(
+        approval_id=approval_id,
+        decision=req.decision,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        source_surface="dashboard",
+        reason=req.reason,
     )

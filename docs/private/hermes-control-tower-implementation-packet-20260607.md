@@ -256,19 +256,43 @@ Acceptance:
 - Every new proposed action emits an audit event.
 - High-risk proposals are visible in Human Inbox.
 
-### Phase 3 — Workflow Map and Gate Inspector
+### Phase 3 — Approval lifecycle and workflow map inspector
 
 Tasks:
 
-1. Derive workflow graph from task/event/proof state.
-2. Implement gate status nodes.
-3. Link event timeline and evidence to graph nodes.
-4. Show next action and blocked reason.
+1. Record approval decisions without executing commands.
+2. Enforce single-use approval semantics with idempotent same-decision retries.
+3. Emit approval decision audit events.
+4. Derive workflow graph/readiness from ledger state.
+5. Validate workflow graph node IDs, dependencies, and cycles.
+6. Show next action and blocked reason.
+
+Implemented slice:
+
+- `control_tower.decide_human_approval(...)` records `approved` / `rejected` decisions in `human_approvals`.
+- Approval decisions emit:
+  - `HumanApprovalGranted`
+  - `HumanApprovalRejected`
+- Repeating the same decision is idempotent and emits no extra event.
+- Conflicting second decisions are rejected.
+- Underlying commands remain `status = proposed`; approval does not execute the command.
+- Dashboard plugin exposes `POST /api/plugins/control-tower/approvals/{approval_id}/decision`.
+- Snapshot `human_inbox` now includes:
+  - pending approvals
+  - recent decided approvals
+- OpenSpec-informed workflow map projection added:
+  - schema id: `control-tower-command-lifecycle`
+  - nodes: `command_proposed`, `approval_requested`, `approval_decided`, `executor_eligible`
+  - readiness and blocked reasons are ledger-derived
+  - executor eligibility is explicitly blocked with `executor_disabled_phase_boundary`
+- Workflow schema validation rejects duplicate node IDs, missing dependencies, and cycles.
 
 Acceptance:
 
-- Any selected task has visible path from creation to current state.
-- Gate reason is inspectable.
+- Human approval decision state is visible and auditable.
+- Approval/rejection does not execute lifecycle side effects.
+- Any selected command lifecycle has inspectable graph nodes and blocked reason.
+- Executor remains disabled until explicit policy approval.
 
 ### Phase 4 — Evidence Spine enforcement
 
@@ -323,7 +347,9 @@ Implemented:
 4. Kanban projection adapter that records deduped observations in the Control Tower Ledger.
 5. Proposed-command registry via `POST /api/plugins/control-tower/commands/propose`.
 6. High-risk proposed commands routed to Human Inbox without execution.
-7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, and human approval requests.
+7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, human approval requests, approval decisions, and workflow-map validation/projection.
+8. Approval decision endpoint via `POST /api/plugins/control-tower/approvals/{approval_id}/decision`.
+9. Ledger-backed workflow map projection with disabled executor boundary.
 
 Still intentionally not implemented:
 
@@ -332,13 +358,14 @@ Still intentionally not implemented:
 - No task claim/release/move/done actions.
 - No arbitrary shell.
 - No write-through Kanban/taskpool adapter.
-- No approval decision endpoint.
+- No approval expiration / role authorization matrix yet.
+- No executor whitelist activation yet.
 
 Why this boundary:
 
-- The system now records durable operator intent but never executes it.
+- The system now records durable operator intent and human decisions but never executes them.
 - The ledger remains the only fact source.
-- The next step changes authority from "record proposed intent" to "approve/execute intent", which requires policy semantics.
+- The next step changes authority from "approve/reject proposed intent" to "execute approved intent", which requires explicit policy semantics and write-through adapter decisions.
 
 ## Human decisions required now
 
@@ -359,10 +386,8 @@ Resolved:
 Remaining decisions before execution-capable implementation:
 
 1. Approval decision semantics:
-   - Who can approve?
-   - Is approval single-use?
-   - Does approval expire?
-   - What evidence must be attached by risk level?
+   - Implemented for current non-executing slice: decisions are single-use, same-decision retries are idempotent, conflicting second decisions fail closed, and decisions emit audit events.
+   - Still undecided for execution-capable phase: approver role matrix, expiration windows, risk-level evidence requirements, and whether approval binds to a command hash/payload digest.
 
 2. Executor boundary:
    - Should Phase 3 still stop at "copy CLI command", or may the dashboard invoke a limited executor for selected L1 actions?
@@ -381,4 +406,4 @@ Remaining decisions before execution-capable implementation:
 
 ## Stop condition
 
-Stop execution-capable implementation here. Proposed commands and Human Inbox records are now durable, audited, idempotent, and non-executing. The next boundary is approval/executor authority, which must be explicitly decided before any lifecycle-affecting action can run.
+Stop execution-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, and workflow-map blocked reasons are now durable, audited, idempotent where safe, and non-executing. The next boundary is executor authority plus write-through adapter policy; do not run any lifecycle-affecting action until the executor whitelist, role matrix, expiration/evidence rules, and rollback/escape path are explicitly decided.

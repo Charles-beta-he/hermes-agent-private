@@ -42,6 +42,20 @@
   background: color-mix(in srgb, Canvas 78%, currentColor 22%);
 }
 
+.control-tower-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.control-tower-summary span {
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, Canvas 86%, currentColor 14%);
+}
+
 .control-tower-card pre {
   margin-top: 20px;
   max-height: 60vh;

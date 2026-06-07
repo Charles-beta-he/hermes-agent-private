@@ -21,6 +21,38 @@ from hermes_constants import get_hermes_home
 SCHEMA_VERSION = 1
 LEDGER_FILENAME = "control_tower.db"
 
+CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA: dict[str, Any] = {
+    "schema_id": "control-tower-command-lifecycle",
+    "version": 1,
+    "nodes": [
+        {
+            "id": "command_proposed",
+            "label": "Command proposed",
+            "requires": [],
+            "truth_source": "events.CommandProposed",
+        },
+        {
+            "id": "approval_requested",
+            "label": "Human approval requested",
+            "requires": ["command_proposed"],
+            "truth_source": "human_approvals.status=requested",
+        },
+        {
+            "id": "approval_decided",
+            "label": "Human approval decided",
+            "requires": ["approval_requested"],
+            "truth_source": "human_approvals.status in approved/rejected",
+        },
+        {
+            "id": "executor_eligible",
+            "label": "Executor eligible",
+            "requires": ["approval_decided"],
+            "truth_source": "future_policy_executor_disabled",
+            "enabled": False,
+        },
+    ],
+}
+
 _TABLES_SQL: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS ledger_meta (
@@ -234,6 +266,55 @@ _INDEXES_SQL: tuple[str, ...] = (
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def validate_workflow_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Validate a small workflow schema graph and return it unchanged.
+
+    This mirrors the useful OpenSpec artifact-graph guardrails while keeping the
+    schema as a Control Tower projection rule, not an external workflow truth.
+    """
+    nodes = schema.get("nodes")
+    if not isinstance(nodes, list):
+        raise ValueError("workflow schema nodes must be a list")
+    node_ids: list[str] = []
+    for node in nodes:
+        node_id = str(node.get("id", "")).strip() if isinstance(node, dict) else ""
+        if not node_id:
+            raise ValueError("workflow node id is required")
+        if node_id in node_ids:
+            raise ValueError(f"duplicate workflow node id: {node_id}")
+        node_ids.append(node_id)
+    known = set(node_ids)
+    dependencies: dict[str, list[str]] = {}
+    for node in nodes:
+        node_id = str(node["id"])
+        requires = node.get("requires", [])
+        if not isinstance(requires, list):
+            raise ValueError(f"workflow node requires must be a list: {node_id}")
+        dependencies[node_id] = [str(dep) for dep in requires]
+        for dep in dependencies[node_id]:
+            if dep not in known:
+                raise ValueError(f"missing dependency for {node_id}: {dep}")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node_id: str, trail: list[str]) -> None:
+        if node_id in visiting:
+            cycle = " -> ".join([*trail, node_id])
+            raise ValueError(f"workflow cycle detected: {cycle}")
+        if node_id in visited:
+            return
+        visiting.add(node_id)
+        for dep in dependencies[node_id]:
+            visit(dep, [*trail, node_id])
+        visiting.remove(node_id)
+        visited.add(node_id)
+
+    for node_id in node_ids:
+        visit(node_id, [])
+    return schema
 
 
 def _active_profile(home: Path) -> str:
@@ -515,6 +596,112 @@ def propose_command(
         "risk_level": risk_level,
     }
 
+def decide_human_approval(
+    *,
+    approval_id: str,
+    decision: str,
+    actor_type: str,
+    actor_id: str,
+    source_surface: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Approve or reject a human approval request without executing the command.
+
+    Approval decisions are single-use and idempotent for repeated submissions of
+    the same final decision. A conflicting second decision is rejected so the
+    Human Inbox cannot silently flip authority after review.
+    """
+    approval_id = approval_id.strip()
+    decision = decision.strip().lower()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    source_surface = source_surface.strip()
+    if not approval_id:
+        raise ValueError("approval_id is required")
+    if decision not in {"approved", "rejected"}:
+        raise ValueError("decision must be approved or rejected")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT approval_id, command_id, requested_action, risk_level, status,
+                   decided_by, decided_at
+            FROM human_approvals
+            WHERE approval_id = ?
+            """,
+            (approval_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"approval not found: {approval_id}")
+        if row["status"] in {"approved", "rejected"}:
+            if row["status"] != decision:
+                raise ValueError(
+                    f"approval already decided as {row['status']}; conflicting decision {decision} rejected"
+                )
+            return {
+                "created": False,
+                "approval_id": approval_id,
+                "command_id": row["command_id"],
+                "status": row["status"],
+                "decision": row["status"],
+                "execution": "not_executed",
+                "source_surface": source_surface,
+                "decided_by": row["decided_by"],
+                "decided_at": row["decided_at"],
+            }
+        if row["status"] != "requested":
+            raise ValueError(f"approval is not pending: {row['status']}")
+
+        decided_at = _now()
+        conn.execute(
+            """
+            UPDATE human_approvals
+            SET status = ?, decided_by = ?, decided_at = ?
+            WHERE approval_id = ?
+            """,
+            (decision, actor_id, decided_at, approval_id),
+        )
+        event_type = "HumanApprovalGranted" if decision == "approved" else "HumanApprovalRejected"
+        event_id = _append_event(
+            conn,
+            event_type=event_type,
+            aggregate_type="approval",
+            aggregate_id=approval_id,
+            command_id=row["command_id"],
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "approval_id": approval_id,
+                "command_id": row["command_id"],
+                "requested_action": row["requested_action"],
+                "risk_level": row["risk_level"],
+                "decision": decision,
+                "reason": reason,
+                "execution": "not_executed",
+            },
+        )
+        conn.commit()
+
+    return {
+        "created": True,
+        "approval_id": approval_id,
+        "command_id": row["command_id"],
+        "status": decision,
+        "decision": decision,
+        "execution": "not_executed",
+        "source_surface": source_surface,
+        "decided_by": actor_id,
+        "decided_at": decided_at,
+        "event_id": event_id,
+    }
+
 
 
 def record_adapter_observation(
@@ -721,7 +908,7 @@ def _command_registry_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def _human_inbox_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
-    rows = conn.execute(
+    pending_rows = conn.execute(
         """
         SELECT approval_id, command_id, task_id, requested_action, risk_level,
                status, request_summary, consequence_summary, requested_by, requested_at
@@ -731,9 +918,70 @@ def _human_inbox_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
         LIMIT 20
         """
     ).fetchall()
+    decided_rows = conn.execute(
+        """
+        SELECT approval_id, command_id, task_id, requested_action, risk_level,
+               status, request_summary, consequence_summary, requested_by,
+               requested_at, decided_by, decided_at
+        FROM human_approvals
+        WHERE status IN ('approved', 'rejected')
+        ORDER BY decided_at DESC, rowid DESC
+        LIMIT 20
+        """
+    ).fetchall()
     return {
         "pending_count": _count(conn, "human_approvals", "status = 'requested'"),
-        "pending": [dict(row) for row in rows],
+        "pending": [dict(row) for row in pending_rows],
+        "decided_count": _count(conn, "human_approvals", "status IN ('approved', 'rejected')"),
+        "recent_decided": [dict(row) for row in decided_rows],
+    }
+
+
+def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    schema = validate_workflow_schema(CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA)
+    pending = conn.execute(
+        """
+        SELECT approval_id, command_id, requested_action, risk_level
+        FROM human_approvals
+        WHERE status = 'requested'
+        ORDER BY rowid ASC
+        """
+    ).fetchall()
+    approved_count = _count(conn, "human_approvals", "status = 'approved'")
+    ready = [
+        {
+            "node_id": "approval_requested",
+            "approval_id": row["approval_id"],
+            "command_id": row["command_id"],
+            "action": row["requested_action"],
+            "risk_level": row["risk_level"],
+        }
+        for row in pending
+    ]
+    blocked: list[dict[str, Any]] = []
+    if pending:
+        blocked.append(
+            {
+                "node_id": "executor_eligible",
+                "reason": "executor_disabled_phase_boundary",
+                "required_human_decisions": len(pending),
+            }
+        )
+    elif approved_count:
+        blocked.append(
+            {
+                "node_id": "executor_eligible",
+                "reason": "executor_disabled_phase_boundary",
+                "approved_commands_waiting": approved_count,
+            }
+        )
+    return {
+        "schema_id": schema["schema_id"],
+        "version": schema["version"],
+        "source": "ledger_projection",
+        "nodes": schema["nodes"],
+        "ready": ready,
+        "blocked": blocked,
     }
 
 
@@ -753,6 +1001,7 @@ def build_snapshot() -> dict[str, Any]:
         tasks = _observed_tasks(conn)
         command_registry = _command_registry_snapshot(conn)
         human_inbox = _human_inbox_snapshot(conn)
+        workflow_map = _workflow_map_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -790,6 +1039,7 @@ def build_snapshot() -> dict[str, Any]:
         "top_blockers": blockers[:5],
         "command_registry": command_registry,
         "human_inbox": human_inbox,
+        "workflow_map": workflow_map,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {
