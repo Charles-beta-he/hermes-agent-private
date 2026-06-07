@@ -294,9 +294,44 @@ Acceptance:
 - Any selected command lifecycle has inspectable graph nodes and blocked reason.
 - Executor remains disabled until explicit policy approval.
 
-### Phase 4 — Evidence Spine enforcement
+### Phase 4 — Executor dry-run planning and Evidence Spine enforcement
+
+Phase 4A implemented slice:
 
 Tasks:
+
+1. Generate executor plans for eligible proposed commands.
+2. Keep executor plans dry-run / copy-command only.
+3. Record plan generation as an audit event.
+4. Surface plans in the dashboard snapshot.
+5. Keep all lifecycle and adapter writes disabled.
+
+Implemented slice:
+
+- `control_tower.generate_executor_plan(...)` creates one idempotent dry-run plan per command.
+- Dashboard plugin exposes `POST /api/plugins/control-tower/commands/{command_id}/executor-plan`.
+- Executor plans are stored in `executor_plans` with:
+  - `mode = dry_run_copy_command_only`
+  - `status = planned`
+  - `execution = not_executed`
+  - `writes_enabled = false`
+  - a copyable command preview
+- Plan generation emits `ExecutorPlanGenerated`.
+- L0/L1 proposed commands can receive dry-run plans without human approval.
+- L2+ commands require an approved Human Inbox decision before planning.
+- Pending/rejected L2+ commands fail closed.
+- Snapshot now includes `executor_plans`.
+- Underlying command rows remain `status = proposed`; no command is marked executed.
+
+Acceptance:
+
+- Executor planning is visible and auditable.
+- Planning does not execute lifecycle side effects.
+- Planning does not write Kanban/taskpool/adapters.
+- Pending/rejected high-risk commands cannot be planned.
+- A generated plan only provides a copyable/dry-run command preview.
+
+Phase 4B remaining Evidence Spine tasks:
 
 1. Implement evidence maturity model.
 2. Link evidence to acceptance criteria.
@@ -347,25 +382,27 @@ Implemented:
 4. Kanban projection adapter that records deduped observations in the Control Tower Ledger.
 5. Proposed-command registry via `POST /api/plugins/control-tower/commands/propose`.
 6. High-risk proposed commands routed to Human Inbox without execution.
-7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, human approval requests, approval decisions, and workflow-map validation/projection.
+7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, human approval requests, approval decisions, workflow-map validation/projection, and executor dry-run planning.
 8. Approval decision endpoint via `POST /api/plugins/control-tower/approvals/{approval_id}/decision`.
 9. Ledger-backed workflow map projection with disabled executor boundary.
+10. Executor dry-run plan endpoint via `POST /api/plugins/control-tower/commands/{command_id}/executor-plan`.
+11. Executor plan projection via snapshot `executor_plans`.
 
 Still intentionally not implemented:
 
 - No lifecycle mutation.
-- No command executor.
+- No command execution.
 - No task claim/release/move/done actions.
 - No arbitrary shell.
 - No write-through Kanban/taskpool adapter.
 - No approval expiration / role authorization matrix yet.
-- No executor whitelist activation yet.
+- No executor whitelist activation beyond dry-run/copy-command planning.
 
 Why this boundary:
 
-- The system now records durable operator intent and human decisions but never executes them.
+- The system now records durable operator intent, human decisions, and executor dry-run plans but never executes them.
 - The ledger remains the only fact source.
-- The next step changes authority from "approve/reject proposed intent" to "execute approved intent", which requires explicit policy semantics and write-through adapter decisions.
+- The next step changes authority from "generate a dry-run plan" to "execute an approved plan", which requires explicit policy semantics and write-through adapter decisions.
 
 ## Human decisions required now
 
@@ -390,8 +427,8 @@ Remaining decisions before execution-capable implementation:
    - Still undecided for execution-capable phase: approver role matrix, expiration windows, risk-level evidence requirements, and whether approval binds to a command hash/payload digest.
 
 2. Executor boundary:
-   - Should Phase 3 still stop at "copy CLI command", or may the dashboard invoke a limited executor for selected L1 actions?
-   - If invoking an executor, which action list is allowed first?
+   - Implemented for current non-executing slice: dry-run/copy-command executor plans may be generated for L0/L1 proposed commands and approved L2+ commands.
+   - Still undecided for execution-capable phase: which actions may actually run, which adapters may be mutated, and what rollback/escape path is required per action.
 
 3. Write-through adapter timing:
    - Keep Kanban/taskpool read-only until command executor is stable, or
@@ -406,4 +443,4 @@ Remaining decisions before execution-capable implementation:
 
 ## Stop condition
 
-Stop execution-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, and workflow-map blocked reasons are now durable, audited, idempotent where safe, and non-executing. The next boundary is executor authority plus write-through adapter policy; do not run any lifecycle-affecting action until the executor whitelist, role matrix, expiration/evidence rules, and rollback/escape path are explicitly decided.
+Stop execution-capable implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, and dry-run executor plans are now durable, audited, idempotent where safe, and non-executing. The next boundary is real executor authority plus write-through adapter policy; do not run any lifecycle-affecting action until the executor whitelist, role matrix, expiration/evidence rules, rollback/escape path, and adapter mutation contract are explicitly decided.

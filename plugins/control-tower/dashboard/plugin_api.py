@@ -33,6 +33,11 @@ class ApprovalDecisionRequest(BaseModel):
     reason: str = Field(default="", min_length=0)
 
 
+class ExecutorPlanRequest(BaseModel):
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+
+
 @router.get("/snapshot")
 def get_snapshot():
     """Return the read-only Control Tower Phase 1 snapshot."""
@@ -65,4 +70,15 @@ def decide_approval(approval_id: str, req: ApprovalDecisionRequest):
         actor_id=req.actor_id,
         source_surface="dashboard",
         reason=req.reason,
+    )
+
+
+@router.post("/commands/{command_id}/executor-plan")
+def generate_executor_plan(command_id: str, req: ExecutorPlanRequest):
+    """Generate a dry-run/copy-command plan without executing workflow side effects."""
+    return control_tower.generate_executor_plan(
+        command_id=command_id,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        source_surface="dashboard",
     )

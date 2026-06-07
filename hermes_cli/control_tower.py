@@ -231,6 +231,21 @@ _TABLES_SQL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS executor_plans (
+        plan_id TEXT PRIMARY KEY,
+        command_id TEXT NOT NULL UNIQUE,
+        command_type TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        status TEXT NOT NULL,
+        execution TEXT NOT NULL,
+        writes_enabled INTEGER NOT NULL DEFAULT 0,
+        copy_command TEXT NOT NULL,
+        plan_json TEXT NOT NULL DEFAULT '{}',
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS adapter_observations (
         observation_id TEXT PRIMARY KEY,
         adapter_name TEXT NOT NULL,
@@ -702,6 +717,156 @@ def decide_human_approval(
         "event_id": event_id,
     }
 
+def _copy_command_for_plan(command_id: str) -> str:
+    return f"hermes control-tower executor-plan --command-id {command_id} --dry-run"
+
+
+def _existing_executor_plan(conn: sqlite3.Connection, command_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT plan_id, command_id, command_type, mode, status, execution,
+               writes_enabled, copy_command, created_by, created_at
+        FROM executor_plans
+        WHERE command_id = ?
+        """,
+        (command_id,),
+    ).fetchone()
+
+
+def _command_is_plan_eligible(conn: sqlite3.Connection, command: sqlite3.Row) -> None:
+    if command["status"] != "proposed":
+        raise ValueError(f"command is not proposed: {command['status']}")
+    risk_level = str(command["risk_level"]).upper()
+    if not _risk_requires_human(risk_level):
+        return
+    approval = conn.execute(
+        "SELECT status FROM human_approvals WHERE command_id = ? ORDER BY rowid DESC LIMIT 1",
+        (command["command_id"],),
+    ).fetchone()
+    if approval is None or approval["status"] == "requested":
+        raise ValueError("command requires approved human approval before executor planning")
+    if approval["status"] == "rejected":
+        raise ValueError("command approval rejected; executor planning is not allowed")
+    if approval["status"] != "approved":
+        raise ValueError(f"unsupported approval status: {approval['status']}")
+
+
+def generate_executor_plan(
+    *,
+    command_id: str,
+    actor_type: str,
+    actor_id: str,
+    source_surface: str,
+) -> dict[str, Any]:
+    """Generate a dry-run/copy-command executor plan without running the command."""
+    command_id = command_id.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    source_surface = source_surface.strip()
+    if not command_id:
+        raise ValueError("command_id is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        command = conn.execute(
+            """
+            SELECT command_id, command_type, target_type, target_id, risk_level,
+                   status, payload_json
+            FROM commands
+            WHERE command_id = ?
+            """,
+            (command_id,),
+        ).fetchone()
+        if command is None:
+            raise ValueError(f"command not found: {command_id}")
+        _command_is_plan_eligible(conn, command)
+        existing = _existing_executor_plan(conn, command_id)
+        if existing is not None:
+            return {
+                "created": False,
+                "plan_id": existing["plan_id"],
+                "command_id": existing["command_id"],
+                "command_type": existing["command_type"],
+                "mode": existing["mode"],
+                "status": existing["status"],
+                "execution": existing["execution"],
+                "writes_enabled": bool(existing["writes_enabled"]),
+                "copy_command": existing["copy_command"],
+                "source_surface": source_surface,
+            }
+        plan_id = f"plan_{uuid.uuid4().hex}"
+        copy_command = _copy_command_for_plan(command_id)
+        plan = {
+            "command_id": command_id,
+            "command_type": command["command_type"],
+            "target_type": command["target_type"],
+            "target_id": command["target_id"],
+            "risk_level": command["risk_level"],
+            "mode": "dry_run_copy_command_only",
+            "writes_enabled": False,
+            "copy_command": copy_command,
+        }
+        created_at = _now()
+        conn.execute(
+            """
+            INSERT INTO executor_plans(
+                plan_id, command_id, command_type, mode, status, execution,
+                writes_enabled, copy_command, plan_json, created_by, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                plan_id,
+                command_id,
+                command["command_type"],
+                "dry_run_copy_command_only",
+                "planned",
+                "not_executed",
+                0,
+                copy_command,
+                _canonical_json(plan),
+                actor_id,
+                created_at,
+            ),
+        )
+        event_id = _append_event(
+            conn,
+            event_type="ExecutorPlanGenerated",
+            aggregate_type="executor_plan",
+            aggregate_id=plan_id,
+            command_id=command_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "plan_id": plan_id,
+                "command_id": command_id,
+                "command_type": command["command_type"],
+                "mode": "dry_run_copy_command_only",
+                "execution": "not_executed",
+                "writes_enabled": False,
+                "copy_command": copy_command,
+            },
+        )
+        conn.commit()
+
+    return {
+        "created": True,
+        "plan_id": plan_id,
+        "command_id": command_id,
+        "command_type": command["command_type"],
+        "mode": "dry_run_copy_command_only",
+        "status": "planned",
+        "execution": "not_executed",
+        "writes_enabled": False,
+        "copy_command": copy_command,
+        "source_surface": source_surface,
+        "event_id": event_id,
+    }
 
 
 def record_adapter_observation(
@@ -937,6 +1102,24 @@ def _human_inbox_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _executor_plans_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT plan_id, command_id, command_type, mode, status, execution, copy_command
+        FROM executor_plans
+        WHERE status = 'planned'
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "dry_run_copy_command_only",
+        "writes_enabled": False,
+        "planned_count": _count(conn, "executor_plans", "status = 'planned'"),
+        "recent_plans": [dict(row) for row in rows],
+    }
+
+
 def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     schema = validate_workflow_schema(CONTROL_TOWER_COMMAND_LIFECYCLE_SCHEMA)
     pending = conn.execute(
@@ -1002,6 +1185,7 @@ def build_snapshot() -> dict[str, Any]:
         command_registry = _command_registry_snapshot(conn)
         human_inbox = _human_inbox_snapshot(conn)
         workflow_map = _workflow_map_snapshot(conn)
+        executor_plans = _executor_plans_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -1040,6 +1224,7 @@ def build_snapshot() -> dict[str, Any]:
         "command_registry": command_registry,
         "human_inbox": human_inbox,
         "workflow_map": workflow_map,
+        "executor_plans": executor_plans,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {

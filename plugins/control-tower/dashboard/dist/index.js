@@ -6,10 +6,10 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
-        Phase 3 is still no-execution: this dashboard can record durable operator
-        intent and approval decisions in the Control Tower Ledger, but it cannot
-        execute lifecycle actions. Durable workflow facts belong to
-        <code>~/.hermes/control_tower.db</code>.
+        Phase 4A is dry-run only: this dashboard can record operator intent,
+        human decisions, and copy-command executor plans in the Control Tower
+        Ledger, but it cannot execute lifecycle actions or write through adapters.
+        Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
       <div class="control-tower-actions">
         <button id="control-tower-refresh" type="button">Refresh snapshot</button>
@@ -21,6 +21,9 @@
         </button>
         <button id="control-tower-reject-first" type="button">
           Reject first pending
+        </button>
+        <button id="control-tower-plan-first" type="button">
+          Plan first proposed
         </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
@@ -39,6 +42,7 @@
     const pending = data?.human_inbox?.pending_count ?? 0;
     const decided = data?.human_inbox?.decided_count ?? 0;
     const proposed = data?.command_registry?.proposed_count ?? 0;
+    const plans = data?.executor_plans?.planned_count ?? 0;
     const ready = data?.workflow_map?.ready?.length ?? 0;
     const blocked = data?.workflow_map?.blocked?.length ?? 0;
     if (summaryEl) {
@@ -46,6 +50,7 @@
         <span>Commands proposed: <strong>${proposed}</strong></span>
         <span>Human pending: <strong>${pending}</strong></span>
         <span>Human decided: <strong>${decided}</strong></span>
+        <span>Executor plans: <strong>${plans}</strong></span>
         <span>Workflow ready: <strong>${ready}</strong></span>
         <span>Blocked gates: <strong>${blocked}</strong></span>
       `;
@@ -111,6 +116,30 @@
       });
   };
 
+  const planFirstProposed = () => {
+    const command = latestSnapshot?.command_registry?.recent_proposed?.[0];
+    if (!command) {
+      if (snapshotEl) snapshotEl.textContent = 'No proposed command to plan.';
+      return;
+    }
+    fetch(`/api/plugins/control-tower/commands/${command.command_id}/executor-plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor_type: 'human',
+        actor_id: 'dashboard',
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.detail) throw new Error(JSON.stringify(data.detail));
+        loadSnapshot();
+      })
+      .catch((error) => {
+        if (snapshotEl) snapshotEl.textContent = `Executor planning failed: ${error}`;
+      });
+  };
+
   document.getElementById('control-tower-refresh')?.addEventListener('click', loadSnapshot);
   document
     .getElementById('control-tower-propose-refresh')
@@ -121,5 +150,8 @@
   document
     .getElementById('control-tower-reject-first')
     ?.addEventListener('click', () => decideFirstPending('rejected'));
+  document
+    .getElementById('control-tower-plan-first')
+    ?.addEventListener('click', planFirstProposed);
   loadSnapshot();
 })();

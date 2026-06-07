@@ -33,6 +33,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "evidence",
             "policy_decisions",
             "human_approvals",
+            "executor_plans",
             "adapter_observations",
             "projection_checkpoints",
         }.issubset(tables)
@@ -456,5 +457,196 @@ def test_snapshot_includes_ledger_backed_workflow_map_without_executor_ready(tmp
             "node_id": "executor_eligible",
             "reason": "executor_disabled_phase_boundary",
             "approved_commands_waiting": 1,
+        }
+    ]
+
+
+def test_generate_executor_plan_for_approved_command_is_dry_run_and_idempotent(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="ReleaseLease",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="task",
+        target_id="task:danger",
+        risk_level="L2",
+        payload={"lease_owner": "worker-1"},
+        idempotency_key="release-task-danger",
+    )
+    control_tower.decide_human_approval(
+        approval_id=proposed["approval_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        reason="operator approved dry-run planning only",
+    )
+
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    repeated = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    assert plan["created"] is True
+    assert plan["status"] == "planned"
+    assert plan["mode"] == "dry_run_copy_command_only"
+    assert plan["execution"] == "not_executed"
+    assert plan["writes_enabled"] is False
+    assert plan["copy_command"] == f"hermes control-tower executor-plan --command-id {proposed['command_id']} --dry-run"
+    assert repeated["created"] is False
+    assert repeated["plan_id"] == plan["plan_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        command_status = ledger.execute(
+            "SELECT status FROM commands WHERE command_id = ?",
+            (proposed["command_id"],),
+        ).fetchone()[0]
+        plan_rows = ledger.execute("SELECT COUNT(*) FROM executor_plans").fetchone()[0]
+        event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert command_status == "proposed"
+    assert plan_rows == 1
+    assert event_types == [
+        "CommandProposed",
+        "HumanApprovalRequested",
+        "HumanApprovalGranted",
+        "ExecutorPlanGenerated",
+    ]
+
+
+def test_existing_executor_plan_revalidates_command_eligibility(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="RefreshProjection",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="projection",
+        target_id="overview",
+        risk_level="L0",
+        payload={},
+        idempotency_key="refresh-existing-plan",
+    )
+    control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            "UPDATE commands SET status = 'executed' WHERE command_id = ?",
+            (proposed["command_id"],),
+        )
+        ledger.commit()
+
+    try:
+        control_tower.generate_executor_plan(
+            command_id=proposed["command_id"],
+            actor_type="human",
+            actor_id="charles",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "command is not proposed" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("expected stale existing plan to fail closed")
+
+
+def test_generate_executor_plan_fails_closed_for_pending_rejected_and_unapproved_high_risk(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    pending = control_tower.propose_command(
+        command_type="ReleaseLease",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="task",
+        target_id="task:pending",
+        risk_level="L2",
+        payload={},
+        idempotency_key="release-task-pending",
+    )
+    rejected = control_tower.propose_command(
+        command_type="CancelWorkflowRun",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="workflow_run",
+        target_id="run-rejected",
+        risk_level="L3",
+        payload={},
+        idempotency_key="cancel-run-rejected",
+    )
+    control_tower.decide_human_approval(
+        approval_id=rejected["approval_id"],
+        decision="rejected",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        reason="insufficient evidence",
+    )
+
+    for command_id, expected in [
+        (pending["command_id"], "requires approved human approval"),
+        (rejected["command_id"], "approval rejected"),
+    ]:
+        try:
+            control_tower.generate_executor_plan(
+                command_id=command_id,
+                actor_type="human",
+                actor_id="charles",
+                source_surface="dashboard",
+            )
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"expected {expected}")
+
+
+def test_snapshot_includes_executor_dry_run_plan_and_no_write_boundary(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    proposed = control_tower.propose_command(
+        command_type="RefreshProjection",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="projection",
+        target_id="overview",
+        risk_level="L0",
+        payload={"reason": "operator requested copy command"},
+        idempotency_key="refresh-overview-plan",
+    )
+
+    plan = control_tower.generate_executor_plan(
+        command_id=proposed["command_id"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    snapshot = control_tower.build_snapshot()
+
+    assert snapshot["executor_plans"]["mode"] == "dry_run_copy_command_only"
+    assert snapshot["executor_plans"]["writes_enabled"] is False
+    assert snapshot["executor_plans"]["planned_count"] == 1
+    assert snapshot["executor_plans"]["recent_plans"] == [
+        {
+            "plan_id": plan["plan_id"],
+            "command_id": proposed["command_id"],
+            "command_type": "RefreshProjection",
+            "mode": "dry_run_copy_command_only",
+            "status": "planned",
+            "execution": "not_executed",
+            "copy_command": plan["copy_command"],
         }
     ]
