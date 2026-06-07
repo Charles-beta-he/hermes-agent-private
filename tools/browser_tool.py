@@ -2330,6 +2330,7 @@ def _prefilter_browser_snapshot_for_agent(
     snapshot_text: str,
     *,
     max_chars: int = BROWSER_SNAPSHOT_AGENT_MAX_CHARS,
+    source_before_chars: Optional[int] = None,
 ) -> tuple[str, dict[str, Any]]:
     """Wrap untrusted page text and apply a deterministic token-cost cap.
 
@@ -2368,15 +2369,33 @@ def _prefilter_browser_snapshot_for_agent(
         "validation_status": validation_status,
         "prompt_injection_detected": prompt_injection,
         "token_prefilter": {
-            "before_chars": len(raw),
+            "before_chars": source_before_chars if source_before_chars is not None else len(raw),
             "after_chars": len(filtered),
             "cap_chars": max_chars,
-            "truncated": len(filtered) < len(prefix) + len(raw),
+            "truncated": len(filtered) < len(prefix) + (source_before_chars if source_before_chars is not None else len(raw)),
         },
     }
     if degraded_reason:
         metadata["degraded_reason"] = degraded_reason
     return filtered, metadata
+
+
+def _merge_browser_validation_metadata(response: dict[str, Any], metadata: dict[str, Any]) -> None:
+    """Merge snapshot validation metadata without downgrading degraded status."""
+    existing_status = response.get("validation_status")
+    new_status = metadata.get("validation_status")
+    for key, value in metadata.items():
+        if key in {"validation_status", "degraded_reason"}:
+            continue
+        if key == "prompt_injection_detected" and response.get(key) is True and value is False:
+            continue
+        response[key] = value
+    if existing_status == "degraded" and new_status == "validation_success":
+        return
+    if new_status:
+        response["validation_status"] = new_status
+    if metadata.get("degraded_reason"):
+        response["degraded_reason"] = metadata["degraded_reason"]
 
 
 # ============================================================================
@@ -2568,12 +2587,14 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
                 snap_data = snap_result.get("data", {})
                 snapshot_text = snap_data.get("snapshot", "")
                 refs = snap_data.get("refs", {})
-                if len(snapshot_text) > SNAPSHOT_SUMMARIZE_THRESHOLD:
-                    snapshot_text = _truncate_snapshot(snapshot_text)
-                snapshot_text, validation_meta = _prefilter_browser_snapshot_for_agent(snapshot_text)
+                original_snapshot_chars = len(snapshot_text)
+                snapshot_text, validation_meta = _prefilter_browser_snapshot_for_agent(
+                    snapshot_text,
+                    source_before_chars=original_snapshot_chars,
+                )
                 response["snapshot"] = snapshot_text
                 response["element_count"] = len(refs) if refs else 0
-                response.update(validation_meta)
+                _merge_browser_validation_metadata(response, validation_meta)
                 if snap_result.get("fallback_warning") and not response.get("fallback_warning"):
                     _copy_fallback_warning(response, snap_result)
         except Exception as e:
@@ -2621,20 +2642,31 @@ def browser_snapshot(
         snapshot_text = data.get("snapshot", "")
         refs = data.get("refs", {})
 
-        # Check if snapshot needs summarization.  Without a user task we do not
-        # pre-truncate here: the truth gate below records before/after cost and
-        # applies the hard agent-facing cap.
+        original_snapshot_chars = len(snapshot_text)
+        pre_validation_meta: Optional[dict[str, Any]] = None
+        # Check if snapshot needs task-aware summarization.  Never send raw
+        # oversized page-controlled text to an auxiliary model: first bound and
+        # frame it as untrusted data, then summarize only that capped payload.
         if len(snapshot_text) > SNAPSHOT_SUMMARIZE_THRESHOLD and user_task:
-            snapshot_text = _extract_relevant_content(snapshot_text, user_task)
+            bounded_snapshot, pre_validation_meta = _prefilter_browser_snapshot_for_agent(
+                snapshot_text,
+                source_before_chars=original_snapshot_chars,
+            )
+            snapshot_text = _extract_relevant_content(bounded_snapshot, user_task)
 
-        snapshot_text, validation_meta = _prefilter_browser_snapshot_for_agent(snapshot_text)
+        snapshot_text, validation_meta = _prefilter_browser_snapshot_for_agent(
+            snapshot_text,
+            source_before_chars=original_snapshot_chars,
+        )
 
         response = {
             "success": True,
             "snapshot": snapshot_text,
             "element_count": len(refs) if refs else 0
         }
-        response.update(validation_meta)
+        if pre_validation_meta:
+            _merge_browser_validation_metadata(response, pre_validation_meta)
+        _merge_browser_validation_metadata(response, validation_meta)
         _copy_fallback_warning(response, result)
 
         # Merge supervisor state (pending dialogs + frame tree) when a CDP

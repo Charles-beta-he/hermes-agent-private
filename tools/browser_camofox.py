@@ -441,6 +441,22 @@ def camofox_navigate(url: str, task_id: Optional[str] = None) -> str:
             "url": data.get("url", browser_url),
             "title": data.get("title", ""),
         }
+        title_lower = str(result.get("title") or "").lower()
+        if any(
+            pattern in title_lower
+            for pattern in (
+                "access denied", "access to this page has been denied", "blocked",
+                "bot detected", "verification required", "please verify",
+                "are you a robot", "captcha", "cloudflare", "ddos protection",
+                "checking your browser", "just a moment", "attention required",
+            )
+        ):
+            result["validation_status"] = "degraded"
+            result["degraded_reason"] = "anti_bot_or_cloudflare_challenge"
+            result["bot_detection_warning"] = (
+                f"Page title '{result['title']}' suggests bot detection. "
+                "The site may have blocked this request."
+            )
         if rewrite_info:
             result["requested_url"] = url
             result["url_rewrite"] = rewrite_info
@@ -464,28 +480,45 @@ def camofox_navigate(url: str, task_id: Optional[str] = None) -> str:
             )
             snapshot_text = snap_data.get("snapshot", "")
             from tools.browser_tool import (
-                SNAPSHOT_SUMMARIZE_THRESHOLD,
-                _truncate_snapshot,
+                _merge_browser_validation_metadata,
+                _prefilter_browser_snapshot_for_agent,
             )
-            if len(snapshot_text) > SNAPSHOT_SUMMARIZE_THRESHOLD:
-                snapshot_text = _truncate_snapshot(snapshot_text)
+            original_snapshot_chars = len(snapshot_text)
+            snapshot_text, validation_meta = _prefilter_browser_snapshot_for_agent(
+                snapshot_text,
+                source_before_chars=original_snapshot_chars,
+            )
             result["snapshot"] = snapshot_text
             result["element_count"] = snap_data.get("refsCount", 0)
+            _merge_browser_validation_metadata(result, validation_meta)
         except Exception:
             pass  # Navigation succeeded; snapshot is a bonus
 
         return json.dumps(result)
     except requests.HTTPError as e:
-        return tool_error(f"Navigation failed: {e}", success=False)
-    except requests.ConnectionError:
         return json.dumps({
             "success": False,
-            "error": f"Cannot connect to Camofox at {get_camofox_url()}. "
-                     "Is the server running? Start with: npm start (in camofox-browser dir) "
-                     "or: docker run -p 9377:9377 -e CAMOFOX_PORT=9377 jo-inc/camofox-browser",
+            "error": f"Navigation failed: {e}",
+            "validation_status": "degraded",
+        })
+    except requests.ConnectionError:
+        error = (
+            f"Cannot connect to Camofox at {get_camofox_url()}. "
+            "Is the server running? Start with: npm start (in camofox-browser dir) "
+            "or: docker run -p 9377:9377 -e CAMOFOX_PORT=9377 jo-inc/camofox-browser"
+        )
+        return json.dumps({
+            "success": False,
+            "error": error,
+            "validation_status": "unreachable",
         })
     except Exception as e:
-        return tool_error(str(e), success=False)
+        from tools.browser_tool import _classify_browser_snapshot_failure
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "validation_status": _classify_browser_snapshot_failure(str(e)),
+        })
 
 
 def camofox_snapshot(full: bool = False, task_id: Optional[str] = None,
@@ -494,7 +527,13 @@ def camofox_snapshot(full: bool = False, task_id: Optional[str] = None,
     try:
         session = _get_session(task_id)
         if not session["tab_id"]:
-            return tool_error("No browser session. Call browser_navigate first.", success=False)
+            from tools.browser_tool import _classify_browser_snapshot_failure
+            error = "No browser session. Call browser_navigate first."
+            return json.dumps({
+                "success": False,
+                "error": error,
+                "validation_status": _classify_browser_snapshot_failure(error),
+            })
 
         data = _get(
             f"/tabs/{session['tab_id']}/snapshot",
@@ -508,22 +547,41 @@ def camofox_snapshot(full: bool = False, task_id: Optional[str] = None,
         from tools.browser_tool import (
             SNAPSHOT_SUMMARIZE_THRESHOLD,
             _extract_relevant_content,
-            _truncate_snapshot,
+            _merge_browser_validation_metadata,
+            _prefilter_browser_snapshot_for_agent,
         )
 
-        if len(snapshot) > SNAPSHOT_SUMMARIZE_THRESHOLD:
-            if user_task:
-                snapshot = _extract_relevant_content(snapshot, user_task)
-            else:
-                snapshot = _truncate_snapshot(snapshot)
+        if len(snapshot) > SNAPSHOT_SUMMARIZE_THRESHOLD and user_task:
+            original_snapshot_chars = len(snapshot)
+            bounded_snapshot, pre_validation_meta = _prefilter_browser_snapshot_for_agent(
+                snapshot,
+                source_before_chars=original_snapshot_chars,
+            )
+            snapshot = _extract_relevant_content(bounded_snapshot, user_task)
+        else:
+            original_snapshot_chars = len(snapshot)
+            pre_validation_meta = None
 
-        return json.dumps({
+        snapshot, validation_meta = _prefilter_browser_snapshot_for_agent(
+            snapshot,
+            source_before_chars=original_snapshot_chars,
+        )
+        result = {
             "success": True,
             "snapshot": snapshot,
             "element_count": refs_count,
-        })
+        }
+        if pre_validation_meta:
+            _merge_browser_validation_metadata(result, pre_validation_meta)
+        _merge_browser_validation_metadata(result, validation_meta)
+        return json.dumps(result)
     except Exception as e:
-        return tool_error(str(e), success=False)
+        from tools.browser_tool import _classify_browser_snapshot_failure
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "validation_status": _classify_browser_snapshot_failure(str(e)),
+        })
 
 
 def camofox_click(ref: str, task_id: Optional[str] = None) -> str:
