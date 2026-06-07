@@ -129,3 +129,145 @@ def test_snapshot_observes_kanban_as_projection_adapter(tmp_path, monkeypatch):
     with sqlite3.connect(home / "control_tower.db") as ledger:
         event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events")]
     assert event_types == ["TaskObservedFromAdapter"]
+
+
+def test_propose_command_records_command_and_audit_event_without_execution(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+
+    proposed = control_tower.propose_command(
+        command_type="RunProofCheck",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="task",
+        target_id="task:abc",
+        risk_level="L1",
+        payload={"reason": "operator requested proof check"},
+        idempotency_key="proof-check-task-abc",
+    )
+
+    assert proposed["status"] == "proposed"
+    assert proposed["execution"] == "not_executed"
+    assert proposed["requires_human"] is False
+    assert proposed["command_id"].startswith("cmd_")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        command_row = ledger.execute(
+            "SELECT command_type, status, risk_level, idempotency_key FROM commands"
+        ).fetchone()
+        event_row = ledger.execute(
+            "SELECT event_type, aggregate_type, aggregate_id, command_id FROM events"
+        ).fetchone()
+    assert command_row == ("RunProofCheck", "proposed", "L1", "proof-check-task-abc")
+    assert event_row == (
+        "CommandProposed",
+        "command",
+        proposed["command_id"],
+        proposed["command_id"],
+    )
+
+
+def test_propose_command_dedupes_by_idempotency_key(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+
+    first = control_tower.propose_command(
+        command_type="RefreshProjection",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="projection",
+        target_id="overview",
+        risk_level="L0",
+        payload={},
+        idempotency_key="refresh-overview",
+    )
+    second = control_tower.propose_command(
+        command_type="RefreshProjection",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="projection",
+        target_id="overview",
+        risk_level="L0",
+        payload={},
+        idempotency_key="refresh-overview",
+    )
+
+    assert second["created"] is False
+    assert second["command_id"] == first["command_id"]
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        assert ledger.execute("SELECT COUNT(*) FROM commands").fetchone()[0] == 1
+        assert ledger.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
+
+
+def test_high_risk_proposed_command_creates_human_approval_request(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+
+    proposed = control_tower.propose_command(
+        command_type="ReleaseLease",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="task",
+        target_id="task:danger",
+        risk_level="L2",
+        payload={"lease_owner": "worker-1"},
+        idempotency_key="release-task-danger",
+    )
+
+    assert proposed["status"] == "proposed"
+    assert proposed["execution"] == "not_executed"
+    assert proposed["requires_human"] is True
+    assert proposed["approval_id"].startswith("appr_")
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        approval = ledger.execute(
+            "SELECT approval_id, command_id, requested_action, risk_level, status FROM human_approvals"
+        ).fetchone()
+        event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert approval == (
+        proposed["approval_id"],
+        proposed["command_id"],
+        "ReleaseLease",
+        "L2",
+        "requested",
+    )
+    assert event_types == ["CommandProposed", "HumanApprovalRequested"]
+
+
+def test_snapshot_includes_proposed_commands_and_pending_human_approvals(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    low = control_tower.propose_command(
+        command_type="RefreshProjection",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="projection",
+        target_id="overview",
+        risk_level="L0",
+        payload={},
+        idempotency_key="refresh-overview",
+    )
+    high = control_tower.propose_command(
+        command_type="CancelWorkflowRun",
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+        target_type="workflow_run",
+        target_id="run-1",
+        risk_level="L3",
+        payload={},
+        idempotency_key="cancel-run-1",
+    )
+
+    snapshot = control_tower.build_snapshot()
+
+    assert snapshot["command_registry"]["proposed_count"] == 2
+    assert [cmd["command_id"] for cmd in snapshot["command_registry"]["recent_proposed"]] == [
+        low["command_id"],
+        high["command_id"],
+    ]
+    assert snapshot["human_inbox"]["pending_count"] == 1
+    assert snapshot["human_inbox"]["pending"][0]["approval_id"] == high["approval_id"]

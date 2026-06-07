@@ -343,6 +343,180 @@ def _append_event(
     return event_id
 
 
+def _risk_requires_human(risk_level: str) -> bool:
+    return risk_level.upper() not in {"L0", "L1"}
+
+
+def _existing_command_by_idempotency(conn: sqlite3.Connection, idempotency_key: str) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT command_id, command_type, source_surface, target_type, target_id,
+               risk_level, status, created_at
+        FROM commands
+        WHERE idempotency_key = ?
+        """,
+        (idempotency_key,),
+    ).fetchone()
+
+
+def propose_command(
+    *,
+    command_type: str,
+    actor_type: str,
+    actor_id: str,
+    source_surface: str,
+    target_type: str | None,
+    target_id: str | None,
+    risk_level: str,
+    payload: dict[str, Any],
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """Record a proposed command in the ledger without executing it.
+
+    Phase 2 deliberately stops at proposed/audited commands. Even L0/L1 entries
+    are *not* executed here; they are durable operator intent records for a later
+    policy-gated executor. L2+ additionally create a human approval request.
+    """
+    command_type = command_type.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    source_surface = source_surface.strip()
+    risk_level = risk_level.strip().upper()
+    if not command_type:
+        raise ValueError("command_type is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+    if risk_level not in {"L0", "L1", "L2", "L3", "L4"}:
+        raise ValueError("risk_level must be one of L0, L1, L2, L3, L4")
+
+    now = _now()
+    with _connect() as conn:
+        if idempotency_key:
+            existing = _existing_command_by_idempotency(conn, idempotency_key)
+            if existing is not None:
+                approval = conn.execute(
+                    "SELECT approval_id FROM human_approvals WHERE command_id = ?",
+                    (existing["command_id"],),
+                ).fetchone()
+                return {
+                    "created": False,
+                    "command_id": existing["command_id"],
+                    "command_type": existing["command_type"],
+                    "status": existing["status"],
+                    "execution": "not_executed",
+                    "requires_human": approval is not None,
+                    "approval_id": approval["approval_id"] if approval else None,
+                    "source_surface": existing["source_surface"],
+                    "target_type": existing["target_type"],
+                    "target_id": existing["target_id"],
+                    "risk_level": existing["risk_level"],
+                }
+
+        command_id = f"cmd_{uuid.uuid4().hex}"
+        conn.execute(
+            """
+            INSERT INTO commands(
+                command_id, command_type, actor_type, actor_id, source_surface,
+                target_type, target_id, idempotency_key, risk_level,
+                payload_json, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                command_id,
+                command_type,
+                actor_type,
+                actor_id,
+                source_surface,
+                target_type,
+                target_id,
+                idempotency_key,
+                risk_level,
+                _canonical_json(payload),
+                "proposed",
+                now,
+            ),
+        )
+        event_id = _append_event(
+            conn,
+            event_type="CommandProposed",
+            aggregate_type="command",
+            aggregate_id=command_id,
+            command_id=command_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "command_type": command_type,
+                "target_type": target_type,
+                "target_id": target_id,
+                "risk_level": risk_level,
+                "execution": "not_executed",
+            },
+        )
+        approval_id = None
+        if _risk_requires_human(risk_level):
+            approval_id = f"appr_{uuid.uuid4().hex}"
+            conn.execute(
+                """
+                INSERT INTO human_approvals(
+                    approval_id, task_id, command_id, requested_action,
+                    risk_level, status, request_summary, consequence_summary,
+                    requested_by, requested_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    approval_id,
+                    target_id if target_type == "task" else None,
+                    command_id,
+                    command_type,
+                    risk_level,
+                    "requested",
+                    f"Approve proposed {command_type}",
+                    "No action has been executed; approval is required before dispatch.",
+                    actor_id,
+                    now,
+                ),
+            )
+            _append_event(
+                conn,
+                event_type="HumanApprovalRequested",
+                aggregate_type="approval",
+                aggregate_id=approval_id,
+                command_id=command_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                source_surface=source_surface,
+                causation_id=event_id,
+                payload={
+                    "approval_id": approval_id,
+                    "command_id": command_id,
+                    "requested_action": command_type,
+                    "risk_level": risk_level,
+                    "status": "requested",
+                },
+            )
+        conn.commit()
+
+    return {
+        "created": True,
+        "command_id": command_id,
+        "command_type": command_type,
+        "status": "proposed",
+        "execution": "not_executed",
+        "requires_human": approval_id is not None,
+        "approval_id": approval_id,
+        "source_surface": source_surface,
+        "target_type": target_type,
+        "target_id": target_id,
+        "risk_level": risk_level,
+    }
+
+
+
 def record_adapter_observation(
     *,
     adapter_name: str,
@@ -528,11 +702,47 @@ def _next_dispatchable_from_tasks(tasks: list[dict[str, Any]]) -> dict[str, Any]
     }
 
 
+def _command_registry_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT command_id, command_type, source_surface, target_type, target_id,
+               risk_level, status, created_at
+        FROM commands
+        WHERE status = 'proposed'
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "proposed_only_no_execution",
+        "proposed_count": _count(conn, "commands", "status = 'proposed'"),
+        "recent_proposed": [dict(row) for row in rows],
+    }
+
+
+def _human_inbox_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT approval_id, command_id, task_id, requested_action, risk_level,
+               status, request_summary, consequence_summary, requested_by, requested_at
+        FROM human_approvals
+        WHERE status = 'requested'
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "pending_count": _count(conn, "human_approvals", "status = 'requested'"),
+        "pending": [dict(row) for row in rows],
+    }
+
+
 def build_snapshot() -> dict[str, Any]:
     """Build the Phase 1 read-only Control Tower snapshot."""
     ledger = init_ledger()
     kanban_adapter = observe_kanban_adapter()
     with sqlite3.connect(ledger) as conn:
+        conn.row_factory = sqlite3.Row
         last_seq = conn.execute("SELECT COALESCE(MAX(sequence), 0) FROM events").fetchone()[0]
         evidence_counts = {
             maturity: _count(conn, "evidence", f"maturity = '{maturity}'")
@@ -541,6 +751,8 @@ def build_snapshot() -> dict[str, Any]:
         stale_or_conflicting = _count(conn, "evidence", "stale_status IN ('stale', 'conflicting')")
         conflict_count = _count(conn, "adapter_observations", "conflict_event_id IS NOT NULL")
         tasks = _observed_tasks(conn)
+        command_registry = _command_registry_snapshot(conn)
+        human_inbox = _human_inbox_snapshot(conn)
     blockers = [
         {
             "adapter": "kanban",
@@ -576,6 +788,8 @@ def build_snapshot() -> dict[str, Any]:
         "taskpool_health": _taskpool_health_from_tasks(tasks),
         "next_dispatchable": _next_dispatchable_from_tasks(tasks),
         "top_blockers": blockers[:5],
+        "command_registry": command_registry,
+        "human_inbox": human_inbox,
         "worker_runs": [],
         "cron_watchdogs": [],
         "evidence_summary": {

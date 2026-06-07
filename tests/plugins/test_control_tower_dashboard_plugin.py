@@ -51,3 +51,31 @@ def test_control_tower_plugin_manifest_declares_dashboard_host():
     assert '"name": "control-tower"' in text
     assert '"api": "plugin_api.py"' in text
     assert '"path": "/control-tower"' in text
+
+
+def test_control_tower_dashboard_plugin_proposes_command_without_execution(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    app = FastAPI()
+    app.include_router(_load_plugin_router(), prefix="/api/plugins/control-tower")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/plugins/control-tower/commands/propose",
+        json={
+            "command_type": "RefreshProjection",
+            "actor_id": "charles",
+            "target_type": "projection",
+            "target_id": "overview",
+            "risk_level": "L0",
+            "payload": {"reason": "manual refresh"},
+            "idempotency_key": "dashboard-refresh-overview",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "proposed"
+    assert data["execution"] == "not_executed"
+    assert data["requires_human"] is False
+    assert data["source_surface"] == "dashboard"

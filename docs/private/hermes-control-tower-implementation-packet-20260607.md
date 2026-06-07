@@ -229,17 +229,32 @@ Suggested first technical slice after approval:
 
 Tasks:
 
-1. Define action registry.
-2. Whitelist L0/L1 actions.
-3. Emit audit events for actions.
-4. Add copy-CLI-command UI affordance.
-5. Add idempotency keys for write actions.
+1. Define command proposal registry.
+2. Whitelist L0/L1 as proposed-only actions.
+3. Emit audit events for proposed actions.
+4. Add idempotency keys for proposed actions.
+5. Route L2+ proposed commands into Human Inbox instead of executing them.
+6. Defer actual lifecycle execution until policy/human approval semantics are reviewed.
+
+Implemented slice:
+
+- `control_tower.propose_command(...)` records operator intent in the `commands` table with `status = proposed`.
+- Every proposed command emits a `CommandProposed` event.
+- `POST /api/plugins/control-tower/commands/propose` exposes the proposal API through the dashboard plugin.
+- Idempotency keys dedupe retries without duplicate events.
+- L0/L1 commands remain non-executed proposed intents.
+- L2/L3/L4 commands create `human_approvals` rows and emit `HumanApprovalRequested`.
+- Snapshot now includes:
+  - `command_registry`
+  - `human_inbox`
 
 Acceptance:
 
-- Every action maps to known command.
+- Every proposed action maps to a command row.
+- No proposed action executes lifecycle side effects.
 - No arbitrary shell.
-- Every action emits audit event.
+- Every new proposed action emits an audit event.
+- High-risk proposals are visible in Human Inbox.
 
 ### Phase 3 — Workflow Map and Gate Inspector
 
@@ -298,23 +313,32 @@ Acceptance:
 - Multi-model PASS without evidence cannot close a task.
 - Disagreement is visible and recoverable.
 
-## First implementation slice proposal
+## First implementation slice status
 
-After human approval, the lowest-risk code slice is:
+Implemented:
 
-1. Add a read-only `control_tower_snapshot` script/CLI endpoint.
-2. It shells out to existing read-only taskpool/Kanban/cron/worker commands or imports existing read APIs when safe.
-3. It returns schema-versioned JSON.
-4. Add focused tests with fixture outputs.
-5. Add dashboard page/plugin only after snapshot shape stabilizes.
+1. Read-only `control_tower_snapshot` API via `GET /api/plugins/control-tower/snapshot`.
+2. Dashboard plugin host under `plugins/control-tower/`.
+3. Schema-versioned JSON snapshot.
+4. Kanban projection adapter that records deduped observations in the Control Tower Ledger.
+5. Proposed-command registry via `POST /api/plugins/control-tower/commands/propose`.
+6. High-risk proposed commands routed to Human Inbox without execution.
+7. Focused tests for ledger schema, snapshot, dashboard plugin, adapter observations, command proposals, idempotency, and human approval requests.
 
-Why this slice:
+Still intentionally not implemented:
 
 - No lifecycle mutation.
-- No new gate authority.
-- No schema migration required if implemented as aggregation.
-- Immediately improves operator visibility.
-- Creates stable API for UI later.
+- No command executor.
+- No task claim/release/move/done actions.
+- No arbitrary shell.
+- No write-through Kanban/taskpool adapter.
+- No approval decision endpoint.
+
+Why this boundary:
+
+- The system now records durable operator intent but never executes it.
+- The ledger remains the only fact source.
+- The next step changes authority from "record proposed intent" to "approve/execute intent", which requires policy semantics.
 
 ## Human decisions required now
 
@@ -324,26 +348,37 @@ Resolved:
    - Use `~/.hermes/control_tower.db` as the only canonical Control Tower Ledger.
    - Existing taskpool/Kanban/brain stores are adapters/projections during migration.
 
-Remaining decisions before code/UI implementation:
+2. UI host:
+   - Use dashboard plugin under `plugins/control-tower/`.
 
-1. UI host:
-   - built-in dashboard page, or
-   - plugin under `plugins/control-tower/`, or
-   - private profile plugin first.
+3. Initial permissions through current slice:
+   - L0/L1/L2+ are proposal-only.
+   - No proposed command executes side effects.
+   - L2+ also create Human Inbox approval requests.
 
-2. Initial permissions:
-   - read-only only, or
-   - read-only + L1 maintenance, or
-   - include selected L2 lifecycle actions.
+Remaining decisions before execution-capable implementation:
 
-3. Integration timing:
-   - ledger-first read-only aggregation, then adapters write through command gateway, or
-   - immediate write-through command gateway for selected flows.
+1. Approval decision semantics:
+   - Who can approve?
+   - Is approval single-use?
+   - Does approval expire?
+   - What evidence must be attached by risk level?
 
-4. External dependency stance:
+2. Executor boundary:
+   - Should Phase 3 still stop at "copy CLI command", or may the dashboard invoke a limited executor for selected L1 actions?
+   - If invoking an executor, which action list is allowed first?
+
+3. Write-through adapter timing:
+   - Keep Kanban/taskpool read-only until command executor is stable, or
+   - Allow selected commands to write through adapters after approval.
+
+4. Human approval UX:
+   - Dashboard-only, Gateway-first with dashboard mirror, or both.
+
+5. External dependency stance:
    - Hermes-native only for now, or
    - leave optional future Temporal/OpenTelemetry integration hooks.
 
 ## Stop condition
 
-Stop implementation at this packet until the remaining human decisions are made. The SSOT ownership is now fixed, but code/schema/UI changes still require confirmation of UI host and initial permission level.
+Stop execution-capable implementation here. Proposed commands and Human Inbox records are now durable, audited, idempotent, and non-executing. The next boundary is approval/executor authority, which must be explicitly decided before any lifecycle-affecting action can run.
