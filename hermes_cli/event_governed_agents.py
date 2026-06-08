@@ -37,6 +37,19 @@ DANGEROUS_ACTIONS = frozenset(
     }
 )
 UNTRUSTED_SOURCES = frozenset({"webhook", "gateway", "cron", "dashboard", "projection"})
+WORKER_RESULT_STATUSES = frozenset({"succeeded", "failed", "blocked", "needs_human", "partial"})
+WORKER_FORBIDDEN_RESULT_KEYS = frozenset(
+    {
+        "mark_done",
+        "task_status",
+        "lifecycle_status",
+        "external_write",
+        "memory_write",
+        "skill_patch",
+        "send_message",
+        "provider_config_change",
+    }
+)
 
 ROLE_CONTRACTS: dict[str, dict[str, Any]] = {
     "event_router": {
@@ -84,6 +97,81 @@ EVIDENCE_LEVELS = {
     "E3": "external_receipt_or_human_acceptance",
     "E4": "sustained_operational_evidence",
 }
+
+AGENT_ARCHITECTURE_COVERAGE: tuple[dict[str, Any], ...] = (
+    {
+        "capability": "state_machine",
+        "hermes_anchor": "7-state canonical lifecycle with policy/evidence guarded transitions",
+        "external_agent_leverage": "dynamic workflow substates, pause/resume, and branch-local runtime state",
+        "coverage_status": "partially_covered",
+        "next_safe_slice": "add workflow_state/substate projections without changing canonical lifecycle authority",
+        "authority_boundary": "do_not_add_custom lifecycle statuses that bypass pending/claimed/running/review/done gates",
+        "priority": "P1",
+    },
+    {
+        "capability": "scheduling",
+        "hermes_anchor": "taskpool/Control Tower dispatch projections with priority and lease readback",
+        "external_agent_leverage": "deadline, SLA, resource/quota-aware routing, and dynamic reprioritization",
+        "coverage_status": "partially_covered",
+        "next_safe_slice": "record deadline/resource profiles as report-only scheduling metadata",
+        "authority_boundary": "do_not_dispatch workers from scheduling metadata without policy review and lease claim",
+        "priority": "P1",
+    },
+    {
+        "capability": "human_checkpoints",
+        "hermes_anchor": "mandatory review/done human boundary and guarded high-risk approvals",
+        "external_agent_leverage": "configurable mid-workflow checkpoints and async human responses",
+        "coverage_status": "partially_covered",
+        "next_safe_slice": "model checkpoint policy as explicit workflow contract data",
+        "authority_boundary": "do_not_weaken no-autonomous-done invariant",
+        "priority": "P2",
+    },
+    {
+        "capability": "parallel_branches",
+        "hermes_anchor": "bounded lane/worker execution with canonical ledger readback",
+        "external_agent_leverage": "fork-join, parallel map, synchronization barriers, and merge aggregation",
+        "coverage_status": "gap_identified",
+        "next_safe_slice": "add fork/join graph contract and join evidence requirements before runtime fanout",
+        "authority_boundary": "do_not_start high-parallel worker dispatch before join/merge evidence gates exist",
+        "priority": "P1",
+    },
+    {
+        "capability": "evidence_gates",
+        "hermes_anchor": "evidence spine, maturity gates, hashes, and artifact pointers",
+        "external_agent_leverage": "richer artifacts such as logs, screenshots, traces, metrics, and reviewer packets",
+        "coverage_status": "mostly_covered",
+        "next_safe_slice": "keep hot ledger compact and add artifact type contracts/pointers",
+        "authority_boundary": "do_not_store full transcripts or large evidence blobs in hot JSONL/frontmatter",
+        "priority": "P2",
+    },
+    {
+        "capability": "multi_model_support",
+        "hermes_anchor": "multi-model quorum/certification with truth gate and best-within-constraints votes",
+        "external_agent_leverage": "role-specific model routing, fallback, ensemble critique, and cost-aware selection",
+        "coverage_status": "partially_covered",
+        "next_safe_slice": "declare planner/implementer/reviewer/arbiter roles as routing metadata",
+        "authority_boundary": "do_not_treat model consensus as fact without claim-linked evidence",
+        "priority": "P2",
+    },
+    {
+        "capability": "error_recovery",
+        "hermes_anchor": "fail-closed retry/blocked/reconcile transitions with evidence-producing errors",
+        "external_agent_leverage": "fine-grained error taxonomy, fallback strategies, and workflow adaptation",
+        "coverage_status": "partially_covered",
+        "next_safe_slice": "add deterministic error classes and allowed fallback proposals",
+        "authority_boundary": "do_not_auto-unblock or auto-close from fallback classification alone",
+        "priority": "P1",
+    },
+    {
+        "capability": "workflow_composition",
+        "hermes_anchor": "Control Tower workflow_runs/steps and taskpool-derived execution projections",
+        "external_agent_leverage": "reusable workflow templates, nested workflows, component contracts, and versioning",
+        "coverage_status": "gap_identified",
+        "next_safe_slice": "add workflow template contract validation before nested runtime execution",
+        "authority_boundary": "do_not_make workflow templates a second fact source separate from the ledger",
+        "priority": "P1",
+    },
+)
 
 
 def _now() -> str:
@@ -163,6 +251,62 @@ def evaluate_agent_action(
     }
 
 
+def validate_worker_result_contract(
+    *,
+    worker_type: str,
+    worker_id: str,
+    task_ref: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate a worker result as evidence/proposal only.
+
+    This is the first safe worker-adapter contract for Claude Code/Codex/OpenCode
+    style executors. It deliberately rejects lifecycle/external-write keys so a
+    worker cannot smuggle authority through its result payload.
+    """
+
+    normalized_status = str(result.get("status", "")).strip().lower()
+    evidence_refs = result.get("evidence_refs", [])
+    proposal_refs = result.get("proposal_refs", [])
+    forbidden_keys = sorted(WORKER_FORBIDDEN_RESULT_KEYS.intersection(result.keys()))
+    blocked_reasons: list[str] = []
+
+    if not worker_type.strip():
+        blocked_reasons.append("worker_type_required")
+    if not worker_id.strip():
+        blocked_reasons.append("worker_id_required")
+    if not task_ref.strip():
+        blocked_reasons.append("task_ref_required")
+    if normalized_status not in WORKER_RESULT_STATUSES:
+        blocked_reasons.append("invalid_worker_result_status")
+    if not isinstance(evidence_refs, list):
+        blocked_reasons.append("evidence_refs_must_be_list")
+    if not isinstance(proposal_refs, list):
+        blocked_reasons.append("proposal_refs_must_be_list")
+    if forbidden_keys:
+        blocked_reasons.append("worker_result_contains_forbidden_authority_keys")
+    if normalized_status == "succeeded" and not evidence_refs:
+        blocked_reasons.append("succeeded_worker_result_requires_evidence_refs")
+
+    accepted = not blocked_reasons
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "report_only",
+        "worker_type": worker_type.strip(),
+        "worker_id": worker_id.strip(),
+        "task_ref": task_ref.strip(),
+        "status": normalized_status,
+        "accepted_as": "evidence_or_proposal" if accepted else "rejected_contract_projection",
+        "allowed_to_mutate_lifecycle": False,
+        "allowed_external_writes": False,
+        "forbidden_keys": forbidden_keys,
+        "evidence_refs": evidence_refs if isinstance(evidence_refs, list) else [],
+        "proposal_refs": proposal_refs if isinstance(proposal_refs, list) else [],
+        "blocked_reasons": blocked_reasons,
+        "result_digest": _digest(result),
+    }
+
+
 def normalize_event(
     *,
     event_type: str,
@@ -200,6 +344,51 @@ def normalize_event(
         },
         "requires_human_confirmation": requires_human,
         "created_at": _now(),
+    }
+
+
+def build_agent_architecture_coverage_report() -> dict[str, Any]:
+    """Return the report-only Claude/Codex/OpenCode-to-Hermes coverage contract.
+
+    The report is intentionally deterministic and non-authorizing: it can guide
+    planning, dashboards, and model reviews, but it does not dispatch workers or
+    mutate lifecycle state.
+    """
+
+    items = [dict(item) for item in AGENT_ARCHITECTURE_COVERAGE]
+    priority_counts: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
+    for item in items:
+        priority_counts[item["priority"]] = priority_counts.get(item["priority"], 0) + 1
+        status_counts[item["coverage_status"]] = status_counts.get(item["coverage_status"], 0) + 1
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "report_only",
+        "architecture": "Hermes Agent Architecture Coverage",
+        "ssot": {
+            "canonical": "Control Tower Ledger / taskpool by fact domain",
+            "external_agents_are_fact_sources": False,
+            "model_outputs_are_fact_sources": False,
+            "worker_outputs_are_evidence_or_proposals": True,
+        },
+        "coverage_count": len(items),
+        "coverage_status_counts": status_counts,
+        "priority_counts": priority_counts,
+        "capabilities": items,
+        "implementation_sequence": [
+            "workflow_state_and_contract_metadata",
+            "fork_join_graph_contract",
+            "worker_adapter_result_contract",
+            "multi_model_certification_contract",
+            "evidence_artifact_pointer_contract",
+        ],
+        "phase_boundary": {
+            "runtime_worker_dispatch_enabled": False,
+            "lifecycle_mutation_enabled": False,
+            "external_adapter_write_enabled": False,
+            "requires_separate_human_gate_before_enabling": True,
+        },
     }
 
 
@@ -244,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Report Hermes Event-Governed Agent Control Plane contracts")
     parser.add_argument("--json", action="store_true", help="Emit JSON report")
     parser.add_argument("--check-action", action="store_true", help="Evaluate one action instead of full report")
+    parser.add_argument("--coverage", action="store_true", help="Emit report-only agent architecture coverage matrix")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -259,6 +449,8 @@ def main(argv: list[str] | None = None) -> int:
             risk_level=args.risk_level,
             evidence_level=args.evidence_level,
         )
+    elif args.coverage:
+        result = build_agent_architecture_coverage_report()
     else:
         result = build_control_plane_report()
 

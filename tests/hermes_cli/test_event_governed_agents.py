@@ -77,6 +77,50 @@ def test_event_envelope_rejects_untrusted_high_privilege_escalation() -> None:
     assert envelope["dedupe_key"] == "webhook-task-123-done"
 
 
+def test_worker_result_contract_accepts_evidence_only_and_rejects_smuggled_authority() -> None:
+    accepted = ega.validate_worker_result_contract(
+        worker_type="claude-code",
+        worker_id="worker-1",
+        task_ref="task:arch-coverage",
+        result={
+            "status": "succeeded",
+            "evidence_refs": ["artifact:/tmp/proof.json"],
+            "proposal_refs": ["proposal:next-slice"],
+        },
+    )
+
+    assert accepted["accepted_as"] == "evidence_or_proposal"
+    assert accepted["allowed_to_mutate_lifecycle"] is False
+    assert accepted["allowed_external_writes"] is False
+    assert accepted["blocked_reasons"] == []
+    assert accepted["result_digest"]
+
+    rejected = ega.validate_worker_result_contract(
+        worker_type="codex",
+        worker_id="worker-2",
+        task_ref="task:arch-coverage",
+        result={
+            "status": "succeeded",
+            "evidence_refs": ["artifact:/tmp/proof.json"],
+            "task_status": "done",
+            "external_write": {"adapter": "kanban"},
+        },
+    )
+
+    assert rejected["accepted_as"] == "rejected_contract_projection"
+    assert rejected["allowed_to_mutate_lifecycle"] is False
+    assert rejected["forbidden_keys"] == ["external_write", "task_status"]
+    assert "worker_result_contains_forbidden_authority_keys" in rejected["blocked_reasons"]
+
+    no_evidence = ega.validate_worker_result_contract(
+        worker_type="opencode",
+        worker_id="worker-3",
+        task_ref="task:arch-coverage",
+        result={"status": "succeeded", "evidence_refs": []},
+    )
+    assert "succeeded_worker_result_requires_evidence_refs" in no_evidence["blocked_reasons"]
+
+
 def test_control_plane_report_is_json_and_report_only(tmp_path) -> None:
     report = ega.build_control_plane_report()
 
@@ -99,3 +143,36 @@ def test_control_plane_report_is_json_and_report_only(tmp_path) -> None:
     cli_report = json.loads(proc.stdout)
     assert cli_report["mode"] == "report_only"
     assert cli_report["danger_gate"]["dangerous_actions_require_human"] is True
+
+
+def test_agent_architecture_coverage_report_is_non_authorizing_contract(tmp_path) -> None:
+    report = ega.build_agent_architecture_coverage_report()
+
+    assert report["schema_version"] == 1
+    assert report["mode"] == "report_only"
+    assert report["ssot"]["external_agents_are_fact_sources"] is False
+    assert report["ssot"]["worker_outputs_are_evidence_or_proposals"] is True
+    assert report["coverage_count"] == 8
+    assert report["priority_counts"]["P1"] >= 4
+    capabilities = {item["capability"]: item for item in report["capabilities"]}
+    assert capabilities["parallel_branches"]["coverage_status"] == "gap_identified"
+    assert "join evidence" in capabilities["parallel_branches"]["next_safe_slice"]
+    assert capabilities["workflow_composition"]["authority_boundary"].startswith("do_not_make workflow templates")
+    assert report["phase_boundary"] == {
+        "runtime_worker_dispatch_enabled": False,
+        "lifecycle_mutation_enabled": False,
+        "external_adapter_write_enabled": False,
+        "requires_separate_human_gate_before_enabling": True,
+    }
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "hermes_cli.event_governed_agents", "--coverage", "--json"],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    cli_report = json.loads(proc.stdout)
+    assert cli_report["architecture"] == "Hermes Agent Architecture Coverage"
+    assert cli_report["phase_boundary"]["runtime_worker_dispatch_enabled"] is False

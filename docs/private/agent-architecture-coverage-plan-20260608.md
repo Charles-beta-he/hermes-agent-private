@@ -1,0 +1,31 @@
+# Agent Architecture Coverage Plan — 2026-06-08
+
+Goal: turn the prior Claude Code / Hermes agent-architecture coverage discussion into a Hermes-owned, evidence-grounded control-plane artifact and land the first safe implementation slices until the next boundary requires runtime authority or human approval.
+Status: in_progress
+SSOT: this file
+
+## Scope
+
+- Codify the architecture coverage matrix as Hermes report-only control-plane contract data.
+- Keep Hermes as canonical ledger / policy / evidence / certification control plane.
+- Treat Claude Code / Codex / OpenCode / delegate workers as bounded execution adapters, not new fact sources.
+- Land low-risk deterministic/report-only slices first; do not enable broad worker execution, lifecycle mutation, external writes, or automatic done.
+
+## Slices
+
+- [x] Slice 0: Establish SSOT and boundary file — docs/private/agent-architecture-coverage-plan-20260608.md
+- [x] Slice 1: Add report-only agent architecture coverage contract to hermes_cli.event_governed_agents with CLI JSON access and tests.
+- [x] Slice 1b: Add worker adapter result contract so Claude Code/Codex/OpenCode outputs are evidence/proposal only and cannot smuggle lifecycle/external-write authority.
+- [x] Slice 2: Run focused tests and py_compile for the touched control-plane module.
+- [ ] Slice 3: Scoped commit if verification passes.
+- [ ] Boundary: stop before real runtime worker dispatch / task lifecycle writes / external adapter writes unless a separate explicit human gate authorizes that slice.
+
+## Decisions
+
+- Report-only first: this captures architecture coverage and gap priorities without granting new authority.
+- Canonical ledger remains Hermes Control Tower / taskpool by fact domain; worker/model outputs are proposals/evidence only.
+- Parallelism/fork-join, model routing, and worker adapters should be expressed as contracts before execution.
+
+## Files Changed
+
+- docs/private/agent-architecture-coverage-plan-20260608.md
