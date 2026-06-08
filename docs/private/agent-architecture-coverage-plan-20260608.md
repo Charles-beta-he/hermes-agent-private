@@ -65,8 +65,11 @@ SSOT: this file
 - [x] Slice 48: Add real sender preflight: consume Telegram/Lark dry-run, require exact delivery/outbox/payload/platform hash, fresh dry-run, token source reference, and sender capability still disabled; do not read token or send.
 - [x] Slice 49: Scoped commit for real sender preflight if verification passes. Commit: 50177d0d6 Preflight real outbound senders.
 - [x] Slice 50: Add real sender execution authorization: consume real sender preflight, require elevated second approval, exact preflight/channel/target/payload/platform hash/token source, requested sender capability, TTL, and evidence; do not read token or send.
-- [x] Slice 51: Scoped commit for real sender execution authorization if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before real Lark/Telegram sender execution, external agent tools/file edits/shell commands, or broad reopen unless a narrower executor-specific slice authorizes that capability.
+- [x] Slice 51: Scoped commit for real sender execution authorization if verification passes. Commit: 46c237a27 Authorize real outbound sender execution.
+- [x] Slice 52: Add Telegram real sender executor: consume real sender execution authorization, require exact authorization/preflight/outbox/payload/platform hash/token source, read env token, call Telegram sendMessage, record platform message id, and never store token value.
+- [x] Slice 53: Scoped commit for Telegram real sender executor if verification passes. Commit: this scoped commit.
+- [ ] Slice 54: Add Lark real sender executor with equivalent authorization/token/API/message-id governance.
+- [ ] Boundary: stop before external agent tools/file edits/shell commands, broad reopen, or unauthenticated sender execution unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
 
@@ -94,6 +97,7 @@ SSOT: this file
 - The nineteenth approved runtime boundary is Lark sender dry-run only: an authorized Lark delivery may validate a text message payload preview and record its hash/summary without reading tokens or sending messages. Real Lark API execution remains disabled.
 - The twentieth approved runtime boundary is real sender preflight only: a fresh Telegram/Lark dry-run may be bound to exact delivery/outbox/payload/platform hashes plus a token-source reference while sender capability remains disabled. It does not read tokens or send messages.
 - The twenty-first approved runtime boundary is real sender execution authorization only: an elevated second approval may grant a short-lived future execution capability against an exact preflight/channel/target/payload/platform-hash/token-source tuple. It still does not read tokens or send messages.
+- The twenty-second approved runtime boundary is Telegram real sender execution: an execution-authorized Telegram payload may read an env-token reference, call sendMessage, and record the platform message id, while preserving exact hash binding and never storing the token value.
 
 ## Files Changed
 

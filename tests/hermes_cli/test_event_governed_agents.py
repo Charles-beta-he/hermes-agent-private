@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import http.server
 import json
 import os
+import socketserver
 import subprocess
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 
 from hermes_cli import event_governed_agents as ega
@@ -3581,3 +3584,185 @@ def test_real_sender_execution_authorization_supports_lark_and_rejects_drift_den
     assert cli_result["accepted_as"] == "real_sender_execution_authorized"
     assert cli_result["send_executed"] is False
     assert cli_result["token_read"] is False
+
+
+class _TelegramTestHandler(http.server.BaseHTTPRequestHandler):
+    requests: list[dict[str, object]] = []
+
+    def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length).decode("utf-8")
+        body = json.loads(raw or "{}")
+        type(self).requests.append({"path": self.path, "body": body, "authorization": self.headers.get("Authorization")})
+        response = {"ok": True, "result": {"message_id": 4242, "chat": {"id": body.get("chat_id")}, "text": body.get("text")}}
+        encoded = json.dumps(response).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
+class _ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+
+
+def _run_telegram_test_server():
+    _TelegramTestHandler.requests = []
+    server = _ThreadingTCPServer(("127.0.0.1", 0), _TelegramTestHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def test_telegram_real_sender_executes_http_send_with_authorization_token_and_records_message_id(tmp_path, monkeypatch) -> None:
+    ledger_path, started, outbox, outbox_path, authorization, dry_run, preflight = _make_telegram_real_sender_preflight(tmp_path)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    execution_authorization = ega.request_real_sender_execution_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "channel": "telegram",
+            "preflight_request_digest": preflight["request_digest"],
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:TELEGRAM_BOT_TOKEN",
+            "sender_capability_requested": True,
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/telegram-real-auth.json"],
+        },
+    )
+    server, api_base_url = _run_telegram_test_server()
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token-123")
+    try:
+        result = ega.execute_telegram_real_sender(
+            ledger_path=ledger_path,
+            run_id=started["run_id"],
+            telegram_send_request={
+                "execution_authorization_id": execution_authorization["authorization_id"],
+                "channel": "telegram",
+                "preflight_request_digest": preflight["request_digest"],
+                "outbox_id": outbox["request_digest"],
+                "target_id": "ops-review-room",
+                "payload_hash": outbox["payload_hash"],
+                "platform_payload_hash": dry_run["platform_payload_hash"],
+                "token_source": "env:TELEGRAM_BOT_TOKEN",
+                "sender_capability_enabled": True,
+                "executor_mode": "send",
+                "platform_payload": {"chat_id": "ops-review-room", "text": "Governed closeout verified; pending delivery."},
+                "api_base_url": api_base_url,
+                "evidence_refs": ["artifact://agent-coverage/telegram-real-send.json"],
+            },
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert result["accepted_as"] == "telegram_delivery_sent"
+    assert result["send_executed"] is True
+    assert result["token_read"] is True
+    assert result["platform_message_id"] == 4242
+    assert result["token_source"] == "env:TELEGRAM_BOT_TOKEN"
+    assert result["token_value_stored"] is False
+    assert _TelegramTestHandler.requests[0]["path"] == "/bottest-token-123/sendMessage"
+    assert _TelegramTestHandler.requests[0]["body"] == {"chat_id": "ops-review-room", "text": "Governed closeout verified; pending delivery."}
+
+
+def test_telegram_real_sender_rejects_disabled_capability_hash_drift_missing_token_and_cli_smoke(tmp_path, monkeypatch) -> None:
+    ledger_path, started, outbox, outbox_path, authorization, dry_run, preflight = _make_telegram_real_sender_preflight(tmp_path)
+    execution_authorization = ega.request_real_sender_execution_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "channel": "telegram",
+            "preflight_request_digest": preflight["request_digest"],
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:TELEGRAM_BOT_TOKEN",
+            "sender_capability_requested": True,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            "evidence_refs": ["artifact://agent-coverage/telegram-real-auth.json"],
+        },
+    )
+    base_request = {
+        "execution_authorization_id": execution_authorization["authorization_id"],
+        "channel": "telegram",
+        "preflight_request_digest": preflight["request_digest"],
+        "outbox_id": outbox["request_digest"],
+        "target_id": "ops-review-room",
+        "payload_hash": outbox["payload_hash"],
+        "platform_payload_hash": dry_run["platform_payload_hash"],
+        "token_source": "env:TELEGRAM_BOT_TOKEN",
+        "sender_capability_enabled": True,
+        "executor_mode": "send",
+        "platform_payload": {"chat_id": "ops-review-room", "text": "Governed closeout verified; pending delivery."},
+        "api_base_url": "http://127.0.0.1:9",
+        "evidence_refs": ["artifact://agent-coverage/telegram-real-send.json"],
+    }
+    rejected_capability = ega.execute_telegram_real_sender(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        telegram_send_request={**base_request, "sender_capability_enabled": False},
+    )
+    assert "sender_capability_enabled_required" in rejected_capability["blocked_reasons"]
+    rejected_hash = ega.execute_telegram_real_sender(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        telegram_send_request={**base_request, "platform_payload": {"chat_id": "ops-review-room", "text": "tampered"}},
+    )
+    assert "platform_payload_hash_drift" in rejected_hash["blocked_reasons"]
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    rejected_token = ega.execute_telegram_real_sender(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        telegram_send_request=base_request,
+    )
+    assert "token_value_missing" in rejected_token["blocked_reasons"]
+
+    server, api_base_url = _run_telegram_test_server()
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "cli-token-456")
+    try:
+        request_json = json.dumps({**base_request, "api_base_url": api_base_url, "evidence_refs": ["artifact://agent-coverage/telegram-real-send-cli.json"]})
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "hermes_cli.event_governed_agents",
+                "--execute-telegram-real-sender",
+                "--runtime-ledger",
+                str(ledger_path),
+                "--run-id",
+                started["run_id"],
+                "--telegram-real-send-json",
+                request_json,
+                "--json",
+            ],
+            cwd=tmp_path,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "telegram_delivery_sent"
+    assert cli_result["platform_message_id"] == 4242
+    assert cli_result["send_executed"] is True
+    assert cli_result["token_read"] is True

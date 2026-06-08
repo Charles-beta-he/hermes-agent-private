@@ -14,7 +14,8 @@ digest-bound taskpool/Kanban rollback, or enqueue Lark/Telegram outbox
 notifications without sending, or project elevated delivery authorization
 without sending, execute Telegram/Lark sender dry-runs, project real sender
 preflight while the sender remains disabled, or project elevated real sender
-execution authorization without reading tokens or sending. Only the explicit
+execution authorization without reading tokens or sending, or execute an
+authorized Telegram real sender. Only the explicit
 ledger-local fact mutation can change canonical lifecycle facts, only the
 local-file adapter harness can write adapter-state fixtures, taskpool note
 closeout/rollback can mutate taskpool markdown frontmatter status, Kanban DB
@@ -23,8 +24,10 @@ can append pending no-secret notification intents, the delivery authorization
 projection can authorize a future sender without calling platform APIs, the
 Telegram/Lark dry-runs can record a payload hash/summary without reading tokens
 or sending, real sender preflight can verify readiness without enabling or
-executing send, and real sender execution authorization can grant a short-lived
-future execution capability without touching secrets or platform APIs; no path writes memory/skills,
+executing send, real sender execution authorization can grant a short-lived
+future execution capability without touching secrets or platform APIs, and the
+Telegram real sender can execute only against exact authorization/hash binding
+while never storing token values; no path writes memory/skills,
 outbound messages, or cron/provider configuration.
 """
 
@@ -32,9 +35,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import json
 import sqlite3
 import subprocess
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -3249,6 +3255,210 @@ def request_real_sender_execution_authorization(*, ledger_path: str | Path, run_
     return record
 
 
+def _read_env_token_reference(token_source: str) -> tuple[str, list[str]]:
+    if not token_source.startswith("env:"):
+        return "", ["token_source_env_required_for_telegram_sender"]
+    env_name = token_source.removeprefix("env:").strip()
+    if not env_name:
+        return "", ["token_env_name_required"]
+    token_value = os.environ.get(env_name, "")
+    if not token_value:
+        return "", ["token_value_missing"]
+    return token_value, []
+
+
+def _post_json(url: str, payload: dict[str, Any], *, timeout_seconds: float = 10.0) -> dict[str, Any]:
+    encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(url, data=encoded, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+        if not body:
+            return {"ok": False, "description": "empty_response"}
+        parsed = json.loads(body)
+        if not isinstance(parsed, dict):
+            return {"ok": False, "description": "non_object_response"}
+        return parsed
+
+
+def execute_telegram_real_sender(*, ledger_path: str | Path, run_id: str, telegram_send_request: dict[str, Any]) -> dict[str, Any]:
+    """Execute an authorized Telegram sender request by reading an env token and calling sendMessage."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    execution_authorization_id = str(telegram_send_request.get("execution_authorization_id", "")).strip()
+    channel = str(telegram_send_request.get("channel", "")).strip().lower()
+    preflight_request_digest = str(telegram_send_request.get("preflight_request_digest", "")).strip()
+    outbox_id = str(telegram_send_request.get("outbox_id", "")).strip()
+    target_id = str(telegram_send_request.get("target_id", "")).strip()
+    payload_hash = str(telegram_send_request.get("payload_hash", "")).strip()
+    platform_payload_hash = str(telegram_send_request.get("platform_payload_hash", "")).strip()
+    token_source = str(telegram_send_request.get("token_source", "")).strip()
+    sender_capability_enabled = telegram_send_request.get("sender_capability_enabled")
+    executor_mode = str(telegram_send_request.get("executor_mode", "")).strip().lower()
+    platform_payload = telegram_send_request.get("platform_payload")
+    api_base_url = str(telegram_send_request.get("api_base_url", "https://api.telegram.org")).strip().rstrip("/")
+    evidence_refs = telegram_send_request.get("evidence_refs", [])
+    request_digest = _digest({key: value for key, value in telegram_send_request.items() if key != "evidence_refs"})
+    authorization_event = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "real_sender_execution_authorized"
+            and row.get("authorization_id") == execution_authorization_id
+        ),
+        None,
+    )
+    existing = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "telegram_delivery_sent"
+            and row.get("request_digest") == request_digest
+        ),
+        None,
+    )
+    if existing is not None:
+        return {**existing, "idempotent_replay": True}
+
+    blocked_reasons: list[str] = []
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if channel != "telegram":
+        blocked_reasons.append("telegram_channel_required")
+    if not execution_authorization_id:
+        blocked_reasons.append("execution_authorization_id_required")
+    if authorization_event is None:
+        blocked_reasons.append("real_sender_execution_authorization_required")
+    if authorization_event is not None:
+        if authorization_event.get("channel") != "telegram":
+            blocked_reasons.append("authorization_channel_not_telegram")
+        if authorization_event.get("preflight_request_digest") != preflight_request_digest:
+            blocked_reasons.append("preflight_request_digest_drift")
+        if authorization_event.get("outbox_id") != outbox_id:
+            blocked_reasons.append("outbox_id_drift")
+        if authorization_event.get("target_id") != target_id:
+            blocked_reasons.append("target_id_drift")
+        if authorization_event.get("payload_hash") != payload_hash:
+            blocked_reasons.append("payload_hash_drift")
+        if authorization_event.get("platform_payload_hash") != platform_payload_hash:
+            blocked_reasons.append("platform_payload_hash_drift")
+        if authorization_event.get("token_source") != token_source:
+            blocked_reasons.append("token_source_drift")
+        if authorization_event.get("sender_capability_requested") is not True:
+            blocked_reasons.append("authorization_capability_not_requested")
+        expires_at = str(authorization_event.get("expires_at", ""))
+        try:
+            expiry = datetime.fromisoformat(expires_at)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry <= datetime.now(timezone.utc):
+                blocked_reasons.append("execution_authorization_expired")
+        except ValueError:
+            blocked_reasons.append("execution_authorization_expires_at_invalid")
+    if sender_capability_enabled is not True:
+        blocked_reasons.append("sender_capability_enabled_required")
+    if executor_mode != "send":
+        blocked_reasons.append("executor_mode_send_required")
+    if not isinstance(platform_payload, dict):
+        blocked_reasons.append("platform_payload_object_required")
+        computed_platform_payload_hash = ""
+    else:
+        computed_platform_payload_hash = _digest(platform_payload)
+        if computed_platform_payload_hash != platform_payload_hash:
+            blocked_reasons.append("platform_payload_hash_drift")
+        if platform_payload.get("chat_id") != target_id:
+            blocked_reasons.append("telegram_chat_id_drift")
+        if not str(platform_payload.get("text", "")).strip():
+            blocked_reasons.append("telegram_text_required")
+        if _contains_secret_like_key(platform_payload):
+            blocked_reasons.append("platform_payload_contains_secret_like_key")
+    if not api_base_url:
+        blocked_reasons.append("api_base_url_required")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("telegram_real_sender_requires_evidence_refs")
+
+    token_value = ""
+    token_blocked: list[str] = []
+    if not blocked_reasons:
+        token_value, token_blocked = _read_env_token_reference(token_source)
+        blocked_reasons.extend(token_blocked)
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "telegram_real_sender",
+        "run_id": normalized_run_id,
+        "channel": channel,
+        "execution_authorization_id": execution_authorization_id,
+        "preflight_request_digest": preflight_request_digest,
+        "outbox_id": outbox_id,
+        "target_id": target_id,
+        "payload_hash": payload_hash,
+        "platform_payload_hash": platform_payload_hash,
+        "computed_platform_payload_hash": computed_platform_payload_hash,
+        "token_source": token_source,
+        "token_value_stored": False,
+        "sender_capability_enabled": sender_capability_enabled,
+        "executor_mode": executor_mode,
+        "api_base_url": api_base_url,
+        "request_digest": request_digest,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {**base, "accepted_as": "rejected_telegram_real_sender", "run_status": "rejected", "runtime_boundary": "telegram_real_sender_rejected", "send_executed": False, "token_read": bool(token_value)}
+
+    send_url = f"{api_base_url}/bot{token_value}/sendMessage"
+    try:
+        platform_response = _post_json(send_url, platform_payload)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return {
+            **base,
+            "accepted_as": "telegram_delivery_send_failed",
+            "run_status": "telegram_delivery_send_failed",
+            "runtime_boundary": "telegram_real_sender_platform_failure",
+            "send_executed": True,
+            "token_read": True,
+            "token_value_stored": False,
+            "failure_class": type(exc).__name__,
+            "failure_detail": str(exc)[:200],
+        }
+    if platform_response.get("ok") is not True:
+        return {
+            **base,
+            "accepted_as": "telegram_delivery_send_failed",
+            "run_status": "telegram_delivery_send_failed",
+            "runtime_boundary": "telegram_real_sender_platform_rejected",
+            "send_executed": True,
+            "token_read": True,
+            "token_value_stored": False,
+            "failure_class": "telegram_api_rejected",
+            "failure_detail": str(platform_response.get("description", ""))[:200],
+        }
+    result = platform_response.get("result") if isinstance(platform_response.get("result"), dict) else {}
+    platform_message_id = result.get("message_id")
+    record = {
+        **base,
+        "accepted_as": "telegram_delivery_sent",
+        "run_status": "telegram_delivery_sent",
+        "runtime_boundary": "telegram_real_sender_executed",
+        "delivery_status": "sent",
+        "send_executed": True,
+        "token_read": True,
+        "token_value_stored": False,
+        "platform_message_id": platform_message_id,
+        "platform_response_ok": True,
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+        "idempotent_replay": False,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def execute_external_adapter_rollback_write(*, ledger_path: str | Path, run_id: str, rollback_request: dict[str, Any]) -> dict[str, Any]:
     """Rollback a previously verified taskpool/Kanban closeout to its recorded previous_status."""
 
@@ -3623,6 +3833,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute-lark-sender-dry-run", action="store_true", help="Verify Lark sender payload contract without token access or sending")
     parser.add_argument("--request-real-sender-preflight", action="store_true", help="Verify real sender readiness while sender capability remains disabled")
     parser.add_argument("--request-real-sender-execution-authorization", action="store_true", help="Project elevated authorization for future real sender execution without token access or sending")
+    parser.add_argument("--execute-telegram-real-sender", action="store_true", help="Execute authorized Telegram sender by reading env token and calling Telegram sendMessage")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -3646,6 +3857,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lark-dry-run-json", default="{}", help="JSON Lark dry-run payload for --execute-lark-sender-dry-run")
     parser.add_argument("--real-sender-preflight-json", default="{}", help="JSON real sender preflight payload for --request-real-sender-preflight")
     parser.add_argument("--real-sender-execution-authorization-json", default="{}", help="JSON real sender execution authorization payload for --request-real-sender-execution-authorization")
+    parser.add_argument("--telegram-real-send-json", default="{}", help="JSON Telegram real sender payload for --execute-telegram-real-sender")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -3848,6 +4060,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(execution_authorization_request, dict):
             parser.error("--real-sender-execution-authorization-json must decode to an object")
         result = request_real_sender_execution_authorization(ledger_path=args.runtime_ledger, run_id=args.run_id, execution_authorization_request=execution_authorization_request)
+    elif args.execute_telegram_real_sender:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --execute-telegram-real-sender")
+        if not args.run_id:
+            parser.error("--run-id is required with --execute-telegram-real-sender")
+        telegram_send_request = json.loads(args.telegram_real_send_json)
+        if not isinstance(telegram_send_request, dict):
+            parser.error("--telegram-real-send-json must decode to an object")
+        result = execute_telegram_real_sender(ledger_path=args.runtime_ledger, run_id=args.run_id, telegram_send_request=telegram_send_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:
