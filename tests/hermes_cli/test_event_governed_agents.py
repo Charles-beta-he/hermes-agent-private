@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 
 from hermes_cli import event_governed_agents as ega
 
@@ -1243,3 +1244,136 @@ def test_certification_promotion_rejects_weak_quorum_no_truth_unsupported_claim_
     assert cli_result["accepted_as"] == "certification_promotion_recorded"
     assert cli_result["certification"]["lifecycle_target"] == "certification_passed_for_review"
     assert len(ledger_path.read_text().splitlines()) == 3
+
+
+def _write_certified_run(tmp_path):
+    ledger_path, started, proposal_path, proposal_record = _write_recorded_proposal(tmp_path)
+    certification_path = tmp_path / "certification.json"
+    certification = {
+        "schema_version": 1,
+        "certification_type": "multi_model_proposal_certification",
+        "run_id": started["run_id"],
+        "proposal_artifact_uri": f"file://{proposal_path}",
+        "proposal_sha256": proposal_record["artifact"]["sha256"],
+        "reviewers": [
+            {"id": "claude", "verdict": "pass", "evidence_refs": ["artifact://agent-coverage/claude-review.json"]},
+            {"id": "codex", "verdict": "pass", "evidence_refs": ["artifact://agent-coverage/codex-review.json"]},
+        ],
+        "quorum": 2,
+        "truth_gate": True,
+        "claims": [{"id": "claim-1", "text": "supported", "evidence_refs": ["artifact://agent-coverage/proof.json"]}],
+        "summary": "certification packet passed for review only",
+        "lifecycle_target": "certification_passed_for_review",
+        "evidence_refs": ["artifact://agent-coverage/certification.json"],
+    }
+    certification_path.write_text(json.dumps(certification), encoding="utf-8")
+    certification_record = ega.append_certification_promotion(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        certification_request={
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": hashlib.sha256(certification_path.read_bytes()).hexdigest(),
+            "evidence_refs": ["artifact://agent-coverage/certification-submit.json"],
+        },
+    )
+    return ledger_path, started, proposal_path, proposal_record, certification_path, certification_record
+
+
+def test_done_authorization_projection_approved_binds_certification_but_write_through_disabled(tmp_path) -> None:
+    ledger_path, started, _proposal_path, _proposal_record, certification_path, certification_record = _write_certified_run(tmp_path)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+
+    result = ega.request_done_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "target_status": "done",
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": certification_record["artifact"]["sha256"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/done-auth.json"],
+        },
+    )
+
+    assert result["accepted_as"] == "done_authorization_projected"
+    assert result["run_status"] == "done_authorization_approved"
+    assert result["runtime_boundary"] == "human_elevated_done_authorization_projected"
+    assert result["authorization_id"].startswith("auth_")
+    assert result["target_status"] == "done"
+    assert result["write_through_allowed"] is False
+    assert result["fact_mutation_enabled"] is False
+    assert result["allowed_to_mutate_lifecycle"] is False
+    assert result["canonical_lifecycle_unchanged"] is True
+    assert result["certification_artifact"]["sha256"] == certification_record["artifact"]["sha256"]
+    assert len(ledger_path.read_text().splitlines()) == 4
+
+
+def test_done_authorization_projection_rejects_non_elevated_expired_drift_and_cli_smoke(tmp_path) -> None:
+    ledger_path, started, _proposal_path, _proposal_record, certification_path, certification_record = _write_certified_run(tmp_path)
+    expired_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    rejected = ega.request_done_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        authorization_request={
+            "actor_id": "worker",
+            "actor_role": "bounded_worker",
+            "decision": "approved",
+            "target_status": "done",
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": "0" * 64,
+            "expires_at": expired_at,
+            "write_through_allowed": True,
+            "evidence_refs": ["artifact://agent-coverage/bad-auth.json"],
+        },
+    )
+
+    assert rejected["accepted_as"] == "rejected_done_authorization_projection"
+    assert rejected["authorization_projected"] is False
+    assert "elevated_actor_role_required" in rejected["blocked_reasons"]
+    assert "authorization_expired" in rejected["blocked_reasons"]
+    assert "authorization_certification_sha256_mismatch" in rejected["blocked_reasons"]
+    assert "write_through_must_remain_disabled" in rejected["blocked_reasons"]
+    assert len(ledger_path.read_text().splitlines()) == 3
+
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    request_json = json.dumps(
+        {
+            "actor_id": "human-admin-cli",
+            "actor_role": "admin",
+            "decision": "approved",
+            "target_status": "done",
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": certification_record["artifact"]["sha256"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/cli-done-auth.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--request-done-authorization",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--authorization-request-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "done_authorization_projected"
+    assert cli_result["target_status"] == "done"
+    assert cli_result["write_through_allowed"] is False
+    assert len(ledger_path.read_text().splitlines()) == 4

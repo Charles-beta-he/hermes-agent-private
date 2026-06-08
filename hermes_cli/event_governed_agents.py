@@ -5,8 +5,8 @@ first record a ledger-local started run, then may invoke an allowlisted builtin
 read-only executor that appends a completed result. Separate external-agent
 paths may run ``--version`` probes, send no-tool/no-write dry-run prompts,
 attach read-only context artifact pointers, record validated proposal artifact
-pointers, or record multi-model certification promotion packets while appending
-only pointers to the ledger. They still do not mutate
+pointers, record multi-model certification promotion packets, or project elevated
+done authorizations while appending only pointers to the ledger. They still do not mutate
 lifecycle, write memory/skills, send external messages, or change cron/provider
 configuration.
 """
@@ -51,6 +51,7 @@ EXTERNAL_AGENT_PROBE_COMMANDS = {"claude_code": "claude", "codex": "codex", "ope
 CANONICAL_LIFECYCLE_STATUSES = frozenset({"pending", "claimed", "running", "retry", "blocked", "review", "done"})
 ARTIFACT_TYPES = frozenset({"json", "log", "screenshot", "trace", "metrics", "transcript", "report"})
 HOT_PATH_SUMMARY_MAX_CHARS = 240
+ELEVATED_DONE_AUTH_ROLES = frozenset({"admin", "elevated_operator", "human_admin"})
 WORKER_FORBIDDEN_RESULT_KEYS = frozenset(
     {
         "mark_done",
@@ -1395,6 +1396,107 @@ def append_certification_promotion(*, ledger_path: str | Path, run_id: str, cert
     return record
 
 
+def request_done_authorization(*, ledger_path: str | Path, run_id: str, authorization_request: dict[str, Any]) -> dict[str, Any]:
+    """Project a human/elevated done authorization without mutating facts yet."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    certification_record = next((row for row in rows if row.get("run_id") == normalized_run_id and row.get("run_status") == "certification_recorded"), None)
+    actor_role = str(authorization_request.get("actor_role", "")).strip()
+    actor_id = str(authorization_request.get("actor_id", "")).strip()
+    decision = str(authorization_request.get("decision", "")).strip().lower()
+    target_status = str(authorization_request.get("target_status", "")).strip().lower()
+    certification_artifact_uri = str(authorization_request.get("certification_artifact_uri", "")).strip()
+    certification_sha256 = str(authorization_request.get("certification_sha256", "")).strip().lower()
+    expires_at = str(authorization_request.get("expires_at", "")).strip()
+    evidence_refs = authorization_request.get("evidence_refs", [])
+    request_digest = _digest(authorization_request)
+    blocked_reasons: list[str] = []
+    expires_dt: datetime | None = None
+
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if certification_record is None:
+        blocked_reasons.append("certification_record_required")
+    if not actor_id:
+        blocked_reasons.append("actor_id_required")
+    if actor_role not in ELEVATED_DONE_AUTH_ROLES:
+        blocked_reasons.append("elevated_actor_role_required")
+    if decision != "approved":
+        blocked_reasons.append("authorization_decision_must_be_approved")
+    if target_status != "done":
+        blocked_reasons.append("authorization_target_status_must_be_done")
+    if authorization_request.get("write_through_allowed") is True or authorization_request.get("fact_mutation_enabled") is True:
+        blocked_reasons.append("write_through_must_remain_disabled")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("authorization_requires_evidence_refs")
+    if not expires_at:
+        blocked_reasons.append("authorization_expires_at_required")
+    else:
+        try:
+            expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expires_dt.tzinfo is None:
+                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+            if expires_dt <= datetime.now(timezone.utc):
+                blocked_reasons.append("authorization_expired")
+        except ValueError:
+            blocked_reasons.append("authorization_expires_at_invalid")
+    if certification_record is not None:
+        recorded_artifact = certification_record.get("artifact", {}) if isinstance(certification_record.get("artifact"), dict) else {}
+        if certification_artifact_uri != recorded_artifact.get("artifact_uri"):
+            blocked_reasons.append("authorization_certification_artifact_uri_mismatch")
+        if certification_sha256 != recorded_artifact.get("sha256"):
+            blocked_reasons.append("authorization_certification_sha256_mismatch")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "done_authorization_projection",
+        "run_id": normalized_run_id,
+        "authorization_projected": False,
+        "authorization_request_digest": request_digest,
+        "target_status": target_status,
+        "write_through_allowed": False,
+        "fact_mutation_enabled": False,
+        "allowed_to_mutate_lifecycle": False,
+        "canonical_lifecycle_unchanged": True,
+        "external_adapter_write_through_enabled": False,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_done_authorization_projection",
+            "run_status": "rejected",
+            "runtime_boundary": "human_elevated_done_authorization_rejected",
+        }
+
+    assert certification_record is not None
+    authorization_id = "auth_" + _digest({"run_id": normalized_run_id, "request_digest": request_digest})[:24]
+    record = {
+        **base,
+        "accepted_as": "done_authorization_projected",
+        "run_status": "done_authorization_approved",
+        "runtime_boundary": "human_elevated_done_authorization_projected",
+        "authorization_projected": True,
+        "authorization_id": authorization_id,
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+        "decision": decision,
+        "expires_at": expires_at,
+        "certification_artifact": {
+            "artifact_uri": certification_artifact_uri,
+            "sha256": certification_sha256,
+        },
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -1581,6 +1683,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-external-agent-readonly-context", action="store_true", help="Send a no-tool/no-write prompt with a readonly context artifact pointer")
     parser.add_argument("--append-external-agent-proposal", action="store_true", help="Append a validated external agent proposal artifact pointer")
     parser.add_argument("--append-certification-promotion", action="store_true", help="Append a validated multi-model certification promotion artifact pointer")
+    parser.add_argument("--request-done-authorization", action="store_true", help="Project an elevated done authorization without fact mutation")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -1590,6 +1693,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--context-request-json", default="{}", help="JSON context payload for --run-external-agent-readonly-context")
     parser.add_argument("--proposal-request-json", default="{}", help="JSON proposal payload for --append-external-agent-proposal")
     parser.add_argument("--certification-request-json", default="{}", help="JSON certification payload for --append-certification-promotion")
+    parser.add_argument("--authorization-request-json", default="{}", help="JSON authorization payload for --request-done-authorization")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -1666,6 +1770,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(certification_request, dict):
             parser.error("--certification-request-json must decode to an object")
         result = append_certification_promotion(ledger_path=args.runtime_ledger, run_id=args.run_id, certification_request=certification_request)
+    elif args.request_done_authorization:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --request-done-authorization")
+        if not args.run_id:
+            parser.error("--run-id is required with --request-done-authorization")
+        authorization_request = json.loads(args.authorization_request_json)
+        if not isinstance(authorization_request, dict):
+            parser.error("--authorization-request-json must decode to an object")
+        result = request_done_authorization(ledger_path=args.runtime_ledger, run_id=args.run_id, authorization_request=authorization_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

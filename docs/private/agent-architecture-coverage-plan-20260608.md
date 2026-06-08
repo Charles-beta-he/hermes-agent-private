@@ -37,8 +37,10 @@ SSOT: this file
 - [x] Slice 20: Add external proposal artifact intake: worker proposals are accepted only as review_proposed artifacts with evidence-backed claims and failure classification; done/lifecycle authority remains rejected.
 - [x] Slice 21: Scoped commit for proposal artifact intake if verification passes. Commit: 95c20b13b Record external agent proposal artifacts.
 - [x] Slice 22: Add multi-model certification promotion packet: certification artifacts must bind to a recorded proposal, require quorum/truth gate/reviewer evidence/claim evidence, and may only target certification_passed_for_review.
-- [x] Slice 23: Scoped commit for certification promotion packet if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before human/elevated policy done gate, external agent tools/file edits/shell commands, task lifecycle writes, or external adapter writes unless a narrower executor-specific slice authorizes that capability.
+- [x] Slice 23: Scoped commit for certification promotion packet if verification passes. Commit: 1146f643a Record multi-model certification promotions.
+- [x] Slice 24: Add human/elevated done authorization projection: require certification_recorded, elevated actor, approval decision, target done, TTL, and certification artifact hash binding while keeping fact mutation/write-through disabled.
+- [x] Slice 25: Scoped commit for done authorization projection if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before ledger-local fact mutation, external agent tools/file edits/shell commands, task lifecycle writes to external adapters, or external adapter writes unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
 
@@ -52,6 +54,7 @@ SSOT: this file
 - The fifth approved runtime boundary is external readonly context packet: an allowlisted agent may receive a prompt containing only a context artifact URI/hash, while inline context and write/tool/lifecycle authority remain rejected. Ledger stores context pointer/hash and output artifact pointer/hash/summary only.
 - The sixth approved runtime boundary is external proposal artifact intake: an external worker proposal may be recorded only as a review_proposed artifact with evidence-backed claims and failure classification. It is still not a fact, cannot mark done, and requires later certification/human gate.
 - The seventh approved runtime boundary is multi-model certification promotion: a certification artifact may be recorded only if it binds to the recorded proposal, has at least two reviewers, quorum >= 2, truth gate enabled, reviewer/claim evidence, and lifecycle_target=certification_passed_for_review. It still cannot mark done or mutate lifecycle.
+- The eighth approved runtime boundary is human/elevated done authorization projection: an elevated human/admin may approve target_status=done only against the exact certification artifact hash and unexpired TTL, but this projection still keeps fact mutation and write-through disabled.
 
 ## Files Changed
 
