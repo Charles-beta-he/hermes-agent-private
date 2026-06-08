@@ -57,8 +57,10 @@ SSOT: this file
 - [x] Slice 40: Add outbound outbox enqueue executor: consume verified write/rollback event, append pending Lark/Telegram notification intent with payload hash/summary only, require target allowlist and no secret-like payload keys, and do not send.
 - [x] Slice 41: Scoped commit for outbound outbox executor if verification passes. Commit: 50e9dbe82 Enqueue governed outbound outbox items.
 - [x] Slice 42: Add outbound delivery authorization projection: consume pending outbox item, require elevated actor approval, exact outbox_id/payload_hash/target/channel, TTL, readback, and do not send.
-- [x] Slice 43: Scoped commit for outbound delivery authorization if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before Lark/Telegram sender execution, external agent tools/file edits/shell commands, or broad reopen unless a narrower executor-specific slice authorizes that capability.
+- [x] Slice 43: Scoped commit for outbound delivery authorization if verification passes. Commit: 08be51b97 Project outbound delivery authorizations.
+- [x] Slice 44: Add Telegram sender dry-run executor: consume delivery authorization, require channel=telegram and sender_mode=dry_run, verify outbox/payload hash, record platform payload hash/summary only, and do not read token or send.
+- [x] Slice 45: Scoped commit for Telegram sender dry-run if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before real Lark/Telegram sender execution, external agent tools/file edits/shell commands, or broad reopen unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
 
@@ -82,6 +84,7 @@ SSOT: this file
 - The fifteenth approved runtime boundary is digest-bound taskpool/Kanban rollback: a verified closeout write event may be consumed by exact write request digest to restore only its recorded previous_status, with current-state check and readback. Broad reopen, Lark/Telegram writes, and arbitrary rollback targets remain disabled.
 - The sixteenth approved runtime boundary is outbound outbox enqueue only: a verified write/rollback event may produce a pending Lark/Telegram outbox item with target allowlist, no secret-like payload keys, payload hash/summary only, and readback. It does not call platform APIs or send messages.
 - The seventeenth approved runtime boundary is outbound delivery authorization projection: an elevated actor may approve a pending outbox item for exactly one channel/target/payload hash under TTL after outbox readback. It still does not call Lark/Telegram APIs or send messages.
+- The eighteenth approved runtime boundary is Telegram sender dry-run only: an authorized Telegram delivery may validate a platform payload preview and record its hash/summary without reading tokens or sending messages. Real Telegram API execution remains disabled.
 
 ## Files Changed
 

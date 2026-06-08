@@ -2767,3 +2767,162 @@ def test_outbound_delivery_authorization_rejects_drift_unauthorized_expired_and_
     assert cli_result["accepted_as"] == "outbound_delivery_authorization_projected"
     assert cli_result["channel"] == "lark"
     assert cli_result["send_executed"] is False
+
+
+def _make_delivery_authorization_run(tmp_path):
+    ledger_path, started, outbox, outbox_path = _make_outbox_enqueue_run(tmp_path)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    authorization = ega.request_outbound_delivery_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        delivery_authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/delivery-auth.json"],
+        },
+    )
+    return ledger_path, started, outbox, outbox_path, authorization
+
+
+def test_telegram_sender_dry_run_projects_payload_without_token_or_send_and_is_idempotent(tmp_path) -> None:
+    ledger_path, started, outbox, outbox_path, authorization = _make_delivery_authorization_run(tmp_path)
+    result = ega.execute_telegram_sender_dry_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        telegram_dry_run_request={
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "dry_run",
+            "platform_payload": {"chat_id": "ops-review-room", "text": "Governed closeout verified; pending delivery."},
+            "evidence_refs": ["artifact://agent-coverage/telegram-dry-run.json"],
+        },
+    )
+    assert result["accepted_as"] == "telegram_delivery_dry_run_verified"
+    assert result["channel"] == "telegram"
+    assert result["sender_mode"] == "dry_run"
+    assert result["send_executed"] is False
+    assert result["token_read"] is False
+    assert result["readback_verified"] is True
+    assert result["platform_payload_hash"]
+    assert "platform_payload" not in result
+
+    replay = ega.execute_telegram_sender_dry_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        telegram_dry_run_request={
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "dry_run",
+            "platform_payload": {"chat_id": "ops-review-room", "text": "Governed closeout verified; pending delivery."},
+            "evidence_refs": ["artifact://agent-coverage/telegram-dry-run-replay.json"],
+        },
+    )
+    assert replay["idempotent_replay"] is True
+    assert len([line for line in ledger_path.read_text(encoding="utf-8").splitlines() if "telegram_delivery_dry_run_verified" in line]) == 1
+
+
+def test_telegram_sender_dry_run_rejects_send_mode_channel_drift_secret_payload_and_cli_smoke(tmp_path) -> None:
+    ledger_path, started, outbox, outbox_path, authorization = _make_delivery_authorization_run(tmp_path)
+    rejected_mode = ega.execute_telegram_sender_dry_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        telegram_dry_run_request={
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "send",
+            "platform_payload": {"chat_id": "ops-review-room", "text": "x"},
+            "evidence_refs": ["artifact://agent-coverage/telegram-send-mode.json"],
+        },
+    )
+    assert rejected_mode["accepted_as"] == "rejected_telegram_delivery_dry_run"
+    assert "dry_run_mode_required" in rejected_mode["blocked_reasons"]
+    rejected_channel = ega.execute_telegram_sender_dry_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        telegram_dry_run_request={
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "lark",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "dry_run",
+            "platform_payload": {"chat_id": "ops-review-room", "text": "x"},
+            "evidence_refs": ["artifact://agent-coverage/telegram-channel-drift.json"],
+        },
+    )
+    assert "telegram_channel_required" in rejected_channel["blocked_reasons"]
+    rejected_secret = ega.execute_telegram_sender_dry_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        telegram_dry_run_request={
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "dry_run",
+            "platform_payload": {"chat_id": "ops-review-room", "text": "x", "bot_token": "secret-token"},
+            "evidence_refs": ["artifact://agent-coverage/telegram-secret.json"],
+        },
+    )
+    assert "platform_payload_contains_secret_like_key" in rejected_secret["blocked_reasons"]
+
+    request_json = json.dumps(
+        {
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "dry_run",
+            "platform_payload": {"chat_id": "ops-review-room", "text": "CLI Telegram dry-run."},
+            "evidence_refs": ["artifact://agent-coverage/telegram-dry-run-cli.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--execute-telegram-sender-dry-run",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--telegram-dry-run-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "telegram_delivery_dry_run_verified"
+    assert cli_result["send_executed"] is False
+    assert cli_result["token_read"] is False
