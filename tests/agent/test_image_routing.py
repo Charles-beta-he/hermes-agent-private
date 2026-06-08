@@ -410,6 +410,27 @@ class TestBuildNativeContentParts:
             f"Expected MIME sniffing to detect PNG bytes regardless of .webp suffix, got: {url[:60]}"
         )
 
+    def test_corrupt_image_file_is_skipped_instead_of_sent_as_jpeg(self, tmp_path: Path):
+        """Regression: text bytes with a .png suffix must not be sent as
+        data:image/jpeg;base64,... to Codex/OpenAI, which rejects it with
+        HTTP 400 "image data ... does not represent a valid image".
+        """
+        img = tmp_path / "not_really.png"
+        img.write_bytes(b"this is not an image")
+        parts, skipped = build_native_content_parts("inspect", [str(img)])
+        assert skipped == [str(img)]
+        assert parts == [{"type": "text", "text": "inspect"}]
+
+    def test_unsupported_image_format_is_skipped_for_native_openai_parts(self, tmp_path: Path):
+        """Native image parts are OpenAI-style and only safe for JPEG/PNG/GIF/WEBP.
+        Do not embed BMP/TIFF/HEIC/etc. bytes as native input_image parts.
+        """
+        img = tmp_path / "bitmap.bmp"
+        img.write_bytes(b"BM" + b"\x00" * 32)
+        parts, skipped = build_native_content_parts("inspect", [str(img)])
+        assert skipped == [str(img)]
+        assert parts == [{"type": "text", "text": "inspect"}]
+
 
 # ─── Oversize handling ───────────────────────────────────────────────────────
 

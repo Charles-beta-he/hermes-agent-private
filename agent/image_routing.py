@@ -332,6 +332,14 @@ def decide_image_input_mode(
 # it fires, which is cheaper than permanent quality loss.
 
 
+_NATIVE_IMAGE_MIME_TYPES = frozenset({
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+})
+
+
 def _sniff_mime_from_bytes(raw: bytes) -> Optional[str]:
     """Detect image MIME from magic bytes. Returns None if unrecognised.
 
@@ -410,7 +418,21 @@ def _file_to_data_url(path: Path) -> Optional[str]:
     except Exception as exc:
         logger.warning("image_routing: failed to read %s — %s", path, exc)
         return None
-    mime = _guess_mime(path, raw=raw)
+
+    # For native OpenAI-style image parts, only attach bytes that we can
+    # positively identify as one of the formats accepted by OpenAI/Codex
+    # (JPEG/PNG/GIF/WEBP). Filename-guess fallback is unsafe here: a corrupt
+    # ``.png`` or unsupported ``.bmp`` would otherwise be sent as base64 and
+    # the provider rejects the whole turn with HTTP 400 invalid image data.
+    mime = _sniff_mime_from_bytes(raw)
+    if mime not in _NATIVE_IMAGE_MIME_TYPES:
+        logger.warning(
+            "image_routing: skipping unsupported or unrecognised native image %s (mime=%s)",
+            path,
+            mime or "unknown",
+        )
+        return None
+
     b64 = base64.b64encode(raw).decode("ascii")
     return f"data:{mime};base64,{b64}"
 
