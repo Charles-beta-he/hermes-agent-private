@@ -1,0 +1,89 @@
+{
+  "records": [
+    {
+      "findings": [
+        {
+          "evidence_bundle": [
+            "artifact:/Users/charles/.hermes/logs/cron/daily-report-20260608.jsonl",
+            "command:python3 ~/.hermes/scripts/brain_task_orchestrator.py dashboard --write"
+          ],
+          "insufficient_evidence": false,
+          "reason": "matched:--write,dashboard --write,transition",
+          "risk": "filesystem_write",
+          "severity": "medium"
+        }
+      ],
+      "insufficient_evidence": false,
+      "max_severity": "medium",
+      "policy": {
+        "deterministic_only": true,
+        "fail_closed_on_missing_evidence": true,
+        "llm_may_explain_but_not_classify": true
+      },
+      "run_id": "cron-daily-report-readback-20260608",
+      "schema": "session_risk_audit_v1",
+      "source": "cron"
+    },
+    {
+      "findings": [
+        {
+          "evidence_bundle": [
+            "artifact:/Users/charles/.hermes/logs/provider-health-20260608.jsonl"
+          ],
+          "insufficient_evidence": false,
+          "reason": "matched:auth.json,oauth,secret,token",
+          "risk": "credential_touch",
+          "severity": "high"
+        },
+        {
+          "evidence_bundle": [
+            "artifact:/Users/charles/.hermes/logs/provider-health-20260608.jsonl"
+          ],
+          "insufficient_evidence": false,
+          "reason": "matched:429,provider,quota,rate_limit,token",
+          "risk": "provider_cost_signal",
+          "severity": "medium"
+        }
+      ],
+      "insufficient_evidence": false,
+      "max_severity": "high",
+      "policy": {
+        "deterministic_only": true,
+        "fail_closed_on_missing_evidence": true,
+        "llm_may_explain_but_not_classify": true
+      },
+      "run_id": "session-provider-health-20260608",
+      "schema": "session_risk_audit_v1",
+      "source": "session"
+    },
+    {
+      "findings": [
+        {
+          "evidence_bundle": [],
+          "insufficient_evidence": true,
+          "reason": "matched:browser,https://",
+          "risk": "external_network",
+          "severity": "medium"
+        },
+        {
+          "evidence_bundle": [],
+          "insufficient_evidence": true,
+          "reason": "matched:mcp,tool_call",
+          "risk": "mcp_or_skill_use",
+          "severity": "medium"
+        }
+      ],
+      "insufficient_evidence": true,
+      "max_severity": "high",
+      "policy": {
+        "deterministic_only": true,
+        "fail_closed_on_missing_evidence": true,
+        "llm_may_explain_but_not_classify": true
+      },
+      "run_id": "tool-browser-mcp-no-artifact-20260608",
+      "schema": "session_risk_audit_v1",
+      "source": "tool"
+    }
+  ],
+  "schema": "session_risk_audit_v1"
+}

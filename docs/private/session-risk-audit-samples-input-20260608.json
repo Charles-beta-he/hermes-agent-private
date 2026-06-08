@@ -1,0 +1,27 @@
+[
+  {
+    "run_id": "cron-daily-report-readback-20260608",
+    "source": "cron",
+    "summary": "cron read-back used dashboard --write after taskpool transition evidence refresh",
+    "evidence_bundle": [
+      "artifact:/Users/charles/.hermes/logs/cron/daily-report-20260608.jsonl",
+      "command:python3 ~/.hermes/scripts/brain_task_orchestrator.py dashboard --write"
+    ]
+  },
+  {
+    "run_id": "session-provider-health-20260608",
+    "source": "session",
+    "messages": [
+      "provider router observed 429 quota/rate_limit and token budget signals",
+      "oauth auth.json presence checked without reading secret values"
+    ],
+    "evidence_refs": [
+      "artifact:/Users/charles/.hermes/logs/provider-health-20260608.jsonl"
+    ]
+  },
+  {
+    "run_id": "tool-browser-mcp-no-artifact-20260608",
+    "source": "tool",
+    "summary": "browser used against https://example.invalid through MCP tool_call, but no persisted evidence pointer was provided"
+  }
+]
