@@ -307,6 +307,136 @@ def validate_worker_result_contract(
     }
 
 
+def validate_fork_join_graph_contract(graph: dict[str, Any]) -> dict[str, Any]:
+    """Validate a fork/join graph as a ledger projection, not an executor.
+
+    Nodes describe taskpool-derived execution shape only. A valid graph still has
+    runtime fanout disabled until a separate dispatcher/policy slice exists.
+    """
+
+    nodes = graph.get("nodes", [])
+    errors: list[str] = []
+    if not isinstance(nodes, list) or not nodes:
+        errors.append("nodes_required")
+        nodes = []
+
+    node_ids: list[str] = []
+    deps_by_id: dict[str, list[str]] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            errors.append("node_must_be_object")
+            continue
+        node_id = str(node.get("id", "")).strip()
+        if not node_id:
+            errors.append("node_id_required")
+            continue
+        node_ids.append(node_id)
+        requires = node.get("requires", [])
+        if not isinstance(requires, list):
+            errors.append(f"requires_must_be_list:{node_id}")
+            requires = []
+        deps_by_id[node_id] = [str(dep).strip() for dep in requires if str(dep).strip()]
+        if str(node.get("kind", "")).strip().lower() == "join":
+            if len(deps_by_id[node_id]) < 2:
+                errors.append(f"join_requires_two_or_more_inputs:{node_id}")
+            if not node.get("evidence_refs_required"):
+                errors.append(f"join_requires_evidence_refs:{node_id}")
+
+    if len(set(node_ids)) != len(node_ids):
+        errors.append("duplicate_node_id")
+    known = set(node_ids)
+    for node_id, deps in deps_by_id.items():
+        for dep in deps:
+            if dep not in known:
+                errors.append(f"missing_dependency:{node_id}:{dep}")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node_id: str) -> None:
+        if node_id in visited or "cycle_detected" in errors:
+            return
+        if node_id in visiting:
+            errors.append("cycle_detected")
+            return
+        visiting.add(node_id)
+        for dep in deps_by_id.get(node_id, []):
+            if dep in deps_by_id:
+                visit(dep)
+        visiting.remove(node_id)
+        visited.add(node_id)
+
+    for node_id in node_ids:
+        visit(node_id)
+
+    accepted = not errors
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "report_only",
+        "graph_id": str(graph.get("graph_id", "")).strip(),
+        "accepted_as": "ledger_projection_contract" if accepted else "rejected_graph_contract_projection",
+        "node_count": len(node_ids),
+        "join_count": sum(1 for node in nodes if isinstance(node, dict) and str(node.get("kind", "")).lower() == "join"),
+        "runtime_parallel_dispatch_enabled": False,
+        "lifecycle_mutation_enabled": False,
+        "ledger_projection_only": True,
+        "blocked_reasons": errors,
+        "graph_digest": _digest(graph),
+    }
+
+
+def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
+    """Validate a multi-model certification packet without granting authority."""
+
+    reviewers = contract.get("reviewers", [])
+    claims = contract.get("claims", [])
+    quorum = int(contract.get("quorum", 0) or 0)
+    truth_gate = bool(contract.get("truth_gate"))
+    errors: list[str] = []
+
+    if not isinstance(reviewers, list) or len(reviewers) < 2:
+        errors.append("at_least_two_reviewers_required")
+        reviewers = [] if not isinstance(reviewers, list) else reviewers
+    if quorum < 2:
+        errors.append("quorum_must_be_at_least_two")
+    if quorum > len(reviewers):
+        errors.append("quorum_exceeds_reviewer_count")
+    if not truth_gate:
+        errors.append("truth_gate_required")
+    if not isinstance(claims, list) or not claims:
+        errors.append("claims_required")
+        claims = [] if not isinstance(claims, list) else claims
+
+    unsupported_claims: list[str] = []
+    for index, claim in enumerate(claims):
+        if not isinstance(claim, dict):
+            unsupported_claims.append(f"claim:{index}")
+            continue
+        claim_id = str(claim.get("id") or f"claim:{index}")
+        evidence_refs = claim.get("evidence_refs", [])
+        if not isinstance(evidence_refs, list) or not evidence_refs:
+            unsupported_claims.append(claim_id)
+    if unsupported_claims:
+        errors.append("all_claims_require_evidence_refs")
+
+    certification_possible = not errors
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "report_only",
+        "subject_ref": str(contract.get("subject_ref", "")).strip(),
+        "certification_possible": certification_possible,
+        "accepted_as": "certification_projection" if certification_possible else "rejected_certification_projection",
+        "reviewer_count": len(reviewers),
+        "quorum": quorum,
+        "truth_gate": truth_gate,
+        "unsupported_claims": unsupported_claims,
+        "allowed_to_mark_done": False,
+        "model_consensus_is_fact": False,
+        "blocked_reasons": errors,
+        "contract_digest": _digest(contract),
+    }
+
+
 def normalize_event(
     *,
     event_type: str,

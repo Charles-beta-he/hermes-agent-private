@@ -17,7 +17,10 @@ SSOT: this file
 - [x] Slice 1: Add report-only agent architecture coverage contract to hermes_cli.event_governed_agents with CLI JSON access and tests.
 - [x] Slice 1b: Add worker adapter result contract so Claude Code/Codex/OpenCode outputs are evidence/proposal only and cannot smuggle lifecycle/external-write authority.
 - [x] Slice 2: Run focused tests and py_compile for the touched control-plane module.
-- [ ] Slice 3: Scoped commit if verification passes.
+- [x] Slice 3: Scoped commit if verification passes. Commit: 06fbbe238 Add agent architecture coverage contract.
+- [x] Slice 4: Add fork/join graph contract validation as ledger projection only; runtime parallel dispatch remains disabled.
+- [x] Slice 5: Add multi-model certification packet validation; model consensus remains non-fact and cannot mark done.
+- [ ] Slice 6: Scoped commit for graph/certification contracts if verification passes.
 - [ ] Boundary: stop before real runtime worker dispatch / task lifecycle writes / external adapter writes unless a separate explicit human gate authorizes that slice.
 
 ## Decisions

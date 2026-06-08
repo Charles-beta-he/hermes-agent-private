@@ -121,6 +121,84 @@ def test_worker_result_contract_accepts_evidence_only_and_rejects_smuggled_autho
     assert "succeeded_worker_result_requires_evidence_refs" in no_evidence["blocked_reasons"]
 
 
+def test_fork_join_graph_contract_is_projection_only_and_rejects_unsafe_graphs() -> None:
+    valid = ega.validate_fork_join_graph_contract(
+        {
+            "graph_id": "agent-coverage-fork-join",
+            "nodes": [
+                {"id": "plan", "kind": "task", "requires": []},
+                {"id": "worker-a", "kind": "task", "requires": ["plan"]},
+                {"id": "worker-b", "kind": "task", "requires": ["plan"]},
+                {
+                    "id": "join",
+                    "kind": "join",
+                    "requires": ["worker-a", "worker-b"],
+                    "evidence_refs_required": ["AC-join"],
+                },
+            ],
+        }
+    )
+
+    assert valid["accepted_as"] == "ledger_projection_contract"
+    assert valid["runtime_parallel_dispatch_enabled"] is False
+    assert valid["lifecycle_mutation_enabled"] is False
+    assert valid["join_count"] == 1
+    assert valid["blocked_reasons"] == []
+
+    unsafe = ega.validate_fork_join_graph_contract(
+        {
+            "graph_id": "unsafe",
+            "nodes": [
+                {"id": "a", "kind": "task", "requires": ["b"]},
+                {"id": "b", "kind": "join", "requires": ["a"]},
+            ],
+        }
+    )
+
+    assert unsafe["accepted_as"] == "rejected_graph_contract_projection"
+    assert "cycle_detected" in unsafe["blocked_reasons"]
+    assert "join_requires_two_or_more_inputs:b" in unsafe["blocked_reasons"]
+    assert "join_requires_evidence_refs:b" in unsafe["blocked_reasons"]
+
+
+def test_certification_contract_requires_quorum_truth_gate_and_evidence() -> None:
+    valid = ega.validate_certification_contract(
+        {
+            "subject_ref": "task:arch-coverage",
+            "quorum": 2,
+            "truth_gate": True,
+            "reviewers": [
+                {"role": "planner", "model": "claude"},
+                {"role": "reviewer", "model": "codex"},
+                {"role": "arbiter", "model": "mimo"},
+            ],
+            "claims": [{"id": "AC-1", "evidence_refs": ["artifact:/tmp/proof.json"]}],
+        }
+    )
+
+    assert valid["certification_possible"] is True
+    assert valid["accepted_as"] == "certification_projection"
+    assert valid["allowed_to_mark_done"] is False
+    assert valid["model_consensus_is_fact"] is False
+    assert valid["blocked_reasons"] == []
+
+    invalid = ega.validate_certification_contract(
+        {
+            "subject_ref": "task:arch-coverage",
+            "quorum": 3,
+            "truth_gate": False,
+            "reviewers": [{"role": "planner", "model": "claude"}],
+            "claims": [{"id": "AC-1", "evidence_refs": []}],
+        }
+    )
+
+    assert invalid["certification_possible"] is False
+    assert "at_least_two_reviewers_required" in invalid["blocked_reasons"]
+    assert "quorum_exceeds_reviewer_count" in invalid["blocked_reasons"]
+    assert "truth_gate_required" in invalid["blocked_reasons"]
+    assert invalid["unsupported_claims"] == ["AC-1"]
+
+
 def test_control_plane_report_is_json_and_report_only(tmp_path) -> None:
     report = ega.build_control_plane_report()
 
