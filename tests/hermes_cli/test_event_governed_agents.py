@@ -927,3 +927,143 @@ def test_external_agent_readonly_context_rejects_inline_context_write_and_cli_sm
     assert cli_result["context"]["context_artifact_uri"] == f"file://{context_path}"
     assert cli_result["artifact"]["artifact_uri"] == f"file://{output_path}"
     assert len(ledger_path.read_text().splitlines()) == 2
+
+
+def test_external_agent_proposal_artifact_accepts_review_proposal_with_evidence(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    proposal_path = tmp_path / "proposal.json"
+    proposal = {
+        "schema_version": 1,
+        "proposal_type": "worker_review_proposal",
+        "run_id": "placeholder",
+        "summary": "Proposal only; human/certification gate still required.",
+        "claims": [
+            {"id": "claim-1", "text": "Readonly context was analyzed.", "evidence_refs": ["artifact://agent-coverage/readonly-output.json"]}
+        ],
+        "failure_classification": "none",
+        "lifecycle_target": "review_proposed",
+        "evidence_refs": ["artifact://agent-coverage/proposal.json"],
+    }
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "claude-code",
+            "worker_id": "claude-proposal",
+            "run_purpose": "external_agent_proposal",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+    proposal["run_id"] = started["run_id"]
+    proposal_path.write_text(json.dumps(proposal), encoding="utf-8")
+
+    result = ega.append_external_agent_proposal(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        proposal_request={
+            "proposal_artifact_uri": f"file://{proposal_path}",
+            "proposal_sha256": hashlib.sha256(proposal_path.read_bytes()).hexdigest(),
+            "evidence_refs": ["artifact://agent-coverage/proposal-submit.json"],
+        },
+    )
+
+    assert result["accepted_as"] == "external_agent_proposal_recorded"
+    assert result["run_status"] == "external_proposal_recorded"
+    assert result["runtime_boundary"] == "external_agent_proposal_artifact_recorded"
+    assert result["proposal"]["lifecycle_target"] == "review_proposed"
+    assert result["allowed_to_mutate_lifecycle"] is False
+    assert result["allowed_to_mark_done"] is False
+    assert result["external_adapter_write_through_enabled"] is False
+    assert result["artifact"]["artifact_uri"] == f"file://{proposal_path}"
+    assert len(result["artifact"]["sha256"]) == 64
+    assert result["claim_count"] == 1
+    rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+    assert [row["run_status"] for row in rows] == ["started", "external_proposal_recorded"]
+
+
+def test_external_agent_proposal_artifact_rejects_done_and_unsupported_claims_cli_smoke(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    proposal_path = tmp_path / "proposal.json"
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "claude-code",
+            "worker_id": "claude-proposal-cli",
+            "run_purpose": "external_agent_proposal",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+    rejected_proposal = {
+        "schema_version": 1,
+        "proposal_type": "worker_review_proposal",
+        "run_id": started["run_id"],
+        "summary": "bad",
+        "claims": [{"id": "claim-1", "text": "unsupported"}],
+        "failure_classification": "none",
+        "lifecycle_target": "done",
+        "evidence_refs": ["artifact://agent-coverage/rejected-proposal.json"],
+    }
+    proposal_path.write_text(json.dumps(rejected_proposal), encoding="utf-8")
+
+    rejected = ega.append_external_agent_proposal(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        proposal_request={
+            "proposal_artifact_uri": f"file://{proposal_path}",
+            "proposal_sha256": hashlib.sha256(proposal_path.read_bytes()).hexdigest(),
+            "task_status": "done",
+            "evidence_refs": ["artifact://agent-coverage/rejected-submit.json"],
+        },
+    )
+
+    assert rejected["accepted_as"] == "rejected_external_agent_proposal"
+    assert rejected["proposal_recorded"] is False
+    assert "proposal_request_contains_forbidden_authority_keys" in rejected["blocked_reasons"]
+    assert "proposal_lifecycle_target_must_be_review_proposed" in rejected["blocked_reasons"]
+    assert "all_proposal_claims_require_evidence_refs" in rejected["blocked_reasons"]
+    assert len(ledger_path.read_text().splitlines()) == 1
+
+    good_proposal = {
+        "schema_version": 1,
+        "proposal_type": "worker_review_proposal",
+        "run_id": started["run_id"],
+        "summary": "ready for certification, not done",
+        "claims": [{"id": "claim-1", "text": "supported", "evidence_refs": ["artifact://agent-coverage/proof.json"]}],
+        "failure_classification": "none",
+        "lifecycle_target": "review_proposed",
+        "evidence_refs": ["artifact://agent-coverage/good-proposal.json"],
+    }
+    proposal_path.write_text(json.dumps(good_proposal), encoding="utf-8")
+    request_json = json.dumps(
+        {
+            "proposal_artifact_uri": f"file://{proposal_path}",
+            "proposal_sha256": hashlib.sha256(proposal_path.read_bytes()).hexdigest(),
+            "evidence_refs": ["artifact://agent-coverage/cli-proposal-submit.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--append-external-agent-proposal",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--proposal-request-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "external_agent_proposal_recorded"
+    assert cli_result["proposal"]["lifecycle_target"] == "review_proposed"
+    assert len(ledger_path.read_text().splitlines()) == 2

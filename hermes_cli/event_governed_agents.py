@@ -3,9 +3,9 @@
 Most helpers are deterministic contract projections. The explicit runtime paths
 first record a ledger-local started run, then may invoke an allowlisted builtin
 read-only executor that appends a completed result. Separate external-agent
-paths may run ``--version`` probes, send no-tool/no-write dry-run prompts, or
-attach read-only context artifact pointers while capturing full output into
-artifacts and appending only pointers to the ledger. They still do not mutate
+paths may run ``--version`` probes, send no-tool/no-write dry-run prompts,
+attach read-only context artifact pointers, or record validated proposal artifact
+pointers while appending only pointers to the ledger. They still do not mutate
 lifecycle, write memory/skills, send external messages, or change cron/provider
 configuration.
 """
@@ -1063,6 +1063,152 @@ def run_external_agent_readonly_context(*, ledger_path: str | Path, run_id: str,
     return record
 
 
+def append_external_agent_proposal(*, ledger_path: str | Path, run_id: str, proposal_request: dict[str, Any]) -> dict[str, Any]:
+    """Validate and append an external agent proposal artifact pointer.
+
+    This records a worker proposal for later certification/human review. It does
+    not mutate lifecycle and explicitly refuses done/closed targets.
+    """
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    proposal_artifact_uri = str(proposal_request.get("proposal_artifact_uri", "")).strip()
+    proposal_sha256 = str(proposal_request.get("proposal_sha256", "")).strip().lower()
+    request_evidence_refs = proposal_request.get("evidence_refs", [])
+    request_digest = _digest(proposal_request)
+    rows = _read_runtime_ledger(path)
+    started = next((row for row in rows if row.get("run_id") == normalized_run_id and row.get("run_status") == "started"), None)
+    proposal_path: Path | None = None
+    proposal: dict[str, Any] = {}
+    blocked_reasons: list[str] = []
+
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if started is None:
+        blocked_reasons.append("started_run_not_found")
+    if not proposal_artifact_uri:
+        blocked_reasons.append("proposal_artifact_uri_required")
+    elif not proposal_artifact_uri.startswith("file://"):
+        blocked_reasons.append("proposal_artifact_uri_must_be_file_uri")
+    else:
+        proposal_path = Path(proposal_artifact_uri.removeprefix("file://"))
+        if not proposal_path.exists() or not proposal_path.is_file():
+            blocked_reasons.append("proposal_artifact_not_found")
+    if not proposal_sha256:
+        blocked_reasons.append("proposal_sha256_required")
+    elif len(proposal_sha256) != 64:
+        blocked_reasons.append("proposal_sha256_invalid")
+    if not isinstance(request_evidence_refs, list) or not request_evidence_refs:
+        blocked_reasons.append("proposal_request_requires_evidence_refs")
+    if sorted(WORKER_FORBIDDEN_RESULT_KEYS.intersection(proposal_request.keys())):
+        blocked_reasons.append("proposal_request_contains_forbidden_authority_keys")
+
+    artifact_bytes = b""
+    if proposal_path is not None and proposal_path.exists():
+        artifact_bytes = proposal_path.read_bytes()
+        actual_sha = hashlib.sha256(artifact_bytes).hexdigest()
+        if proposal_sha256 and actual_sha != proposal_sha256:
+            blocked_reasons.append("proposal_sha256_mismatch")
+        try:
+            decoded = json.loads(artifact_bytes.decode("utf-8"))
+            if isinstance(decoded, dict):
+                proposal = decoded
+            else:
+                blocked_reasons.append("proposal_artifact_must_decode_to_object")
+        except json.JSONDecodeError:
+            blocked_reasons.append("proposal_artifact_invalid_json")
+
+    claims = proposal.get("claims", []) if proposal else []
+    proposal_evidence_refs = proposal.get("evidence_refs", []) if proposal else []
+    lifecycle_target = str(proposal.get("lifecycle_target", "")).strip() if proposal else ""
+    failure_classification = str(proposal.get("failure_classification", "")).strip() if proposal else ""
+    summary = str(proposal.get("summary", "")).strip() if proposal else ""
+    unsupported_claims: list[str] = []
+
+    if proposal:
+        if proposal.get("proposal_type") != "worker_review_proposal":
+            blocked_reasons.append("proposal_type_must_be_worker_review_proposal")
+        if proposal.get("run_id") != normalized_run_id:
+            blocked_reasons.append("proposal_run_id_mismatch")
+        if not summary:
+            blocked_reasons.append("proposal_summary_required")
+        if not failure_classification:
+            blocked_reasons.append("proposal_failure_classification_required")
+        if lifecycle_target != "review_proposed":
+            blocked_reasons.append("proposal_lifecycle_target_must_be_review_proposed")
+        if not isinstance(proposal_evidence_refs, list) or not proposal_evidence_refs:
+            blocked_reasons.append("proposal_requires_evidence_refs")
+        if not isinstance(claims, list) or not claims:
+            blocked_reasons.append("proposal_claims_required")
+            claims = []
+        for index, claim in enumerate(claims):
+            if not isinstance(claim, dict):
+                unsupported_claims.append(f"claim:{index}")
+                continue
+            claim_id = str(claim.get("id") or f"claim:{index}")
+            claim_evidence_refs = claim.get("evidence_refs", [])
+            if not isinstance(claim_evidence_refs, list) or not claim_evidence_refs:
+                unsupported_claims.append(claim_id)
+        if unsupported_claims:
+            blocked_reasons.append("all_proposal_claims_require_evidence_refs")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "external_agent_proposal",
+        "run_id": normalized_run_id,
+        "proposal_request_digest": request_digest,
+        "proposal_recorded": False,
+        "allowed_to_mutate_lifecycle": False,
+        "allowed_to_mark_done": False,
+        "canonical_lifecycle_unchanged": True,
+        "external_adapter_write_through_enabled": False,
+        "persistent_learning_write_enabled": False,
+        "blocked_reasons": blocked_reasons,
+        "unsupported_claims": unsupported_claims,
+    }
+
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_external_agent_proposal",
+            "run_status": "rejected",
+            "runtime_boundary": "external_agent_proposal_artifact_rejected",
+        }
+
+    assert started is not None
+    record = {
+        **base,
+        "accepted_as": "external_agent_proposal_recorded",
+        "run_status": "external_proposal_recorded",
+        "runtime_boundary": "external_agent_proposal_artifact_recorded",
+        "proposal_recorded": True,
+        "task_ref": started.get("task_ref"),
+        "worker_type": started.get("worker_type"),
+        "worker_id": started.get("worker_id"),
+        "claim_count": len(claims),
+        "proposal": {
+            "proposal_type": proposal.get("proposal_type"),
+            "summary": summary[:HOT_PATH_SUMMARY_MAX_CHARS],
+            "failure_classification": failure_classification,
+            "lifecycle_target": lifecycle_target,
+            "evidence_refs": proposal_evidence_refs,
+        },
+        "artifact": {
+            "artifact_uri": proposal_artifact_uri,
+            "artifact_type": "json",
+            "sha256": hashlib.sha256(artifact_bytes).hexdigest(),
+            "size_bytes": len(artifact_bytes),
+            "summary": summary[:HOT_PATH_SUMMARY_MAX_CHARS],
+            "evidence_refs": request_evidence_refs,
+        },
+        "recorded_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -1247,6 +1393,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--probe-external-runtime-run", action="store_true", help="Run an allowlisted external agent --version probe")
     parser.add_argument("--dry-run-external-agent-prompt", action="store_true", help="Send a no-tool/no-write prompt to an allowlisted external agent")
     parser.add_argument("--run-external-agent-readonly-context", action="store_true", help="Send a no-tool/no-write prompt with a readonly context artifact pointer")
+    parser.add_argument("--append-external-agent-proposal", action="store_true", help="Append a validated external agent proposal artifact pointer")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -1254,6 +1401,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--probe-request-json", default="{}", help="JSON probe payload for --probe-external-runtime-run")
     parser.add_argument("--prompt-request-json", default="{}", help="JSON prompt payload for --dry-run-external-agent-prompt")
     parser.add_argument("--context-request-json", default="{}", help="JSON context payload for --run-external-agent-readonly-context")
+    parser.add_argument("--proposal-request-json", default="{}", help="JSON proposal payload for --append-external-agent-proposal")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -1312,6 +1460,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(context_request, dict):
             parser.error("--context-request-json must decode to an object")
         result = run_external_agent_readonly_context(ledger_path=args.runtime_ledger, run_id=args.run_id, context_request=context_request)
+    elif args.append_external_agent_proposal:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --append-external-agent-proposal")
+        if not args.run_id:
+            parser.error("--run-id is required with --append-external-agent-proposal")
+        proposal_request = json.loads(args.proposal_request_json)
+        if not isinstance(proposal_request, dict):
+            parser.error("--proposal-request-json must decode to an object")
+        result = append_external_agent_proposal(ledger_path=args.runtime_ledger, run_id=args.run_id, proposal_request=proposal_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:
