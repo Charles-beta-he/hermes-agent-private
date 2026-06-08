@@ -6,7 +6,8 @@ read-only executor that appends a completed result. Separate external-agent
 paths may run ``--version`` probes, send no-tool/no-write dry-run prompts,
 attach read-only context artifact pointers, record validated proposal artifact
 pointers, record multi-model certification promotion packets, project elevated
-done authorizations, or execute a ledger-local fact mutation. Only the explicit
+done authorizations, execute a ledger-local fact mutation, or project an external
+adapter write intent. Only the explicit
 ledger-local fact mutation can change canonical lifecycle facts; it still does
 not write external adapters, memory/skills, outbound messages, or cron/provider
 configuration.
@@ -53,6 +54,7 @@ CANONICAL_LIFECYCLE_STATUSES = frozenset({"pending", "claimed", "running", "retr
 ARTIFACT_TYPES = frozenset({"json", "log", "screenshot", "trace", "metrics", "transcript", "report"})
 HOT_PATH_SUMMARY_MAX_CHARS = 240
 ELEVATED_DONE_AUTH_ROLES = frozenset({"admin", "elevated_operator", "human_admin"})
+ALLOWED_EXTERNAL_WRITE_INTENT_ADAPTERS = frozenset({"taskpool", "kanban", "lark", "telegram"})
 WORKER_FORBIDDEN_RESULT_KEYS = frozenset(
     {
         "mark_done",
@@ -1620,6 +1622,102 @@ def execute_ledger_fact_mutation(*, ledger_path: str | Path, run_id: str, fact_r
     return record
 
 
+def request_external_adapter_write_intent(*, ledger_path: str | Path, run_id: str, intent_request: dict[str, Any]) -> dict[str, Any]:
+    """Project an external adapter write intent without performing write-through."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    adapter = str(intent_request.get("adapter", "")).strip().lower()
+    target_ref = str(intent_request.get("target_ref", "")).strip()
+    target_status = str(intent_request.get("target_status", "")).strip().lower()
+    canonical_fact_digest = str(intent_request.get("canonical_fact_digest", "")).strip()
+    readiness_check = intent_request.get("readiness_check")
+    readback_plan = intent_request.get("readback_plan")
+    rollback_plan = intent_request.get("rollback_plan")
+    evidence_refs = intent_request.get("evidence_refs", [])
+    request_digest = _digest(intent_request)
+    done_fact = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "fact_mutated"
+            and row.get("fact_is_canonical") is True
+            and row.get("canonical_lifecycle_status") == "done"
+            and row.get("fact_request_digest") == canonical_fact_digest
+        ),
+        None,
+    )
+    blocked_reasons: list[str] = []
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if done_fact is None:
+        blocked_reasons.append("canonical_done_fact_required")
+    if adapter not in ALLOWED_EXTERNAL_WRITE_INTENT_ADAPTERS:
+        blocked_reasons.append("adapter_not_allowlisted")
+    if not target_ref:
+        blocked_reasons.append("target_ref_required")
+    if target_status != "done":
+        blocked_reasons.append("target_status_must_be_done")
+    if not canonical_fact_digest:
+        blocked_reasons.append("canonical_fact_digest_required")
+    if not isinstance(readiness_check, dict) or not readiness_check:
+        blocked_reasons.append("readiness_check_required")
+    if not isinstance(readback_plan, dict) or not readback_plan:
+        blocked_reasons.append("readback_plan_required")
+    if not isinstance(rollback_plan, dict) or not rollback_plan:
+        blocked_reasons.append("rollback_plan_required")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("write_intent_requires_evidence_refs")
+    forbidden_keys = sorted((WORKER_FORBIDDEN_RESULT_KEYS | {"write_through_enabled", "write_through_allowed", "external_adapter_write_through_enabled"}).intersection(intent_request.keys()))
+    if forbidden_keys:
+        blocked_reasons.append("write_intent_contains_forbidden_authority_keys")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "external_adapter_write_intent_projection",
+        "run_id": normalized_run_id,
+        "adapter": adapter,
+        "target_ref": target_ref,
+        "target_status": target_status,
+        "canonical_fact_required": True,
+        "canonical_fact_digest": canonical_fact_digest,
+        "readiness_required": True,
+        "readback_required": True,
+        "rollback_required": True,
+        "write_through_allowed": False,
+        "external_adapter_write_through_enabled": False,
+        "request_digest": request_digest,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_external_adapter_write_intent",
+            "run_status": "rejected",
+            "runtime_boundary": "external_adapter_write_intent_rejected",
+        }
+
+    intent_id = "write_intent_" + _digest({"run_id": normalized_run_id, "request_digest": request_digest})[:24]
+    record = {
+        **base,
+        "accepted_as": "external_adapter_write_intent_projected",
+        "run_status": "external_adapter_write_intent_recorded",
+        "runtime_boundary": "external_adapter_write_intent_projection",
+        "intent_id": intent_id,
+        "readiness_check": readiness_check,
+        "readback_plan": readback_plan,
+        "rollback_plan": rollback_plan,
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -1808,6 +1906,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--append-certification-promotion", action="store_true", help="Append a validated multi-model certification promotion artifact pointer")
     parser.add_argument("--request-done-authorization", action="store_true", help="Project an elevated done authorization without fact mutation")
     parser.add_argument("--execute-ledger-fact-mutation", action="store_true", help="Execute ledger-local canonical lifecycle fact mutation")
+    parser.add_argument("--request-external-adapter-write-intent", action="store_true", help="Project external adapter write intent without write-through")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -1819,6 +1918,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--certification-request-json", default="{}", help="JSON certification payload for --append-certification-promotion")
     parser.add_argument("--authorization-request-json", default="{}", help="JSON authorization payload for --request-done-authorization")
     parser.add_argument("--fact-request-json", default="{}", help="JSON fact mutation payload for --execute-ledger-fact-mutation")
+    parser.add_argument("--adapter-intent-json", default="{}", help="JSON adapter write intent payload for --request-external-adapter-write-intent")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -1913,6 +2013,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(fact_request, dict):
             parser.error("--fact-request-json must decode to an object")
         result = execute_ledger_fact_mutation(ledger_path=args.runtime_ledger, run_id=args.run_id, fact_request=fact_request)
+    elif args.request_external_adapter_write_intent:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --request-external-adapter-write-intent")
+        if not args.run_id:
+            parser.error("--run-id is required with --request-external-adapter-write-intent")
+        adapter_intent = json.loads(args.adapter_intent_json)
+        if not isinstance(adapter_intent, dict):
+            parser.error("--adapter-intent-json must decode to an object")
+        result = request_external_adapter_write_intent(ledger_path=args.runtime_ledger, run_id=args.run_id, intent_request=adapter_intent)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

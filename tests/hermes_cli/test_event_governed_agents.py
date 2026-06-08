@@ -1524,3 +1524,117 @@ def test_ledger_local_fact_mutation_rejects_missing_authorization_expired_and_dr
     assert cli_result["accepted_as"] == "canonical_lifecycle_fact_mutated"
     assert cli_result["canonical_lifecycle_status"] == "done"
     assert cli_result["fact_is_canonical"] is True
+
+
+def _write_done_fact_run(tmp_path):
+    ledger_path, started, proposal_path, proposal_record, certification_path, certification_record, authorization_record = _write_authorized_done_run(tmp_path)
+    fact_record = ega.execute_ledger_fact_mutation(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        fact_request={
+            "authorization_id": authorization_record["authorization_id"],
+            "target_status": "done",
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": certification_record["artifact"]["sha256"],
+            "evidence_refs": ["artifact://agent-coverage/fact-mutation.json"],
+        },
+    )
+    return ledger_path, started, proposal_path, proposal_record, certification_path, certification_record, authorization_record, fact_record
+
+
+def test_external_adapter_write_intent_projects_readiness_without_write_through(tmp_path) -> None:
+    ledger_path, started, _proposal_path, _proposal_record, _certification_path, _certification_record, _authorization_record, fact_record = _write_done_fact_run(tmp_path)
+
+    result = ega.request_external_adapter_write_intent(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        intent_request={
+            "adapter": "taskpool",
+            "target_ref": "task:arch-coverage",
+            "target_status": "done",
+            "canonical_fact_digest": fact_record["fact_request_digest"],
+            "readiness_check": {"preflight": "passed", "current_remote_status": "review"},
+            "readback_plan": {"method": "fetch_task", "expected_status": "done"},
+            "rollback_plan": {"method": "restore_previous_status", "previous_status": "review"},
+            "evidence_refs": ["artifact://agent-coverage/write-intent.json"],
+        },
+    )
+
+    assert result["accepted_as"] == "external_adapter_write_intent_projected"
+    assert result["run_status"] == "external_adapter_write_intent_recorded"
+    assert result["runtime_boundary"] == "external_adapter_write_intent_projection"
+    assert result["adapter"] == "taskpool"
+    assert result["target_status"] == "done"
+    assert result["canonical_fact_required"] is True
+    assert result["canonical_fact_digest"] == fact_record["fact_request_digest"]
+    assert result["readiness_required"] is True
+    assert result["readback_required"] is True
+    assert result["rollback_required"] is True
+    assert result["write_through_allowed"] is False
+    assert result["external_adapter_write_through_enabled"] is False
+    assert len(ledger_path.read_text().splitlines()) == 6
+
+
+def test_external_adapter_write_intent_rejects_missing_fact_bad_adapter_and_direct_write_cli_smoke(tmp_path) -> None:
+    ledger_path, started, _proposal_path, _proposal_record, _certification_path, _certification_record = _write_certified_run(tmp_path)
+    rejected = ega.request_external_adapter_write_intent(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        intent_request={
+            "adapter": "unknown",
+            "target_ref": "task:arch-coverage",
+            "target_status": "done",
+            "canonical_fact_digest": "missing",
+            "readiness_check": {"preflight": "passed"},
+            "readback_plan": {"method": "fetch_task"},
+            "rollback_plan": {"method": "restore"},
+            "write_through_enabled": True,
+            "external_write": True,
+            "evidence_refs": ["artifact://agent-coverage/bad-write-intent.json"],
+        },
+    )
+    assert rejected["accepted_as"] == "rejected_external_adapter_write_intent"
+    assert rejected["write_through_allowed"] is False
+    assert "canonical_done_fact_required" in rejected["blocked_reasons"]
+    assert "adapter_not_allowlisted" in rejected["blocked_reasons"]
+    assert "write_intent_contains_forbidden_authority_keys" in rejected["blocked_reasons"]
+    assert len(ledger_path.read_text().splitlines()) == 3
+
+    _ledger_path, started2, _proposal_path2, _proposal_record2, _certification_path2, _certification_record2, _authorization_record2, fact_record = _write_done_fact_run(tmp_path / "cli")
+    request_json = json.dumps(
+        {
+            "adapter": "kanban",
+            "target_ref": "card:arch-coverage",
+            "target_status": "done",
+            "canonical_fact_digest": fact_record["fact_request_digest"],
+            "readiness_check": {"preflight": "passed", "current_remote_status": "review"},
+            "readback_plan": {"method": "fetch_card", "expected_status": "done"},
+            "rollback_plan": {"method": "restore_previous_status", "previous_status": "review"},
+            "evidence_refs": ["artifact://agent-coverage/cli-write-intent.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--request-external-adapter-write-intent",
+            "--runtime-ledger",
+            str(_ledger_path),
+            "--run-id",
+            started2["run_id"],
+            "--adapter-intent-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "external_adapter_write_intent_projected"
+    assert cli_result["adapter"] == "kanban"
+    assert cli_result["write_through_allowed"] is False

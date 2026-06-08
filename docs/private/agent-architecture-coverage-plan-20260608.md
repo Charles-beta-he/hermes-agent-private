@@ -41,8 +41,10 @@ SSOT: this file
 - [x] Slice 24: Add human/elevated done authorization projection: require certification_recorded, elevated actor, approval decision, target done, TTL, and certification artifact hash binding while keeping fact mutation/write-through disabled.
 - [x] Slice 25: Scoped commit for done authorization projection if verification passes. Commit: 2e909860e Project elevated done authorizations.
 - [x] Slice 26: Execute ledger-local canonical fact mutation: consume unexpired approved done authorization, rebind certification hash, append canonical_lifecycle_status=done fact, and keep external adapters disabled.
-- [x] Slice 27: Scoped commit for ledger-local fact mutation if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before external adapter/taskpool/Kanban/Lark write-through, external agent tools/file edits/shell commands, or rollback/reopen unless a narrower executor-specific slice authorizes that capability.
+- [x] Slice 27: Scoped commit for ledger-local fact mutation if verification passes. Commit: 8b41b7426 Execute ledger-local canonical fact mutations.
+- [x] Slice 28: Add external adapter write intent projection: require canonical done fact, adapter allowlist, readiness check, readback plan, rollback plan, and evidence while keeping write-through disabled.
+- [x] Slice 29: Scoped commit for adapter write intent projection if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before external adapter/taskpool/Kanban/Lark write-through execution, external agent tools/file edits/shell commands, or rollback/reopen unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
 
@@ -58,6 +60,7 @@ SSOT: this file
 - The seventh approved runtime boundary is multi-model certification promotion: a certification artifact may be recorded only if it binds to the recorded proposal, has at least two reviewers, quorum >= 2, truth gate enabled, reviewer/claim evidence, and lifecycle_target=certification_passed_for_review. It still cannot mark done or mutate lifecycle.
 - The eighth approved runtime boundary is human/elevated done authorization projection: an elevated human/admin may approve target_status=done only against the exact certification artifact hash and unexpired TTL, but this projection still keeps fact mutation and write-through disabled.
 - The ninth approved runtime boundary is ledger-local canonical fact mutation: a valid unexpired done authorization may be consumed to append canonical_lifecycle_status=done as a durable fact in the local ledger. External adapter write-through remains disabled and requires a separate slice.
+- The tenth approved runtime boundary is external adapter write intent projection: a canonical done fact may be mapped to an allowlisted adapter target only as an intent with readiness/readback/rollback plans and evidence. It still cannot perform external write-through.
 
 ## Files Changed
 
