@@ -1,0 +1,372 @@
+{
+  "schema": "multi_model_state_v1",
+  "created_at": "2026-06-08T19:24:04.396834+00:00",
+  "question": "你是 Hermes Agent 私有 overlay 棘轮升级评审员。目标：基于证据包，对当前 private/main 相对 upstream/main 的私有修改做 carry / absorb / retire / redesign 决策，并给出合并冲突处理策略。\n\n上下文：\n- repo: /Users/charles/.hermes/hermes-agent\n- private HEAD: cfd3b39ab90b\n- upstream/main: 2f510ca8e07b\n- merge-base: 56236b16e383\n- 已在 private/main 保护并推送备份；现在需要完成 upstream ratchet 升级。\n- post-update-check 当前没有 FIX_FAILED，但 upstream/main 仍领先，merge-tree 预测 27 个冲突/手工决策点。\n\n评审任务：\n1. 按 overlay registry 八类能力逐项判断：carry / absorb / retire / redesign。\n2. 对 both-touched 和 predicted conflicts 给出冲突解决策略：ours/theirs/manual 以及验收测试。\n3. 明确哪些 upstream commit/能力应吸收，哪些私有代码必须继续携带。\n4. 禁止泛泛而谈；引用 evidence.json 中的字段、文件名、overlay id。\n5. 输出结构：summary、decisions[]、conflict_plan[]、verification_plan[]、risks[]。\n\n证据包路径：/Users/charles/.hermes/hermes-agent/docs/private/upstream-ratchet-20260609/evidence.json\n关键 evidence 摘要：\n- counts: {'private_commits_not_upstream': 70, 'upstream_commits_not_private_sampled': 80, 'private_changed_files': 99, 'both_touched_files': 25, 'predicted_conflicts': 27}\n- both_touched_files: ['agent/agent_init.py', 'agent/chat_completion_helpers.py', 'agent/context_compressor.py', 'agent/conversation_loop.py', 'agent/image_routing.py', 'agent/memory_manager.py', 'hermes_cli/gateway.py', 'hermes_cli/main.py', 'hermes_cli/model_switch.py', 'hermes_cli/skills_hub.py', 'model_tools.py', 'run_agent.py', 'tests/agent/test_auxiliary_client.py', 'tests/test_model_tools.py', 'tests/tools/test_delegate.py', 'tests/tools/test_memory_tool.py', 'tests/tools/test_process_registry.py', 'tests/tools/test_skill_manager_tool.py', 'tools/browser_tool.py', 'tools/delegate_tool.py', 'tools/file_tools.py', 'tools/mcp_tool.py', 'tools/memory_tool.py', 'tools/process_registry.py', 'tools/skill_manager_tool.py']\n- conflicts: [{'kind': 'changed in both', 'path': 'agent/agent_init.py'}, {'kind': 'changed in both', 'path': 'agent/chat_completion_helpers.py'}, {'kind': 'changed in both', 'path': 'agent/context_compressor.py'}, {'kind': 'changed in both', 'path': 'agent/conversation_loop.py'}, {'kind': 'changed in both', 'path': 'agent/image_routing.py'}, {'kind': 'changed in both', 'path': 'agent/memory_manager.py'}, {'kind': 'removed in remote', 'path': 'apps/desktop/src/app/cron/cron-job-actions-menu.tsx'}, {'kind': 'removed in remote', 'path': 'gateway/platforms/homeassistant.py'}, {'kind': 'changed in both', 'path': 'hermes_cli/gateway.py'}, {'kind': 'changed in both', 'path': 'hermes_cli/main.py'}, {'kind': 'changed in both', 'path': 'hermes_cli/model_switch.py'}, {'kind': 'changed in both', 'path': 'hermes_cli/skills_hub.py'}, {'kind': 'changed in both', 'path': 'model_tools.py'}, {'kind': 'changed in both', 'path': 'run_agent.py'}, {'kind': 'changed in both', 'path': 'tests/agent/test_auxiliary_client.py'}, {'kind': 'changed in both', 'path': 'tests/test_model_tools.py'}, {'kind': 'changed in both', 'path': 'tests/tools/test_delegate.py'}, {'kind': 'changed in both', 'path': 'tests/tools/test_memory_tool.py'}, {'kind': 'changed in both', 'path': 'tests/tools/test_process_registry.py'}, {'kind': 'changed in both', 'path': 'tests/tools/test_skill_manager_tool.py'}, {'kind': 'changed in both', 'path': 'tools/browser_tool.py'}, {'kind': 'changed in both', 'path': 'tools/delegate_tool.py'}, {'kind': 'changed in both', 'path': 'tools/file_tools.py'}, {'kind': 'changed in both', 'path': 'tools/mcp_tool.py'}, {'kind': 'changed in both', 'path': 'tools/memory_tool.py'}, {'kind': 'changed in both', 'path': 'tools/process_registry.py'}, {'kind': 'changed in both', 'path': 'tools/skill_manager_tool.py'}]\n- active overlays from registry are embedded in evidence.json.",
+  "context": {
+    "head": "cfd3b39ab90b021dccf0d1504e9cd0aa4058dbfb",
+    "origin_private_main": "cfd3b39ab90b021dccf0d1504e9cd0aa4058dbfb",
+    "upstream_main": "2f510ca8e07b570ad3fdc491400432a96494aaf3",
+    "merge_base": "56236b16e383cc656bb8c88429902f4de83f1faf",
+    "counts": {
+      "private_commits_not_upstream": 70,
+      "upstream_commits_not_private_sampled": 80,
+      "private_changed_files": 99,
+      "both_touched_files": 25,
+      "predicted_conflicts": 27
+    },
+    "conflicts": [
+      {
+        "kind": "changed in both",
+        "path": "agent/agent_init.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "agent/chat_completion_helpers.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "agent/context_compressor.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "agent/conversation_loop.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "agent/image_routing.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "agent/memory_manager.py"
+      },
+      {
+        "kind": "removed in remote",
+        "path": "apps/desktop/src/app/cron/cron-job-actions-menu.tsx"
+      },
+      {
+        "kind": "removed in remote",
+        "path": "gateway/platforms/homeassistant.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "hermes_cli/gateway.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "hermes_cli/main.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "hermes_cli/model_switch.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "hermes_cli/skills_hub.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "model_tools.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "run_agent.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tests/agent/test_auxiliary_client.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tests/test_model_tools.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tests/tools/test_delegate.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tests/tools/test_memory_tool.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tests/tools/test_process_registry.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tests/tools/test_skill_manager_tool.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tools/browser_tool.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tools/delegate_tool.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tools/file_tools.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tools/mcp_tool.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tools/memory_tool.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tools/process_registry.py"
+      },
+      {
+        "kind": "changed in both",
+        "path": "tools/skill_manager_tool.py"
+      }
+    ],
+    "both_touched_files": [
+      "agent/agent_init.py",
+      "agent/chat_completion_helpers.py",
+      "agent/context_compressor.py",
+      "agent/conversation_loop.py",
+      "agent/image_routing.py",
+      "agent/memory_manager.py",
+      "hermes_cli/gateway.py",
+      "hermes_cli/main.py",
+      "hermes_cli/model_switch.py",
+      "hermes_cli/skills_hub.py",
+      "model_tools.py",
+      "run_agent.py",
+      "tests/agent/test_auxiliary_client.py",
+      "tests/test_model_tools.py",
+      "tests/tools/test_delegate.py",
+      "tests/tools/test_memory_tool.py",
+      "tests/tools/test_process_registry.py",
+      "tests/tools/test_skill_manager_tool.py",
+      "tools/browser_tool.py",
+      "tools/delegate_tool.py",
+      "tools/file_tools.py",
+      "tools/mcp_tool.py",
+      "tools/memory_tool.py",
+      "tools/process_registry.py",
+      "tools/skill_manager_tool.py"
+    ],
+    "private_commits": [
+      "cfd3b39ab docs(private): add Harness-1 retrieval governance eval",
+      "4be953303 Record real Lark sender smoke",
+      "94cf2ae20 Record real Telegram sender smoke",
+      "ded130ed8 Execute authorized Lark outbound sender",
+      "ee3909348 Execute authorized Telegram outbound sender",
+      "46c237a27 Authorize real outbound sender execution",
+      "50177d0d6 Preflight real outbound senders",
+      "422752530 Dry run Lark outbound delivery",
+      "7a2bd2ded Dry run Telegram outbound delivery",
+      "08be51b97 Project outbound delivery authorizations",
+      "50e9dbe82 Enqueue governed outbound outbox items",
+      "1255142ea Rollback taskpool and Kanban closeouts",
+      "5c359c1b6 Execute Kanban DB closeout writes",
+      "87ac0f889 Execute taskpool note closeout writes",
+      "9f007e480 Execute local-file adapter write through",
+      "00e039a8f Project external adapter write authorizations",
+      "54431a916 Project external adapter write intents",
+      "8b41b7426 Execute ledger-local canonical fact mutations",
+      "2e909860e Project elevated done authorizations",
+      "1146f643a Record multi-model certification promotions",
+      "95c20b13b Record external agent proposal artifacts",
+      "5da09a457 Attach readonly context to external agent runs",
+      "9f2bda9b5 Dry run external agent prompt execution",
+      "df9fbc6bb Probe external agent runtime executors",
+      "747f419d9 Execute bounded builtin agent runtime runs",
+      "9a5440557 Start bounded agent runtime ledger runs",
+      "268e63de0 Add agent artifact workflow metadata contracts",
+      "58f086b5f Add agent workflow graph certification contracts",
+      "06fbbe238 Add agent architecture coverage contract",
+      "9c3f75976 Improve session JSONL risk audit normalization",
+      "711669ffe Add event-governed agent control plane contracts",
+      "3a2f6330f Add session JSONL risk audit index",
+      "60085eaab feat: add non-consuming conflicting evidence override projection",
+      "f330a8995 fix: skip invalid native image attachments",
+      "79176ccb9 feat: add auto-relay recurrent state hints",
+      "3dbead485 Add deterministic session risk audit scaffold",
+      "9b1901ab3 docs: add taskpool source resolution artifacts",
+      "e1aa8aae2 docs: update EasyVibe intake assessment",
+      "dd54a7879 feat: enable Control Tower taskpool write-through",
+      "56328dd2a feat: add Control Tower Kanban rollback executor",
+      "df8fdbeaa feat: add Control Tower Kanban write executor",
+      "34163d3b7 feat: add Control Tower external write preflights",
+      "90a666da6 feat: add Control Tower external write authorizations",
+      "1b5c5269c feat: add Control Tower external write reviews",
+      "6e3f964a7 docs: suggest control tower phase 10 slice",
+      "de7ecddad feat: add Control Tower external write intents",
+      "9a007ecde feat: add Control Tower ledger closeout execution",
+      "2491f1994 feat: add Control Tower read-only executor consumer",
+      "720611b5c feat: add Control Tower read-only executor eligibility",
+      "dfec6b4d2 feat: add Control Tower closeout authorization projection",
+      "9db841dcb docs: add EasyVibe skill-graph intake",
+      "2254f3519 feat: add Control Tower evidence gate projection",
+      "a6cf7ad8a feat: add Control Tower execution policy projection",
+      "8a09e2372 [verified] feat: add Control Tower dry-run executor plans",
+      "9f6652a1a feat: add Control Tower approval workflow map",
+      "242438a25 fix(browser): close truth gate coverage gaps",
+      "68cc0c514 docs: review OpenSpec for Control Tower",
+      "157c7d8be feat(browser): add snapshot truth gate",
+      "46d8034b1 feat: record Control Tower proposed commands",
+      "d7dc68764 feat: add Control Tower read-only snapshot",
+      "7ec7010cc docs: make Control Tower ledger the single fact source",
+      "638714a38 docs: define Hermes Control Tower architecture",
+      "633334777 Add recall proof gate fixtures",
+      "f95f83aef [verified] Add read-only skills health audit",
+      "1546afebf [verified] Restore provider runtime recovery",
+      "7fab361df [verified] Restore bounded continuation auto-relay",
+      "71bfe8e6f feat(private): restore tranche A safety gates",
+      "b27acc53c docs(private): add overlay ratchet merge plan",
+      "0407d7e3f docs(private): audit remote divergence before alignment",
+      "f83492b8c [verified] Align private overlays with upstream main"
+    ],
+    "upstream_commits_sample": [
+      "2f510ca8e fix(deps): align anthropic extra pin with lazy pin + guard whole pin surface (#42335)",
+      "c78b3e1d3 fix(auth): add Codex OAuth accounts as distinct pool entries",
+      "761b744ab fix(auth): preserve independent Codex pool entries on re-auth (#39236)",
+      "c9094f5e5 fix(stream): don't report dropped mid-tool-call streams as output truncation (#42314)",
+      "89d380261 fix(approval): resolve Hermes home at detection time, not import time",
+      "b0efe1d64 fix(approval): gate resolved Hermes config paths",
+      "96fd9d497 fix(desktop): stop running Hermes.exe locking win-unpacked before Windows pack (#42100)",
+      "abcf996b1 feat(windows): enable dashboard /chat tab via ConPTY (win_pty_bridge) + tests (#42251)",
+      "c6d27addf fix(deps): align aiohttp extras pins with lazy Slack pin (3.13.4)",
+      "5916248dc chore: add AUTHOR_MAP entry for rbrtbn (salvage #25939)",
+      "550b72dd8 fix(cli): gate tool-rendering paths with tool_progress_mode, not quiet_mode",
+      "4129092fd fix(cli): strip OSC 8 hyperlink sequences in ChatConsole output",
+      "8e4c447e5 fix(gateway): prevent duplicate user messages in state.db",
+      "9b1e0d6f7 feat(desktop): assignable themes per profile (#42286)",
+      "395ed9189 fix(desktop): keep a just-finished session visible after switching away (#42285)",
+      "365813a72 fix: resolve rebase conflict in _teardown_session worker cleanup",
+      "ae94ed172 fix(tui-gateway): reap leaked slash_worker sessions on disconnect + active_list liveness (re-scoped onto current main)",
+      "9c9d9113a fix(auth): auto-detect OpenRouter credential from the pool, not just env (#42263)",
+      "de80d28f3 fix(desktop): require session ids for scoped gateway events (#42178)",
+      "a77efada5 refactor(cli): extract 18 model-flow wizard functions into model_setup_flows (god-file Phase 2)",
+      "55b83c3d9 refactor(agent): extract run_conversation post-loop tail into finalize_turn (god-file Phase 1)",
+      "a706a349b refactor(gateway): extract authorization cluster into GatewayAuthorizationMixin (god-file Phase 3)",
+      "094aa85c3 refactor(cli): extract agent-construction cluster into CLIAgentSetupMixin (god-file Phase 4)",
+      "cef00ae60 fix(tui): handle Windows PTY stdin and detached WS frames (#41953)",
+      "74744795a docs(tui): correct HERMES_TUI_GATEWAY_URL — dashboard-internal, not remote-attach (#42162)",
+      "399b8ee5f fix(anthropic): strip Responses-only kwargs before Messages SDK call (#31673) (#42155)",
+      "47d5177a7 fix(plugins): thread-safe lazy-singleton helpers; fix honcho TOCTOU (#24759) (#42150)",
+      "74239b494 i18n(desktop): translate backend update apply status messages",
+      "b000e05b1 fix(desktop): don't claim the backend update succeeded when it never returns",
+      "cd030f5f4 fix(desktop): close the backend update overlay on success; error on no-return",
+      "81647458c fix(desktop): recover the backend update overlay after the remote restarts",
+      "9b2a64fa6 fix(desktop): reflect env-override remote in gateway connection state",
+      "47518bc91 fix(desktop): check backend updates when the connection becomes remote",
+      "cfaa46fca fix(desktop): pre-check backend updates in poller; client button first",
+      "56be1a63a fix(desktop): split client and backend into two distinct update buttons",
+      "9c264555b fix(desktop): name the update target in the overlay; honest no-changelog copy",
+      "87ac7cac1 fix(dashboard): log update changelog against origin/main, not @{upstream}",
+      "64da518db feat(desktop): remote update overlay sourced from backend",
+      "ed1e2533b feat(desktop): show client and backend versions in status bar when remote",
+      "228414704 docs: document commits field on /api/hermes/update/check",
+      "9e360681f feat(dashboard): return recent commits from /api/hermes/update/check",
+      "fd1e7c2bc fix(tui): install the process.on('exit') terminal-mode backstop (#42165)",
+      "7230fcb7f revert(nix): drop the cp patchPhase workaround from #41867 (#42151)",
+      "4219a91df fix(nix): make config.yaml group-writable under addToSystemPackages (#41940)",
+      "a3fca26c5 fix(tui): close slash_worker inside _finalize_session (defense-in-depth, #38095) (#42149)",
+      "5e06c9ffe fix(agent): clear _session_messages in AIAgent.close() (#42123)",
+      "cb13723f5 fix(pty-bridge): mark os.killpg/getpgid windows-footgun-ok (POSIX-only module)",
+      "8cb1908e1 chore: map paulb26 in AUTHOR_MAP for #24135 salvage",
+      "8b6a8f667 feat(slash-worker): self-terminate on parent death via create_time watchdog",
+      "b31c6c33b fix(pty-bridge): terminate PTY process groups on teardown",
+      "e9c1e757f fix(gateway): release evicted agent clients to stop RSS leak (#29298) (#41974)",
+      "3d029a53e fix(gateway): close residual memory-leak sites under heavy scheduled workload",
+      "400e6e43c test(gateway): de-flake concurrent-compression lock test with a barrier",
+      "2b89afec7 fix(plugins): alias-normalize enable/disable for nested category plugins (follow-up to #41076)",
+      "f96eb857a chore: add kristianvast to AUTHOR_MAP",
+      "d55304c39 fix(gateway): transcribe voice messages during active agent runs",
+      "00c46b8ff test(tui): cover heapdump opt-in gate + retention; add AUTHOR_MAP",
+      "8ae0d054f fix(tui): guard automatic heap dumps against disk fill",
+      "dd0d1222a fix(agent): don't retry interrupt-induced transport errors (cascading-interrupt hang)",
+      "aa6f2775f fix(memory): run end-of-turn sync off the turn thread (#41945)",
+      "a5c12f5f5 fix(install): move broken checkout aside instead of deleting it",
+      "5d7abf911 test(install): cover commit-less checkout handling (#40998)",
+      "fc0900d12 fix(install): re-clone interrupted (commit-less) checkout instead of failing",
+      "0904bc7ea refactor(cli): extract 32 slash-command handlers into CLICommandsMixin (god-file Phase 4)",
+      "039fbb41f fix(desktop): show newly configured model providers (#41545)",
+      "15c99b437 fix(cli): set PYTHON env for node-gyp native builds on NixOS (#40690)",
+      "7a5827c8b test: repoint percentage-clamp source guard to gateway/slash_commands.py",
+      "de5fe2fa7 test(gateway): repoint slash-command mocks after mixin extraction",
+      "619bd7827 refactor(gateway): extract 42 slash-command handlers into GatewaySlashCommandsMixin (god-file Phase 3b)",
+      "02a4d6695 fix(auxiliary): retry transient transport error once before fallback (#16587)",
+      "4d18717b6 fix(gateway): drop --replace from systemd unit templates (#41892)",
+      "d02a59b67 fix(nix): cold npm builds + fix-lockfiles real-build verification + auto-fix workflow (#41867)",
+      "e45b74583 fix(file-tools): reject sentinel TERMINAL_CWD; anchor worktree edits before live cwd exists (#41861)",
+      "e02f4c03c fix(gateway): abort --replace when old PID survives SIGKILL",
+      "3714caa1b fix(session): follow compression continuations for transcript reads",
+      "329c33dac fix(terminal): read cwd overrides under raw task_id after container collapse",
+      "d759c13c0 chore(salvage): lint fix + AUTHOR_MAP for desktop source-folders PR #40272",
+      "694adec63 Smooth desktop sidebar drag sorting",
+      "f0fcaa1e5 Preserve dragged order inside source folders",
+      "0f500fc41 Render grouped sessions when local list is empty"
+    ]
+  },
+  "constraints": [
+    "Preserve user-private Hermes overlays unless upstream equivalence is proven by evidence.",
+    "Do not recommend dropping safety/truth-gate/continuation/control-plane behavior without equivalent tests or upstream behavior evidence.",
+    "Prefer ratchet merge: absorb upstream bugfixes/refactors while replaying private behavior behind tests."
+  ],
+  "acceptance_criteria": [
+    "Every active overlay has carry/absorb/retire/redesign decision.",
+    "Every predicted conflict has resolution strategy and verification.",
+    "Output identifies immediate merge execution plan."
+  ],
+  "non_goals": [],
+  "risk_level": "medium",
+  "budget": {},
+  "claims": [
+    {
+      "id": "C-001",
+      "text": "private_head cfd3b39ab is protected on origin/private/main and backup branch/tag before ratchet merge.",
+      "severity": 3
+    },
+    {
+      "id": "C-002",
+      "text": "post_update_check has no FIX_FAILED before upstream ratchet; summary says 16 OK, 0 fixed, 2 need attention.",
+      "severity": 3
+    },
+    {
+      "id": "C-003",
+      "text": "merge-tree predicts 27 conflict/manual-decision entries across both-touched files.",
+      "severity": 3
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-001",
+      "kind": "command",
+      "summary": "git push output recorded private/main cfd3b39ab plus backup branch and tag pushed to origin before ratchet merge; evidence.json head and origin_private_main are cfd3b39ab.",
+      "supports": [
+        "C-001"
+      ]
+    },
+    {
+      "id": "E-002",
+      "kind": "command",
+      "summary": "post-update-check --fix with Hermes venv completed: 16 OK, 0 fixed, 2 need attention; no FIX_FAILED appears in summary embedded in evidence.json.",
+      "supports": [
+        "C-002"
+      ]
+    },
+    {
+      "id": "E-003",
+      "kind": "command",
+      "summary": "git merge-tree over merge-base 56236b16e, HEAD cfd3b39ab, upstream/main 2f510ca8e produced 27 conflict/manual-decision entries; evidence.json lists conflicts array.",
+      "supports": [
+        "C-003"
+      ]
+    }
+  ],
+  "implementation_target": {
+    "files": [],
+    "verify_commands": [],
+    "forbidden_changes": []
+  },
+  "is_candidate_solution": false,
+  "state_owner": "main_orchestrator"
+}
