@@ -3324,3 +3324,260 @@ def test_real_sender_preflight_supports_lark_and_rejects_enabled_capability_drif
     assert cli_result["accepted_as"] == "real_sender_preflight_verified"
     assert cli_result["send_executed"] is False
     assert cli_result["token_read"] is False
+
+
+def _make_telegram_real_sender_preflight(tmp_path):
+    ledger_path, started, outbox, outbox_path, authorization, dry_run = _make_telegram_dry_run_verified(tmp_path)
+    preflight = ega.request_real_sender_preflight(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        preflight_request={
+            "channel": "telegram",
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "dry_run_request_digest": dry_run["request_digest"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:TELEGRAM_BOT_TOKEN",
+            "sender_capability_enabled": False,
+            "dry_run_max_age_seconds": 600,
+            "evidence_refs": ["artifact://agent-coverage/telegram-preflight.json"],
+        },
+    )
+    return ledger_path, started, outbox, outbox_path, authorization, dry_run, preflight
+
+
+def _make_lark_real_sender_preflight(tmp_path):
+    ledger_path, started, outbox, outbox_path, authorization, dry_run = _make_lark_dry_run_verified(tmp_path)
+    preflight = ega.request_real_sender_preflight(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        preflight_request={
+            "channel": "lark",
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "dry_run_request_digest": dry_run["request_digest"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:LARK_APP_SECRET",
+            "sender_capability_enabled": False,
+            "dry_run_max_age_seconds": 600,
+            "evidence_refs": ["artifact://agent-coverage/lark-preflight.json"],
+        },
+    )
+    return ledger_path, started, outbox, outbox_path, authorization, dry_run, preflight
+
+
+def test_real_sender_execution_authorization_projects_second_approval_without_token_or_send_and_is_idempotent(tmp_path) -> None:
+    ledger_path, started, outbox, outbox_path, authorization, dry_run, preflight = _make_telegram_real_sender_preflight(tmp_path)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    result = ega.request_real_sender_execution_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "channel": "telegram",
+            "preflight_request_digest": preflight["request_digest"],
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:TELEGRAM_BOT_TOKEN",
+            "sender_capability_requested": True,
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/real-sender-exec-auth.json"],
+        },
+    )
+    assert result["accepted_as"] == "real_sender_execution_authorized"
+    assert result["channel"] == "telegram"
+    assert result["send_executed"] is False
+    assert result["token_read"] is False
+    assert result["sender_capability_requested"] is True
+    assert result["authorization_status"] == "approved_not_executed"
+
+    replay = ega.request_real_sender_execution_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "channel": "telegram",
+            "preflight_request_digest": preflight["request_digest"],
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:TELEGRAM_BOT_TOKEN",
+            "sender_capability_requested": True,
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/real-sender-exec-auth-replay.json"],
+        },
+    )
+    assert replay["idempotent_replay"] is True
+    assert len([line for line in ledger_path.read_text(encoding="utf-8").splitlines() if "real_sender_execution_authorized" in line]) == 1
+
+
+def test_real_sender_execution_authorization_supports_lark_and_rejects_drift_denied_bad_actor_capability_and_cli_smoke(tmp_path) -> None:
+    ledger_path, started, outbox, outbox_path, authorization, dry_run, preflight = _make_lark_real_sender_preflight(tmp_path)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    ok = ega.request_real_sender_execution_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_authorization_request={
+            "actor_id": "ops-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "channel": "lark",
+            "preflight_request_digest": preflight["request_digest"],
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:LARK_APP_SECRET",
+            "sender_capability_requested": True,
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/lark-real-sender-exec-auth.json"],
+        },
+    )
+    assert ok["accepted_as"] == "real_sender_execution_authorized"
+    assert ok["channel"] == "lark"
+
+    rejected_drift = ega.request_real_sender_execution_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_authorization_request={
+            "actor_id": "ops-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "channel": "lark",
+            "preflight_request_digest": preflight["request_digest"],
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "lark-review-chat",
+            "payload_hash": "bad-hash",
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:LARK_APP_SECRET",
+            "sender_capability_requested": True,
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/drift-exec-auth.json"],
+        },
+    )
+    assert "payload_hash_drift" in rejected_drift["blocked_reasons"]
+
+    rejected_denied = ega.request_real_sender_execution_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_authorization_request={
+            "actor_id": "ops-admin",
+            "actor_role": "admin",
+            "decision": "denied",
+            "channel": "lark",
+            "preflight_request_digest": preflight["request_digest"],
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:LARK_APP_SECRET",
+            "sender_capability_requested": True,
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/denied-exec-auth.json"],
+        },
+    )
+    assert "decision_must_be_approved" in rejected_denied["blocked_reasons"]
+
+    rejected_bad_actor = ega.request_real_sender_execution_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_authorization_request={
+            "actor_id": "worker-1",
+            "actor_role": "bounded_worker",
+            "decision": "approved",
+            "channel": "lark",
+            "preflight_request_digest": preflight["request_digest"],
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:LARK_APP_SECRET",
+            "sender_capability_requested": True,
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/bad-actor-exec-auth.json"],
+        },
+    )
+    assert "actor_role_not_elevated" in rejected_bad_actor["blocked_reasons"]
+
+    rejected_capability = ega.request_real_sender_execution_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_authorization_request={
+            "actor_id": "ops-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "channel": "lark",
+            "preflight_request_digest": preflight["request_digest"],
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:LARK_APP_SECRET",
+            "sender_capability_requested": False,
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/no-capability-exec-auth.json"],
+        },
+    )
+    assert "sender_capability_request_required" in rejected_capability["blocked_reasons"]
+
+    request_json = json.dumps(
+        {
+            "actor_id": "ops-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "channel": "lark",
+            "preflight_request_digest": preflight["request_digest"],
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "platform_payload_hash": dry_run["platform_payload_hash"],
+            "token_source": "env:LARK_APP_SECRET",
+            "sender_capability_requested": True,
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/real-sender-exec-auth-cli.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--request-real-sender-execution-authorization",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--real-sender-execution-authorization-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "real_sender_execution_authorized"
+    assert cli_result["send_executed"] is False
+    assert cli_result["token_read"] is False
