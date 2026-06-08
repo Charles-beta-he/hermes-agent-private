@@ -1,10 +1,10 @@
 """Contracts and bounded starts for Hermes Event-Governed Agent Control Plane.
 
-Most helpers are deterministic contract projections. The explicit
-``start_bounded_runtime_run`` path is the first real runtime boundary: it only
-records a ledger-local started run and still does not execute tools, mutate task
-lifecycle, write memory/skills, send messages, or change cron/provider
-configuration.
+Most helpers are deterministic contract projections. The explicit runtime paths
+first record a ledger-local started run, then may invoke an allowlisted builtin
+read-only executor that appends a completed result. They still do not invoke
+external agent processes, mutate task lifecycle, write memory/skills, send
+messages, or change cron/provider configuration.
 """
 
 from __future__ import annotations
@@ -40,6 +40,8 @@ DANGEROUS_ACTIONS = frozenset(
 )
 UNTRUSTED_SOURCES = frozenset({"webhook", "gateway", "cron", "dashboard", "projection"})
 WORKER_RESULT_STATUSES = frozenset({"succeeded", "failed", "blocked", "needs_human", "partial"})
+BUILTIN_READONLY_EXECUTORS = frozenset({"hermes_builtin_readonly"})
+BUILTIN_READONLY_ACTIONS = frozenset({"summarize_started_run"})
 CANONICAL_LIFECYCLE_STATUSES = frozenset({"pending", "claimed", "running", "retry", "blocked", "review", "done"})
 ARTIFACT_TYPES = frozenset({"json", "log", "screenshot", "trace", "metrics", "transcript", "report"})
 HOT_PATH_SUMMARY_MAX_CHARS = 240
@@ -568,6 +570,109 @@ def start_bounded_runtime_run(*, request: dict[str, Any], ledger_path: str | Pat
     return record
 
 
+def _read_runtime_ledger(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def execute_bounded_runtime_run(*, ledger_path: str | Path, run_id: str, executor_request: dict[str, Any]) -> dict[str, Any]:
+    """Execute the first governed builtin read-only executor for a started run.
+
+    This crosses from merely recording a start into invoking a constrained local
+    executor. It remains ledger-local and read-only: external agent processes,
+    lifecycle mutation, adapter writes, and persistent learning are still off.
+    """
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    executor_type = str(executor_request.get("executor_type", "")).strip().lower()
+    action = str(executor_request.get("action", "")).strip().lower()
+    evidence_refs = executor_request.get("evidence_refs", [])
+    request_digest = _digest(executor_request)
+    rows = _read_runtime_ledger(path)
+    started = next((row for row in rows if row.get("run_id") == normalized_run_id and row.get("run_status") == "started"), None)
+    completed = next((row for row in rows if row.get("run_id") == normalized_run_id and row.get("run_status") == "completed"), None)
+    blocked_reasons: list[str] = []
+
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if started is None:
+        blocked_reasons.append("started_run_not_found")
+    if executor_type not in BUILTIN_READONLY_EXECUTORS:
+        blocked_reasons.append("executor_type_not_allowlisted")
+    if action not in BUILTIN_READONLY_ACTIONS:
+        blocked_reasons.append("executor_action_not_allowlisted")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("executor_requires_evidence_refs")
+    if sorted(WORKER_FORBIDDEN_RESULT_KEYS.intersection(executor_request.keys())):
+        blocked_reasons.append("executor_request_contains_forbidden_authority_keys")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "runtime_execution",
+        "run_id": normalized_run_id,
+        "executor_type": executor_type,
+        "action": action,
+        "executor_request_digest": request_digest,
+        "executor_invoked": False,
+        "external_executor_invoked": False,
+        "canonical_lifecycle_unchanged": True,
+        "allowed_to_mutate_lifecycle": False,
+        "external_adapter_write_through_enabled": False,
+        "persistent_learning_write_enabled": False,
+        "blocked_reasons": blocked_reasons,
+    }
+
+    if completed is not None and completed.get("executor_request_digest") == request_digest:
+        return {**completed, "idempotent_replay": True}
+
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_runtime_execution",
+            "run_status": "rejected",
+            "runtime_boundary": "builtin_readonly_executor_rejected",
+            "idempotent_replay": False,
+        }
+
+    assert started is not None
+    result = {
+        "summary": "Started run verified from ledger",
+        "verified_started_run_id": normalized_run_id,
+        "verified_task_ref": started.get("task_ref"),
+        "verified_request_digest": started.get("request_digest"),
+        "evidence_refs": evidence_refs,
+    }
+    record = {
+        **base,
+        "accepted_as": "bounded_runtime_run_completed",
+        "run_status": "completed",
+        "runtime_boundary": "builtin_readonly_executor_completed",
+        "executor_invoked": True,
+        "idempotent_replay": False,
+        "task_ref": started.get("task_ref"),
+        "worker_type": started.get("worker_type"),
+        "worker_id": started.get("worker_id"),
+        "result": result,
+        "completed_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -748,8 +853,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check-action", action="store_true", help="Evaluate one action instead of full report")
     parser.add_argument("--coverage", action="store_true", help="Emit report-only agent architecture coverage matrix")
     parser.add_argument("--start-runtime-run", action="store_true", help="Record a ledger-only bounded runtime run start")
-    parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for --start-runtime-run")
+    parser.add_argument("--execute-runtime-run", action="store_true", help="Execute an allowlisted builtin read-only runtime run")
+    parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
+    parser.add_argument("--run-id", default="", help="Run id for --execute-runtime-run")
+    parser.add_argument("--executor-request-json", default="{}", help="JSON executor payload for --execute-runtime-run")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -772,6 +880,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(request, dict):
             parser.error("--runtime-request-json must decode to an object")
         result = start_bounded_runtime_run(request=request, ledger_path=args.runtime_ledger)
+    elif args.execute_runtime_run:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --execute-runtime-run")
+        if not args.run_id:
+            parser.error("--run-id is required with --execute-runtime-run")
+        executor_request = json.loads(args.executor_request_json)
+        if not isinstance(executor_request, dict):
+            parser.error("--executor-request-json must decode to an object")
+        result = execute_bounded_runtime_run(ledger_path=args.runtime_ledger, run_id=args.run_id, executor_request=executor_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

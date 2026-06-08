@@ -25,8 +25,10 @@ SSOT: this file
 - [x] Slice 8: Add workflow metadata contract for lane/workflow_state/checkpoint substate without lifecycle authority.
 - [x] Slice 9: Scoped commit for artifact/workflow metadata contracts if verification passes. Commit: 268e63de0 Add agent artifact workflow metadata contracts.
 - [x] Slice 10: Add first real started runtime boundary: ledger-only bounded run start with durable JSONL record, idempotent retry, no external executor invocation, no lifecycle mutation, no adapter write-through.
-- [x] Slice 11: Scoped commit for ledger-only runtime start if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before external worker invocation / task lifecycle writes / external adapter writes unless a separate explicit human gate authorizes that slice.
+- [x] Slice 11: Scoped commit for ledger-only runtime start if verification passes. Commit: 9a5440557 Start bounded agent runtime ledger runs.
+- [x] Slice 12: Add first governed executor invocation: allowlisted Hermes builtin read-only executor completes a started run and appends result evidence to ledger; unknown/external executors remain rejected.
+- [x] Slice 13: Scoped commit for builtin read-only executor if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before external worker process invocation / task lifecycle writes / external adapter writes unless a separate explicit gate authorizes that slice.
 
 ## Decisions
 
@@ -34,6 +36,7 @@ SSOT: this file
 - Canonical ledger remains Hermes Control Tower / taskpool by fact domain; worker/model outputs are proposals/evidence only.
 - Parallelism/fork-join, model routing, and worker adapters should be expressed as contracts before execution.
 - The first approved runtime boundary is ledger-only start: it may append a durable run record and support idempotent retry, but it still must not invoke external executors, mutate lifecycle, write adapters, or persist learning.
+- The second approved runtime boundary is a governed builtin read-only executor: it may append a completed run result after verifying a started run, but external agent process invocation remains disabled until a narrower executor-specific slice exists.
 
 ## Files Changed
 

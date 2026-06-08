@@ -424,3 +424,117 @@ def test_start_runtime_boundary_fails_closed_on_smuggled_authority_and_cli_smoke
     assert cli_started["accepted_as"] == "bounded_runtime_run_started"
     assert cli_started["runtime_boundary"] == "started_ledger_only"
     assert ledger_path.exists()
+
+
+def test_execute_runtime_boundary_runs_allowlisted_builtin_executor_and_appends_result(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "hermes-builtin-readonly",
+            "worker_id": "builtin-1",
+            "run_purpose": "readonly_verification",
+            "workflow_state": "runtime_started",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+
+    completed = ega.execute_bounded_runtime_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        executor_request={
+            "executor_type": "hermes_builtin_readonly",
+            "action": "summarize_started_run",
+            "evidence_refs": ["artifact://agent-coverage/executor-proof.json"],
+        },
+    )
+
+    assert completed["accepted_as"] == "bounded_runtime_run_completed"
+    assert completed["run_status"] == "completed"
+    assert completed["runtime_boundary"] == "builtin_readonly_executor_completed"
+    assert completed["executor_invoked"] is True
+    assert completed["external_executor_invoked"] is False
+    assert completed["allowed_to_mutate_lifecycle"] is False
+    assert completed["external_adapter_write_through_enabled"] is False
+    assert completed["result"]["summary"] == "Started run verified from ledger"
+
+    rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+    assert [row["run_status"] for row in rows] == ["started", "completed"]
+
+    retry = ega.execute_bounded_runtime_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        executor_request={
+            "executor_type": "hermes_builtin_readonly",
+            "action": "summarize_started_run",
+            "evidence_refs": ["artifact://agent-coverage/executor-proof.json"],
+        },
+    )
+    retry_rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+    assert retry["idempotent_replay"] is True
+    assert retry["run_status"] == "completed"
+    assert len(retry_rows) == 2
+
+
+def test_execute_runtime_boundary_rejects_unknown_executor_and_cli_smoke(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "hermes-builtin-readonly",
+            "worker_id": "builtin-2",
+            "run_purpose": "readonly_verification",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+
+    rejected = ega.execute_bounded_runtime_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        executor_request={
+            "executor_type": "claude_code_external",
+            "action": "summarize_started_run",
+            "evidence_refs": ["artifact://agent-coverage/executor-proof.json"],
+        },
+    )
+
+    assert rejected["accepted_as"] == "rejected_runtime_execution"
+    assert rejected["run_status"] == "rejected"
+    assert rejected["executor_invoked"] is False
+    assert "executor_type_not_allowlisted" in rejected["blocked_reasons"]
+    assert len(ledger_path.read_text().splitlines()) == 1
+
+    executor_json = json.dumps(
+        {
+            "executor_type": "hermes_builtin_readonly",
+            "action": "summarize_started_run",
+            "evidence_refs": ["artifact://agent-coverage/cli-executor-proof.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--execute-runtime-run",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--executor-request-json",
+            executor_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_completed = json.loads(proc.stdout)
+    assert cli_completed["accepted_as"] == "bounded_runtime_run_completed"
+    assert cli_completed["runtime_boundary"] == "builtin_readonly_executor_completed"
+    assert len(ledger_path.read_text().splitlines()) == 2
