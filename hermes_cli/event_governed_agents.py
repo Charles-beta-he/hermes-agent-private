@@ -12,14 +12,17 @@ a local-file adapter harness write-through, execute a digest-bound taskpool
 note closeout, execute a digest-bound Kanban DB closeout, execute a
 digest-bound taskpool/Kanban rollback, or enqueue Lark/Telegram outbox
 notifications without sending, or project elevated delivery authorization
-without sending, or execute Telegram/Lark sender dry-runs. Only the explicit
+without sending, execute Telegram/Lark sender dry-runs, or project real sender
+preflight while the sender remains disabled. Only the explicit
 ledger-local fact mutation can change canonical lifecycle facts, only the
 local-file adapter harness can write adapter-state fixtures, taskpool note
 closeout/rollback can mutate taskpool markdown frontmatter status, Kanban DB
 closeout/rollback can mutate a single tasks.status row, the outbox executor
 can append pending no-secret notification intents, the delivery authorization
-projection can authorize a future sender without calling platform APIs, and the
-Telegram/Lark dry-runs can record a payload hash/summary without reading tokens or sending; no path writes memory/skills,
+projection can authorize a future sender without calling platform APIs, the
+Telegram/Lark dry-runs can record a payload hash/summary without reading tokens
+or sending, and real sender preflight can verify readiness without enabling or
+executing send; no path writes memory/skills,
 outbound messages, or cron/provider configuration.
 """
 
@@ -2963,6 +2966,141 @@ def execute_lark_sender_dry_run(*, ledger_path: str | Path, run_id: str, lark_dr
     return record
 
 
+def request_real_sender_preflight(*, ledger_path: str | Path, run_id: str, preflight_request: dict[str, Any]) -> dict[str, Any]:
+    """Project readiness for real sender execution without token access or sending."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    channel = str(preflight_request.get("channel", "")).strip().lower()
+    delivery_authorization_id = str(preflight_request.get("delivery_authorization_id", "")).strip()
+    dry_run_request_digest = str(preflight_request.get("dry_run_request_digest", "")).strip()
+    outbox_id = str(preflight_request.get("outbox_id", "")).strip()
+    target_id = str(preflight_request.get("target_id", "")).strip()
+    payload_hash = str(preflight_request.get("payload_hash", "")).strip()
+    platform_payload_hash = str(preflight_request.get("platform_payload_hash", "")).strip()
+    token_source = str(preflight_request.get("token_source", "")).strip()
+    sender_capability_enabled = preflight_request.get("sender_capability_enabled")
+    dry_run_max_age_seconds = preflight_request.get("dry_run_max_age_seconds", 0)
+    evidence_refs = preflight_request.get("evidence_refs", [])
+    request_digest = _digest(preflight_request)
+    dry_run_status = f"{channel}_delivery_dry_run_verified" if channel in {"telegram", "lark"} else ""
+    dry_run_event = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == dry_run_status
+            and row.get("request_digest") == dry_run_request_digest
+        ),
+        None,
+    )
+    existing = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "real_sender_preflight_verified"
+            and row.get("channel") == channel
+            and row.get("delivery_authorization_id") == delivery_authorization_id
+            and row.get("dry_run_request_digest") == dry_run_request_digest
+            and row.get("outbox_id") == outbox_id
+            and row.get("target_id") == target_id
+            and row.get("payload_hash") == payload_hash
+            and row.get("platform_payload_hash") == platform_payload_hash
+            and row.get("token_source") == token_source
+            and row.get("sender_capability_enabled") == sender_capability_enabled
+        ),
+        None,
+    )
+    if existing is not None:
+        return {**existing, "idempotent_replay": True}
+
+    blocked_reasons: list[str] = []
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if channel not in {"telegram", "lark"}:
+        blocked_reasons.append("sender_channel_not_allowlisted")
+    if not delivery_authorization_id:
+        blocked_reasons.append("delivery_authorization_id_required")
+    if not dry_run_request_digest:
+        blocked_reasons.append("dry_run_request_digest_required")
+    if dry_run_event is None:
+        blocked_reasons.append("sender_dry_run_required")
+    if dry_run_event is not None:
+        if dry_run_event.get("delivery_authorization_id") != delivery_authorization_id:
+            blocked_reasons.append("delivery_authorization_id_drift")
+        if dry_run_event.get("outbox_id") != outbox_id:
+            blocked_reasons.append("outbox_id_drift")
+        if dry_run_event.get("target_id") != target_id:
+            blocked_reasons.append("target_id_drift")
+        if dry_run_event.get("payload_hash") != payload_hash:
+            blocked_reasons.append("payload_hash_drift")
+        if dry_run_event.get("platform_payload_hash") != platform_payload_hash:
+            blocked_reasons.append("platform_payload_hash_drift")
+        if dry_run_event.get("send_executed") is not False:
+            blocked_reasons.append("dry_run_must_not_have_sent")
+        if dry_run_event.get("token_read") is not False:
+            blocked_reasons.append("dry_run_must_not_have_read_token")
+        recorded_at_raw = str(dry_run_event.get("recorded_at", ""))
+        try:
+            recorded_at = datetime.fromisoformat(recorded_at_raw)
+            if recorded_at.tzinfo is None:
+                recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+            max_age = int(dry_run_max_age_seconds)
+            if max_age <= 0:
+                blocked_reasons.append("dry_run_max_age_seconds_required")
+            elif (datetime.now(timezone.utc) - recorded_at).total_seconds() > max_age:
+                blocked_reasons.append("dry_run_too_old")
+        except (TypeError, ValueError):
+            blocked_reasons.append("invalid_dry_run_recorded_at_or_max_age")
+    if not token_source:
+        blocked_reasons.append("token_source_required")
+    elif not token_source.startswith(("env:", "keychain:", "secret-ref:", "config-ref:")):
+        blocked_reasons.append("token_source_must_be_reference_not_secret")
+    if sender_capability_enabled is not False:
+        blocked_reasons.append("sender_capability_must_remain_disabled")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("real_sender_preflight_requires_evidence_refs")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "real_sender_preflight",
+        "run_id": normalized_run_id,
+        "channel": channel,
+        "delivery_authorization_id": delivery_authorization_id,
+        "dry_run_request_digest": dry_run_request_digest,
+        "outbox_id": outbox_id,
+        "target_id": target_id,
+        "payload_hash": payload_hash,
+        "platform_payload_hash": platform_payload_hash,
+        "token_source": token_source,
+        "sender_capability_enabled": sender_capability_enabled,
+        "request_digest": request_digest,
+        "send_executed": False,
+        "token_read": False,
+        "readback_verified": dry_run_event is not None,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {**base, "accepted_as": "rejected_real_sender_preflight", "run_status": "rejected", "runtime_boundary": "real_sender_preflight_rejected"}
+
+    record = {
+        **base,
+        "accepted_as": "real_sender_preflight_verified",
+        "run_status": "real_sender_preflight_verified",
+        "runtime_boundary": "real_sender_preflight_no_send",
+        "delivery_status": "preflight_verified_sender_still_disabled",
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+        "idempotent_replay": False,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def execute_external_adapter_rollback_write(*, ledger_path: str | Path, run_id: str, rollback_request: dict[str, Any]) -> dict[str, Any]:
     """Rollback a previously verified taskpool/Kanban closeout to its recorded previous_status."""
 
@@ -3335,6 +3473,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--request-outbound-delivery-authorization", action="store_true", help="Project elevated authorization for a pending outbound item without sending it")
     parser.add_argument("--execute-telegram-sender-dry-run", action="store_true", help="Verify Telegram sender payload contract without token access or sending")
     parser.add_argument("--execute-lark-sender-dry-run", action="store_true", help="Verify Lark sender payload contract without token access or sending")
+    parser.add_argument("--request-real-sender-preflight", action="store_true", help="Verify real sender readiness while sender capability remains disabled")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -3356,6 +3495,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--delivery-authorization-json", default="{}", help="JSON delivery authorization payload for --request-outbound-delivery-authorization")
     parser.add_argument("--telegram-dry-run-json", default="{}", help="JSON Telegram dry-run payload for --execute-telegram-sender-dry-run")
     parser.add_argument("--lark-dry-run-json", default="{}", help="JSON Lark dry-run payload for --execute-lark-sender-dry-run")
+    parser.add_argument("--real-sender-preflight-json", default="{}", help="JSON real sender preflight payload for --request-real-sender-preflight")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -3540,6 +3680,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(lark_dry_run, dict):
             parser.error("--lark-dry-run-json must decode to an object")
         result = execute_lark_sender_dry_run(ledger_path=args.runtime_ledger, run_id=args.run_id, lark_dry_run_request=lark_dry_run)
+    elif args.request_real_sender_preflight:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --request-real-sender-preflight")
+        if not args.run_id:
+            parser.error("--run-id is required with --request-real-sender-preflight")
+        preflight_request = json.loads(args.real_sender_preflight_json)
+        if not isinstance(preflight_request, dict):
+            parser.error("--real-sender-preflight-json must decode to an object")
+        result = request_real_sender_preflight(ledger_path=args.runtime_ledger, run_id=args.run_id, preflight_request=preflight_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:
