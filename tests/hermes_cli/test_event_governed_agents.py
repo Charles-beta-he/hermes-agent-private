@@ -1067,3 +1067,179 @@ def test_external_agent_proposal_artifact_rejects_done_and_unsupported_claims_cl
     assert cli_result["accepted_as"] == "external_agent_proposal_recorded"
     assert cli_result["proposal"]["lifecycle_target"] == "review_proposed"
     assert len(ledger_path.read_text().splitlines()) == 2
+
+
+def _write_recorded_proposal(tmp_path, *, run_purpose="external_agent_proposal"):
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    proposal_path = tmp_path / "proposal.json"
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "claude-code",
+            "worker_id": "claude-certification",
+            "run_purpose": run_purpose,
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+    proposal = {
+        "schema_version": 1,
+        "proposal_type": "worker_review_proposal",
+        "run_id": started["run_id"],
+        "summary": "ready for certification, not done",
+        "claims": [{"id": "claim-1", "text": "supported", "evidence_refs": ["artifact://agent-coverage/proof.json"]}],
+        "failure_classification": "none",
+        "lifecycle_target": "review_proposed",
+        "evidence_refs": ["artifact://agent-coverage/proposal.json"],
+    }
+    proposal_path.write_text(json.dumps(proposal), encoding="utf-8")
+    proposal_record = ega.append_external_agent_proposal(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        proposal_request={
+            "proposal_artifact_uri": f"file://{proposal_path}",
+            "proposal_sha256": hashlib.sha256(proposal_path.read_bytes()).hexdigest(),
+            "evidence_refs": ["artifact://agent-coverage/proposal-submit.json"],
+        },
+    )
+    return ledger_path, started, proposal_path, proposal_record
+
+
+def test_certification_promotion_packet_records_passed_for_review_not_done(tmp_path) -> None:
+    ledger_path, started, proposal_path, proposal_record = _write_recorded_proposal(tmp_path)
+    certification_path = tmp_path / "certification.json"
+    certification = {
+        "schema_version": 1,
+        "certification_type": "multi_model_proposal_certification",
+        "run_id": started["run_id"],
+        "proposal_artifact_uri": f"file://{proposal_path}",
+        "proposal_sha256": proposal_record["artifact"]["sha256"],
+        "reviewers": [
+            {"id": "claude", "verdict": "pass", "evidence_refs": ["artifact://agent-coverage/claude-review.json"]},
+            {"id": "codex", "verdict": "pass", "evidence_refs": ["artifact://agent-coverage/codex-review.json"]},
+        ],
+        "quorum": 2,
+        "truth_gate": True,
+        "claims": [{"id": "claim-1", "text": "supported", "evidence_refs": ["artifact://agent-coverage/proof.json"]}],
+        "summary": "certification packet passed for review only",
+        "lifecycle_target": "certification_passed_for_review",
+        "evidence_refs": ["artifact://agent-coverage/certification.json"],
+    }
+    certification_path.write_text(json.dumps(certification), encoding="utf-8")
+
+    result = ega.append_certification_promotion(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        certification_request={
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": hashlib.sha256(certification_path.read_bytes()).hexdigest(),
+            "evidence_refs": ["artifact://agent-coverage/certification-submit.json"],
+        },
+    )
+
+    assert result["accepted_as"] == "certification_promotion_recorded"
+    assert result["run_status"] == "certification_recorded"
+    assert result["runtime_boundary"] == "multi_model_certification_promotion_recorded"
+    assert result["certification"]["lifecycle_target"] == "certification_passed_for_review"
+    assert result["reviewer_count"] == 2
+    assert result["quorum"] == 2
+    assert result["truth_gate"] is True
+    assert result["allowed_to_mark_done"] is False
+    assert result["allowed_to_mutate_lifecycle"] is False
+    assert result["model_consensus_is_fact"] is False
+    assert result["proposal_artifact"]["artifact_uri"] == f"file://{proposal_path}"
+    assert result["artifact"]["artifact_uri"] == f"file://{certification_path}"
+    rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+    assert [row["run_status"] for row in rows] == ["started", "external_proposal_recorded", "certification_recorded"]
+
+
+def test_certification_promotion_rejects_weak_quorum_no_truth_unsupported_claim_and_done_cli_smoke(tmp_path) -> None:
+    ledger_path, started, proposal_path, proposal_record = _write_recorded_proposal(tmp_path)
+    certification_path = tmp_path / "certification.json"
+    rejected_packet = {
+        "schema_version": 1,
+        "certification_type": "multi_model_proposal_certification",
+        "run_id": started["run_id"],
+        "proposal_artifact_uri": f"file://{proposal_path}",
+        "proposal_sha256": proposal_record["artifact"]["sha256"],
+        "reviewers": [{"id": "claude", "verdict": "pass"}],
+        "quorum": 1,
+        "truth_gate": False,
+        "claims": [{"id": "claim-1", "text": "unsupported"}],
+        "summary": "bad",
+        "lifecycle_target": "done",
+        "evidence_refs": ["artifact://agent-coverage/bad-certification.json"],
+    }
+    certification_path.write_text(json.dumps(rejected_packet), encoding="utf-8")
+
+    rejected = ega.append_certification_promotion(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        certification_request={
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": hashlib.sha256(certification_path.read_bytes()).hexdigest(),
+            "task_status": "done",
+            "evidence_refs": ["artifact://agent-coverage/bad-certification-submit.json"],
+        },
+    )
+
+    assert rejected["accepted_as"] == "rejected_certification_promotion"
+    assert rejected["certification_recorded"] is False
+    assert "certification_request_contains_forbidden_authority_keys" in rejected["blocked_reasons"]
+    assert "at_least_two_reviewers_required" in rejected["blocked_reasons"]
+    assert "quorum_must_be_at_least_two" in rejected["blocked_reasons"]
+    assert "truth_gate_required" in rejected["blocked_reasons"]
+    assert "all_certification_claims_require_evidence_refs" in rejected["blocked_reasons"]
+    assert "certification_lifecycle_target_must_be_passed_for_review" in rejected["blocked_reasons"]
+    assert len(ledger_path.read_text().splitlines()) == 2
+
+    good_packet = {
+        "schema_version": 1,
+        "certification_type": "multi_model_proposal_certification",
+        "run_id": started["run_id"],
+        "proposal_artifact_uri": f"file://{proposal_path}",
+        "proposal_sha256": proposal_record["artifact"]["sha256"],
+        "reviewers": [
+            {"id": "claude", "verdict": "pass", "evidence_refs": ["artifact://agent-coverage/claude-review.json"]},
+            {"id": "codex", "verdict": "pass", "evidence_refs": ["artifact://agent-coverage/codex-review.json"]},
+        ],
+        "quorum": 2,
+        "truth_gate": True,
+        "claims": [{"id": "claim-1", "text": "supported", "evidence_refs": ["artifact://agent-coverage/proof.json"]}],
+        "summary": "certification packet passed for review only",
+        "lifecycle_target": "certification_passed_for_review",
+        "evidence_refs": ["artifact://agent-coverage/good-certification.json"],
+    }
+    certification_path.write_text(json.dumps(good_packet), encoding="utf-8")
+    request_json = json.dumps(
+        {
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": hashlib.sha256(certification_path.read_bytes()).hexdigest(),
+            "evidence_refs": ["artifact://agent-coverage/cli-certification-submit.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--append-certification-promotion",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--certification-request-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "certification_promotion_recorded"
+    assert cli_result["certification"]["lifecycle_target"] == "certification_passed_for_review"
+    assert len(ledger_path.read_text().splitlines()) == 3

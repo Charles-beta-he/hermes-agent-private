@@ -35,8 +35,10 @@ SSOT: this file
 - [x] Slice 18: Add external readonly context packet: allowlisted agent receives a no-tool/no-write prompt that references a file artifact by URI/hash; inline context is rejected and ledger stores only context/output artifact pointers.
 - [x] Slice 19: Scoped commit for external readonly context packet if verification passes. Commit: 5da09a457 Attach readonly context to external agent runs.
 - [x] Slice 20: Add external proposal artifact intake: worker proposals are accepted only as review_proposed artifacts with evidence-backed claims and failure classification; done/lifecycle authority remains rejected.
-- [x] Slice 21: Scoped commit for proposal artifact intake if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before multi-model certification promotion, external agent tools/file edits/shell commands, task lifecycle writes, or external adapter writes unless a narrower executor-specific slice authorizes that capability.
+- [x] Slice 21: Scoped commit for proposal artifact intake if verification passes. Commit: 95c20b13b Record external agent proposal artifacts.
+- [x] Slice 22: Add multi-model certification promotion packet: certification artifacts must bind to a recorded proposal, require quorum/truth gate/reviewer evidence/claim evidence, and may only target certification_passed_for_review.
+- [x] Slice 23: Scoped commit for certification promotion packet if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before human/elevated policy done gate, external agent tools/file edits/shell commands, task lifecycle writes, or external adapter writes unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
 
@@ -49,6 +51,7 @@ SSOT: this file
 - The fourth approved runtime boundary is external prompt dry-run only: an allowlisted agent may receive a prompt with tools disabled and permission mode constrained; stdout/stderr are stored as an artifact while the ledger stores only pointer/hash/summary. The agent still cannot edit files, run shell tools, mutate lifecycle, or write adapters.
 - The fifth approved runtime boundary is external readonly context packet: an allowlisted agent may receive a prompt containing only a context artifact URI/hash, while inline context and write/tool/lifecycle authority remain rejected. Ledger stores context pointer/hash and output artifact pointer/hash/summary only.
 - The sixth approved runtime boundary is external proposal artifact intake: an external worker proposal may be recorded only as a review_proposed artifact with evidence-backed claims and failure classification. It is still not a fact, cannot mark done, and requires later certification/human gate.
+- The seventh approved runtime boundary is multi-model certification promotion: a certification artifact may be recorded only if it binds to the recorded proposal, has at least two reviewers, quorum >= 2, truth gate enabled, reviewer/claim evidence, and lifecycle_target=certification_passed_for_review. It still cannot mark done or mutate lifecycle.
 
 ## Files Changed
 

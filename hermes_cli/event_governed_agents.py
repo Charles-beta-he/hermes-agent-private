@@ -4,8 +4,9 @@ Most helpers are deterministic contract projections. The explicit runtime paths
 first record a ledger-local started run, then may invoke an allowlisted builtin
 read-only executor that appends a completed result. Separate external-agent
 paths may run ``--version`` probes, send no-tool/no-write dry-run prompts,
-attach read-only context artifact pointers, or record validated proposal artifact
-pointers while appending only pointers to the ledger. They still do not mutate
+attach read-only context artifact pointers, record validated proposal artifact
+pointers, or record multi-model certification promotion packets while appending
+only pointers to the ledger. They still do not mutate
 lifecycle, write memory/skills, send external messages, or change cron/provider
 configuration.
 """
@@ -1209,6 +1210,191 @@ def append_external_agent_proposal(*, ledger_path: str | Path, run_id: str, prop
     return record
 
 
+def append_certification_promotion(*, ledger_path: str | Path, run_id: str, certification_request: dict[str, Any]) -> dict[str, Any]:
+    """Validate and append a multi-model certification promotion packet.
+
+    This promotes an external proposal only to certified-for-review. It does not
+    mark the task done or mutate lifecycle; done still requires a later gate.
+    """
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    certification_artifact_uri = str(certification_request.get("certification_artifact_uri", "")).strip()
+    certification_sha256 = str(certification_request.get("certification_sha256", "")).strip().lower()
+    request_evidence_refs = certification_request.get("evidence_refs", [])
+    request_digest = _digest(certification_request)
+    rows = _read_runtime_ledger(path)
+    started = next((row for row in rows if row.get("run_id") == normalized_run_id and row.get("run_status") == "started"), None)
+    proposal_record = next((row for row in rows if row.get("run_id") == normalized_run_id and row.get("run_status") == "external_proposal_recorded"), None)
+    certification_path: Path | None = None
+    certification: dict[str, Any] = {}
+    blocked_reasons: list[str] = []
+
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if started is None:
+        blocked_reasons.append("started_run_not_found")
+    if proposal_record is None:
+        blocked_reasons.append("recorded_proposal_required")
+    if not certification_artifact_uri:
+        blocked_reasons.append("certification_artifact_uri_required")
+    elif not certification_artifact_uri.startswith("file://"):
+        blocked_reasons.append("certification_artifact_uri_must_be_file_uri")
+    else:
+        certification_path = Path(certification_artifact_uri.removeprefix("file://"))
+        if not certification_path.exists() or not certification_path.is_file():
+            blocked_reasons.append("certification_artifact_not_found")
+    if not certification_sha256:
+        blocked_reasons.append("certification_sha256_required")
+    elif len(certification_sha256) != 64:
+        blocked_reasons.append("certification_sha256_invalid")
+    if not isinstance(request_evidence_refs, list) or not request_evidence_refs:
+        blocked_reasons.append("certification_request_requires_evidence_refs")
+    if sorted(WORKER_FORBIDDEN_RESULT_KEYS.intersection(certification_request.keys())):
+        blocked_reasons.append("certification_request_contains_forbidden_authority_keys")
+
+    artifact_bytes = b""
+    if certification_path is not None and certification_path.exists():
+        artifact_bytes = certification_path.read_bytes()
+        actual_sha = hashlib.sha256(artifact_bytes).hexdigest()
+        if certification_sha256 and actual_sha != certification_sha256:
+            blocked_reasons.append("certification_sha256_mismatch")
+        try:
+            decoded = json.loads(artifact_bytes.decode("utf-8"))
+            if isinstance(decoded, dict):
+                certification = decoded
+            else:
+                blocked_reasons.append("certification_artifact_must_decode_to_object")
+        except json.JSONDecodeError:
+            blocked_reasons.append("certification_artifact_invalid_json")
+
+    reviewers = certification.get("reviewers", []) if certification else []
+    claims = certification.get("claims", []) if certification else []
+    quorum = int(certification.get("quorum", 0) or 0) if certification else 0
+    truth_gate = bool(certification.get("truth_gate")) if certification else False
+    lifecycle_target = str(certification.get("lifecycle_target", "")).strip() if certification else ""
+    summary = str(certification.get("summary", "")).strip() if certification else ""
+    certification_evidence_refs = certification.get("evidence_refs", []) if certification else []
+    proposal_artifact_uri = str(certification.get("proposal_artifact_uri", "")).strip() if certification else ""
+    proposal_sha256 = str(certification.get("proposal_sha256", "")).strip().lower() if certification else ""
+    unsupported_claims: list[str] = []
+    unsupported_reviewers: list[str] = []
+
+    if certification:
+        if certification.get("certification_type") != "multi_model_proposal_certification":
+            blocked_reasons.append("certification_type_must_be_multi_model_proposal_certification")
+        if certification.get("run_id") != normalized_run_id:
+            blocked_reasons.append("certification_run_id_mismatch")
+        if proposal_record is not None:
+            recorded_artifact = proposal_record.get("artifact", {}) if isinstance(proposal_record.get("artifact"), dict) else {}
+            if proposal_artifact_uri != recorded_artifact.get("artifact_uri"):
+                blocked_reasons.append("certification_proposal_artifact_uri_mismatch")
+            if proposal_sha256 != recorded_artifact.get("sha256"):
+                blocked_reasons.append("certification_proposal_sha256_mismatch")
+        if not summary:
+            blocked_reasons.append("certification_summary_required")
+        if lifecycle_target != "certification_passed_for_review":
+            blocked_reasons.append("certification_lifecycle_target_must_be_passed_for_review")
+        if not isinstance(certification_evidence_refs, list) or not certification_evidence_refs:
+            blocked_reasons.append("certification_requires_evidence_refs")
+        if not isinstance(reviewers, list) or len(reviewers) < 2:
+            blocked_reasons.append("at_least_two_reviewers_required")
+            reviewers = [] if not isinstance(reviewers, list) else reviewers
+        if quorum < 2:
+            blocked_reasons.append("quorum_must_be_at_least_two")
+        if quorum > len(reviewers):
+            blocked_reasons.append("quorum_exceeds_reviewer_count")
+        if not truth_gate:
+            blocked_reasons.append("truth_gate_required")
+        for index, reviewer in enumerate(reviewers):
+            if not isinstance(reviewer, dict):
+                unsupported_reviewers.append(f"reviewer:{index}")
+                continue
+            reviewer_id = str(reviewer.get("id") or f"reviewer:{index}")
+            reviewer_evidence_refs = reviewer.get("evidence_refs", [])
+            if not isinstance(reviewer_evidence_refs, list) or not reviewer_evidence_refs:
+                unsupported_reviewers.append(reviewer_id)
+        if unsupported_reviewers:
+            blocked_reasons.append("all_reviewers_require_evidence_refs")
+        if not isinstance(claims, list) or not claims:
+            blocked_reasons.append("certification_claims_required")
+            claims = [] if not isinstance(claims, list) else claims
+        for index, claim in enumerate(claims):
+            if not isinstance(claim, dict):
+                unsupported_claims.append(f"claim:{index}")
+                continue
+            claim_id = str(claim.get("id") or f"claim:{index}")
+            claim_evidence_refs = claim.get("evidence_refs", [])
+            if not isinstance(claim_evidence_refs, list) or not claim_evidence_refs:
+                unsupported_claims.append(claim_id)
+        if unsupported_claims:
+            blocked_reasons.append("all_certification_claims_require_evidence_refs")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "multi_model_certification_promotion",
+        "run_id": normalized_run_id,
+        "certification_request_digest": request_digest,
+        "certification_recorded": False,
+        "allowed_to_mutate_lifecycle": False,
+        "allowed_to_mark_done": False,
+        "model_consensus_is_fact": False,
+        "canonical_lifecycle_unchanged": True,
+        "external_adapter_write_through_enabled": False,
+        "persistent_learning_write_enabled": False,
+        "blocked_reasons": blocked_reasons,
+        "unsupported_claims": unsupported_claims,
+        "unsupported_reviewers": unsupported_reviewers,
+    }
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_certification_promotion",
+            "run_status": "rejected",
+            "runtime_boundary": "multi_model_certification_promotion_rejected",
+        }
+
+    assert started is not None
+    assert proposal_record is not None
+    record = {
+        **base,
+        "accepted_as": "certification_promotion_recorded",
+        "run_status": "certification_recorded",
+        "runtime_boundary": "multi_model_certification_promotion_recorded",
+        "certification_recorded": True,
+        "task_ref": started.get("task_ref"),
+        "worker_type": started.get("worker_type"),
+        "worker_id": started.get("worker_id"),
+        "reviewer_count": len(reviewers),
+        "quorum": quorum,
+        "truth_gate": truth_gate,
+        "claim_count": len(claims),
+        "proposal_artifact": {
+            "artifact_uri": proposal_artifact_uri,
+            "sha256": proposal_sha256,
+        },
+        "certification": {
+            "certification_type": certification.get("certification_type"),
+            "summary": summary[:HOT_PATH_SUMMARY_MAX_CHARS],
+            "lifecycle_target": lifecycle_target,
+            "evidence_refs": certification_evidence_refs,
+        },
+        "artifact": {
+            "artifact_uri": certification_artifact_uri,
+            "artifact_type": "json",
+            "sha256": hashlib.sha256(artifact_bytes).hexdigest(),
+            "size_bytes": len(artifact_bytes),
+            "summary": summary[:HOT_PATH_SUMMARY_MAX_CHARS],
+            "evidence_refs": request_evidence_refs,
+        },
+        "recorded_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -1394,6 +1580,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run-external-agent-prompt", action="store_true", help="Send a no-tool/no-write prompt to an allowlisted external agent")
     parser.add_argument("--run-external-agent-readonly-context", action="store_true", help="Send a no-tool/no-write prompt with a readonly context artifact pointer")
     parser.add_argument("--append-external-agent-proposal", action="store_true", help="Append a validated external agent proposal artifact pointer")
+    parser.add_argument("--append-certification-promotion", action="store_true", help="Append a validated multi-model certification promotion artifact pointer")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -1402,6 +1589,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prompt-request-json", default="{}", help="JSON prompt payload for --dry-run-external-agent-prompt")
     parser.add_argument("--context-request-json", default="{}", help="JSON context payload for --run-external-agent-readonly-context")
     parser.add_argument("--proposal-request-json", default="{}", help="JSON proposal payload for --append-external-agent-proposal")
+    parser.add_argument("--certification-request-json", default="{}", help="JSON certification payload for --append-certification-promotion")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -1469,6 +1657,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(proposal_request, dict):
             parser.error("--proposal-request-json must decode to an object")
         result = append_external_agent_proposal(ledger_path=args.runtime_ledger, run_id=args.run_id, proposal_request=proposal_request)
+    elif args.append_certification_promotion:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --append-certification-promotion")
+        if not args.run_id:
+            parser.error("--run-id is required with --append-certification-promotion")
+        certification_request = json.loads(args.certification_request_json)
+        if not isinstance(certification_request, dict):
+            parser.error("--certification-request-json must decode to an object")
+        result = append_certification_promotion(ledger_path=args.runtime_ledger, run_id=args.run_id, certification_request=certification_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:
