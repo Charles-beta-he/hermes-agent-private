@@ -67,8 +67,9 @@ SSOT: this file
 - [x] Slice 50: Add real sender execution authorization: consume real sender preflight, require elevated second approval, exact preflight/channel/target/payload/platform hash/token source, requested sender capability, TTL, and evidence; do not read token or send.
 - [x] Slice 51: Scoped commit for real sender execution authorization if verification passes. Commit: 46c237a27 Authorize real outbound sender execution.
 - [x] Slice 52: Add Telegram real sender executor: consume real sender execution authorization, require exact authorization/preflight/outbox/payload/platform hash/token source, read env token, call Telegram sendMessage, record platform message id, and never store token value.
-- [x] Slice 53: Scoped commit for Telegram real sender executor if verification passes. Commit: this scoped commit.
-- [ ] Slice 54: Add Lark real sender executor with equivalent authorization/token/API/message-id governance.
+- [x] Slice 53: Scoped commit for Telegram real sender executor if verification passes. Commit: ee3909348 Execute authorized Telegram outbound sender.
+- [x] Slice 54: Add Lark real sender executor with equivalent authorization/token/API/message-id governance.
+- [x] Slice 55: Scoped commit for Lark real sender executor if verification passes. Commit: this scoped commit.
 - [ ] Boundary: stop before external agent tools/file edits/shell commands, broad reopen, or unauthenticated sender execution unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
