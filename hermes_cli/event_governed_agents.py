@@ -6,11 +6,12 @@ read-only executor that appends a completed result. Separate external-agent
 paths may run ``--version`` probes, send no-tool/no-write dry-run prompts,
 attach read-only context artifact pointers, record validated proposal artifact
 pointers, record multi-model certification promotion packets, project elevated
-done authorizations, execute a ledger-local fact mutation, or project an external
-adapter write intent, or project an external adapter write authorization. Only the explicit
-ledger-local fact mutation can change canonical lifecycle facts; it still does
-not write external adapters, memory/skills, outbound messages, or cron/provider
-configuration.
+done authorizations, execute a ledger-local fact mutation, project an external
+adapter write intent, project an external adapter write authorization, or execute
+a local-file adapter harness write-through. Only the explicit ledger-local fact
+mutation can change canonical lifecycle facts, and only the local-file adapter
+harness can write adapter state; no path writes memory/skills, outbound messages,
+or cron/provider configuration.
 """
 
 from __future__ import annotations
@@ -1834,6 +1835,160 @@ def request_external_adapter_write_authorization(*, ledger_path: str | Path, run
     return record
 
 
+def execute_external_adapter_local_file_write(*, ledger_path: str | Path, run_id: str, execution_request: dict[str, Any]) -> dict[str, Any]:
+    """Execute a narrow local-file adapter write-through and read it back."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    authorization_id = str(execution_request.get("authorization_id", "")).strip()
+    intent_id = str(execution_request.get("intent_id", "")).strip()
+    adapter = str(execution_request.get("adapter", "")).strip().lower()
+    target_ref = str(execution_request.get("target_ref", "")).strip()
+    target_status = str(execution_request.get("target_status", "")).strip().lower()
+    adapter_state_path_raw = str(execution_request.get("adapter_state_path", "")).strip()
+    expected_previous_status = str(execution_request.get("expected_previous_status", "")).strip().lower()
+    evidence_refs = execution_request.get("evidence_refs", [])
+    request_digest = _digest(execution_request)
+    auth_record = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "external_adapter_write_authorization_approved"
+            and row.get("authorization_id") == authorization_id
+            and row.get("intent_id") == intent_id
+        ),
+        None,
+    )
+    existing = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "external_adapter_write_verified"
+            and row.get("authorization_id") == authorization_id
+            and row.get("intent_id") == intent_id
+            and row.get("adapter") == adapter
+            and row.get("target_ref") == target_ref
+            and row.get("target_status") == target_status
+        ),
+        None,
+    )
+    if existing is not None:
+        return {**existing, "idempotent_replay": True}
+
+    blocked_reasons: list[str] = []
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if auth_record is None:
+        blocked_reasons.append("write_authorization_required")
+    if adapter not in ALLOWED_EXTERNAL_WRITE_INTENT_ADAPTERS:
+        blocked_reasons.append("adapter_not_allowlisted")
+    if target_status != "done":
+        blocked_reasons.append("target_status_must_be_done")
+    if not adapter_state_path_raw:
+        blocked_reasons.append("adapter_state_path_required")
+    adapter_state_path = Path(adapter_state_path_raw) if adapter_state_path_raw else None
+    if adapter_state_path is not None and not adapter_state_path.exists():
+        blocked_reasons.append("adapter_state_path_missing")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("write_execution_requires_evidence_refs")
+    if auth_record is not None:
+        if adapter != auth_record.get("adapter"):
+            blocked_reasons.append("execution_adapter_mismatch")
+        if target_ref != auth_record.get("target_ref"):
+            blocked_reasons.append("execution_target_ref_mismatch")
+        if target_status != auth_record.get("target_status"):
+            blocked_reasons.append("execution_target_status_mismatch")
+        expires_at = str(auth_record.get("expires_at", ""))
+        try:
+            expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expires_dt.tzinfo is None:
+                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+            if expires_dt <= datetime.now(timezone.utc):
+                blocked_reasons.append("write_authorization_expired")
+        except ValueError:
+            blocked_reasons.append("write_authorization_expires_at_invalid")
+
+    state: dict[str, Any] | None = None
+    previous_status = ""
+    if adapter_state_path is not None and adapter_state_path.exists():
+        try:
+            loaded = json.loads(adapter_state_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                state = loaded
+            else:
+                blocked_reasons.append("adapter_state_must_be_object")
+        except json.JSONDecodeError:
+            blocked_reasons.append("adapter_state_json_invalid")
+    if state is not None:
+        tasks = state.get("tasks")
+        if not isinstance(tasks, dict):
+            blocked_reasons.append("adapter_state_tasks_object_required")
+        elif target_ref not in tasks or not isinstance(tasks.get(target_ref), dict):
+            blocked_reasons.append("adapter_state_target_ref_missing")
+        else:
+            previous_status = str(tasks[target_ref].get("status", "")).strip().lower()
+            if expected_previous_status and previous_status != expected_previous_status:
+                blocked_reasons.append("adapter_state_previous_status_mismatch")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "external_adapter_local_file_write_through",
+        "run_id": normalized_run_id,
+        "authorization_id": authorization_id,
+        "intent_id": intent_id,
+        "adapter": adapter,
+        "target_ref": target_ref,
+        "target_status": target_status,
+        "adapter_state_path": adapter_state_path_raw,
+        "previous_status": previous_status,
+        "write_executed": False,
+        "readback_verified": False,
+        "rollback_available": False,
+        "external_adapter_write_through_enabled": False,
+        "request_digest": request_digest,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_external_adapter_write_execution",
+            "run_status": "rejected",
+            "runtime_boundary": "external_adapter_write_execution_rejected",
+        }
+
+    assert adapter_state_path is not None
+    assert state is not None
+    tasks = state["tasks"]
+    tasks[target_ref]["status"] = target_status
+    tasks[target_ref]["updated_by"] = "hermes_event_governed_agent_executor"
+    tasks[target_ref]["updated_at"] = _now()
+    adapter_state_path.write_text(json.dumps(state, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    readback_state = json.loads(adapter_state_path.read_text(encoding="utf-8"))
+    readback_status = str(readback_state["tasks"][target_ref].get("status", "")).strip().lower()
+    readback_verified = readback_status == target_status
+    record = {
+        **base,
+        "accepted_as": "external_adapter_write_verified" if readback_verified else "external_adapter_write_mismatch",
+        "run_status": "external_adapter_write_verified" if readback_verified else "external_adapter_write_mismatch",
+        "runtime_boundary": "external_adapter_local_file_write_through",
+        "write_executed": True,
+        "readback_status": readback_status,
+        "readback_verified": readback_verified,
+        "rollback_available": True,
+        "external_adapter_write_through_enabled": True,
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+        "idempotent_replay": False,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -2024,6 +2179,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute-ledger-fact-mutation", action="store_true", help="Execute ledger-local canonical lifecycle fact mutation")
     parser.add_argument("--request-external-adapter-write-intent", action="store_true", help="Project external adapter write intent without write-through")
     parser.add_argument("--request-external-adapter-write-authorization", action="store_true", help="Project external adapter write authorization without executing write-through")
+    parser.add_argument("--execute-external-adapter-local-file-write", action="store_true", help="Execute authorized external adapter write against a local-file adapter harness and read it back")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -2037,6 +2193,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fact-request-json", default="{}", help="JSON fact mutation payload for --execute-ledger-fact-mutation")
     parser.add_argument("--adapter-intent-json", default="{}", help="JSON adapter write intent payload for --request-external-adapter-write-intent")
     parser.add_argument("--adapter-authorization-json", default="{}", help="JSON adapter write authorization payload for --request-external-adapter-write-authorization")
+    parser.add_argument("--adapter-execution-json", default="{}", help="JSON adapter write execution payload for --execute-external-adapter-local-file-write")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -2149,6 +2306,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(adapter_authorization, dict):
             parser.error("--adapter-authorization-json must decode to an object")
         result = request_external_adapter_write_authorization(ledger_path=args.runtime_ledger, run_id=args.run_id, authorization_request=adapter_authorization)
+    elif args.execute_external_adapter_local_file_write:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --execute-external-adapter-local-file-write")
+        if not args.run_id:
+            parser.error("--run-id is required with --execute-external-adapter-local-file-write")
+        adapter_execution = json.loads(args.adapter_execution_json)
+        if not isinstance(adapter_execution, dict):
+            parser.error("--adapter-execution-json must decode to an object")
+        result = execute_external_adapter_local_file_write(ledger_path=args.runtime_ledger, run_id=args.run_id, execution_request=adapter_execution)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

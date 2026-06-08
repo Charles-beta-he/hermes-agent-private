@@ -1769,3 +1769,151 @@ def test_external_adapter_write_authorization_rejects_non_elevated_expired_drift
     assert cli_result["accepted_as"] == "external_adapter_write_authorization_projected"
     assert cli_result["write_authorized"] is True
     assert cli_result["write_executed"] is False
+
+
+def _write_adapter_authorization_run(tmp_path):
+    ledger_path, started, proposal_path, proposal_record, certification_path, certification_record, authorization_record, fact_record, intent_record = _write_adapter_intent_run(tmp_path)
+    write_authorization = ega.request_external_adapter_write_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        authorization_request={
+            "intent_id": intent_record["intent_id"],
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "adapter": intent_record["adapter"],
+            "target_ref": intent_record["target_ref"],
+            "target_status": intent_record["target_status"],
+            "canonical_fact_digest": intent_record["canonical_fact_digest"],
+            "intent_request_digest": intent_record["request_digest"],
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+            "evidence_refs": ["artifact://agent-coverage/write-auth.json"],
+        },
+    )
+    return (
+        ledger_path,
+        started,
+        proposal_path,
+        proposal_record,
+        certification_path,
+        certification_record,
+        authorization_record,
+        fact_record,
+        intent_record,
+        write_authorization,
+    )
+
+
+def test_external_adapter_local_file_executor_writes_and_readback_verifies_idempotently(tmp_path) -> None:
+    ledger_path, started, *_rest, intent_record, write_authorization = _write_adapter_authorization_run(tmp_path)
+    adapter_state_path = tmp_path / "adapter-state.json"
+    adapter_state_path.write_text(json.dumps({"tasks": {"task:arch-coverage": {"status": "review"}}}))
+
+    result = ega.execute_external_adapter_local_file_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "taskpool",
+            "target_ref": "task:arch-coverage",
+            "target_status": "done",
+            "adapter_state_path": str(adapter_state_path),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/write-execute.json"],
+        },
+    )
+
+    assert result["accepted_as"] == "external_adapter_write_verified"
+    assert result["run_status"] == "external_adapter_write_verified"
+    assert result["runtime_boundary"] == "external_adapter_local_file_write_through"
+    assert result["write_executed"] is True
+    assert result["readback_verified"] is True
+    assert result["external_adapter_write_through_enabled"] is True
+    assert result["rollback_available"] is True
+    assert json.loads(adapter_state_path.read_text())["tasks"]["task:arch-coverage"]["status"] == "done"
+    assert len(ledger_path.read_text().splitlines()) == 8
+
+    replay = ega.execute_external_adapter_local_file_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "taskpool",
+            "target_ref": "task:arch-coverage",
+            "target_status": "done",
+            "adapter_state_path": str(adapter_state_path),
+            "expected_previous_status": "done",
+            "evidence_refs": ["artifact://agent-coverage/write-execute-replay.json"],
+        },
+    )
+    assert replay["accepted_as"] == "external_adapter_write_verified"
+    assert replay["idempotent_replay"] is True
+    assert len(ledger_path.read_text().splitlines()) == 8
+
+
+def test_external_adapter_local_file_executor_rejects_missing_authorization_drift_and_cli_smoke(tmp_path) -> None:
+    ledger_path, started, *_rest, intent_record, write_authorization = _write_adapter_authorization_run(tmp_path)
+    missing_state_path = tmp_path / "missing-adapter-state.json"
+    rejected = ega.execute_external_adapter_local_file_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": "missing-auth",
+            "intent_id": intent_record["intent_id"],
+            "adapter": "lark",
+            "target_ref": "task:arch-coverage",
+            "target_status": "done",
+            "adapter_state_path": str(missing_state_path),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/bad-write-execute.json"],
+        },
+    )
+    assert rejected["accepted_as"] == "rejected_external_adapter_write_execution"
+    assert rejected["write_executed"] is False
+    assert "write_authorization_required" in rejected["blocked_reasons"]
+    assert "adapter_state_path_missing" in rejected["blocked_reasons"]
+    assert len(ledger_path.read_text().splitlines()) == 7
+
+    _ledger_path, started2, *_rest2, intent_record2, write_authorization2 = _write_adapter_authorization_run(tmp_path / "cli")
+    adapter_state_path = tmp_path / "cli" / "adapter-state.json"
+    adapter_state_path.parent.mkdir(parents=True, exist_ok=True)
+    adapter_state_path.write_text(json.dumps({"tasks": {intent_record2["target_ref"]: {"status": "review"}}}))
+    request_json = json.dumps(
+        {
+            "authorization_id": write_authorization2["authorization_id"],
+            "intent_id": intent_record2["intent_id"],
+            "adapter": intent_record2["adapter"],
+            "target_ref": intent_record2["target_ref"],
+            "target_status": intent_record2["target_status"],
+            "adapter_state_path": str(adapter_state_path),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/cli-write-execute.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--execute-external-adapter-local-file-write",
+            "--runtime-ledger",
+            str(_ledger_path),
+            "--run-id",
+            started2["run_id"],
+            "--adapter-execution-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "external_adapter_write_verified"
+    assert cli_result["write_executed"] is True
+    assert cli_result["readback_verified"] is True

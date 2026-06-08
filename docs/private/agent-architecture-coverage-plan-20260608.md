@@ -45,8 +45,10 @@ SSOT: this file
 - [x] Slice 28: Add external adapter write intent projection: require canonical done fact, adapter allowlist, readiness check, readback plan, rollback plan, and evidence while keeping write-through disabled.
 - [x] Slice 29: Scoped commit for adapter write intent projection if verification passes. Commit: 54431a916 Project external adapter write intents.
 - [x] Slice 30: Add external adapter write authorization projection: require recorded intent, elevated actor, approval decision, TTL, target/digest unchanged, and evidence while still not executing write-through.
-- [x] Slice 31: Scoped commit for adapter write authorization projection if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before external adapter/taskpool/Kanban/Lark write-through execution, external agent tools/file edits/shell commands, or rollback/reopen unless a narrower executor-specific slice authorizes that capability.
+- [x] Slice 31: Scoped commit for adapter write authorization projection if verification passes. Commit: 00e039a8f Project external adapter write authorizations.
+- [x] Slice 32: Add narrow local-file adapter write-through executor: consume unexpired write authorization, update adapter_state_path status=done, read back, record verified/mismatch, and keep real taskpool/Kanban/Lark/Telegram adapters disabled.
+- [x] Slice 33: Scoped commit for local-file adapter executor if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before real external adapter/taskpool/Kanban/Lark write-through execution, external agent tools/file edits/shell commands, or rollback/reopen unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
 
@@ -64,6 +66,7 @@ SSOT: this file
 - The ninth approved runtime boundary is ledger-local canonical fact mutation: a valid unexpired done authorization may be consumed to append canonical_lifecycle_status=done as a durable fact in the local ledger. External adapter write-through remains disabled and requires a separate slice.
 - The tenth approved runtime boundary is external adapter write intent projection: a canonical done fact may be mapped to an allowlisted adapter target only as an intent with readiness/readback/rollback plans and evidence. It still cannot perform external write-through.
 - The eleventh approved runtime boundary is external adapter write authorization projection: an elevated actor may approve a recorded write intent only if adapter/ref/status/canonical digest/intent digest are unchanged and TTL is valid. It still records authorization only and does not execute write-through.
+- The twelfth approved runtime boundary is local-file adapter write-through execution: an unexpired write authorization may update a local adapter_state_path target status to done, then immediately read it back and record verified or mismatch. This is a harness executor only; real taskpool/Kanban/Lark/Telegram writes still require separate adapter-specific slices.
 
 ## Files Changed
 
