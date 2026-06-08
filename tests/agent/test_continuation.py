@@ -124,6 +124,11 @@ def test_clean_session_handoff_requires_valid_packet_and_inherits_limits_not_sum
         goal_boundary={"type": "acceptance_commands", "commands": ["pytest"], "closure_criteria": "all_pass"},
         side_effect_ledger=[{"key": "comment:lark-1", "status": "done"}],
         limits={"refresh_count": 2, "max_refreshes_per_task": 3, "global_refresh_count": 2, "global_hard_cap": 5},
+        recurrent_task_state={
+            "schema": "hermes_recurrent_task_state_v1",
+            "task_id": "task-1",
+            "next_bounded_action": "run acceptance command",
+        },
         metadata={"compression_attempts": 3},
     )
 
@@ -136,6 +141,8 @@ def test_clean_session_handoff_requires_valid_packet_and_inherits_limits_not_sum
     assert payload["evidence"] == [{"id": "E-1", "path": "proof.json"}]
     assert payload["metadata"]["handoff_summary"] == "natural language summary is advisory"
     assert payload["metadata"]["summary_authority"] == "non_authoritative"
+    assert payload["recurrent_task_state"]["schema"] == "hermes_recurrent_task_state_v1"
+    assert payload["recurrent_task_state"]["next_bounded_action"] == "run acceptance command"
     assert payload["side_effect_ledger"] == [{"key": "comment:lark-1", "status": "done"}]
     assert payload["limits"]["global_hard_cap"] == 5
 

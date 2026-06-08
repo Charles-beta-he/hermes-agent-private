@@ -79,6 +79,7 @@ class ContinuationPacket:
     resume: dict[str, Any] = field(default_factory=dict)
     delivery: dict[str, Any] = field(default_factory=dict)
     limits: dict[str, Any] = field(default_factory=dict)
+    recurrent_task_state: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -106,6 +107,7 @@ class ContinuationPacket:
             "resume": dict(self.resume),
             "delivery": dict(self.delivery),
             "limits": dict(self.limits),
+            "recurrent_task_state": dict(self.recurrent_task_state),
             "metadata": dict(self.metadata),
         }
 
@@ -131,6 +133,7 @@ def build_continuation_packet(
     resume: Mapping[str, Any] | None = None,
     delivery: Mapping[str, Any] | None = None,
     limits: Mapping[str, Any] | None = None,
+    recurrent_task_state: Mapping[str, Any] | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> ContinuationPacket:
     raw_reason = str(reason or "unknown")
@@ -155,6 +158,7 @@ def build_continuation_packet(
         resume=dict(resume or {}),
         delivery=dict(delivery or {}),
         limits=dict(limits or {}),
+        recurrent_task_state=dict(recurrent_task_state or {}),
         metadata=dict(metadata or {}),
     )
 
@@ -312,6 +316,7 @@ def build_clean_session_handoff(
         resume={"mode": "clean_session", "executor": "conversation_loop"},
         delivery=payload.get("delivery") or {},
         limits=payload.get("limits") or {},
+        recurrent_task_state=payload.get("recurrent_task_state") or {},
         metadata=handoff_metadata,
     )
 

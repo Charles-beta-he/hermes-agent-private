@@ -109,6 +109,46 @@ def _capture_auto_relay_summary(agent: Any, final_response: str | None) -> str:
     return str(final_response or "")
 
 
+def _estimate_recurrent_state_tokens(text: str) -> int:
+    return max(1, (len(text or "") + 3) // 4)
+
+
+def _build_recurrent_task_state_hint(*, agent: Any, reason: str, summary: str, relay_index: int, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    summary_text = str(summary or "").strip()
+    objective = ""
+    for message in reversed(messages or []):
+        if str(message.get("role") or "") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            objective = content.strip()
+            break
+    if not objective:
+        objective = summary_text or str(getattr(agent, "task_id", "") or "") or "continue the current task"
+    wrong_source_hypotheses = []
+    if len(messages or []) > 8:
+        wrong_source_hypotheses.append("do_not_dump_full_history_when_compact_state_covers_resume")
+    state = {
+        "schema": "hermes_recurrent_task_state_v1",
+        "task_id": getattr(agent, "task_id", None),
+        "attempt": relay_index,
+        "objective": objective[:240],
+        "completed_proof_artifacts": [],
+        "files_changed": [],
+        "current_blocker": str(reason or "iteration_budget_exhausted"),
+        "next_bounded_action": "verify current files/state, then continue the smallest unfinished acceptance item",
+        "remaining_steps": ["continue the user task from the exhausted-turn summary"],
+        "wrong_source_hypotheses": wrong_source_hypotheses,
+        "partial_tail": summary_text[-1200:],
+        "policy": "compact_state_is_resume_hint_not_proof; verify files and artifacts before lifecycle advancement",
+    }
+    encoded = json.dumps(state, ensure_ascii=False, sort_keys=True)
+    state["char_count"] = len(encoded)
+    state["token_estimate"] = _estimate_recurrent_state_tokens(encoded)
+    state["max_chars"] = 2400
+    return state
+
+
 def _reset_auto_relay_count_for_root_turn(agent: Any) -> None:
     """Reset relay capacity for a user-initiated root turn.
 
@@ -123,6 +163,13 @@ def _reset_auto_relay_count_for_root_turn(agent: Any) -> None:
 
 def _write_auto_relay_packet(agent: Any, *, reason: str, summary: str, messages: list[dict[str, Any]], api_call_count: int) -> Path:
     relay_index = int(getattr(agent, "_relay_count", 0) or 0) + 1
+    recurrent_task_state = _build_recurrent_task_state_hint(
+        agent=agent,
+        reason=reason,
+        summary=summary,
+        relay_index=relay_index,
+        messages=messages,
+    )
     packet = build_continuation_packet(
         scope="conversation",
         reason=reason,
@@ -146,6 +193,7 @@ def _write_auto_relay_packet(agent: Any, *, reason: str, summary: str, messages:
             "budget_max": getattr(getattr(agent, "iteration_budget", None), "max_total", getattr(agent, "max_iterations", 0)),
             "api_calls": api_call_count,
         },
+        recurrent_task_state=recurrent_task_state,
         metadata={
             "legacy_schema": "hermes_auto_relay_packet_v1",
             "turn_exit_reason": reason,

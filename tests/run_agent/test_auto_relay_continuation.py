@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from agent.conversation_loop import (
     _build_auto_relay_prompt,
+    _build_recurrent_task_state_hint,
     _capture_auto_relay_summary,
     _is_auto_relay_exit_reason,
     _reset_auto_relay_count_for_root_turn,
@@ -62,6 +63,27 @@ def test_capture_auto_relay_summary_requires_authoritative_handoff():
     assert _capture_auto_relay_summary(synthetic, 'I reached the iteration limit and could not summarize.') == ''
 
 
+def test_build_recurrent_task_state_hint_prefers_compact_resume_state():
+    agent = SimpleNamespace(task_id="task-1")
+
+    state = _build_recurrent_task_state_hint(
+        agent=agent,
+        reason="max_iterations_reached(8/8)",
+        summary="Run verification then report proof",
+        relay_index=2,
+        messages=[{"role": "user", "content": "Finish the Hermes proof bundle"}] * 9,
+    )
+
+    assert state["schema"] == "hermes_recurrent_task_state_v1"
+    assert state["task_id"] == "task-1"
+    assert state["attempt"] == 2
+    assert state["objective"] == "Finish the Hermes proof bundle"
+    assert state["remaining_steps"] == ["continue the user task from the exhausted-turn summary"]
+    assert "do_not_dump_full_history_when_compact_state_covers_resume" in state["wrong_source_hypotheses"]
+    assert state["token_estimate"] > 0
+    assert state["max_chars"] == 2400
+
+
 def test_write_auto_relay_packet_and_prompt(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_RELAY_PACKET_DIR", str(tmp_path))
     monkeypatch.setenv("HERMES_CONTINUATION_DIR", str(tmp_path / "continuations"))
@@ -91,6 +113,8 @@ def test_write_auto_relay_packet_and_prompt(tmp_path, monkeypatch):
     assert payload["reason"] == "max_iterations"
     assert payload["summary"] == "summary text"
     assert payload["limits"]["relay_index"] == 1
+    assert payload["recurrent_task_state"]["schema"] == "hermes_recurrent_task_state_v1"
+    assert payload["recurrent_task_state"]["next_bounded_action"].startswith("verify current files/state")
     assert payload["metadata"]["messages_snapshot"][-1]["content"] == "hello"
 
     prompt = _build_auto_relay_prompt(
