@@ -59,7 +59,9 @@ SSOT: this file
 - [x] Slice 42: Add outbound delivery authorization projection: consume pending outbox item, require elevated actor approval, exact outbox_id/payload_hash/target/channel, TTL, readback, and do not send.
 - [x] Slice 43: Scoped commit for outbound delivery authorization if verification passes. Commit: 08be51b97 Project outbound delivery authorizations.
 - [x] Slice 44: Add Telegram sender dry-run executor: consume delivery authorization, require channel=telegram and sender_mode=dry_run, verify outbox/payload hash, record platform payload hash/summary only, and do not read token or send.
-- [x] Slice 45: Scoped commit for Telegram sender dry-run if verification passes. Commit: this scoped commit.
+- [x] Slice 45: Scoped commit for Telegram sender dry-run if verification passes. Commit: 7a2bd2ded Dry run Telegram outbound delivery.
+- [x] Slice 46: Add Lark sender dry-run executor: consume delivery authorization, require channel=lark and sender_mode=dry_run, verify outbox/payload hash, record platform payload hash/summary only, and do not read token or send.
+- [x] Slice 47: Scoped commit for Lark sender dry-run if verification passes. Commit: this scoped commit.
 - [ ] Boundary: stop before real Lark/Telegram sender execution, external agent tools/file edits/shell commands, or broad reopen unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
@@ -85,6 +87,7 @@ SSOT: this file
 - The sixteenth approved runtime boundary is outbound outbox enqueue only: a verified write/rollback event may produce a pending Lark/Telegram outbox item with target allowlist, no secret-like payload keys, payload hash/summary only, and readback. It does not call platform APIs or send messages.
 - The seventeenth approved runtime boundary is outbound delivery authorization projection: an elevated actor may approve a pending outbox item for exactly one channel/target/payload hash under TTL after outbox readback. It still does not call Lark/Telegram APIs or send messages.
 - The eighteenth approved runtime boundary is Telegram sender dry-run only: an authorized Telegram delivery may validate a platform payload preview and record its hash/summary without reading tokens or sending messages. Real Telegram API execution remains disabled.
+- The nineteenth approved runtime boundary is Lark sender dry-run only: an authorized Lark delivery may validate a text message payload preview and record its hash/summary without reading tokens or sending messages. Real Lark API execution remains disabled.
 
 ## Files Changed
 

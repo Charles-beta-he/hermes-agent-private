@@ -2926,3 +2926,196 @@ def test_telegram_sender_dry_run_rejects_send_mode_channel_drift_secret_payload_
     assert cli_result["accepted_as"] == "telegram_delivery_dry_run_verified"
     assert cli_result["send_executed"] is False
     assert cli_result["token_read"] is False
+
+
+def _make_lark_delivery_authorization_run(tmp_path):
+    ledger_path, started, intent_record, write_authorization = _write_kanban_authorization_run(tmp_path)
+    db_path = tmp_path / "lark-kanban.db"
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, status TEXT)")
+        conn.execute("INSERT INTO tasks (id, title, status) VALUES (?, ?, ?)", ("kb_arch_task", "Arch", "review"))
+    write_result = ega.execute_kanban_db_closeout_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "kanban",
+            "target_ref": "kb_arch_task",
+            "target_status": "done",
+            "kanban_db_path": str(db_path),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/kanban-db-write.json"],
+        },
+    )
+    outbox_path = tmp_path / "lark-outbox.jsonl"
+    outbox = ega.execute_outbound_outbox_enqueue(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        outbox_request={
+            "source_run_status": "kanban_db_write_verified",
+            "source_request_digest": write_result["request_digest"],
+            "channels": ["lark"],
+            "target_id": "lark-review-chat",
+            "target_allowlist": ["lark-review-chat"],
+            "outbox_path": str(outbox_path),
+            "payload": {"text": "Governed closeout verified; pending Lark delivery."},
+            "evidence_refs": ["artifact://agent-coverage/lark-outbox.json"],
+        },
+    )
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    authorization = ega.request_outbound_delivery_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        delivery_authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "lark",
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/lark-delivery-auth.json"],
+        },
+    )
+    return ledger_path, started, outbox, outbox_path, authorization
+
+
+def test_lark_sender_dry_run_projects_payload_without_token_or_send_and_is_idempotent(tmp_path) -> None:
+    ledger_path, started, outbox, outbox_path, authorization = _make_lark_delivery_authorization_run(tmp_path)
+    result = ega.execute_lark_sender_dry_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        lark_dry_run_request={
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "lark",
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "dry_run",
+            "platform_payload": {"receive_id": "lark-review-chat", "msg_type": "text", "content": {"text": "Governed closeout verified; pending Lark delivery."}},
+            "evidence_refs": ["artifact://agent-coverage/lark-dry-run.json"],
+        },
+    )
+    assert result["accepted_as"] == "lark_delivery_dry_run_verified"
+    assert result["channel"] == "lark"
+    assert result["sender_mode"] == "dry_run"
+    assert result["send_executed"] is False
+    assert result["token_read"] is False
+    assert result["readback_verified"] is True
+    assert result["platform_payload_hash"]
+    assert "platform_payload" not in result
+
+    replay = ega.execute_lark_sender_dry_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        lark_dry_run_request={
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "lark",
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "dry_run",
+            "platform_payload": {"receive_id": "lark-review-chat", "msg_type": "text", "content": {"text": "Governed closeout verified; pending Lark delivery."}},
+            "evidence_refs": ["artifact://agent-coverage/lark-dry-run-replay.json"],
+        },
+    )
+    assert replay["idempotent_replay"] is True
+    assert len([line for line in ledger_path.read_text(encoding="utf-8").splitlines() if "lark_delivery_dry_run_verified" in line]) == 1
+
+
+def test_lark_sender_dry_run_rejects_send_mode_channel_drift_secret_payload_and_cli_smoke(tmp_path) -> None:
+    ledger_path, started, outbox, outbox_path, authorization = _make_lark_delivery_authorization_run(tmp_path)
+    rejected_mode = ega.execute_lark_sender_dry_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        lark_dry_run_request={
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "lark",
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "send",
+            "platform_payload": {"receive_id": "lark-review-chat", "msg_type": "text", "content": {"text": "x"}},
+            "evidence_refs": ["artifact://agent-coverage/lark-send-mode.json"],
+        },
+    )
+    assert rejected_mode["accepted_as"] == "rejected_lark_delivery_dry_run"
+    assert "dry_run_mode_required" in rejected_mode["blocked_reasons"]
+    rejected_channel = ega.execute_lark_sender_dry_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        lark_dry_run_request={
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "dry_run",
+            "platform_payload": {"receive_id": "lark-review-chat", "msg_type": "text", "content": {"text": "x"}},
+            "evidence_refs": ["artifact://agent-coverage/lark-channel-drift.json"],
+        },
+    )
+    assert "lark_channel_required" in rejected_channel["blocked_reasons"]
+    rejected_secret = ega.execute_lark_sender_dry_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        lark_dry_run_request={
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "lark",
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "dry_run",
+            "platform_payload": {"receive_id": "lark-review-chat", "msg_type": "text", "tenant_access_token": "secret-token", "content": {"text": "x"}},
+            "evidence_refs": ["artifact://agent-coverage/lark-secret.json"],
+        },
+    )
+    assert "platform_payload_contains_secret_like_key" in rejected_secret["blocked_reasons"]
+
+    request_json = json.dumps(
+        {
+            "delivery_authorization_id": authorization["delivery_authorization_id"],
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "lark",
+            "target_id": "lark-review-chat",
+            "payload_hash": outbox["payload_hash"],
+            "sender_mode": "dry_run",
+            "platform_payload": {"receive_id": "lark-review-chat", "msg_type": "text", "content": {"text": "CLI Lark dry-run."}},
+            "evidence_refs": ["artifact://agent-coverage/lark-dry-run-cli.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--execute-lark-sender-dry-run",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--lark-dry-run-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "lark_delivery_dry_run_verified"
+    assert cli_result["send_executed"] is False
+    assert cli_result["token_read"] is False
