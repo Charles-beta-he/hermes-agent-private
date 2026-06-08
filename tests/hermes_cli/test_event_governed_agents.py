@@ -3851,6 +3851,11 @@ def test_lark_real_sender_executes_http_send_with_bearer_token_and_records_messa
     assert result["token_value_stored"] is False
     assert _LarkTestHandler.requests[0]["path"] == "/open-apis/im/v1/messages?receive_id_type=chat_id"
     assert _LarkTestHandler.requests[0]["authorization"] == "Bearer tenant-token-123"
+    assert _LarkTestHandler.requests[0]["body"] == {
+        "receive_id": "lark-review-chat",
+        "msg_type": "text",
+        "content": json.dumps({"text": "Governed closeout verified; pending Lark delivery."}, ensure_ascii=False),
+    }
 
 
 def test_lark_real_sender_rejects_disabled_capability_hash_drift_missing_token_and_cli_smoke(tmp_path, monkeypatch) -> None:

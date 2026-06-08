@@ -3599,8 +3599,28 @@ def execute_lark_real_sender(*, ledger_path: str | Path, run_id: str, lark_send_
         return {**base, "accepted_as": "rejected_lark_real_sender", "run_status": "rejected", "runtime_boundary": "lark_real_sender_rejected", "send_executed": False, "token_read": bool(token_value)}
 
     send_url = f"{api_base_url}/open-apis/im/v1/messages?receive_id_type={receive_id_type}"
+    assert isinstance(platform_payload, dict)
+    send_payload: dict[str, Any] = {str(key): value for key, value in platform_payload.items()}
+    if isinstance(send_payload.get("content"), dict):
+        send_payload["content"] = json.dumps(send_payload["content"], ensure_ascii=False)
     try:
-        platform_response = _post_json(send_url, platform_payload, headers={"Authorization": f"Bearer {token_value}"})
+        platform_response = _post_json(send_url, send_payload, headers={"Authorization": f"Bearer {token_value}"})
+    except urllib.error.HTTPError as exc:
+        try:
+            failure_body = exc.read().decode("utf-8")[:200]
+        except Exception:
+            failure_body = str(exc)[:200]
+        return {
+            **base,
+            "accepted_as": "lark_delivery_send_failed",
+            "run_status": "lark_delivery_send_failed",
+            "runtime_boundary": "lark_real_sender_platform_failure",
+            "send_executed": True,
+            "token_read": True,
+            "token_value_stored": False,
+            "failure_class": type(exc).__name__,
+            "failure_detail": failure_body,
+        }
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         return {
             **base,
