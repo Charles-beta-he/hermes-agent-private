@@ -7,7 +7,7 @@ paths may run ``--version`` probes, send no-tool/no-write dry-run prompts,
 attach read-only context artifact pointers, record validated proposal artifact
 pointers, record multi-model certification promotion packets, project elevated
 done authorizations, execute a ledger-local fact mutation, or project an external
-adapter write intent. Only the explicit
+adapter write intent, or project an external adapter write authorization. Only the explicit
 ledger-local fact mutation can change canonical lifecycle facts; it still does
 not write external adapters, memory/skills, outbound messages, or cron/provider
 configuration.
@@ -1718,6 +1718,122 @@ def request_external_adapter_write_intent(*, ledger_path: str | Path, run_id: st
     return record
 
 
+def request_external_adapter_write_authorization(*, ledger_path: str | Path, run_id: str, authorization_request: dict[str, Any]) -> dict[str, Any]:
+    """Authorize a recorded adapter write intent without executing the external write."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    intent_id = str(authorization_request.get("intent_id", "")).strip()
+    actor_id = str(authorization_request.get("actor_id", "")).strip()
+    actor_role = str(authorization_request.get("actor_role", "")).strip()
+    decision = str(authorization_request.get("decision", "")).strip().lower()
+    adapter = str(authorization_request.get("adapter", "")).strip().lower()
+    target_ref = str(authorization_request.get("target_ref", "")).strip()
+    target_status = str(authorization_request.get("target_status", "")).strip().lower()
+    canonical_fact_digest = str(authorization_request.get("canonical_fact_digest", "")).strip()
+    intent_request_digest = str(authorization_request.get("intent_request_digest", "")).strip()
+    expires_at = str(authorization_request.get("expires_at", "")).strip()
+    evidence_refs = authorization_request.get("evidence_refs", [])
+    request_digest = _digest(authorization_request)
+    intent_record = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "external_adapter_write_intent_recorded"
+            and row.get("intent_id") == intent_id
+        ),
+        None,
+    )
+    blocked_reasons: list[str] = []
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if intent_record is None:
+        blocked_reasons.append("write_intent_required")
+    if not actor_id:
+        blocked_reasons.append("actor_id_required")
+    if actor_role not in ELEVATED_DONE_AUTH_ROLES:
+        blocked_reasons.append("elevated_actor_required")
+    if decision != "approved":
+        blocked_reasons.append("approval_decision_required")
+    if target_status != "done":
+        blocked_reasons.append("target_status_must_be_done")
+    if not expires_at:
+        blocked_reasons.append("expires_at_required")
+    else:
+        try:
+            expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expires_dt.tzinfo is None:
+                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+            if expires_dt <= datetime.now(timezone.utc):
+                blocked_reasons.append("authorization_expired")
+        except ValueError:
+            blocked_reasons.append("authorization_expires_at_invalid")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("write_authorization_requires_evidence_refs")
+    forbidden_keys = sorted((WORKER_FORBIDDEN_RESULT_KEYS | {"write_through_enabled", "write_through_allowed", "external_adapter_write_through_enabled"}).intersection(authorization_request.keys()))
+    if forbidden_keys:
+        blocked_reasons.append("write_authorization_contains_forbidden_authority_keys")
+    if intent_record is not None:
+        if adapter != intent_record.get("adapter"):
+            blocked_reasons.append("authorization_adapter_mismatch")
+        if target_ref != intent_record.get("target_ref"):
+            blocked_reasons.append("authorization_target_ref_mismatch")
+        if target_status != intent_record.get("target_status"):
+            blocked_reasons.append("authorization_target_status_mismatch")
+        if canonical_fact_digest != intent_record.get("canonical_fact_digest"):
+            blocked_reasons.append("authorization_canonical_fact_digest_mismatch")
+        if intent_request_digest != intent_record.get("request_digest"):
+            blocked_reasons.append("authorization_intent_request_digest_mismatch")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "external_adapter_write_authorization_projection",
+        "run_id": normalized_run_id,
+        "intent_id": intent_id,
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+        "decision": decision,
+        "adapter": adapter,
+        "target_ref": target_ref,
+        "target_status": target_status,
+        "canonical_fact_digest": canonical_fact_digest,
+        "intent_request_digest": intent_request_digest,
+        "expires_at": expires_at,
+        "write_authorized": False,
+        "write_executed": False,
+        "readback_required": True,
+        "rollback_required": True,
+        "external_adapter_write_through_enabled": False,
+        "request_digest": request_digest,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_external_adapter_write_authorization",
+            "run_status": "rejected",
+            "runtime_boundary": "external_adapter_write_authorization_rejected",
+        }
+
+    authorization_id = "adapter_auth_" + _digest({"run_id": normalized_run_id, "request_digest": request_digest})[:24]
+    record = {
+        **base,
+        "accepted_as": "external_adapter_write_authorization_projected",
+        "run_status": "external_adapter_write_authorization_approved",
+        "runtime_boundary": "external_adapter_write_authorization_projection",
+        "authorization_id": authorization_id,
+        "write_authorized": True,
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -1907,6 +2023,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--request-done-authorization", action="store_true", help="Project an elevated done authorization without fact mutation")
     parser.add_argument("--execute-ledger-fact-mutation", action="store_true", help="Execute ledger-local canonical lifecycle fact mutation")
     parser.add_argument("--request-external-adapter-write-intent", action="store_true", help="Project external adapter write intent without write-through")
+    parser.add_argument("--request-external-adapter-write-authorization", action="store_true", help="Project external adapter write authorization without executing write-through")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -1919,6 +2036,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--authorization-request-json", default="{}", help="JSON authorization payload for --request-done-authorization")
     parser.add_argument("--fact-request-json", default="{}", help="JSON fact mutation payload for --execute-ledger-fact-mutation")
     parser.add_argument("--adapter-intent-json", default="{}", help="JSON adapter write intent payload for --request-external-adapter-write-intent")
+    parser.add_argument("--adapter-authorization-json", default="{}", help="JSON adapter write authorization payload for --request-external-adapter-write-authorization")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -2022,6 +2140,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(adapter_intent, dict):
             parser.error("--adapter-intent-json must decode to an object")
         result = request_external_adapter_write_intent(ledger_path=args.runtime_ledger, run_id=args.run_id, intent_request=adapter_intent)
+    elif args.request_external_adapter_write_authorization:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --request-external-adapter-write-authorization")
+        if not args.run_id:
+            parser.error("--run-id is required with --request-external-adapter-write-authorization")
+        adapter_authorization = json.loads(args.adapter_authorization_json)
+        if not isinstance(adapter_authorization, dict):
+            parser.error("--adapter-authorization-json must decode to an object")
+        result = request_external_adapter_write_authorization(ledger_path=args.runtime_ledger, run_id=args.run_id, authorization_request=adapter_authorization)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

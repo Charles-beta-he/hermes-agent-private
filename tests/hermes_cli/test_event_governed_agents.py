@@ -1638,3 +1638,134 @@ def test_external_adapter_write_intent_rejects_missing_fact_bad_adapter_and_dire
     assert cli_result["accepted_as"] == "external_adapter_write_intent_projected"
     assert cli_result["adapter"] == "kanban"
     assert cli_result["write_through_allowed"] is False
+
+
+def _write_adapter_intent_run(tmp_path):
+    ledger_path, started, proposal_path, proposal_record, certification_path, certification_record, authorization_record, fact_record = _write_done_fact_run(tmp_path)
+    intent_record = ega.request_external_adapter_write_intent(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        intent_request={
+            "adapter": "taskpool",
+            "target_ref": "task:arch-coverage",
+            "target_status": "done",
+            "canonical_fact_digest": fact_record["fact_request_digest"],
+            "readiness_check": {"preflight": "passed", "current_remote_status": "review"},
+            "readback_plan": {"method": "fetch_task", "expected_status": "done"},
+            "rollback_plan": {"method": "restore_previous_status", "previous_status": "review"},
+            "evidence_refs": ["artifact://agent-coverage/write-intent.json"],
+        },
+    )
+    return ledger_path, started, proposal_path, proposal_record, certification_path, certification_record, authorization_record, fact_record, intent_record
+
+
+def test_external_adapter_write_authorization_approves_intent_but_still_no_write(tmp_path) -> None:
+    ledger_path, started, *_rest, intent_record = _write_adapter_intent_run(tmp_path)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+
+    result = ega.request_external_adapter_write_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        authorization_request={
+            "intent_id": intent_record["intent_id"],
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "adapter": "taskpool",
+            "target_ref": "task:arch-coverage",
+            "target_status": "done",
+            "canonical_fact_digest": intent_record["canonical_fact_digest"],
+            "intent_request_digest": intent_record["request_digest"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/write-auth.json"],
+        },
+    )
+
+    assert result["accepted_as"] == "external_adapter_write_authorization_projected"
+    assert result["run_status"] == "external_adapter_write_authorization_approved"
+    assert result["runtime_boundary"] == "external_adapter_write_authorization_projection"
+    assert result["intent_id"] == intent_record["intent_id"]
+    assert result["adapter"] == "taskpool"
+    assert result["target_ref"] == "task:arch-coverage"
+    assert result["target_status"] == "done"
+    assert result["write_authorized"] is True
+    assert result["write_executed"] is False
+    assert result["external_adapter_write_through_enabled"] is False
+    assert result["readback_required"] is True
+    assert result["rollback_required"] is True
+    assert len(ledger_path.read_text().splitlines()) == 7
+
+
+def test_external_adapter_write_authorization_rejects_non_elevated_expired_drift_and_cli_smoke(tmp_path) -> None:
+    ledger_path, started, *_rest, intent_record = _write_adapter_intent_run(tmp_path)
+    expired = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    rejected = ega.request_external_adapter_write_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        authorization_request={
+            "intent_id": intent_record["intent_id"],
+            "actor_id": "worker-1",
+            "actor_role": "bounded_worker",
+            "decision": "approved",
+            "adapter": "lark",
+            "target_ref": "task:arch-coverage",
+            "target_status": "done",
+            "canonical_fact_digest": "drifted",
+            "intent_request_digest": "drifted",
+            "expires_at": expired,
+            "write_through_enabled": True,
+            "external_write": True,
+            "evidence_refs": ["artifact://agent-coverage/bad-write-auth.json"],
+        },
+    )
+    assert rejected["accepted_as"] == "rejected_external_adapter_write_authorization"
+    assert rejected["write_authorized"] is False
+    assert rejected["external_adapter_write_through_enabled"] is False
+    assert "elevated_actor_required" in rejected["blocked_reasons"]
+    assert "authorization_expired" in rejected["blocked_reasons"]
+    assert "authorization_adapter_mismatch" in rejected["blocked_reasons"]
+    assert "authorization_canonical_fact_digest_mismatch" in rejected["blocked_reasons"]
+    assert "write_authorization_contains_forbidden_authority_keys" in rejected["blocked_reasons"]
+    assert len(ledger_path.read_text().splitlines()) == 6
+
+    _ledger_path, started2, *_rest2, intent_record2 = _write_adapter_intent_run(tmp_path / "cli")
+    request_json = json.dumps(
+        {
+            "intent_id": intent_record2["intent_id"],
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "adapter": intent_record2["adapter"],
+            "target_ref": intent_record2["target_ref"],
+            "target_status": intent_record2["target_status"],
+            "canonical_fact_digest": intent_record2["canonical_fact_digest"],
+            "intent_request_digest": intent_record2["request_digest"],
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+            "evidence_refs": ["artifact://agent-coverage/cli-write-auth.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--request-external-adapter-write-authorization",
+            "--runtime-ledger",
+            str(_ledger_path),
+            "--run-id",
+            started2["run_id"],
+            "--adapter-authorization-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "external_adapter_write_authorization_projected"
+    assert cli_result["write_authorized"] is True
+    assert cli_result["write_executed"] is False
