@@ -780,7 +780,40 @@ Acceptance:
 - Repeating the same execution is idempotent and returns the existing run.
 - Wrong digest, insufficient actor role, unsupported adapter, stale source chain, payload drift, or target drift fail closed before mutation.
 - Digest-bound taskpool rollback restores the previous taskpool status.
-- Conflicting evidence override remains outside this phase.
+- Conflicting evidence override remains non-consuming outside this phase.
+
+### Phase 16 — conflicting-evidence override authorization projection
+
+Status: implemented as a non-executing / non-consuming ledger projection only.
+
+New endpoint/API surface:
+
+- `POST /api/plugins/control-tower/evidence-gates/{evidence_review_id}/conflicting-evidence-override`
+  requests an admin-only, evidence-state-bound override authorization projection.
+- `POST /api/plugins/control-tower/conflicting-evidence-overrides/{conflict_override_authorization_id}/decision`
+  records an admin approval/rejection decision.
+- Snapshot projection: `conflicting_evidence_override_authorizations`.
+
+Hard boundaries:
+
+- Override requests require an existing satisfied evidence-gate review that also
+  has `stale_or_conflicting_count > 0`.
+- The request is bound to the exact `evidence_state_hash`; evidence changes after
+  review or after request fail closed and require a fresh review/request.
+- Admin role is required for request and decision.
+- Same pending request is idempotent for the same evidence review/hash; conflicting
+  second decisions fail closed.
+- Approved override rows still keep `override_allowed = false`,
+  `closeout_allowed = false`, and `execution = not_executed`.
+- No closeout execution path consumes this override yet; conflicting evidence still
+  blocks closeout execution.
+
+Rationale:
+
+- This slice records the human/operator override intent and decision audit trail
+  without changing closeout authority. The later consuming slice must explicitly
+  define when an approved override can be bound to closeout execution, how it is
+  consumed, and what additional evidence/escape/rollback semantics are required.
 
 ## First implementation slice status
 
@@ -822,10 +855,15 @@ Implemented:
 34. Digest-bound Kanban/taskpool external write execution projection via snapshot `external_adapter_write_execution_runs`.
 35. Digest-bound Kanban/taskpool rollback/reopen endpoint via `POST /api/plugins/control-tower/external-write-runs/{external_write_execution_id}/rollback`.
 36. Digest-bound Kanban/taskpool rollback/reopen projection via snapshot `external_adapter_write_rollback_runs`.
+37. Non-executing conflicting evidence override request endpoint via `POST /api/plugins/control-tower/evidence-gates/{evidence_review_id}/conflicting-evidence-override`.
+38. Non-executing conflicting evidence override decision endpoint via `POST /api/plugins/control-tower/conflicting-evidence-overrides/{conflict_override_authorization_id}/decision`.
+39. Non-consuming conflicting evidence override projection via snapshot `conflicting_evidence_override_authorizations`.
 
 Still intentionally not implemented:
 
-- No conflicting-evidence human override; evidence changes after authorization fail closed.
+- Conflicting-evidence human override decisions are recordable only as
+  non-consuming ledger projections; approved override rows still do not unblock
+  closeout execution.
 - Read-only executor whitelist is now executable only through the bounded
   read-only consumer; it still cannot write adapters or mutate external task lifecycle.
 - Closeout execution is limited to Control Tower Ledger task rows and keeps
@@ -847,9 +885,9 @@ Still intentionally not implemented:
 
 Why this boundary:
 
-- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, blocked external adapter write intents with mutation digests, blocked readiness reviews for those intents, external write authorization decisions, command-digest preflights, digest-bound Kanban/taskpool write execution runs, and digest-bound Kanban/taskpool rollback/reopen runs.
+- The system now records durable operator intent, human decisions, executor dry-run plans, execution-policy reviews, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization decisions, approved Control Tower Ledger closeout executions, blocked external adapter write intents with mutation digests, blocked readiness reviews for those intents, external write authorization decisions, command-digest preflights, digest-bound Kanban/taskpool write execution runs, digest-bound Kanban/taskpool rollback/reopen runs, and non-consuming conflicting-evidence override decisions.
 - The ledger remains the only fact source.
-- The next step changes authority from "digest-bound adapter closeout write-through with rollback" to "conflicting evidence override / broader adapter operations", which requires explicit evidence override policy and per-operation rollback/escape paths.
+- The next step changes authority from "record approved conflicting-evidence override intent" to "consume an approved conflicting-evidence override during closeout execution" or to "broader adapter operations", either of which requires explicit consumption policy and per-operation rollback/escape paths.
 
 ## Human decisions required now
 
@@ -885,8 +923,9 @@ Remaining decisions before execution-capable implementation:
    - Implemented: evidence can be recorded and evaluated against risk-level maturity requirements and acceptance refs.
    - Evidence-gate projection remains a pre-execution gate; closeout execution requires a separate approved authorization and rechecks evidence freshness.
    - Closeout authorization can be requested/decided as a durable evidence-bound human projection.
-   - Closeout execution can close Control Tower Ledger task rows only; external adapter closeout/write-through remains undecided.
-   - Still undecided for external closeout-capable phase: which adapter receives the final done/closed mutation, whether conflicting evidence can ever be human-overridden, and what rollback/reopen path is mandatory.
+   - Closeout execution can close Control Tower Ledger task rows only; Kanban/taskpool external closeout write-through is supported only through digest-bound preflight consumption.
+   - Conflicting evidence override can be requested/approved only as a non-consuming projection; consuming it during closeout remains undecided and fail-closed.
+   - Still undecided for broader closeout-capable phase: which additional adapters/operations receive final done/closed mutation, whether approved conflicting evidence override can ever be consumed by closeout, and what rollback/reopen path is mandatory.
 
 4. Write-through adapter timing:
    - Keep Kanban/taskpool read-only until command executor is stable, or
@@ -901,4 +940,4 @@ Remaining decisions before execution-capable implementation:
 
 ## Stop condition
 
-Stop taskpool write-through and conflicting evidence override implementation here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, read-only executor eligibility projections, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization requests/decisions, Control Tower Ledger closeout executions, digest-bound Kanban closeout write-through, and digest-bound Kanban rollback/reopen are now durable, audited, idempotent where safe, and expiring where required. The next boundary is taskpool adapter write-through plus conflicting-evidence override; do not mutate taskpool or override conflicting evidence until the taskpool mutation contract, conflicting-evidence override semantics, taskpool rollback/escape path, and command-execution approval digest semantics are explicitly implemented and verified.
+Stop consuming conflicting evidence overrides here. Proposed commands, Human Inbox requests, approval decisions, workflow-map blocked reasons, dry-run executor plans, read-only executor eligibility projections, bounded read-only executor runs, evidence entries, evidence-gate closeout projections, evidence-bound closeout authorization requests/decisions, Control Tower Ledger closeout executions, digest-bound Kanban/taskpool closeout write-through, digest-bound Kanban/taskpool rollback/reopen, and non-consuming conflicting-evidence override decisions are now durable, audited, idempotent where safe, and expiring where required. The next boundary is consuming approved conflicting-evidence overrides during closeout or broadening adapter operations; do not consume conflicting-evidence overrides until the consumption contract, stale-evidence escape path, and rollback/audit semantics are explicitly implemented and verified.

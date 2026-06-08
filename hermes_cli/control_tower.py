@@ -270,6 +270,32 @@ _TABLES_SQL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS conflicting_evidence_override_authorizations (
+        conflict_override_authorization_id TEXT PRIMARY KEY,
+        evidence_review_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        risk_level TEXT NOT NULL,
+        evidence_state_hash TEXT NOT NULL,
+        stale_or_conflicting_count INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        required_role TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        requested_role TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        decided_by TEXT,
+        decided_role TEXT,
+        decided_at TEXT,
+        reason TEXT,
+        override_allowed INTEGER NOT NULL DEFAULT 0,
+        closeout_allowed INTEGER NOT NULL DEFAULT 0,
+        CHECK(stale_or_conflicting_count > 0),
+        CHECK(status IN ('requested', 'approved', 'rejected', 'expired')),
+        CHECK(override_allowed = 0),
+        CHECK(closeout_allowed = 0)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS closeout_execution_runs (
         closeout_execution_id TEXT PRIMARY KEY,
         closeout_authorization_id TEXT NOT NULL UNIQUE,
@@ -1948,6 +1974,316 @@ def _closeout_authorization_response(*, created: bool, row: sqlite3.Row, source_
         "execution": "not_executed",
         "source_surface": source_surface,
     }
+
+
+def _conflicting_evidence_override_authorization_response(*, created: bool, row: sqlite3.Row, source_surface: str) -> dict[str, Any]:
+    return {
+        "created": created,
+        "conflict_override_authorization_id": row["conflict_override_authorization_id"],
+        "evidence_review_id": row["evidence_review_id"],
+        "task_id": row["task_id"],
+        "risk_level": row["risk_level"],
+        "evidence_state_hash": row["evidence_state_hash"],
+        "stale_or_conflicting_count": int(row["stale_or_conflicting_count"]),
+        "status": row["status"],
+        "required_role": row["required_role"],
+        "requested_by": row["requested_by"],
+        "requested_role": row["requested_role"],
+        "requested_at": row["requested_at"],
+        "expires_at": row["expires_at"],
+        "decided_by": row["decided_by"],
+        "decided_role": row["decided_role"],
+        "decided_at": row["decided_at"],
+        "override_allowed": bool(row["override_allowed"]),
+        "closeout_allowed": bool(row["closeout_allowed"]),
+        "execution": "not_executed",
+        "source_surface": source_surface,
+    }
+
+
+def _select_conflicting_evidence_override_authorization(
+    conn: sqlite3.Connection,
+    conflict_override_authorization_id: str,
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT conflict_override_authorization_id, evidence_review_id, task_id,
+               risk_level, evidence_state_hash, stale_or_conflicting_count,
+               status, required_role, requested_by, requested_role,
+               requested_at, expires_at, decided_by, decided_role, decided_at,
+               override_allowed, closeout_allowed
+        FROM conflicting_evidence_override_authorizations
+        WHERE conflict_override_authorization_id = ?
+        """,
+        (conflict_override_authorization_id,),
+    ).fetchone()
+
+
+def request_conflicting_evidence_override_authorization(
+    *,
+    evidence_review_id: str,
+    actor_type: str,
+    actor_id: str,
+    actor_role: str,
+    source_surface: str,
+    reason: str = "",
+    ttl_hours: int = DEFAULT_CLOSEOUT_AUTH_TTL_HOURS,
+) -> dict[str, Any]:
+    """Request a non-executing admin projection for conflicting-evidence override.
+
+    Approval here does not permit closeout. It records intent only; closeout
+    remains blocked until a separate consumer explicitly binds and consumes an
+    approved override in a later governed slice.
+    """
+    evidence_review_id = evidence_review_id.strip()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    actor_role = actor_role.strip().lower()
+    source_surface = source_surface.strip()
+    reason = reason.strip()
+    if not evidence_review_id:
+        raise ValueError("evidence_review_id is required")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if actor_role not in ROLE_RANK:
+        raise ValueError(f"unsupported actor_role: {actor_role}")
+    if not _role_allows(actor_role, "admin"):
+        raise ValueError("conflicting evidence override authorization requires admin role")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+    if ttl_hours <= 0:
+        raise ValueError("ttl_hours must be positive")
+
+    with _connect() as conn:
+        review = conn.execute(
+            """
+            SELECT evidence_review_id, task_id, risk_level, evidence_status,
+                   evidence_state_hash, stale_or_conflicting_count
+            FROM evidence_gate_reviews
+            WHERE evidence_review_id = ?
+            """,
+            (evidence_review_id,),
+        ).fetchone()
+        if review is None:
+            raise ValueError(f"evidence gate review not found: {evidence_review_id}")
+        if review["evidence_status"] != "satisfied":
+            raise ValueError("conflicting evidence override requires satisfied positive evidence")
+        current_evidence_state_hash = _evidence_state_hash_for_task(conn, review["task_id"])
+        if current_evidence_state_hash != review["evidence_state_hash"]:
+            raise ValueError("evidence state changed after review; evaluate a fresh evidence gate before override authorization")
+        if int(review["stale_or_conflicting_count"]) <= 0:
+            raise ValueError("conflicting evidence override requires conflicting or stale evidence")
+        existing = conn.execute(
+            """
+            SELECT conflict_override_authorization_id, evidence_review_id, task_id,
+                   risk_level, evidence_state_hash, stale_or_conflicting_count,
+                   status, required_role, requested_by, requested_role,
+                   requested_at, expires_at, decided_by, decided_role, decided_at,
+                   override_allowed, closeout_allowed
+            FROM conflicting_evidence_override_authorizations
+            WHERE evidence_review_id = ? AND evidence_state_hash = ? AND status != 'expired'
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (evidence_review_id, review["evidence_state_hash"]),
+        ).fetchone()
+        if existing is not None:
+            if existing["status"] == "requested" and datetime.fromisoformat(existing["expires_at"]) <= datetime.now(timezone.utc):
+                conn.execute(
+                    "UPDATE conflicting_evidence_override_authorizations SET status = ? WHERE conflict_override_authorization_id = ?",
+                    ("expired", existing["conflict_override_authorization_id"]),
+                )
+                _append_event(
+                    conn,
+                    event_type="ConflictingEvidenceOverrideAuthorizationExpired",
+                    aggregate_type="conflicting_evidence_override_authorization",
+                    aggregate_id=existing["conflict_override_authorization_id"],
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    source_surface=source_surface,
+                    payload={
+                        "conflict_override_authorization_id": existing["conflict_override_authorization_id"],
+                        "evidence_review_id": evidence_review_id,
+                        "task_id": existing["task_id"],
+                        "override_allowed": False,
+                        "closeout_allowed": False,
+                        "execution": "not_executed",
+                    },
+                )
+            else:
+                return _conflicting_evidence_override_authorization_response(created=False, row=existing, source_surface=source_surface)
+
+        requested_at_dt = datetime.now(timezone.utc)
+        requested_at = requested_at_dt.isoformat()
+        expires_at = (requested_at_dt + timedelta(hours=ttl_hours)).isoformat()
+        conflict_override_authorization_id = f"confoverride_{uuid.uuid4().hex}"
+        conn.execute(
+            """
+            INSERT INTO conflicting_evidence_override_authorizations(
+                conflict_override_authorization_id, evidence_review_id, task_id,
+                risk_level, evidence_state_hash, stale_or_conflicting_count,
+                status, required_role, requested_by, requested_role,
+                requested_at, expires_at, reason, override_allowed, closeout_allowed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                conflict_override_authorization_id,
+                evidence_review_id,
+                review["task_id"],
+                review["risk_level"],
+                review["evidence_state_hash"],
+                int(review["stale_or_conflicting_count"]),
+                "requested",
+                "admin",
+                actor_id,
+                actor_role,
+                requested_at,
+                expires_at,
+                reason,
+                0,
+                0,
+            ),
+        )
+        _append_event(
+            conn,
+            event_type="ConflictingEvidenceOverrideAuthorizationRequested",
+            aggregate_type="conflicting_evidence_override_authorization",
+            aggregate_id=conflict_override_authorization_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "conflict_override_authorization_id": conflict_override_authorization_id,
+                "evidence_review_id": evidence_review_id,
+                "task_id": review["task_id"],
+                "risk_level": review["risk_level"],
+                "evidence_state_hash": review["evidence_state_hash"],
+                "stale_or_conflicting_count": int(review["stale_or_conflicting_count"]),
+                "required_role": "admin",
+                "status": "requested",
+                "expires_at": expires_at,
+                "override_allowed": False,
+                "closeout_allowed": False,
+                "execution": "not_executed",
+            },
+        )
+        conn.commit()
+        row = _select_conflicting_evidence_override_authorization(conn, conflict_override_authorization_id)
+        if row is None:  # pragma: no cover - defensive ledger invariant
+            raise RuntimeError("conflicting evidence override authorization insert was not readable")
+    return _conflicting_evidence_override_authorization_response(created=True, row=row, source_surface=source_surface)
+
+
+def decide_conflicting_evidence_override_authorization(
+    *,
+    conflict_override_authorization_id: str,
+    decision: str,
+    actor_type: str,
+    actor_id: str,
+    actor_role: str,
+    source_surface: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Approve/reject a conflicting-evidence override projection without enabling closeout."""
+    conflict_override_authorization_id = conflict_override_authorization_id.strip()
+    decision = decision.strip().lower()
+    actor_type = actor_type.strip()
+    actor_id = actor_id.strip()
+    actor_role = actor_role.strip().lower()
+    source_surface = source_surface.strip()
+    reason = reason.strip()
+    if not conflict_override_authorization_id:
+        raise ValueError("conflict_override_authorization_id is required")
+    if decision not in {"approved", "rejected"}:
+        raise ValueError("decision must be approved or rejected")
+    if not actor_type:
+        raise ValueError("actor_type is required")
+    if not actor_id:
+        raise ValueError("actor_id is required")
+    if actor_role not in ROLE_RANK:
+        raise ValueError(f"unsupported actor_role: {actor_role}")
+    if not _role_allows(actor_role, "admin"):
+        raise ValueError("conflicting evidence override decision requires admin role")
+    if not source_surface:
+        raise ValueError("source_surface is required")
+
+    with _connect() as conn:
+        row = _select_conflicting_evidence_override_authorization(conn, conflict_override_authorization_id)
+        if row is None:
+            raise ValueError(f"conflicting evidence override authorization not found: {conflict_override_authorization_id}")
+        current_evidence_state_hash = _evidence_state_hash_for_task(conn, row["task_id"])
+        if current_evidence_state_hash != row["evidence_state_hash"]:
+            raise ValueError("evidence state changed after override authorization request; request a fresh evidence-bound override")
+        if row["status"] in {"approved", "rejected"}:
+            if row["status"] != decision:
+                raise ValueError(
+                    f"conflicting evidence override authorization already decided as {row['status']}; conflicting decision {decision} rejected"
+                )
+            return _conflicting_evidence_override_authorization_response(created=False, row=row, source_surface=source_surface)
+        if row["status"] != "requested":
+            raise ValueError(f"conflicting evidence override authorization is not pending: {row['status']}")
+        if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+            conn.execute(
+                "UPDATE conflicting_evidence_override_authorizations SET status = ? WHERE conflict_override_authorization_id = ?",
+                ("expired", conflict_override_authorization_id),
+            )
+            _append_event(
+                conn,
+                event_type="ConflictingEvidenceOverrideAuthorizationExpired",
+                aggregate_type="conflicting_evidence_override_authorization",
+                aggregate_id=conflict_override_authorization_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                source_surface=source_surface,
+                payload={
+                    "conflict_override_authorization_id": conflict_override_authorization_id,
+                    "evidence_review_id": row["evidence_review_id"],
+                    "task_id": row["task_id"],
+                    "override_allowed": False,
+                    "closeout_allowed": False,
+                    "execution": "not_executed",
+                },
+            )
+            conn.commit()
+            raise ValueError("conflicting evidence override authorization expired; request a fresh override")
+        decided_at = _now()
+        conn.execute(
+            """
+            UPDATE conflicting_evidence_override_authorizations
+            SET status = ?, decided_by = ?, decided_role = ?, decided_at = ?, reason = ?,
+                override_allowed = 0, closeout_allowed = 0
+            WHERE conflict_override_authorization_id = ?
+            """,
+            (decision, actor_id, actor_role, decided_at, reason, conflict_override_authorization_id),
+        )
+        _append_event(
+            conn,
+            event_type="ConflictingEvidenceOverrideAuthorizationGranted" if decision == "approved" else "ConflictingEvidenceOverrideAuthorizationRejected",
+            aggregate_type="conflicting_evidence_override_authorization",
+            aggregate_id=conflict_override_authorization_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source_surface=source_surface,
+            payload={
+                "conflict_override_authorization_id": conflict_override_authorization_id,
+                "evidence_review_id": row["evidence_review_id"],
+                "task_id": row["task_id"],
+                "risk_level": row["risk_level"],
+                "evidence_state_hash": row["evidence_state_hash"],
+                "decision": decision,
+                "reason": reason,
+                "override_allowed": False,
+                "closeout_allowed": False,
+                "execution": "not_executed",
+            },
+        )
+        conn.commit()
+        updated = _select_conflicting_evidence_override_authorization(conn, conflict_override_authorization_id)
+        if updated is None:  # pragma: no cover - defensive ledger invariant
+            raise RuntimeError("conflicting evidence override authorization decision was not readable")
+    return _conflicting_evidence_override_authorization_response(created=True, row=updated, source_surface=source_surface)
 
 
 def request_closeout_authorization(
@@ -4596,6 +4932,46 @@ def _evidence_policy_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _conflicting_evidence_override_authorizations_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    pending_rows = conn.execute(
+        """
+        SELECT conflict_override_authorization_id, evidence_review_id, task_id,
+               risk_level, evidence_state_hash, stale_or_conflicting_count,
+               status, required_role, requested_by, requested_role, requested_at, expires_at,
+               override_allowed, closeout_allowed
+        FROM conflicting_evidence_override_authorizations
+        WHERE status = 'requested'
+        ORDER BY rowid ASC
+        LIMIT 20
+        """
+    ).fetchall()
+    decided_rows = conn.execute(
+        """
+        SELECT conflict_override_authorization_id, evidence_review_id, task_id,
+               risk_level, evidence_state_hash, stale_or_conflicting_count,
+               status, required_role, requested_by, requested_role, requested_at,
+               expires_at, decided_by, decided_role, decided_at, override_allowed, closeout_allowed
+        FROM conflicting_evidence_override_authorizations
+        WHERE status IN ('approved', 'rejected', 'expired')
+        ORDER BY COALESCE(decided_at, expires_at) DESC, rowid DESC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "mode": "conflicting_evidence_override_projection_only",
+        "execution_enabled": False,
+        "override_consumption_enabled": False,
+        "closeout_execution_enabled": False,
+        "required_role": "admin",
+        "ttl_hours": DEFAULT_CLOSEOUT_AUTH_TTL_HOURS,
+        "pending_count": _count(conn, "conflicting_evidence_override_authorizations", "status = 'requested'"),
+        "expired_count": _count(conn, "conflicting_evidence_override_authorizations", "status = 'expired'"),
+        "pending": [dict(row) for row in pending_rows],
+        "decided_count": _count(conn, "conflicting_evidence_override_authorizations", "status IN ('approved', 'rejected')"),
+        "recent_decided": [dict(row) for row in decided_rows],
+    }
+
+
 def _closeout_authorizations_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     pending_rows = conn.execute(
         """
@@ -5062,6 +5438,7 @@ def build_snapshot() -> dict[str, Any]:
         read_only_executor = _read_only_executor_snapshot(conn)
         evidence_policy = _evidence_policy_snapshot(conn)
         closeout_authorizations = _closeout_authorizations_snapshot(conn)
+        conflicting_evidence_override_authorizations = _conflicting_evidence_override_authorizations_snapshot(conn)
         closeout_execution = _closeout_execution_snapshot(conn)
         external_adapter_write_intents = _external_adapter_write_intents_snapshot(conn)
         external_adapter_write_intent_reviews = _external_adapter_write_intent_reviews_snapshot(conn)
@@ -5112,6 +5489,7 @@ def build_snapshot() -> dict[str, Any]:
         "read_only_executor": read_only_executor,
         "evidence_policy": evidence_policy,
         "closeout_authorizations": closeout_authorizations,
+        "conflicting_evidence_override_authorizations": conflicting_evidence_override_authorizations,
         "closeout_execution": closeout_execution,
         "external_adapter_write_intents": external_adapter_write_intents,
         "external_adapter_write_intent_reviews": external_adapter_write_intent_reviews,

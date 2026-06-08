@@ -46,6 +46,7 @@ def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
             "external_adapter_write_execution_runs",
             "evidence_gate_reviews",
             "closeout_authorizations",
+            "conflicting_evidence_override_authorizations",
             "adapter_observations",
             "projection_checkpoints",
         }.issubset(tables)
@@ -1217,6 +1218,328 @@ def test_request_closeout_authorization_fails_closed_for_insufficient_or_conflic
         assert "conflicting evidence requires remediation" in str(exc)
     else:  # pragma: no cover - assertion clarity
         raise AssertionError("conflicting evidence must block closeout authorization")
+
+
+def test_conflicting_evidence_override_authorization_is_non_executing_projection(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    control_tower.record_evidence(
+        task_id="task:override-conflict",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Verified acceptance proof",
+        producer_type="agent",
+        producer_id="worker-1",
+        acceptance_refs=["AC-1"],
+    )
+    control_tower.record_evidence(
+        task_id="task:override-conflict",
+        evidence_type="counterexample",
+        maturity="verified",
+        source_type="reviewer",
+        summary="Reviewer found a conflicting signal",
+        producer_type="human",
+        producer_id="reviewer",
+        acceptance_refs=["AC-1"],
+        stale_status="conflicting",
+    )
+    review = control_tower.evaluate_evidence_gate(
+        task_id="task:override-conflict",
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+
+    request = control_tower.request_conflicting_evidence_override_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="dashboard",
+        reason="operator accepts documented conflicting evidence risk",
+    )
+    repeated = control_tower.request_conflicting_evidence_override_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="dashboard",
+        reason="same request retry",
+    )
+    decided = control_tower.decide_conflicting_evidence_override_authorization(
+        conflict_override_authorization_id=request["conflict_override_authorization_id"],
+        decision="approved",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="dashboard",
+        reason="admin approved projection only",
+    )
+    drifted_repeat_failed = False
+    control_tower.record_evidence(
+        task_id="task:override-conflict",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="New evidence after override decision",
+        producer_type="agent",
+        producer_id="worker-2",
+        acceptance_refs=["AC-2"],
+    )
+    try:
+        control_tower.decide_conflicting_evidence_override_authorization(
+            conflict_override_authorization_id=request["conflict_override_authorization_id"],
+            decision="approved",
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="dashboard",
+            reason="same decision retry after evidence drift",
+        )
+    except ValueError as exc:
+        drifted_repeat_failed = "evidence state changed after override authorization request" in str(exc)
+
+    assert request["created"] is True
+    assert request["status"] == "requested"
+    assert request["required_role"] == "admin"
+    assert request["stale_or_conflicting_count"] == 1
+    assert request["override_allowed"] is False
+    assert request["closeout_allowed"] is False
+    assert request["execution"] == "not_executed"
+    assert repeated["created"] is False
+    assert repeated["conflict_override_authorization_id"] == request["conflict_override_authorization_id"]
+    assert decided["status"] == "approved"
+    assert decided["override_allowed"] is False
+    assert decided["closeout_allowed"] is False
+    assert drifted_repeat_failed is True
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        rows = ledger.execute("SELECT status, override_allowed, closeout_allowed FROM conflicting_evidence_override_authorizations").fetchall()
+        task_rows = ledger.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
+    assert rows == [("approved", 0, 0)]
+    assert task_rows == 0
+    assert "ConflictingEvidenceOverrideAuthorizationRequested" in event_types
+    assert "ConflictingEvidenceOverrideAuthorizationGranted" in event_types
+
+
+def test_conflicting_evidence_override_authorization_expires_and_rejects_conflicting_decisions(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    control_tower.record_evidence(
+        task_id="task:override-expiry",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Verified proof",
+        producer_type="agent",
+        producer_id="worker-1",
+        acceptance_refs=["AC-1"],
+    )
+    control_tower.record_evidence(
+        task_id="task:override-expiry",
+        evidence_type="counterexample",
+        maturity="verified",
+        source_type="reviewer",
+        summary="Conflict",
+        producer_type="human",
+        producer_id="reviewer",
+        acceptance_refs=["AC-1"],
+        stale_status="conflicting",
+    )
+    review = control_tower.evaluate_evidence_gate(
+        task_id="task:override-expiry",
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    first = control_tower.request_conflicting_evidence_override_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="dashboard",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            "UPDATE conflicting_evidence_override_authorizations SET expires_at = ? WHERE conflict_override_authorization_id = ?",
+            ("2000-01-01T00:00:00+00:00", first["conflict_override_authorization_id"]),
+        )
+    second = control_tower.request_conflicting_evidence_override_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="dashboard",
+    )
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        ledger.execute(
+            "UPDATE conflicting_evidence_override_authorizations SET expires_at = ? WHERE conflict_override_authorization_id = ?",
+            ("2000-01-01T00:00:00+00:00", second["conflict_override_authorization_id"]),
+        )
+    try:
+        control_tower.decide_conflicting_evidence_override_authorization(
+            conflict_override_authorization_id=second["conflict_override_authorization_id"],
+            decision="approved",
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "expired" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("expired override decision must fail closed")
+
+    third = control_tower.request_conflicting_evidence_override_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="dashboard",
+    )
+    rejected = control_tower.decide_conflicting_evidence_override_authorization(
+        conflict_override_authorization_id=third["conflict_override_authorization_id"],
+        decision="rejected",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="dashboard",
+    )
+    repeated = control_tower.decide_conflicting_evidence_override_authorization(
+        conflict_override_authorization_id=third["conflict_override_authorization_id"],
+        decision="rejected",
+        actor_type="human",
+        actor_id="charles",
+        actor_role="admin",
+        source_surface="dashboard",
+    )
+    try:
+        control_tower.decide_conflicting_evidence_override_authorization(
+            conflict_override_authorization_id=third["conflict_override_authorization_id"],
+            decision="approved",
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "already decided as rejected" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("conflicting second override decision must fail closed")
+
+    assert first["conflict_override_authorization_id"] != second["conflict_override_authorization_id"]
+    assert second["conflict_override_authorization_id"] != third["conflict_override_authorization_id"]
+    assert second["created"] is True
+    assert third["created"] is True
+    assert rejected["status"] == "rejected"
+    assert repeated["created"] is False
+    with sqlite3.connect(home / "control_tower.db") as ledger:
+        statuses = [row[0] for row in ledger.execute("SELECT status FROM conflicting_evidence_override_authorizations ORDER BY rowid")]
+    assert statuses == ["expired", "expired", "rejected"]
+
+
+def test_conflicting_evidence_override_authorization_validates_inputs(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    for kwargs, expected in [
+        ({"evidence_review_id": "", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "dashboard"}, "evidence_review_id is required"),
+        ({"evidence_review_id": "missing", "actor_type": "", "actor_id": "charles", "actor_role": "admin", "source_surface": "dashboard"}, "actor_type is required"),
+        ({"evidence_review_id": "missing", "actor_type": "human", "actor_id": "", "actor_role": "admin", "source_surface": "dashboard"}, "actor_id is required"),
+        ({"evidence_review_id": "missing", "actor_type": "human", "actor_id": "charles", "actor_role": "ghost", "source_surface": "dashboard"}, "unsupported actor_role"),
+        ({"evidence_review_id": "missing", "actor_type": "human", "actor_id": "charles", "actor_role": "operator", "source_surface": "dashboard"}, "requires admin role"),
+        ({"evidence_review_id": "missing", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": ""}, "source_surface is required"),
+        ({"evidence_review_id": "missing", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "dashboard", "ttl_hours": 0}, "ttl_hours must be positive"),
+        ({"evidence_review_id": "missing", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "dashboard"}, "evidence gate review not found"),
+    ]:
+        try:
+            control_tower.request_conflicting_evidence_override_authorization(**kwargs)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"expected ValueError containing {expected}")
+
+    for kwargs, expected in [
+        ({"conflict_override_authorization_id": "", "decision": "approved", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "dashboard"}, "conflict_override_authorization_id is required"),
+        ({"conflict_override_authorization_id": "missing", "decision": "maybe", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "dashboard"}, "decision must be approved or rejected"),
+        ({"conflict_override_authorization_id": "missing", "decision": "approved", "actor_type": "", "actor_id": "charles", "actor_role": "admin", "source_surface": "dashboard"}, "actor_type is required"),
+        ({"conflict_override_authorization_id": "missing", "decision": "approved", "actor_type": "human", "actor_id": "", "actor_role": "admin", "source_surface": "dashboard"}, "actor_id is required"),
+        ({"conflict_override_authorization_id": "missing", "decision": "approved", "actor_type": "human", "actor_id": "charles", "actor_role": "ghost", "source_surface": "dashboard"}, "unsupported actor_role"),
+        ({"conflict_override_authorization_id": "missing", "decision": "approved", "actor_type": "human", "actor_id": "charles", "actor_role": "operator", "source_surface": "dashboard"}, "requires admin role"),
+        ({"conflict_override_authorization_id": "missing", "decision": "approved", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": ""}, "source_surface is required"),
+        ({"conflict_override_authorization_id": "missing", "decision": "approved", "actor_type": "human", "actor_id": "charles", "actor_role": "admin", "source_surface": "dashboard"}, "not found"),
+    ]:
+        try:
+            control_tower.decide_conflicting_evidence_override_authorization(**kwargs)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError(f"expected ValueError containing {expected}")
+
+
+def test_conflicting_evidence_override_authorization_fails_closed_without_current_conflict(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    review = _record_verified_closeout_evidence("task:no-conflict-override")
+
+    try:
+        control_tower.request_conflicting_evidence_override_authorization(
+            evidence_review_id=review["evidence_review_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "requires conflicting or stale evidence" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("override request without conflict must fail closed")
+
+    control_tower.record_evidence(
+        task_id="task:stale-after-override-review",
+        evidence_type="proof",
+        maturity="verified",
+        source_type="pytest",
+        summary="Verified proof before conflict",
+        producer_type="agent",
+        producer_id="worker-1",
+        acceptance_refs=["AC-1"],
+    )
+    stale_review = control_tower.evaluate_evidence_gate(
+        task_id="task:stale-after-override-review",
+        risk_level="L2",
+        acceptance_refs=["AC-1"],
+        actor_type="human",
+        actor_id="charles",
+        source_surface="dashboard",
+    )
+    control_tower.record_evidence(
+        task_id="task:stale-after-override-review",
+        evidence_type="counterexample",
+        maturity="verified",
+        source_type="reviewer",
+        summary="Conflict arrives after review",
+        producer_type="human",
+        producer_id="reviewer",
+        acceptance_refs=["AC-1"],
+        stale_status="conflicting",
+    )
+    try:
+        control_tower.request_conflicting_evidence_override_authorization(
+            evidence_review_id=stale_review["evidence_review_id"],
+            actor_type="human",
+            actor_id="charles",
+            actor_role="admin",
+            source_surface="dashboard",
+        )
+    except ValueError as exc:
+        assert "evidence state changed after review" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("obsolete conflict override review must fail closed")
 
 
 def test_decide_closeout_authorization_checks_role_ttl_and_digest_without_closing_task(tmp_path, monkeypatch):

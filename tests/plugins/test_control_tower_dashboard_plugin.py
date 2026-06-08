@@ -236,6 +236,104 @@ def test_control_tower_dashboard_plugin_records_evidence_and_reviews_gate_withou
     assert data["source_surface"] == "dashboard"
 
 
+def test_control_tower_dashboard_plugin_requests_and_decides_conflicting_evidence_override_without_unblocking_closeout(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    app = FastAPI()
+    app.include_router(_load_plugin_router(), prefix="/api/plugins/control-tower")
+    client = TestClient(app)
+
+    for payload in [
+        {
+            "task_id": "task:dashboard-conflict",
+            "evidence_type": "proof",
+            "maturity": "verified",
+            "source_type": "pytest",
+            "summary": "Dashboard verified proof",
+            "producer_type": "human",
+            "producer_id": "charles",
+            "acceptance_refs": ["AC-1"],
+        },
+        {
+            "task_id": "task:dashboard-conflict",
+            "evidence_type": "counterexample",
+            "maturity": "verified",
+            "source_type": "reviewer",
+            "summary": "Dashboard conflicting signal",
+            "producer_type": "human",
+            "producer_id": "reviewer",
+            "acceptance_refs": ["AC-1"],
+            "stale_status": "conflicting",
+        },
+    ]:
+        response = client.post("/api/plugins/control-tower/evidence", json=payload)
+        assert response.status_code == 200, response.text
+
+    review = client.post(
+        "/api/plugins/control-tower/evidence-gates/evaluate",
+        json={
+            "task_id": "task:dashboard-conflict",
+            "risk_level": "L2",
+            "acceptance_refs": ["AC-1"],
+            "actor_id": "charles",
+        },
+    ).json()
+    omitted_role_request = client.post(
+        f"/api/plugins/control-tower/evidence-gates/{review['evidence_review_id']}/conflicting-evidence-override",
+        json={
+            "actor_id": "charles",
+            "reason": "missing role must not become admin",
+        },
+    )
+    requested = client.post(
+        f"/api/plugins/control-tower/evidence-gates/{review['evidence_review_id']}/conflicting-evidence-override",
+        json={
+            "actor_id": "charles",
+            "actor_role": "admin",
+            "reason": "operator accepts documented conflict risk",
+        },
+    )
+
+    assert omitted_role_request.status_code == 422, omitted_role_request.text
+    assert requested.status_code == 200, requested.text
+    data = requested.json()
+    assert data["status"] == "requested"
+    assert data["execution"] == "not_executed"
+    assert data["override_allowed"] is False
+    assert data["closeout_allowed"] is False
+    omitted_role_decision = client.post(
+        f"/api/plugins/control-tower/conflicting-evidence-overrides/{data['conflict_override_authorization_id']}/decision",
+        json={
+            "decision": "approved",
+            "actor_id": "charles",
+            "reason": "missing role must not become admin",
+        },
+    )
+    decided = client.post(
+        f"/api/plugins/control-tower/conflicting-evidence-overrides/{data['conflict_override_authorization_id']}/decision",
+        json={
+            "decision": "approved",
+            "actor_id": "charles",
+            "actor_role": "admin",
+            "reason": "projection only",
+        },
+    )
+    snapshot = client.get("/api/plugins/control-tower/snapshot")
+
+    assert omitted_role_decision.status_code == 422, omitted_role_decision.text
+    assert decided.status_code == 200, decided.text
+    decided_data = decided.json()
+    assert decided_data["status"] == "approved"
+    assert decided_data["execution"] == "not_executed"
+    assert decided_data["override_allowed"] is False
+    assert decided_data["closeout_allowed"] is False
+    snapshot_data = snapshot.json()["conflicting_evidence_override_authorizations"]
+    assert snapshot_data["mode"] == "conflicting_evidence_override_projection_only"
+    assert snapshot_data["override_consumption_enabled"] is False
+    assert snapshot_data["closeout_execution_enabled"] is False
+    assert snapshot_data["decided_count"] == 1
+
+
 def test_control_tower_dashboard_plugin_requests_and_decides_closeout_authorization_without_execution(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))

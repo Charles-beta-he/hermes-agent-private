@@ -5,8 +5,9 @@ The plugin exposes ledger projections and controlled operator intent. It may
 execute narrow consumers after explicit gates: L0/L1 read-only executor runs,
 approved evidence-bound closeout inside the Control Tower ledger, and explicitly
 approved digest-bound Kanban/taskpool closeout write-through plus digest-bound
-rollback/reopen of those writes. It still does not enable conflicting evidence
-override.
+rollback/reopen of those writes. Conflicting evidence override is exposed only
+as a non-executing, ledger-gated admin projection; approved overrides are not
+consumed by closeout execution in this slice.
 """
 
 from __future__ import annotations
@@ -80,6 +81,22 @@ class CloseoutAuthorizationDecisionRequest(BaseModel):
     actor_type: str = Field(default="human", min_length=1)
     actor_id: str = Field(default="dashboard", min_length=1)
     actor_role: str = Field(default="operator", min_length=1)
+    reason: str = Field(default="", min_length=0)
+
+
+class ConflictingEvidenceOverrideAuthorizationRequest(BaseModel):
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    actor_role: str = Field(min_length=1)
+    reason: str = Field(default="", min_length=0)
+    ttl_hours: int = control_tower.DEFAULT_CLOSEOUT_AUTH_TTL_HOURS
+
+
+class ConflictingEvidenceOverrideDecisionRequest(BaseModel):
+    decision: str = Field(min_length=1)
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    actor_role: str = Field(min_length=1)
     reason: str = Field(default="", min_length=0)
 
 
@@ -209,6 +226,40 @@ def request_closeout_authorization(evidence_review_id: str, req: CloseoutAuthori
         source_surface="dashboard",
         reason=req.reason,
         ttl_hours=req.ttl_hours,
+    )
+
+
+@router.post("/evidence-gates/{evidence_review_id}/conflicting-evidence-override")
+def request_conflicting_evidence_override_authorization(
+    evidence_review_id: str,
+    req: ConflictingEvidenceOverrideAuthorizationRequest,
+):
+    """Request non-executing conflicting evidence override intent; does not unblock closeout."""
+    return control_tower.request_conflicting_evidence_override_authorization(
+        evidence_review_id=evidence_review_id,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        source_surface="dashboard",
+        reason=req.reason,
+        ttl_hours=req.ttl_hours,
+    )
+
+
+@router.post("/conflicting-evidence-overrides/{conflict_override_authorization_id}/decision")
+def decide_conflicting_evidence_override_authorization(
+    conflict_override_authorization_id: str,
+    req: ConflictingEvidenceOverrideDecisionRequest,
+):
+    """Decide conflicting evidence override projection without enabling closeout."""
+    return control_tower.decide_conflicting_evidence_override_authorization(
+        conflict_override_authorization_id=conflict_override_authorization_id,
+        decision=req.decision,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        source_surface="dashboard",
+        reason=req.reason,
     )
 
 
