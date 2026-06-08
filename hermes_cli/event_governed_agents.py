@@ -5,9 +5,10 @@ first record a ledger-local started run, then may invoke an allowlisted builtin
 read-only executor that appends a completed result. Separate external-agent
 paths may run ``--version`` probes, send no-tool/no-write dry-run prompts,
 attach read-only context artifact pointers, record validated proposal artifact
-pointers, record multi-model certification promotion packets, or project elevated
-done authorizations while appending only pointers to the ledger. They still do not mutate
-lifecycle, write memory/skills, send external messages, or change cron/provider
+pointers, record multi-model certification promotion packets, project elevated
+done authorizations, or execute a ledger-local fact mutation. Only the explicit
+ledger-local fact mutation can change canonical lifecycle facts; it still does
+not write external adapters, memory/skills, outbound messages, or cron/provider
 configuration.
 """
 
@@ -1497,6 +1498,128 @@ def request_done_authorization(*, ledger_path: str | Path, run_id: str, authoriz
     return record
 
 
+def execute_ledger_fact_mutation(*, ledger_path: str | Path, run_id: str, fact_request: dict[str, Any]) -> dict[str, Any]:
+    """Consume an approved done authorization and append a canonical ledger-local fact."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    authorization_id = str(fact_request.get("authorization_id", "")).strip()
+    target_status = str(fact_request.get("target_status", "")).strip().lower()
+    certification_artifact_uri = str(fact_request.get("certification_artifact_uri", "")).strip()
+    certification_sha256 = str(fact_request.get("certification_sha256", "")).strip().lower()
+    evidence_refs = fact_request.get("evidence_refs", [])
+    request_digest = _digest(fact_request)
+    authorization_record = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "done_authorization_approved"
+            and row.get("authorization_id") == authorization_id
+        ),
+        None,
+    )
+    certification_record = next((row for row in rows if row.get("run_id") == normalized_run_id and row.get("run_status") == "certification_recorded"), None)
+    existing_fact = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "fact_mutated"
+            and row.get("authorization_id") == authorization_id
+            and row.get("canonical_lifecycle_status") == target_status
+        ),
+        None,
+    )
+    if existing_fact is not None:
+        replay = dict(existing_fact)
+        replay["idempotent_replay"] = True
+        return replay
+
+    blocked_reasons: list[str] = []
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if not authorization_id:
+        blocked_reasons.append("authorization_id_required")
+    if authorization_record is None:
+        blocked_reasons.append("approved_authorization_required")
+    if certification_record is None:
+        blocked_reasons.append("certification_record_required")
+    if target_status != "done":
+        blocked_reasons.append("fact_target_status_must_be_done")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("fact_mutation_requires_evidence_refs")
+    if sorted(WORKER_FORBIDDEN_RESULT_KEYS.intersection(fact_request.keys())):
+        blocked_reasons.append("fact_request_contains_forbidden_authority_keys")
+    if authorization_record is not None:
+        if authorization_record.get("target_status") != target_status:
+            blocked_reasons.append("fact_authorization_target_status_mismatch")
+        try:
+            expires_dt = datetime.fromisoformat(str(authorization_record.get("expires_at", "")).replace("Z", "+00:00"))
+            if expires_dt.tzinfo is None:
+                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+            if expires_dt <= datetime.now(timezone.utc):
+                blocked_reasons.append("authorization_expired")
+        except ValueError:
+            blocked_reasons.append("authorization_expires_at_invalid")
+        auth_cert = authorization_record.get("certification_artifact", {}) if isinstance(authorization_record.get("certification_artifact"), dict) else {}
+        if certification_artifact_uri != auth_cert.get("artifact_uri"):
+            blocked_reasons.append("fact_certification_artifact_uri_mismatch")
+        if certification_sha256 != auth_cert.get("sha256"):
+            blocked_reasons.append("fact_certification_sha256_mismatch")
+    elif certification_record is not None:
+        recorded_artifact = certification_record.get("artifact", {}) if isinstance(certification_record.get("artifact"), dict) else {}
+        if certification_artifact_uri != recorded_artifact.get("artifact_uri"):
+            blocked_reasons.append("fact_certification_artifact_uri_mismatch")
+        if certification_sha256 != recorded_artifact.get("sha256"):
+            blocked_reasons.append("fact_certification_sha256_mismatch")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "ledger_local_fact_mutation",
+        "run_id": normalized_run_id,
+        "authorization_id": authorization_id,
+        "fact_is_canonical": False,
+        "canonical_lifecycle_status": target_status,
+        "fact_request_digest": request_digest,
+        "allowed_to_mutate_lifecycle": False,
+        "canonical_lifecycle_unchanged": True,
+        "external_adapter_write_through_enabled": False,
+        "blocked_reasons": blocked_reasons,
+        "idempotent_replay": False,
+    }
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_canonical_lifecycle_fact_mutation",
+            "run_status": "rejected",
+            "runtime_boundary": "ledger_local_canonical_fact_mutation_rejected",
+        }
+
+    assert authorization_record is not None
+    record = {
+        **base,
+        "accepted_as": "canonical_lifecycle_fact_mutated",
+        "run_status": "fact_mutated",
+        "runtime_boundary": "ledger_local_canonical_fact_mutation",
+        "fact_is_canonical": True,
+        "allowed_to_mutate_lifecycle": True,
+        "canonical_lifecycle_unchanged": False,
+        "target_status": target_status,
+        "certification_artifact": {
+            "artifact_uri": certification_artifact_uri,
+            "sha256": certification_sha256,
+        },
+        "evidence_refs": evidence_refs,
+        "mutated_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -1684,6 +1807,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--append-external-agent-proposal", action="store_true", help="Append a validated external agent proposal artifact pointer")
     parser.add_argument("--append-certification-promotion", action="store_true", help="Append a validated multi-model certification promotion artifact pointer")
     parser.add_argument("--request-done-authorization", action="store_true", help="Project an elevated done authorization without fact mutation")
+    parser.add_argument("--execute-ledger-fact-mutation", action="store_true", help="Execute ledger-local canonical lifecycle fact mutation")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -1694,6 +1818,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--proposal-request-json", default="{}", help="JSON proposal payload for --append-external-agent-proposal")
     parser.add_argument("--certification-request-json", default="{}", help="JSON certification payload for --append-certification-promotion")
     parser.add_argument("--authorization-request-json", default="{}", help="JSON authorization payload for --request-done-authorization")
+    parser.add_argument("--fact-request-json", default="{}", help="JSON fact mutation payload for --execute-ledger-fact-mutation")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -1779,6 +1904,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(authorization_request, dict):
             parser.error("--authorization-request-json must decode to an object")
         result = request_done_authorization(ledger_path=args.runtime_ledger, run_id=args.run_id, authorization_request=authorization_request)
+    elif args.execute_ledger_fact_mutation:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --execute-ledger-fact-mutation")
+        if not args.run_id:
+            parser.error("--run-id is required with --execute-ledger-fact-mutation")
+        fact_request = json.loads(args.fact_request_json)
+        if not isinstance(fact_request, dict):
+            parser.error("--fact-request-json must decode to an object")
+        result = execute_ledger_fact_mutation(ledger_path=args.runtime_ledger, run_id=args.run_id, fact_request=fact_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

@@ -1377,3 +1377,150 @@ def test_done_authorization_projection_rejects_non_elevated_expired_drift_and_cl
     assert cli_result["target_status"] == "done"
     assert cli_result["write_through_allowed"] is False
     assert len(ledger_path.read_text().splitlines()) == 4
+
+
+def _write_authorized_done_run(tmp_path):
+    ledger_path, started, proposal_path, proposal_record, certification_path, certification_record = _write_certified_run(tmp_path)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    authorization_record = ega.request_done_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "target_status": "done",
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": certification_record["artifact"]["sha256"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/done-auth.json"],
+        },
+    )
+    return ledger_path, started, proposal_path, proposal_record, certification_path, certification_record, authorization_record
+
+
+def test_ledger_local_fact_mutation_marks_done_as_canonical_fact_and_is_idempotent(tmp_path) -> None:
+    ledger_path, started, _proposal_path, _proposal_record, certification_path, certification_record, authorization_record = _write_authorized_done_run(tmp_path)
+
+    result = ega.execute_ledger_fact_mutation(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        fact_request={
+            "authorization_id": authorization_record["authorization_id"],
+            "target_status": "done",
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": certification_record["artifact"]["sha256"],
+            "evidence_refs": ["artifact://agent-coverage/fact-mutation.json"],
+        },
+    )
+
+    assert result["accepted_as"] == "canonical_lifecycle_fact_mutated"
+    assert result["run_status"] == "fact_mutated"
+    assert result["runtime_boundary"] == "ledger_local_canonical_fact_mutation"
+    assert result["fact_is_canonical"] is True
+    assert result["canonical_lifecycle_status"] == "done"
+    assert result["allowed_to_mutate_lifecycle"] is True
+    assert result["canonical_lifecycle_unchanged"] is False
+    assert result["external_adapter_write_through_enabled"] is False
+    assert result["authorization_id"] == authorization_record["authorization_id"]
+    assert len(ledger_path.read_text().splitlines()) == 5
+
+    replay = ega.execute_ledger_fact_mutation(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        fact_request={
+            "authorization_id": authorization_record["authorization_id"],
+            "target_status": "done",
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": certification_record["artifact"]["sha256"],
+            "evidence_refs": ["artifact://agent-coverage/fact-mutation.json"],
+        },
+    )
+    assert replay["idempotent_replay"] is True
+    assert replay["accepted_as"] == "canonical_lifecycle_fact_mutated"
+    assert len(ledger_path.read_text().splitlines()) == 5
+
+
+def test_ledger_local_fact_mutation_rejects_missing_authorization_expired_and_drift_cli_smoke(tmp_path) -> None:
+    ledger_path, started, _proposal_path, _proposal_record, certification_path, certification_record = _write_certified_run(tmp_path)
+    rejected = ega.execute_ledger_fact_mutation(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        fact_request={
+            "authorization_id": "auth_missing",
+            "target_status": "done",
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": "0" * 64,
+            "evidence_refs": ["artifact://agent-coverage/bad-fact.json"],
+        },
+    )
+    assert rejected["accepted_as"] == "rejected_canonical_lifecycle_fact_mutation"
+    assert rejected["fact_is_canonical"] is False
+    assert "approved_authorization_required" in rejected["blocked_reasons"]
+    assert "fact_certification_sha256_mismatch" in rejected["blocked_reasons"]
+    assert len(ledger_path.read_text().splitlines()) == 3
+
+    # Append an expired authorization directly to prove the executor re-checks TTL at execution time.
+    expired_auth = {
+        "schema_version": 1,
+        "accepted_as": "done_authorization_projected",
+        "run_status": "done_authorization_approved",
+        "runtime_boundary": "human_elevated_done_authorization_projected",
+        "authorization_projected": True,
+        "authorization_id": "auth_expired",
+        "run_id": started["run_id"],
+        "target_status": "done",
+        "expires_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+        "certification_artifact": {"artifact_uri": f"file://{certification_path}", "sha256": certification_record["artifact"]["sha256"]},
+        "evidence_refs": ["artifact://agent-coverage/expired-auth.json"],
+    }
+    with ledger_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(expired_auth) + "\n")
+    expired_rejected = ega.execute_ledger_fact_mutation(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        fact_request={
+            "authorization_id": "auth_expired",
+            "target_status": "done",
+            "certification_artifact_uri": f"file://{certification_path}",
+            "certification_sha256": certification_record["artifact"]["sha256"],
+            "evidence_refs": ["artifact://agent-coverage/expired-fact.json"],
+        },
+    )
+    assert "authorization_expired" in expired_rejected["blocked_reasons"]
+
+    _ledger_path, started2, _proposal_path2, _proposal_record2, certification_path2, certification_record2, authorization_record = _write_authorized_done_run(tmp_path / "cli")
+    request_json = json.dumps(
+        {
+            "authorization_id": authorization_record["authorization_id"],
+            "target_status": "done",
+            "certification_artifact_uri": f"file://{certification_path2}",
+            "certification_sha256": certification_record2["artifact"]["sha256"],
+            "evidence_refs": ["artifact://agent-coverage/cli-fact-mutation.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--execute-ledger-fact-mutation",
+            "--runtime-ledger",
+            str(_ledger_path),
+            "--run-id",
+            started2["run_id"],
+            "--fact-request-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "canonical_lifecycle_fact_mutated"
+    assert cli_result["canonical_lifecycle_status"] == "done"
+    assert cli_result["fact_is_canonical"] is True
