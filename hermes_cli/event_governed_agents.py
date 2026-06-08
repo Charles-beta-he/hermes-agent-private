@@ -9,12 +9,14 @@ pointers, record multi-model certification promotion packets, project elevated
 done authorizations, execute a ledger-local fact mutation, project an external
 adapter write intent, project an external adapter write authorization, execute
 a local-file adapter harness write-through, execute a digest-bound taskpool
-note closeout, execute a digest-bound Kanban DB closeout, or execute a
-digest-bound taskpool/Kanban rollback. Only the explicit
+note closeout, execute a digest-bound Kanban DB closeout, execute a
+digest-bound taskpool/Kanban rollback, or enqueue Lark/Telegram outbox
+notifications without sending. Only the explicit
 ledger-local fact mutation can change canonical lifecycle facts, only the
 local-file adapter harness can write adapter-state fixtures, taskpool note
-closeout/rollback can mutate taskpool markdown frontmatter status, and Kanban DB
-closeout/rollback can mutate a single tasks.status row; no path writes memory/skills,
+closeout/rollback can mutate taskpool markdown frontmatter status, Kanban DB
+closeout/rollback can mutate a single tasks.status row, and the outbox executor
+can append pending no-secret notification intents; no path writes memory/skills,
 outbound messages, or cron/provider configuration.
 """
 
@@ -2362,6 +2364,167 @@ def execute_kanban_db_closeout_write(*, ledger_path: str | Path, run_id: str, ex
     return record
 
 
+def _contains_secret_like_key(value: Any) -> bool:
+    secret_markers = ("token", "password", "secret", "api_key", "apikey", "authorization", "credential")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if any(marker in str(key).lower() for marker in secret_markers):
+                return True
+            if _contains_secret_like_key(item):
+                return True
+    if isinstance(value, list):
+        return any(_contains_secret_like_key(item) for item in value)
+    return False
+
+
+def _compact_payload_summary(payload: Any) -> str:
+    if isinstance(payload, dict) and isinstance(payload.get("text"), str):
+        summary = payload["text"]
+    else:
+        summary = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return summary[:240]
+
+
+def execute_outbound_outbox_enqueue(*, ledger_path: str | Path, run_id: str, outbox_request: dict[str, Any]) -> dict[str, Any]:
+    """Create a pending outbound item for Lark/Telegram without sending it."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    source_run_status = str(outbox_request.get("source_run_status", "")).strip()
+    source_request_digest = str(outbox_request.get("source_request_digest", "")).strip()
+    channels_raw = outbox_request.get("channels", [])
+    channels = [str(channel).strip().lower() for channel in channels_raw] if isinstance(channels_raw, list) else []
+    target_id = str(outbox_request.get("target_id", "")).strip()
+    target_allowlist_raw = outbox_request.get("target_allowlist", [])
+    target_allowlist = [str(item).strip() for item in target_allowlist_raw] if isinstance(target_allowlist_raw, list) else []
+    outbox_path_raw = str(outbox_request.get("outbox_path", "")).strip()
+    payload = outbox_request.get("payload", {})
+    evidence_refs = outbox_request.get("evidence_refs", [])
+    request_digest = _digest(outbox_request)
+    payload_hash = _digest(payload)
+    allowed_source_statuses = {
+        "taskpool_note_write_verified",
+        "kanban_db_write_verified",
+        "external_adapter_rollback_verified",
+    }
+    source_event = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == source_run_status
+            and row.get("request_digest") == source_request_digest
+        ),
+        None,
+    )
+    existing = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "outbound_outbox_item_enqueued"
+            and row.get("source_request_digest") == source_request_digest
+            and row.get("target_id") == target_id
+            and row.get("payload_hash") == payload_hash
+        ),
+        None,
+    )
+    if existing is not None:
+        return {**existing, "idempotent_replay": True}
+
+    blocked_reasons: list[str] = []
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if source_run_status not in allowed_source_statuses:
+        blocked_reasons.append("source_status_not_outbox_eligible")
+    if source_event is None:
+        blocked_reasons.append("verified_source_event_required")
+    if not channels:
+        blocked_reasons.append("channels_required")
+    unsupported_channels = [channel for channel in channels if channel not in {"telegram", "lark"}]
+    if unsupported_channels:
+        blocked_reasons.append("channel_not_allowlisted")
+    if not target_id:
+        blocked_reasons.append("target_id_required")
+    if target_id not in target_allowlist:
+        blocked_reasons.append("target_not_allowlisted")
+    if not outbox_path_raw:
+        blocked_reasons.append("outbox_path_required")
+    else:
+        outbox_path = Path(outbox_path_raw)
+        if outbox_path.exists() and outbox_path.is_symlink():
+            blocked_reasons.append("outbox_path_is_symlink")
+        if outbox_path.parent.exists() and outbox_path.parent.is_symlink():
+            blocked_reasons.append("outbox_parent_is_symlink")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("outbox_requires_evidence_refs")
+    if _contains_secret_like_key(payload):
+        blocked_reasons.append("payload_contains_secret_like_key")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "outbound_outbox_enqueue",
+        "run_id": normalized_run_id,
+        "source_run_status": source_run_status,
+        "source_request_digest": source_request_digest,
+        "channels": channels,
+        "target_id": target_id,
+        "request_digest": request_digest,
+        "payload_hash": payload_hash,
+        "payload_summary": _compact_payload_summary(payload),
+        "delivery_status": "not_enqueued",
+        "send_executed": False,
+        "readback_verified": False,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {**base, "accepted_as": "rejected_outbound_outbox_enqueue", "run_status": "rejected", "runtime_boundary": "outbound_outbox_rejected"}
+
+    outbox_path = Path(outbox_path_raw)
+    outbox_item = {
+        "schema_version": SCHEMA_VERSION,
+        "outbox_id": request_digest,
+        "run_id": normalized_run_id,
+        "source_run_status": source_run_status,
+        "source_request_digest": source_request_digest,
+        "channels": channels,
+        "target_id": target_id,
+        "payload_hash": payload_hash,
+        "payload_summary": _compact_payload_summary(payload),
+        "delivery_status": "pending",
+        "send_executed": False,
+        "created_at": _now(),
+        "evidence_refs": evidence_refs,
+    }
+    outbox_path.parent.mkdir(parents=True, exist_ok=True)
+    with outbox_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(outbox_item, ensure_ascii=False, sort_keys=True) + "\n")
+    readback_rows = [json.loads(line) for line in outbox_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    readback_verified = any(
+        row.get("outbox_id") == request_digest
+        and row.get("payload_hash") == payload_hash
+        and row.get("delivery_status") == "pending"
+        for row in readback_rows
+    )
+    record = {
+        **base,
+        "accepted_as": "outbound_outbox_item_enqueued" if readback_verified else "outbound_outbox_readback_mismatch",
+        "run_status": "outbound_outbox_item_enqueued" if readback_verified else "outbound_outbox_readback_mismatch",
+        "runtime_boundary": "outbound_outbox_enqueue_only",
+        "delivery_status": "pending" if readback_verified else "unknown",
+        "readback_verified": readback_verified,
+        "outbox_path": str(outbox_path),
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+        "idempotent_replay": False,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def execute_external_adapter_rollback_write(*, ledger_path: str | Path, run_id: str, rollback_request: dict[str, Any]) -> dict[str, Any]:
     """Rollback a previously verified taskpool/Kanban closeout to its recorded previous_status."""
 
@@ -2730,6 +2893,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute-taskpool-note-closeout-write", action="store_true", help="Execute authorized taskpool note closeout by mutating frontmatter status and reading it back")
     parser.add_argument("--execute-kanban-db-closeout-write", action="store_true", help="Execute authorized Kanban DB closeout by mutating tasks.status and reading it back")
     parser.add_argument("--execute-external-adapter-rollback-write", action="store_true", help="Execute digest-bound rollback for a previously verified taskpool/Kanban closeout")
+    parser.add_argument("--execute-outbound-outbox-enqueue", action="store_true", help="Enqueue a pending Lark/Telegram outbox item without sending it")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -2747,6 +2911,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--taskpool-execution-json", default="{}", help="JSON taskpool note write execution payload for --execute-taskpool-note-closeout-write")
     parser.add_argument("--kanban-execution-json", default="{}", help="JSON Kanban DB write execution payload for --execute-kanban-db-closeout-write")
     parser.add_argument("--adapter-rollback-json", default="{}", help="JSON rollback payload for --execute-external-adapter-rollback-write")
+    parser.add_argument("--outbox-request-json", default="{}", help="JSON outbox enqueue payload for --execute-outbound-outbox-enqueue")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -2895,6 +3060,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(adapter_rollback, dict):
             parser.error("--adapter-rollback-json must decode to an object")
         result = execute_external_adapter_rollback_write(ledger_path=args.runtime_ledger, run_id=args.run_id, rollback_request=adapter_rollback)
+    elif args.execute_outbound_outbox_enqueue:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --execute-outbound-outbox-enqueue")
+        if not args.run_id:
+            parser.error("--run-id is required with --execute-outbound-outbox-enqueue")
+        outbox_request = json.loads(args.outbox_request_json)
+        if not isinstance(outbox_request, dict):
+            parser.error("--outbox-request-json must decode to an object")
+        result = execute_outbound_outbox_enqueue(ledger_path=args.runtime_ledger, run_id=args.run_id, outbox_request=outbox_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:
