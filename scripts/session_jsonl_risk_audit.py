@@ -32,6 +32,8 @@ WRITE_TOOL_NAMES = {
 }
 SHELL_TOOL_NAMES = {"terminal", "shell", "bash", "run_command", "execute_command"}
 BROWSER_TOOL_NAMES = {"browser", "browser_action", "browser_navigate", "browser_click"}
+SKILL_TOOL_NAMES = {"skill_view", "skill_manage", "skill_list"}
+MCP_TOOL_HINT_RE = re.compile(r"(?i)\bmcp[_-]?(?:server|tool|call)\b|^mcp[_:. -]")
 
 WRITE_PATH_RE = re.compile(
     r"(?P<path>(?:~|/Users/[^\s'\"]+|/tmp)/[^\s'\"]+|[\w./-]+\.(?:py|ts|tsx|js|json|ya?ml|toml|md|sh))"
@@ -120,6 +122,50 @@ def _tool_name(record: dict[str, Any]) -> str:
     return ""
 
 
+def _iter_tool_records(record: dict[str, Any]) -> Iterable[dict[str, Any]]:
+    """Yield top-level and nested tool-call records without mutating input.
+
+    Hermes session JSONL has drifted across providers: some rows are flattened
+    tool records, while others store OpenAI/Anthropic-style calls under
+    ``tool_calls`` or nested message payloads. The audit index should be a
+    replay aid, not a schema migration, so it normalizes common nested shapes
+    into lightweight pseudo-records that retain the parent session/message ids.
+    """
+
+    yield record
+    nested_values: list[Any] = []
+    for key in ("tool_calls", "tools", "actions"):
+        value = record.get(key)
+        if isinstance(value, list):
+            nested_values.extend(value)
+    message = record.get("message")
+    if isinstance(message, dict):
+        for key in ("tool_calls", "tools", "actions"):
+            value = message.get(key)
+            if isinstance(value, list):
+                nested_values.extend(value)
+
+    for item in nested_values:
+        if not isinstance(item, dict):
+            continue
+        normalized = dict(item)
+        function = item.get("function")
+        if isinstance(function, dict):
+            if "name" not in normalized and isinstance(function.get("name"), str):
+                normalized["tool_name"] = function["name"]
+            if "arguments" not in normalized and "arguments" in function:
+                args = function["arguments"]
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        pass
+                normalized["arguments"] = args
+        for key in ("session_id", "conversation_id", "thread_id", "message_id", "turn_index", "turn", "round", "step"):
+            normalized.setdefault(key, record.get(key))
+        yield normalized
+
+
 def _session_id(record: dict[str, Any], fallback: str) -> str:
     for key in ("session_id", "conversation_id", "thread_id"):
         value = record.get(key)
@@ -180,8 +226,14 @@ def _emit(record: dict[str, Any], path: Path, line_no: int, fallback_session: st
         if SHELL_MUTATION_RE.search(text) or tool_l in SHELL_TOOL_NAMES:
             yield RiskEvent("shell_command", "high" if SHELL_MUTATION_RE.search(text) else "medium", session_id, message_id, turn_index, line_no, tool_name, _target_from_text(text), evidence_ref, _compact(text))
 
-    if tool_l in BROWSER_TOOL_NAMES or any(name in lowered for name in BROWSER_TOOL_NAMES):
+    if tool_l in BROWSER_TOOL_NAMES:
         yield RiskEvent("browser_action", "medium", session_id, message_id, turn_index, line_no, tool_name, "", evidence_ref, _compact(text))
+
+    if tool_l in SKILL_TOOL_NAMES:
+        yield RiskEvent("skill_action", "medium", session_id, message_id, turn_index, line_no, tool_name, "", evidence_ref, _compact(text))
+
+    if MCP_TOOL_HINT_RE.search(tool_l):
+        yield RiskEvent("mcp_action", "medium", session_id, message_id, turn_index, line_no, tool_name, "", evidence_ref, _compact(text))
 
     for pattern in SECRET_PATTERNS:
         match = pattern.search(text)
@@ -209,7 +261,8 @@ def audit_jsonl(path: str | Path) -> dict[str, Any]:
                 parse_errors.append({"line": line_no, "error": str(exc)})
                 continue
             if isinstance(record, dict):
-                events.extend(_emit(record, jsonl_path, line_no, fallback_session))
+                for tool_record in _iter_tool_records(record):
+                    events.extend(_emit(tool_record, jsonl_path, line_no, fallback_session))
 
     seen: set[tuple[str, str, str, str, str]] = set()
     unique: list[dict[str, Any]] = []
@@ -230,6 +283,13 @@ def audit_jsonl(path: str | Path) -> dict[str, Any]:
         "line_count": line_count,
         "risk_count": len(unique),
         "risk_counts_by_kind": dict(sorted(counts.items())),
+        "summary": {
+            "tool_events": sum(1 for event in unique if event["tool_name"]),
+            "skill_events": counts.get("skill_action", 0),
+            "mcp_events": counts.get("mcp_action", 0),
+            "critical_events": sum(1 for event in unique if event["severity"] == "critical"),
+            "sessions": sorted({event["session_id"] for event in unique}),
+        },
         "events": sorted(unique, key=lambda item: (item["line"], item["kind"], item["event_id"])),
         "parse_errors": parse_errors,
     }

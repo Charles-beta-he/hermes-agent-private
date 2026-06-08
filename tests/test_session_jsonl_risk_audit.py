@@ -85,3 +85,47 @@ def test_risk_index_empty_for_safe_jsonl(tmp_path: Path) -> None:
     assert result["risk_counts_by_kind"] == {}
     assert result["events"] == []
     assert result["line_count"] == 2
+
+
+def test_risk_index_normalizes_nested_tool_calls_and_summarizes_skill_mcp(tmp_path: Path) -> None:
+    source = tmp_path / "nested.jsonl"
+    _write_jsonl(
+        source,
+        [
+            {
+                "session_id": "sess-nested",
+                "message_id": "m10",
+                "turn_index": 7,
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "skill_view",
+                                "arguments": json.dumps({"name": "taskpool-control-plane"}),
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "mcp_tool_call",
+                                "arguments": json.dumps({"server": "browser", "tool": "snapshot"}),
+                            }
+                        },
+                    ]
+                },
+            }
+        ],
+    )
+
+    result = audit_jsonl(source)
+
+    assert result["risk_counts_by_kind"]["skill_action"] == 1
+    assert result["risk_counts_by_kind"]["mcp_action"] == 1
+    assert result["summary"] == {
+        "tool_events": 2,
+        "skill_events": 1,
+        "mcp_events": 1,
+        "critical_events": 0,
+        "sessions": ["sess-nested"],
+    }
+    assert {event["message_id"] for event in result["events"]} == {"m10"}
+    assert {event["turn_index"] for event in result["events"]} == {7}
