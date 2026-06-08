@@ -2248,3 +2248,179 @@ def test_kanban_db_closeout_write_rejects_symlink_missing_table_and_cli_smoke(tm
     assert cli_result["accepted_as"] == "kanban_db_write_verified"
     assert cli_result["write_executed"] is True
     assert cli_result["readback_verified"] is True
+
+
+def test_external_adapter_rollback_restores_taskpool_note_and_kanban_db_idempotently(tmp_path) -> None:
+    task_ledger, task_started, task_intent, task_auth = _write_taskpool_authorization_run(tmp_path / "taskpool")
+    tasks_dir = tmp_path / "vault" / "05-实践与项目" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    note = tasks_dir / "arch-coverage-task.md"
+    note.write_text("---\ntitle: Rollback task\nstatus: review\n---\n\nBody.\n", encoding="utf-8")
+    task_write = ega.execute_taskpool_note_closeout_write(
+        ledger_path=task_ledger,
+        run_id=task_started["run_id"],
+        execution_request={
+            "authorization_id": task_auth["authorization_id"],
+            "intent_id": task_intent["intent_id"],
+            "adapter": "taskpool",
+            "target_ref": "arch-coverage-task",
+            "target_status": "done",
+            "taskpool_tasks_dir": str(tasks_dir),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/taskpool-write-execute.json"],
+        },
+    )
+    task_rollback = ega.execute_external_adapter_rollback_write(
+        ledger_path=task_ledger,
+        run_id=task_started["run_id"],
+        rollback_request={
+            "adapter": "taskpool",
+            "authorization_id": task_auth["authorization_id"],
+            "intent_id": task_intent["intent_id"],
+            "target_ref": "arch-coverage-task",
+            "target_status": "review",
+            "expected_current_status": "done",
+            "write_request_digest": task_write["request_digest"],
+            "taskpool_tasks_dir": str(tasks_dir),
+            "evidence_refs": ["artifact://agent-coverage/taskpool-rollback.json"],
+        },
+    )
+    assert task_rollback["accepted_as"] == "external_adapter_rollback_verified"
+    assert task_rollback["adapter"] == "taskpool"
+    assert task_rollback["readback_status"] == "review"
+    assert "status: review" in note.read_text(encoding="utf-8")
+    replay = ega.execute_external_adapter_rollback_write(
+        ledger_path=task_ledger,
+        run_id=task_started["run_id"],
+        rollback_request={
+            "adapter": "taskpool",
+            "authorization_id": task_auth["authorization_id"],
+            "intent_id": task_intent["intent_id"],
+            "target_ref": "arch-coverage-task",
+            "target_status": "review",
+            "expected_current_status": "review",
+            "write_request_digest": task_write["request_digest"],
+            "taskpool_tasks_dir": str(tasks_dir),
+            "evidence_refs": ["artifact://agent-coverage/taskpool-rollback-replay.json"],
+        },
+    )
+    assert replay["idempotent_replay"] is True
+
+    kanban_ledger, kanban_started, kanban_intent, kanban_auth = _write_kanban_authorization_run(tmp_path / "kanban")
+    db_path = tmp_path / "kanban" / "kanban.db"
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, status TEXT)")
+        conn.execute("INSERT INTO tasks (id, title, status) VALUES (?, ?, ?)", ("kb_arch_task", "Arch", "review"))
+    kanban_write = ega.execute_kanban_db_closeout_write(
+        ledger_path=kanban_ledger,
+        run_id=kanban_started["run_id"],
+        execution_request={
+            "authorization_id": kanban_auth["authorization_id"],
+            "intent_id": kanban_intent["intent_id"],
+            "adapter": "kanban",
+            "target_ref": "kb_arch_task",
+            "target_status": "done",
+            "kanban_db_path": str(db_path),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/kanban-write-execute.json"],
+        },
+    )
+    kanban_rollback = ega.execute_external_adapter_rollback_write(
+        ledger_path=kanban_ledger,
+        run_id=kanban_started["run_id"],
+        rollback_request={
+            "adapter": "kanban",
+            "authorization_id": kanban_auth["authorization_id"],
+            "intent_id": kanban_intent["intent_id"],
+            "target_ref": "kb_arch_task",
+            "target_status": "review",
+            "expected_current_status": "done",
+            "write_request_digest": kanban_write["request_digest"],
+            "kanban_db_path": str(db_path),
+            "evidence_refs": ["artifact://agent-coverage/kanban-rollback.json"],
+        },
+    )
+    assert kanban_rollback["accepted_as"] == "external_adapter_rollback_verified"
+    assert kanban_rollback["adapter"] == "kanban"
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT status FROM tasks WHERE id=?", ("kb_arch_task",)).fetchone()[0] == "review"
+
+
+def test_external_adapter_rollback_rejects_digest_drift_current_drift_and_cli_smoke(tmp_path) -> None:
+    ledger_path, started, intent_record, write_authorization = _write_kanban_authorization_run(tmp_path)
+    db_path = tmp_path / "kanban.db"
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, status TEXT)")
+        conn.execute("INSERT INTO tasks (id, title, status) VALUES (?, ?, ?)", ("kb_arch_task", "Arch", "review"))
+    write = ega.execute_kanban_db_closeout_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "kanban",
+            "target_ref": "kb_arch_task",
+            "target_status": "done",
+            "kanban_db_path": str(db_path),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/kanban-write-execute.json"],
+        },
+    )
+    rejected = ega.execute_external_adapter_rollback_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        rollback_request={
+            "adapter": "kanban",
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "target_ref": "kb_arch_task",
+            "target_status": "review",
+            "expected_current_status": "done",
+            "write_request_digest": "deadbeef",
+            "kanban_db_path": str(db_path),
+            "evidence_refs": ["artifact://agent-coverage/kanban-rollback-drift.json"],
+        },
+    )
+    assert rejected["accepted_as"] == "rejected_external_adapter_rollback"
+    assert "verified_write_event_required" in rejected["blocked_reasons"]
+
+    request_json = json.dumps(
+        {
+            "adapter": "kanban",
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "target_ref": "kb_arch_task",
+            "target_status": "review",
+            "expected_current_status": "done",
+            "write_request_digest": write["request_digest"],
+            "kanban_db_path": str(db_path),
+            "evidence_refs": ["artifact://agent-coverage/cli-kanban-rollback.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--execute-external-adapter-rollback-write",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--adapter-rollback-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "external_adapter_rollback_verified"
+    assert cli_result["write_executed"] is True
+    assert cli_result["readback_verified"] is True

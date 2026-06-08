@@ -9,11 +9,12 @@ pointers, record multi-model certification promotion packets, project elevated
 done authorizations, execute a ledger-local fact mutation, project an external
 adapter write intent, project an external adapter write authorization, execute
 a local-file adapter harness write-through, execute a digest-bound taskpool
-note closeout, or execute a digest-bound Kanban DB closeout. Only the explicit
+note closeout, execute a digest-bound Kanban DB closeout, or execute a
+digest-bound taskpool/Kanban rollback. Only the explicit
 ledger-local fact mutation can change canonical lifecycle facts, only the
 local-file adapter harness can write adapter-state fixtures, taskpool note
-closeout can mutate taskpool markdown frontmatter status, and Kanban DB closeout
-can mutate a single tasks.status row; no path writes memory/skills,
+closeout/rollback can mutate taskpool markdown frontmatter status, and Kanban DB
+closeout/rollback can mutate a single tasks.status row; no path writes memory/skills,
 outbound messages, or cron/provider configuration.
 """
 
@@ -2024,6 +2025,30 @@ def _has_symlink_in_taskpool_chain(tasks_dir: Path) -> bool:
     return any(path.is_symlink() for path in check_paths)
 
 
+def _safe_taskpool_note_path(tasks_dir: Path, target_ref: str) -> tuple[Path | None, list[str]]:
+    errors: list[str] = []
+    if not target_ref or target_ref in {".", ".."} or "/" in target_ref or "\\" in target_ref or target_ref.endswith(".md"):
+        errors.append("target_ref_unsafe")
+        return None, errors
+    if _has_symlink_in_taskpool_chain(tasks_dir):
+        errors.append("taskpool_path_chain_contains_symlink")
+    note_path = tasks_dir / f"{target_ref}.md"
+    if note_path.parent != tasks_dir:
+        errors.append("taskpool_note_parent_mismatch")
+    if note_path.is_symlink():
+        errors.append("taskpool_note_is_symlink")
+    if not note_path.exists():
+        errors.append("taskpool_note_missing")
+    elif not note_path.is_file():
+        errors.append("taskpool_note_not_regular_file")
+    try:
+        if tasks_dir.exists() and note_path.exists() and note_path.resolve().parent != tasks_dir.resolve():
+            errors.append("taskpool_note_resolves_outside_tasks_dir")
+    except OSError:
+        errors.append("taskpool_note_resolution_failed")
+    return note_path if not errors else None, errors
+
+
 def execute_taskpool_note_closeout_write(*, ledger_path: str | Path, run_id: str, execution_request: dict[str, Any]) -> dict[str, Any]:
     """Execute a digest-bound taskpool note closeout by mutating only frontmatter status."""
 
@@ -2337,6 +2362,180 @@ def execute_kanban_db_closeout_write(*, ledger_path: str | Path, run_id: str, ex
     return record
 
 
+def execute_external_adapter_rollback_write(*, ledger_path: str | Path, run_id: str, rollback_request: dict[str, Any]) -> dict[str, Any]:
+    """Rollback a previously verified taskpool/Kanban closeout to its recorded previous_status."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    adapter = str(rollback_request.get("adapter", "")).strip().lower()
+    authorization_id = str(rollback_request.get("authorization_id", "")).strip()
+    intent_id = str(rollback_request.get("intent_id", "")).strip()
+    target_ref = str(rollback_request.get("target_ref", "")).strip()
+    target_status = str(rollback_request.get("target_status", "")).strip().lower()
+    expected_current_status = str(rollback_request.get("expected_current_status", "")).strip().lower()
+    write_request_digest = str(rollback_request.get("write_request_digest", "")).strip()
+    evidence_refs = rollback_request.get("evidence_refs", [])
+    request_digest = _digest(rollback_request)
+    verified_status_by_adapter = {
+        "taskpool": "taskpool_note_write_verified",
+        "kanban": "kanban_db_write_verified",
+    }
+    verified_status = verified_status_by_adapter.get(adapter, "")
+    write_event = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == verified_status
+            and row.get("authorization_id") == authorization_id
+            and row.get("intent_id") == intent_id
+            and row.get("target_ref") == target_ref
+            and row.get("request_digest") == write_request_digest
+        ),
+        None,
+    )
+    existing = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "external_adapter_rollback_verified"
+            and row.get("authorization_id") == authorization_id
+            and row.get("intent_id") == intent_id
+            and row.get("target_ref") == target_ref
+            and row.get("target_status") == target_status
+            and row.get("write_request_digest") == write_request_digest
+        ),
+        None,
+    )
+    if existing is not None:
+        return {**existing, "idempotent_replay": True}
+
+    blocked_reasons: list[str] = []
+    if adapter not in {"taskpool", "kanban"}:
+        blocked_reasons.append("rollback_adapter_not_supported")
+    if write_event is None:
+        blocked_reasons.append("verified_write_event_required")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("rollback_requires_evidence_refs")
+    if not target_status:
+        blocked_reasons.append("rollback_target_status_required")
+    previous_status = str((write_event or {}).get("previous_status", "")).strip().lower()
+    if write_event is not None:
+        if adapter != str(write_event.get("adapter", "")).lower():
+            blocked_reasons.append("rollback_adapter_mismatch")
+        if target_ref != write_event.get("target_ref"):
+            blocked_reasons.append("rollback_target_ref_mismatch")
+        if target_status != previous_status:
+            blocked_reasons.append("rollback_target_status_must_match_previous_status")
+        if not previous_status:
+            blocked_reasons.append("write_event_previous_status_missing")
+
+    current_status = ""
+    readback_status = ""
+    task_note_path = ""
+    db_path_raw = ""
+    if adapter == "taskpool" and "verified_write_event_required" not in blocked_reasons:
+        tasks_dir_raw = str(rollback_request.get("taskpool_tasks_dir", "")).strip()
+        if not tasks_dir_raw:
+            blocked_reasons.append("taskpool_tasks_dir_required")
+        else:
+            note_path, path_errors = _safe_taskpool_note_path(Path(tasks_dir_raw), target_ref)
+            blocked_reasons.extend(path_errors)
+            if note_path is not None and not blocked_reasons:
+                task_note_path = str(note_path)
+                text = note_path.read_text(encoding="utf-8")
+                current_status = _extract_frontmatter_status(text)
+                if expected_current_status and current_status != expected_current_status:
+                    blocked_reasons.append("rollback_current_status_mismatch")
+    elif adapter == "kanban" and "verified_write_event_required" not in blocked_reasons:
+        db_path_raw = str(rollback_request.get("kanban_db_path", "")).strip()
+        if not db_path_raw:
+            blocked_reasons.append("kanban_db_path_required")
+        else:
+            db_path = Path(db_path_raw)
+            if db_path.is_symlink():
+                blocked_reasons.append("kanban_db_is_symlink")
+            elif not db_path.exists():
+                blocked_reasons.append("kanban_db_missing")
+            elif not db_path.is_file():
+                blocked_reasons.append("kanban_db_not_regular_file")
+            if not blocked_reasons:
+                try:
+                    with sqlite3.connect(db_path) as conn:
+                        table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone()
+                        if table is None:
+                            blocked_reasons.append("kanban_tasks_table_missing")
+                        else:
+                            row = conn.execute("SELECT status FROM tasks WHERE id=?", (target_ref,)).fetchone()
+                            if row is None:
+                                blocked_reasons.append("kanban_task_missing")
+                            else:
+                                current_status = str(row[0] or "").strip().lower()
+                                if expected_current_status and current_status != expected_current_status:
+                                    blocked_reasons.append("rollback_current_status_mismatch")
+                except sqlite3.Error:
+                    blocked_reasons.append("kanban_db_unreadable")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "external_adapter_rollback_write",
+        "run_id": normalized_run_id,
+        "adapter": adapter,
+        "authorization_id": authorization_id,
+        "intent_id": intent_id,
+        "target_ref": target_ref,
+        "target_status": target_status,
+        "expected_current_status": expected_current_status,
+        "previous_status": previous_status,
+        "current_status": current_status,
+        "write_request_digest": write_request_digest,
+        "request_digest": request_digest,
+        "write_executed": False,
+        "readback_verified": False,
+        "external_adapter_write_through_enabled": False,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {**base, "accepted_as": "rejected_external_adapter_rollback", "run_status": "rejected", "runtime_boundary": "external_adapter_rollback_rejected"}
+
+    if adapter == "taskpool":
+        note_path = Path(task_note_path)
+        text = note_path.read_text(encoding="utf-8")
+        updated = _replace_frontmatter_status(text, target_status)
+        if "<!-- hermes_adapter_rollback" not in updated:
+            updated += f"\n<!-- hermes_adapter_rollback run_id={normalized_run_id} adapter=taskpool target_status={target_status} -->\n"
+        note_path.write_text(updated, encoding="utf-8")
+        readback_status = _extract_frontmatter_status(note_path.read_text(encoding="utf-8"))
+    else:
+        db_path = Path(db_path_raw)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("UPDATE tasks SET status=? WHERE id=?", (target_status, target_ref))
+            conn.commit()
+            row = conn.execute("SELECT status FROM tasks WHERE id=?", (target_ref,)).fetchone()
+        readback_status = str(row[0] if row else "").strip().lower()
+
+    readback_verified = readback_status == target_status
+    record = {
+        **base,
+        "accepted_as": "external_adapter_rollback_verified" if readback_verified else "external_adapter_rollback_mismatch",
+        "run_status": "external_adapter_rollback_verified" if readback_verified else "external_adapter_rollback_mismatch",
+        "runtime_boundary": "external_adapter_digest_bound_rollback",
+        "write_executed": True,
+        "readback_status": readback_status,
+        "readback_verified": readback_verified,
+        "external_adapter_write_through_enabled": True,
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+        "idempotent_replay": False,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -2530,6 +2729,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute-external-adapter-local-file-write", action="store_true", help="Execute authorized external adapter write against a local-file adapter harness and read it back")
     parser.add_argument("--execute-taskpool-note-closeout-write", action="store_true", help="Execute authorized taskpool note closeout by mutating frontmatter status and reading it back")
     parser.add_argument("--execute-kanban-db-closeout-write", action="store_true", help="Execute authorized Kanban DB closeout by mutating tasks.status and reading it back")
+    parser.add_argument("--execute-external-adapter-rollback-write", action="store_true", help="Execute digest-bound rollback for a previously verified taskpool/Kanban closeout")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -2546,6 +2746,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--adapter-execution-json", default="{}", help="JSON adapter write execution payload for --execute-external-adapter-local-file-write")
     parser.add_argument("--taskpool-execution-json", default="{}", help="JSON taskpool note write execution payload for --execute-taskpool-note-closeout-write")
     parser.add_argument("--kanban-execution-json", default="{}", help="JSON Kanban DB write execution payload for --execute-kanban-db-closeout-write")
+    parser.add_argument("--adapter-rollback-json", default="{}", help="JSON rollback payload for --execute-external-adapter-rollback-write")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -2685,6 +2886,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(kanban_execution, dict):
             parser.error("--kanban-execution-json must decode to an object")
         result = execute_kanban_db_closeout_write(ledger_path=args.runtime_ledger, run_id=args.run_id, execution_request=kanban_execution)
+    elif args.execute_external_adapter_rollback_write:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --execute-external-adapter-rollback-write")
+        if not args.run_id:
+            parser.error("--run-id is required with --execute-external-adapter-rollback-write")
+        adapter_rollback = json.loads(args.adapter_rollback_json)
+        if not isinstance(adapter_rollback, dict):
+            parser.error("--adapter-rollback-json must decode to an object")
+        result = execute_external_adapter_rollback_write(ledger_path=args.runtime_ledger, run_id=args.run_id, rollback_request=adapter_rollback)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

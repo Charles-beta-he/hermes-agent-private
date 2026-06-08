@@ -51,8 +51,10 @@ SSOT: this file
 - [x] Slice 34: Add taskpool note closeout write-through executor: consume unexpired taskpool authorization, reject path/symlink escapes, mutate only frontmatter status to done, append audit marker, read back status.
 - [x] Slice 35: Scoped commit for taskpool note closeout executor if verification passes. Commit: 87ac0f889 Execute taskpool note closeout writes.
 - [x] Slice 36: Add Kanban DB closeout write-through executor: consume unexpired kanban authorization, reject DB symlink/missing-table/missing-task drift, mutate only `tasks.status` to done, read back status.
-- [x] Slice 37: Scoped commit for Kanban DB closeout executor if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before Lark/Telegram write-through execution, external agent tools/file edits/shell commands, or rollback/reopen unless a narrower executor-specific slice authorizes that capability.
+- [x] Slice 37: Scoped commit for Kanban DB closeout executor if verification passes. Commit: 5c359c1b6 Execute Kanban DB closeout writes.
+- [x] Slice 38: Add digest-bound rollback executor for taskpool/Kanban: consume verified write event by request digest, restore recorded previous_status, read back, and remain idempotent.
+- [x] Slice 39: Scoped commit for rollback executor if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before Lark/Telegram write-through execution, external agent tools/file edits/shell commands, or broad reopen unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
 
@@ -71,8 +73,9 @@ SSOT: this file
 - The tenth approved runtime boundary is external adapter write intent projection: a canonical done fact may be mapped to an allowlisted adapter target only as an intent with readiness/readback/rollback plans and evidence. It still cannot perform external write-through.
 - The eleventh approved runtime boundary is external adapter write authorization projection: an elevated actor may approve a recorded write intent only if adapter/ref/status/canonical digest/intent digest are unchanged and TTL is valid. It still records authorization only and does not execute write-through.
 - The twelfth approved runtime boundary is local-file adapter write-through execution: an unexpired write authorization may update a local adapter_state_path target status to done, then immediately read it back and record verified or mismatch. This is a harness executor only; real taskpool/Kanban/Lark/Telegram writes still require separate adapter-specific slices.
-- The thirteenth approved runtime boundary is taskpool note closeout write-through: an unexpired taskpool write authorization may mutate exactly one safe task markdown note frontmatter status from the expected previous status to done, append an audit marker, and read it back. Kanban DB, Lark, Telegram, rollback, and arbitrary taskpool lifecycle operations remain disabled.
-- The fourteenth approved runtime boundary is Kanban DB closeout write-through: an unexpired kanban write authorization may mutate exactly one SQLite `tasks.status` cell from the expected previous status to done, then read it back. Lark, Telegram, rollback, arbitrary SQL, schema mutation, and arbitrary Kanban operations remain disabled.
+- The thirteenth approved runtime boundary is taskpool note closeout write-through: an unexpired taskpool write authorization may mutate exactly one safe task markdown note frontmatter status from the expected previous status to done, append an audit marker, and read it back. Kanban DB, Lark, Telegram, and arbitrary taskpool lifecycle operations remain disabled.
+- The fourteenth approved runtime boundary is Kanban DB closeout write-through: an unexpired kanban write authorization may mutate exactly one SQLite `tasks.status` cell from the expected previous status to done, then read it back. Lark, Telegram, arbitrary SQL, schema mutation, and arbitrary Kanban operations remain disabled.
+- The fifteenth approved runtime boundary is digest-bound taskpool/Kanban rollback: a verified closeout write event may be consumed by exact write request digest to restore only its recorded previous_status, with current-state check and readback. Broad reopen, Lark/Telegram writes, and arbitrary rollback targets remain disabled.
 
 ## Files Changed
 
