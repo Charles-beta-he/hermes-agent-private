@@ -7,11 +7,13 @@ paths may run ``--version`` probes, send no-tool/no-write dry-run prompts,
 attach read-only context artifact pointers, record validated proposal artifact
 pointers, record multi-model certification promotion packets, project elevated
 done authorizations, execute a ledger-local fact mutation, project an external
-adapter write intent, project an external adapter write authorization, or execute
-a local-file adapter harness write-through. Only the explicit ledger-local fact
-mutation can change canonical lifecycle facts, and only the local-file adapter
-harness can write adapter state; no path writes memory/skills, outbound messages,
-or cron/provider configuration.
+adapter write intent, project an external adapter write authorization, execute
+a local-file adapter harness write-through, or execute a digest-bound taskpool
+note closeout. Only the explicit ledger-local fact
+mutation can change canonical lifecycle facts, only the local-file adapter
+harness can write adapter-state fixtures, and only taskpool note closeout can
+mutate taskpool markdown frontmatter status; no path writes memory/skills,
+outbound messages, or cron/provider configuration.
 """
 
 from __future__ import annotations
@@ -1989,6 +1991,197 @@ def execute_external_adapter_local_file_write(*, ledger_path: str | Path, run_id
     return record
 
 
+def _extract_frontmatter_status(text: str) -> str:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return ""
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if line.startswith("status:"):
+            return line.split(":", 1)[1].strip().strip('"\'').lower()
+    return ""
+
+
+def _replace_frontmatter_status(text: str, target_status: str) -> str:
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("frontmatter_required")
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            raise ValueError("frontmatter_status_required")
+        if lines[index].startswith("status:"):
+            newline = "\n" if lines[index].endswith("\n") else ""
+            lines[index] = f"status: {target_status}{newline}"
+            return "".join(lines)
+    raise ValueError("frontmatter_status_required")
+
+
+def _has_symlink_in_taskpool_chain(tasks_dir: Path) -> bool:
+    check_paths = [tasks_dir, tasks_dir.parent, tasks_dir.parent.parent]
+    return any(path.is_symlink() for path in check_paths)
+
+
+def execute_taskpool_note_closeout_write(*, ledger_path: str | Path, run_id: str, execution_request: dict[str, Any]) -> dict[str, Any]:
+    """Execute a digest-bound taskpool note closeout by mutating only frontmatter status."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    authorization_id = str(execution_request.get("authorization_id", "")).strip()
+    intent_id = str(execution_request.get("intent_id", "")).strip()
+    adapter = str(execution_request.get("adapter", "")).strip().lower()
+    target_ref = str(execution_request.get("target_ref", "")).strip()
+    target_status = str(execution_request.get("target_status", "")).strip().lower()
+    tasks_dir_raw = str(execution_request.get("taskpool_tasks_dir", "")).strip()
+    expected_previous_status = str(execution_request.get("expected_previous_status", "")).strip().lower()
+    evidence_refs = execution_request.get("evidence_refs", [])
+    request_digest = _digest(execution_request)
+    auth_record = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "external_adapter_write_authorization_approved"
+            and row.get("authorization_id") == authorization_id
+            and row.get("intent_id") == intent_id
+        ),
+        None,
+    )
+    existing = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "taskpool_note_write_verified"
+            and row.get("authorization_id") == authorization_id
+            and row.get("intent_id") == intent_id
+            and row.get("target_ref") == target_ref
+            and row.get("target_status") == target_status
+        ),
+        None,
+    )
+    if existing is not None:
+        return {**existing, "idempotent_replay": True}
+
+    blocked_reasons: list[str] = []
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if auth_record is None:
+        blocked_reasons.append("write_authorization_required")
+    if adapter != "taskpool":
+        blocked_reasons.append("adapter_must_be_taskpool")
+    if target_status != "done":
+        blocked_reasons.append("target_status_must_be_done")
+    if not target_ref or target_ref in {".", ".."} or "/" in target_ref or "\\" in target_ref or target_ref.endswith(".md"):
+        blocked_reasons.append("target_ref_unsafe")
+    if not tasks_dir_raw:
+        blocked_reasons.append("taskpool_tasks_dir_required")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("taskpool_write_requires_evidence_refs")
+    if auth_record is not None:
+        if adapter != auth_record.get("adapter"):
+            blocked_reasons.append("execution_adapter_mismatch")
+        if target_ref != auth_record.get("target_ref"):
+            blocked_reasons.append("execution_target_ref_mismatch")
+        if target_status != auth_record.get("target_status"):
+            blocked_reasons.append("execution_target_status_mismatch")
+        expires_at = str(auth_record.get("expires_at", ""))
+        try:
+            expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expires_dt.tzinfo is None:
+                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+            if expires_dt <= datetime.now(timezone.utc):
+                blocked_reasons.append("write_authorization_expired")
+        except ValueError:
+            blocked_reasons.append("write_authorization_expires_at_invalid")
+
+    tasks_dir = Path(tasks_dir_raw) if tasks_dir_raw else None
+    note_path: Path | None = None
+    previous_status = ""
+    if tasks_dir is not None:
+        if not tasks_dir.exists() or not tasks_dir.is_dir():
+            blocked_reasons.append("taskpool_tasks_dir_missing")
+        elif _has_symlink_in_taskpool_chain(tasks_dir):
+            blocked_reasons.append("taskpool_tasks_dir_symlink_chain")
+        elif "target_ref_unsafe" not in blocked_reasons:
+            note_path = tasks_dir / f"{target_ref}.md"
+            if note_path.parent != tasks_dir:
+                blocked_reasons.append("taskpool_note_parent_escape")
+            elif note_path.is_symlink():
+                blocked_reasons.append("taskpool_note_is_symlink")
+            elif not note_path.exists():
+                blocked_reasons.append("taskpool_note_missing")
+            elif not note_path.is_file():
+                blocked_reasons.append("taskpool_note_not_regular_file")
+            else:
+                try:
+                    if note_path.resolve().parent != tasks_dir.resolve():
+                        blocked_reasons.append("taskpool_note_resolve_escape")
+                except FileNotFoundError:
+                    blocked_reasons.append("taskpool_note_missing")
+                if not blocked_reasons:
+                    text = note_path.read_text(encoding="utf-8")
+                    previous_status = _extract_frontmatter_status(text)
+                    if not previous_status:
+                        blocked_reasons.append("frontmatter_status_required")
+                    elif expected_previous_status and previous_status != expected_previous_status:
+                        blocked_reasons.append("taskpool_note_previous_status_mismatch")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "taskpool_note_closeout_write_through",
+        "run_id": normalized_run_id,
+        "authorization_id": authorization_id,
+        "intent_id": intent_id,
+        "adapter": adapter,
+        "target_ref": target_ref,
+        "target_status": target_status,
+        "taskpool_tasks_dir": tasks_dir_raw,
+        "previous_status": previous_status,
+        "write_executed": False,
+        "readback_verified": False,
+        "rollback_available": False,
+        "external_adapter_write_through_enabled": False,
+        "request_digest": request_digest,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_taskpool_note_write_execution",
+            "run_status": "rejected",
+            "runtime_boundary": "taskpool_note_write_execution_rejected",
+        }
+
+    assert note_path is not None
+    original_text = note_path.read_text(encoding="utf-8")
+    updated_text = _replace_frontmatter_status(original_text, target_status)
+    audit_marker = f"\n<!-- hermes_taskpool_write_through authorization_id={authorization_id} previous_status={previous_status} target_status={target_status} recorded_at={_now()} -->\n"
+    note_path.write_text(updated_text.rstrip("\n") + audit_marker, encoding="utf-8")
+    readback_text = note_path.read_text(encoding="utf-8")
+    readback_status = _extract_frontmatter_status(readback_text)
+    readback_verified = readback_status == target_status
+    record = {
+        **base,
+        "accepted_as": "taskpool_note_write_verified" if readback_verified else "taskpool_note_write_mismatch",
+        "run_status": "taskpool_note_write_verified" if readback_verified else "taskpool_note_write_mismatch",
+        "runtime_boundary": "taskpool_note_closeout_write_through",
+        "write_executed": True,
+        "readback_status": readback_status,
+        "readback_verified": readback_verified,
+        "rollback_available": True,
+        "external_adapter_write_through_enabled": True,
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+        "idempotent_replay": False,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -2180,6 +2373,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--request-external-adapter-write-intent", action="store_true", help="Project external adapter write intent without write-through")
     parser.add_argument("--request-external-adapter-write-authorization", action="store_true", help="Project external adapter write authorization without executing write-through")
     parser.add_argument("--execute-external-adapter-local-file-write", action="store_true", help="Execute authorized external adapter write against a local-file adapter harness and read it back")
+    parser.add_argument("--execute-taskpool-note-closeout-write", action="store_true", help="Execute authorized taskpool note closeout by mutating frontmatter status and reading it back")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -2194,6 +2388,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--adapter-intent-json", default="{}", help="JSON adapter write intent payload for --request-external-adapter-write-intent")
     parser.add_argument("--adapter-authorization-json", default="{}", help="JSON adapter write authorization payload for --request-external-adapter-write-authorization")
     parser.add_argument("--adapter-execution-json", default="{}", help="JSON adapter write execution payload for --execute-external-adapter-local-file-write")
+    parser.add_argument("--taskpool-execution-json", default="{}", help="JSON taskpool note write execution payload for --execute-taskpool-note-closeout-write")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -2315,6 +2510,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(adapter_execution, dict):
             parser.error("--adapter-execution-json must decode to an object")
         result = execute_external_adapter_local_file_write(ledger_path=args.runtime_ledger, run_id=args.run_id, execution_request=adapter_execution)
+    elif args.execute_taskpool_note_closeout_write:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --execute-taskpool-note-closeout-write")
+        if not args.run_id:
+            parser.error("--run-id is required with --execute-taskpool-note-closeout-write")
+        taskpool_execution = json.loads(args.taskpool_execution_json)
+        if not isinstance(taskpool_execution, dict):
+            parser.error("--taskpool-execution-json must decode to an object")
+        result = execute_taskpool_note_closeout_write(ledger_path=args.runtime_ledger, run_id=args.run_id, execution_request=taskpool_execution)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

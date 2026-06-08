@@ -47,8 +47,10 @@ SSOT: this file
 - [x] Slice 30: Add external adapter write authorization projection: require recorded intent, elevated actor, approval decision, TTL, target/digest unchanged, and evidence while still not executing write-through.
 - [x] Slice 31: Scoped commit for adapter write authorization projection if verification passes. Commit: 00e039a8f Project external adapter write authorizations.
 - [x] Slice 32: Add narrow local-file adapter write-through executor: consume unexpired write authorization, update adapter_state_path status=done, read back, record verified/mismatch, and keep real taskpool/Kanban/Lark/Telegram adapters disabled.
-- [x] Slice 33: Scoped commit for local-file adapter executor if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before real external adapter/taskpool/Kanban/Lark write-through execution, external agent tools/file edits/shell commands, or rollback/reopen unless a narrower executor-specific slice authorizes that capability.
+- [x] Slice 33: Scoped commit for local-file adapter executor if verification passes. Commit: 9f007e480 Execute local-file adapter write through.
+- [x] Slice 34: Add taskpool note closeout write-through executor: consume unexpired taskpool authorization, reject path/symlink escapes, mutate only frontmatter status to done, append audit marker, read back status.
+- [x] Slice 35: Scoped commit for taskpool note closeout executor if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before Kanban DB/Lark/Telegram write-through execution, external agent tools/file edits/shell commands, or rollback/reopen unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
 
@@ -67,6 +69,7 @@ SSOT: this file
 - The tenth approved runtime boundary is external adapter write intent projection: a canonical done fact may be mapped to an allowlisted adapter target only as an intent with readiness/readback/rollback plans and evidence. It still cannot perform external write-through.
 - The eleventh approved runtime boundary is external adapter write authorization projection: an elevated actor may approve a recorded write intent only if adapter/ref/status/canonical digest/intent digest are unchanged and TTL is valid. It still records authorization only and does not execute write-through.
 - The twelfth approved runtime boundary is local-file adapter write-through execution: an unexpired write authorization may update a local adapter_state_path target status to done, then immediately read it back and record verified or mismatch. This is a harness executor only; real taskpool/Kanban/Lark/Telegram writes still require separate adapter-specific slices.
+- The thirteenth approved runtime boundary is taskpool note closeout write-through: an unexpired taskpool write authorization may mutate exactly one safe task markdown note frontmatter status from the expected previous status to done, append an audit marker, and read it back. Kanban DB, Lark, Telegram, rollback, and arbitrary taskpool lifecycle operations remain disabled.
 
 ## Files Changed
 

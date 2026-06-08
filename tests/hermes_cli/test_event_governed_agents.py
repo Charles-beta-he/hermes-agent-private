@@ -1917,3 +1917,179 @@ def test_external_adapter_local_file_executor_rejects_missing_authorization_drif
     assert cli_result["accepted_as"] == "external_adapter_write_verified"
     assert cli_result["write_executed"] is True
     assert cli_result["readback_verified"] is True
+
+
+def _write_taskpool_authorization_run(tmp_path):
+    ledger_path, started, proposal_path, proposal_record, certification_path, certification_record, authorization_record, fact_record = _write_done_fact_run(tmp_path)
+    intent_record = ega.request_external_adapter_write_intent(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        intent_request={
+            "adapter": "taskpool",
+            "target_ref": "arch-coverage-task",
+            "target_status": "done",
+            "canonical_fact_digest": fact_record["fact_request_digest"],
+            "readiness_check": {"preflight": "passed", "current_remote_status": "review"},
+            "readback_plan": {"method": "read_task_note_frontmatter", "expected_status": "done"},
+            "rollback_plan": {"method": "restore_previous_frontmatter_status", "previous_status": "review"},
+            "evidence_refs": ["artifact://agent-coverage/taskpool-write-intent.json"],
+        },
+    )
+    write_authorization = ega.request_external_adapter_write_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        authorization_request={
+            "intent_id": intent_record["intent_id"],
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "adapter": intent_record["adapter"],
+            "target_ref": intent_record["target_ref"],
+            "target_status": intent_record["target_status"],
+            "canonical_fact_digest": intent_record["canonical_fact_digest"],
+            "intent_request_digest": intent_record["request_digest"],
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+            "evidence_refs": ["artifact://agent-coverage/taskpool-write-auth.json"],
+        },
+    )
+    return ledger_path, started, intent_record, write_authorization
+
+
+def test_taskpool_note_closeout_write_through_updates_status_and_readback_idempotently(tmp_path) -> None:
+    ledger_path, started, intent_record, write_authorization = _write_taskpool_authorization_run(tmp_path)
+    tasks_dir = tmp_path / "vault" / "05-实践与项目" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    note_path = tasks_dir / "arch-coverage-task.md"
+    note_path.write_text("---\ntitle: Arch coverage task\nstatus: review\n---\n\nBody stays intact.\n", encoding="utf-8")
+
+    result = ega.execute_taskpool_note_closeout_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "taskpool",
+            "target_ref": "arch-coverage-task",
+            "target_status": "done",
+            "taskpool_tasks_dir": str(tasks_dir),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/taskpool-write-execute.json"],
+        },
+    )
+
+    text = note_path.read_text(encoding="utf-8")
+    assert result["accepted_as"] == "taskpool_note_write_verified"
+    assert result["run_status"] == "taskpool_note_write_verified"
+    assert result["runtime_boundary"] == "taskpool_note_closeout_write_through"
+    assert result["write_executed"] is True
+    assert result["readback_verified"] is True
+    assert result["previous_status"] == "review"
+    assert result["readback_status"] == "done"
+    assert "status: done" in text
+    assert "Body stays intact." in text
+    assert "hermes_taskpool_write_through" in text
+    assert len(ledger_path.read_text().splitlines()) == 8
+
+    replay = ega.execute_taskpool_note_closeout_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "taskpool",
+            "target_ref": "arch-coverage-task",
+            "target_status": "done",
+            "taskpool_tasks_dir": str(tasks_dir),
+            "expected_previous_status": "done",
+            "evidence_refs": ["artifact://agent-coverage/taskpool-write-replay.json"],
+        },
+    )
+    assert replay["idempotent_replay"] is True
+    assert len(ledger_path.read_text().splitlines()) == 8
+
+
+def test_taskpool_note_closeout_write_rejects_path_escape_symlink_and_cli_smoke(tmp_path) -> None:
+    ledger_path, started, intent_record, write_authorization = _write_taskpool_authorization_run(tmp_path)
+    tasks_dir = tmp_path / "vault" / "05-实践与项目" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.md"
+    outside.write_text("---\nstatus: review\n---\noutside\n", encoding="utf-8")
+    symlink_note = tasks_dir / "arch-coverage-task.md"
+    symlink_note.symlink_to(outside)
+
+    rejected = ega.execute_taskpool_note_closeout_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "taskpool",
+            "target_ref": "arch-coverage-task",
+            "target_status": "done",
+            "taskpool_tasks_dir": str(tasks_dir),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/taskpool-symlink-reject.json"],
+        },
+    )
+    assert rejected["accepted_as"] == "rejected_taskpool_note_write_execution"
+    assert rejected["write_executed"] is False
+    assert "taskpool_note_is_symlink" in rejected["blocked_reasons"]
+    assert "status: review" in outside.read_text(encoding="utf-8")
+
+    bad_ref = ega.execute_taskpool_note_closeout_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "taskpool",
+            "target_ref": "../escape",
+            "target_status": "done",
+            "taskpool_tasks_dir": str(tasks_dir),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/taskpool-bad-ref.json"],
+        },
+    )
+    assert "target_ref_unsafe" in bad_ref["blocked_reasons"]
+
+    _ledger_path, started2, intent_record2, write_authorization2 = _write_taskpool_authorization_run(tmp_path / "cli")
+    cli_tasks_dir = tmp_path / "cli" / "vault" / "05-实践与项目" / "tasks"
+    cli_tasks_dir.mkdir(parents=True)
+    (cli_tasks_dir / "arch-coverage-task.md").write_text("---\ntitle: CLI task\nstatus: review\n---\n\nCLI body.\n", encoding="utf-8")
+    request_json = json.dumps(
+        {
+            "authorization_id": write_authorization2["authorization_id"],
+            "intent_id": intent_record2["intent_id"],
+            "adapter": "taskpool",
+            "target_ref": "arch-coverage-task",
+            "target_status": "done",
+            "taskpool_tasks_dir": str(cli_tasks_dir),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/cli-taskpool-write.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--execute-taskpool-note-closeout-write",
+            "--runtime-ledger",
+            str(_ledger_path),
+            "--run-id",
+            started2["run_id"],
+            "--taskpool-execution-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "taskpool_note_write_verified"
+    assert cli_result["write_executed"] is True
+    assert cli_result["readback_verified"] is True
