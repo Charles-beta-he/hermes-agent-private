@@ -23,15 +23,20 @@ SSOT: this file
 - [x] Slice 6: Scoped commit for graph/certification contracts if verification passes. Commit: 58f086b5f Add agent workflow graph certification contracts.
 - [x] Slice 7: Add artifact pointer contract so evidence remains summary/hash/pointer only in the hot ledger.
 - [x] Slice 8: Add workflow metadata contract for lane/workflow_state/checkpoint substate without lifecycle authority.
-- [ ] Slice 9: Scoped commit for artifact/workflow metadata contracts if verification passes.
-- [ ] Boundary: stop before real runtime worker dispatch / task lifecycle writes / external adapter writes unless a separate explicit human gate authorizes that slice.
+- [x] Slice 9: Scoped commit for artifact/workflow metadata contracts if verification passes. Commit: 268e63de0 Add agent artifact workflow metadata contracts.
+- [x] Slice 10: Add first real started runtime boundary: ledger-only bounded run start with durable JSONL record, idempotent retry, no external executor invocation, no lifecycle mutation, no adapter write-through.
+- [x] Slice 11: Scoped commit for ledger-only runtime start if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before external worker invocation / task lifecycle writes / external adapter writes unless a separate explicit human gate authorizes that slice.
 
 ## Decisions
 
 - Report-only first: this captures architecture coverage and gap priorities without granting new authority.
 - Canonical ledger remains Hermes Control Tower / taskpool by fact domain; worker/model outputs are proposals/evidence only.
 - Parallelism/fork-join, model routing, and worker adapters should be expressed as contracts before execution.
+- The first approved runtime boundary is ledger-only start: it may append a durable run record and support idempotent retry, but it still must not invoke external executors, mutate lifecycle, write adapters, or persist learning.
 
 ## Files Changed
 
 - docs/private/agent-architecture-coverage-plan-20260608.md
+- hermes_cli/event_governed_agents.py
+- tests/hermes_cli/test_event_governed_agents.py

@@ -1,9 +1,10 @@
-"""Report-only contracts for Hermes Event-Governed Agent Control Plane.
+"""Contracts and bounded starts for Hermes Event-Governed Agent Control Plane.
 
-This module is intentionally deterministic and side-effect free. It does not
-execute tools, mutate task lifecycle, write memory/skills, send messages, or
-change cron/provider configuration. Agents and workers can use it to classify
-what they are allowed to propose before a real policy/human gate exists.
+Most helpers are deterministic contract projections. The explicit
+``start_bounded_runtime_run`` path is the first real runtime boundary: it only
+records a ledger-local started run and still does not execute tools, mutate task
+lifecycle, write memory/skills, send messages, or change cron/provider
+configuration.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import argparse
 import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -133,9 +135,9 @@ AGENT_ARCHITECTURE_COVERAGE: tuple[dict[str, Any], ...] = (
         "capability": "parallel_branches",
         "hermes_anchor": "bounded lane/worker execution with canonical ledger readback",
         "external_agent_leverage": "fork-join, parallel map, synchronization barriers, and merge aggregation",
-        "coverage_status": "gap_identified",
-        "next_safe_slice": "add fork/join graph contract and join evidence requirements before runtime fanout",
-        "authority_boundary": "do_not_start high-parallel worker dispatch before join/merge evidence gates exist",
+        "coverage_status": "runtime_boundary_started",
+        "next_safe_slice": "connect ledger-started runs to a governed worker executor behind policy gate and readback",
+        "authority_boundary": "do_not_invoke high-parallel external workers before run ledger, join evidence gates, and stop/rollback paths exist",
         "priority": "P1",
     },
     {
@@ -478,6 +480,94 @@ def validate_fork_join_graph_contract(graph: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def start_bounded_runtime_run(*, request: dict[str, Any], ledger_path: str | Path) -> dict[str, Any]:
+    """Record the first real-but-ledger-only runtime start boundary.
+
+    This is intentionally narrower than external worker dispatch: it writes a
+    durable started run record and idempotently returns it on retry, but it does
+    not invoke external executors, mutate task lifecycle, or write adapters.
+    """
+
+    path = Path(ledger_path)
+    task_ref = str(request.get("task_ref", "")).strip()
+    worker_type = str(request.get("worker_type", "")).strip().lower()
+    worker_id = str(request.get("worker_id", "")).strip()
+    run_purpose = str(request.get("run_purpose", "")).strip()
+    workflow_state = str(request.get("workflow_state", "")).strip().lower()
+    evidence_refs = request.get("evidence_refs", [])
+    forbidden_keys = sorted(WORKER_FORBIDDEN_RESULT_KEYS.intersection(request.keys()))
+    blocked_reasons: list[str] = []
+
+    if not task_ref:
+        blocked_reasons.append("task_ref_required")
+    if not worker_type:
+        blocked_reasons.append("worker_type_required")
+    if not worker_id:
+        blocked_reasons.append("worker_id_required")
+    if not run_purpose:
+        blocked_reasons.append("run_purpose_required")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("runtime_start_requires_evidence_refs")
+    if workflow_state and workflow_state in CANONICAL_LIFECYCLE_STATUSES:
+        blocked_reasons.append("workflow_state_must_not_be_canonical_lifecycle_status")
+    if forbidden_keys:
+        blocked_reasons.append("runtime_start_request_contains_forbidden_authority_keys")
+
+    request_digest = _digest(request)
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "runtime_start",
+        "runtime_boundary": "started_ledger_only",
+        "task_ref": task_ref,
+        "worker_type": worker_type,
+        "worker_id": worker_id,
+        "run_purpose": run_purpose,
+        "workflow_state": workflow_state,
+        "request_digest": request_digest,
+        "external_executor_invoked": False,
+        "canonical_lifecycle_unchanged": True,
+        "allowed_to_mutate_lifecycle": False,
+        "external_adapter_write_through_enabled": False,
+        "persistent_learning_write_enabled": False,
+        "blocked_reasons": blocked_reasons,
+    }
+
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_runtime_run_start",
+            "run_status": "rejected",
+            "run_id": "",
+            "idempotent_replay": False,
+        }
+
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                existing = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if existing.get("request_digest") == request_digest:
+                return {**existing, "idempotent_replay": True}
+
+    run_id = "run_" + _digest({"task_ref": task_ref, "worker_id": worker_id, "request_digest": request_digest})[:24]
+    record = {
+        **base,
+        "accepted_as": "bounded_runtime_run_started",
+        "run_status": "started",
+        "run_id": run_id,
+        "idempotent_replay": False,
+        "evidence_refs": evidence_refs,
+        "started_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -657,6 +747,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="Emit JSON report")
     parser.add_argument("--check-action", action="store_true", help="Evaluate one action instead of full report")
     parser.add_argument("--coverage", action="store_true", help="Emit report-only agent architecture coverage matrix")
+    parser.add_argument("--start-runtime-run", action="store_true", help="Record a ledger-only bounded runtime run start")
+    parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for --start-runtime-run")
+    parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -672,6 +765,13 @@ def main(argv: list[str] | None = None) -> int:
             risk_level=args.risk_level,
             evidence_level=args.evidence_level,
         )
+    elif args.start_runtime_run:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --start-runtime-run")
+        request = json.loads(args.runtime_request_json)
+        if not isinstance(request, dict):
+            parser.error("--runtime-request-json must decode to an object")
+        result = start_bounded_runtime_run(request=request, ledger_path=args.runtime_ledger)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

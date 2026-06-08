@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 
@@ -291,6 +292,7 @@ def test_control_plane_report_is_json_and_report_only(tmp_path) -> None:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
     )
     cli_report = json.loads(proc.stdout)
     assert cli_report["mode"] == "report_only"
@@ -307,8 +309,8 @@ def test_agent_architecture_coverage_report_is_non_authorizing_contract(tmp_path
     assert report["coverage_count"] == 8
     assert report["priority_counts"]["P1"] >= 4
     capabilities = {item["capability"]: item for item in report["capabilities"]}
-    assert capabilities["parallel_branches"]["coverage_status"] == "gap_identified"
-    assert "join evidence" in capabilities["parallel_branches"]["next_safe_slice"]
+    assert capabilities["parallel_branches"]["coverage_status"] == "runtime_boundary_started"
+    assert "governed worker executor" in capabilities["parallel_branches"]["next_safe_slice"]
     assert capabilities["workflow_composition"]["authority_boundary"].startswith("do_not_make workflow templates")
     assert report["phase_boundary"] == {
         "runtime_worker_dispatch_enabled": False,
@@ -324,7 +326,101 @@ def test_agent_architecture_coverage_report_is_non_authorizing_contract(tmp_path
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
     )
     cli_report = json.loads(proc.stdout)
     assert cli_report["architecture"] == "Hermes Agent Architecture Coverage"
     assert cli_report["phase_boundary"]["runtime_worker_dispatch_enabled"] is False
+
+
+def test_start_runtime_boundary_records_real_started_run_without_lifecycle_or_external_writes(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    request = {
+        "task_ref": "task:arch-coverage",
+        "worker_type": "claude-code",
+        "worker_id": "worker-1",
+        "run_purpose": "verify_next_slice",
+        "workflow_state": "runtime_started",
+        "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+    }
+
+    started = ega.start_bounded_runtime_run(request=request, ledger_path=ledger_path)
+
+    assert started["accepted_as"] == "bounded_runtime_run_started"
+    assert started["runtime_boundary"] == "started_ledger_only"
+    assert started["run_status"] == "started"
+    assert started["task_ref"] == "task:arch-coverage"
+    assert started["worker_type"] == "claude-code"
+    assert started["external_executor_invoked"] is False
+    assert started["canonical_lifecycle_unchanged"] is True
+    assert started["allowed_to_mutate_lifecycle"] is False
+    assert started["external_adapter_write_through_enabled"] is False
+    assert started["blocked_reasons"] == []
+
+    rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["run_id"] == started["run_id"]
+    assert rows[0]["request_digest"] == started["request_digest"]
+
+    retry = ega.start_bounded_runtime_run(request=request, ledger_path=ledger_path)
+    retry_rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+    assert retry["accepted_as"] == "bounded_runtime_run_started"
+    assert retry["idempotent_replay"] is True
+    assert retry["run_id"] == started["run_id"]
+    assert len(retry_rows) == 1
+
+
+def test_start_runtime_boundary_fails_closed_on_smuggled_authority_and_cli_smoke(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    rejected = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "codex",
+            "worker_id": "worker-2",
+            "run_purpose": "unsafe",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+            "task_status": "done",
+            "external_write": {"adapter": "kanban"},
+        },
+        ledger_path=ledger_path,
+    )
+
+    assert rejected["accepted_as"] == "rejected_runtime_run_start"
+    assert rejected["run_status"] == "rejected"
+    assert rejected["external_executor_invoked"] is False
+    assert rejected["canonical_lifecycle_unchanged"] is True
+    assert "runtime_start_request_contains_forbidden_authority_keys" in rejected["blocked_reasons"]
+    assert not ledger_path.exists()
+
+    request_json = json.dumps(
+        {
+            "task_ref": "task:arch-coverage",
+            "worker_type": "opencode",
+            "worker_id": "worker-3",
+            "run_purpose": "cli_smoke",
+            "evidence_refs": ["artifact://agent-coverage/cli-start-proof.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--start-runtime-run",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--runtime-request-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_started = json.loads(proc.stdout)
+    assert cli_started["accepted_as"] == "bounded_runtime_run_started"
+    assert cli_started["runtime_boundary"] == "started_ledger_only"
+    assert ledger_path.exists()
