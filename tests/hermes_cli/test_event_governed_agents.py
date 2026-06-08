@@ -641,3 +641,139 @@ def test_external_agent_probe_rejects_unallowlisted_command_and_cli_smoke(tmp_pa
     assert cli_probed["accepted_as"] == "external_agent_probe_completed"
     assert cli_probed["external_executor_invoked"] is True
     assert len(ledger_path.read_text().splitlines()) == 2
+
+
+def test_external_agent_prompt_dry_run_sends_readonly_prompt_and_records_artifact_pointer(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    artifact_path = tmp_path / "artifacts" / "claude-dry-run.json"
+    argv_log = tmp_path / "argv.json"
+    fake_claude = tmp_path / "claude"
+    fake_claude.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        f"open({str(argv_log)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+        "print(json.dumps({'result': 'DRY_RUN_OK'}))\n"
+    )
+    fake_claude.chmod(0o755)
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "claude-code",
+            "worker_id": "claude-dry-run",
+            "run_purpose": "external_agent_prompt_dry_run",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+
+    dry_run = ega.dry_run_external_agent_prompt(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        prompt_request={
+            "executor_type": "claude_code",
+            "command_path": str(fake_claude),
+            "prompt": "只读总结这个 run，不要调用工具，不要写文件。只回复 DRY_RUN_OK。",
+            "artifact_path": str(artifact_path),
+            "evidence_refs": ["artifact://agent-coverage/prompt-dry-run-request.json"],
+        },
+    )
+
+    assert dry_run["accepted_as"] == "external_agent_prompt_dry_run_completed"
+    assert dry_run["run_status"] == "external_prompt_dry_run_completed"
+    assert dry_run["runtime_boundary"] == "external_agent_prompt_dry_run_completed"
+    assert dry_run["external_executor_invoked"] is True
+    assert dry_run["task_prompt_sent"] is True
+    assert dry_run["tools_enabled"] is False
+    assert dry_run["write_mode_enabled"] is False
+    assert dry_run["allowed_to_mutate_lifecycle"] is False
+    assert dry_run["external_adapter_write_through_enabled"] is False
+    assert dry_run["artifact"]["artifact_uri"] == f"file://{artifact_path}"
+    assert dry_run["artifact"]["artifact_type"] == "json"
+    assert len(dry_run["artifact"]["sha256"]) == 64
+    assert artifact_path.exists()
+    artifact = json.loads(artifact_path.read_text())
+    assert artifact["returncode"] == 0
+    assert "DRY_RUN_OK" in artifact["stdout"]
+    argv = json.loads(argv_log.read_text())
+    assert "-p" in argv
+    assert "--tools" in argv
+    assert "" in argv
+    assert "--permission-mode" in argv
+    assert "plan" in argv
+    assert "--no-session-persistence" in argv
+    rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+    assert [row["run_status"] for row in rows] == ["started", "external_prompt_dry_run_completed"]
+
+
+def test_external_agent_prompt_dry_run_rejects_tool_or_write_authority_and_cli_smoke(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    artifact_path = tmp_path / "artifacts" / "claude-dry-run.json"
+    fake_claude = tmp_path / "claude"
+    fake_claude.write_text("#!/bin/sh\necho '{\"result\":\"DRY_RUN_OK\"}'\n")
+    fake_claude.chmod(0o755)
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "claude-code",
+            "worker_id": "claude-dry-run-cli",
+            "run_purpose": "external_agent_prompt_dry_run",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+
+    rejected = ega.dry_run_external_agent_prompt(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        prompt_request={
+            "executor_type": "claude_code",
+            "command_path": str(fake_claude),
+            "prompt": "please edit files",
+            "artifact_path": str(artifact_path),
+            "tools_enabled": True,
+            "task_status": "done",
+            "evidence_refs": ["artifact://agent-coverage/rejected-prompt.json"],
+        },
+    )
+
+    assert rejected["accepted_as"] == "rejected_external_agent_prompt_dry_run"
+    assert rejected["external_executor_invoked"] is False
+    assert "tools_must_be_disabled" in rejected["blocked_reasons"]
+    assert "prompt_request_contains_forbidden_authority_keys" in rejected["blocked_reasons"]
+    assert not artifact_path.exists()
+    assert len(ledger_path.read_text().splitlines()) == 1
+
+    request_json = json.dumps(
+        {
+            "executor_type": "claude_code",
+            "command_path": str(fake_claude),
+            "prompt": "只读 dry run，回复 DRY_RUN_OK。",
+            "artifact_path": str(artifact_path),
+            "evidence_refs": ["artifact://agent-coverage/cli-prompt-dry-run.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--dry-run-external-agent-prompt",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--prompt-request-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_dry_run = json.loads(proc.stdout)
+    assert cli_dry_run["accepted_as"] == "external_agent_prompt_dry_run_completed"
+    assert cli_dry_run["artifact"]["artifact_uri"] == f"file://{artifact_path}"
+    assert len(ledger_path.read_text().splitlines()) == 2

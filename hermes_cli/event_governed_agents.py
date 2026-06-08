@@ -2,10 +2,11 @@
 
 Most helpers are deterministic contract projections. The explicit runtime paths
 first record a ledger-local started run, then may invoke an allowlisted builtin
-read-only executor that appends a completed result. A separate probe path may
-invoke an allowlisted external agent binary with only ``--version``. They still
-do not send task prompts, mutate lifecycle, write memory/skills, send external
-messages, or change cron/provider configuration.
+read-only executor that appends a completed result. Separate external-agent
+paths may run ``--version`` probes or send no-tool/no-write dry-run prompts while
+capturing full output into artifacts and appending only pointers to the ledger.
+They still do not mutate lifecycle, write memory/skills, send external messages,
+or change cron/provider configuration.
 """
 
 from __future__ import annotations
@@ -761,6 +762,136 @@ def probe_external_agent_runtime_run(*, ledger_path: str | Path, run_id: str, pr
     return record
 
 
+def dry_run_external_agent_prompt(*, ledger_path: str | Path, run_id: str, prompt_request: dict[str, Any]) -> dict[str, Any]:
+    """Send a no-tool/no-write prompt to an allowlisted external agent.
+
+    This is intentionally a dry-run packet boundary. It sends a prompt, captures
+    stdout/stderr into an external artifact file, appends only a pointer to the
+    run ledger, and keeps lifecycle/adapter/write authority disabled.
+    """
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    executor_type = str(prompt_request.get("executor_type", "")).strip().lower()
+    command_path = str(prompt_request.get("command_path", "")).strip()
+    prompt = str(prompt_request.get("prompt", "")).strip()
+    artifact_path_raw = str(prompt_request.get("artifact_path", "")).strip()
+    evidence_refs = prompt_request.get("evidence_refs", [])
+    tools_enabled = bool(prompt_request.get("tools_enabled", False))
+    write_mode_enabled = bool(prompt_request.get("write_mode_enabled", False))
+    request_digest = _digest(prompt_request)
+    rows = _read_runtime_ledger(path)
+    started = next((row for row in rows if row.get("run_id") == normalized_run_id and row.get("run_status") == "started"), None)
+    expected_basename = EXTERNAL_AGENT_PROBE_COMMANDS.get(executor_type)
+    command_basename = Path(command_path).name if command_path else ""
+    artifact_path = Path(artifact_path_raw) if artifact_path_raw else None
+    blocked_reasons: list[str] = []
+
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if started is None:
+        blocked_reasons.append("started_run_not_found")
+    if expected_basename is None:
+        blocked_reasons.append("executor_type_not_allowlisted")
+    if not command_path:
+        blocked_reasons.append("command_path_required")
+    elif expected_basename is not None and command_basename != expected_basename:
+        blocked_reasons.append("command_path_basename_mismatch")
+    if not prompt:
+        blocked_reasons.append("prompt_required")
+    if not artifact_path_raw:
+        blocked_reasons.append("artifact_path_required")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("prompt_dry_run_requires_evidence_refs")
+    if tools_enabled:
+        blocked_reasons.append("tools_must_be_disabled")
+    if write_mode_enabled:
+        blocked_reasons.append("write_mode_must_be_disabled")
+    if sorted(WORKER_FORBIDDEN_RESULT_KEYS.intersection(prompt_request.keys())):
+        blocked_reasons.append("prompt_request_contains_forbidden_authority_keys")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "external_agent_prompt_dry_run",
+        "run_id": normalized_run_id,
+        "executor_type": executor_type,
+        "command_basename": command_basename,
+        "prompt_request_digest": request_digest,
+        "external_executor_invoked": False,
+        "task_prompt_sent": False,
+        "tools_enabled": False,
+        "write_mode_enabled": False,
+        "allowed_to_mutate_lifecycle": False,
+        "canonical_lifecycle_unchanged": True,
+        "external_adapter_write_through_enabled": False,
+        "persistent_learning_write_enabled": False,
+        "blocked_reasons": blocked_reasons,
+    }
+
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_external_agent_prompt_dry_run",
+            "run_status": "rejected",
+            "runtime_boundary": "external_agent_prompt_dry_run_rejected",
+        }
+
+    assert started is not None
+    assert artifact_path is not None
+    argv = [
+        command_path,
+        "-p",
+        prompt,
+        "--permission-mode",
+        "plan",
+        "--tools",
+        "",
+        "--no-session-persistence",
+        "--output-format",
+        "json",
+    ]
+    proc = subprocess.run(argv, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    artifact_payload = {
+        "schema_version": SCHEMA_VERSION,
+        "artifact_type": "external_agent_prompt_dry_run",
+        "run_id": normalized_run_id,
+        "executor_type": executor_type,
+        "argv": [command_basename, "-p", "<prompt>", "--permission-mode", "plan", "--tools", "", "--no-session-persistence", "--output-format", "json"],
+        "prompt_digest": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "returncode": proc.returncode,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "evidence_refs": evidence_refs,
+    }
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_bytes = json.dumps(artifact_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    artifact_path.write_bytes(artifact_bytes)
+    record = {
+        **base,
+        "accepted_as": "external_agent_prompt_dry_run_completed",
+        "run_status": "external_prompt_dry_run_completed",
+        "runtime_boundary": "external_agent_prompt_dry_run_completed",
+        "external_executor_invoked": True,
+        "task_prompt_sent": True,
+        "task_ref": started.get("task_ref"),
+        "worker_type": started.get("worker_type"),
+        "worker_id": started.get("worker_id"),
+        "artifact": {
+            "artifact_uri": f"file://{artifact_path}",
+            "artifact_type": "json",
+            "sha256": hashlib.sha256(artifact_bytes).hexdigest(),
+            "size_bytes": len(artifact_bytes),
+            "summary": (proc.stdout or proc.stderr).strip()[:HOT_PATH_SUMMARY_MAX_CHARS],
+            "evidence_refs": evidence_refs,
+        },
+        "completed_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -943,11 +1074,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start-runtime-run", action="store_true", help="Record a ledger-only bounded runtime run start")
     parser.add_argument("--execute-runtime-run", action="store_true", help="Execute an allowlisted builtin read-only runtime run")
     parser.add_argument("--probe-external-runtime-run", action="store_true", help="Run an allowlisted external agent --version probe")
+    parser.add_argument("--dry-run-external-agent-prompt", action="store_true", help="Send a no-tool/no-write prompt to an allowlisted external agent")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
     parser.add_argument("--executor-request-json", default="{}", help="JSON executor payload for --execute-runtime-run")
     parser.add_argument("--probe-request-json", default="{}", help="JSON probe payload for --probe-external-runtime-run")
+    parser.add_argument("--prompt-request-json", default="{}", help="JSON prompt payload for --dry-run-external-agent-prompt")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -988,6 +1121,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(probe_request, dict):
             parser.error("--probe-request-json must decode to an object")
         result = probe_external_agent_runtime_run(ledger_path=args.runtime_ledger, run_id=args.run_id, probe_request=probe_request)
+    elif args.dry_run_external_agent_prompt:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --dry-run-external-agent-prompt")
+        if not args.run_id:
+            parser.error("--run-id is required with --dry-run-external-agent-prompt")
+        prompt_request = json.loads(args.prompt_request_json)
+        if not isinstance(prompt_request, dict):
+            parser.error("--prompt-request-json must decode to an object")
+        result = dry_run_external_agent_prompt(ledger_path=args.runtime_ledger, run_id=args.run_id, prompt_request=prompt_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

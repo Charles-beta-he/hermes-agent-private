@@ -29,8 +29,10 @@ SSOT: this file
 - [x] Slice 12: Add first governed executor invocation: allowlisted Hermes builtin read-only executor completes a started run and appends result evidence to ledger; unknown/external executors remain rejected.
 - [x] Slice 13: Scoped commit for builtin read-only executor if verification passes. Commit: 747f419d9 Execute bounded builtin agent runtime runs.
 - [x] Slice 14: Add first external process boundary: allowlisted Claude/Codex/OpenCode-style agent version probe appends a receipt to ledger; no task prompt/tool execution/lifecycle/adapter write.
-- [x] Slice 15: Scoped commit for external agent version probe if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before sending task prompts to external worker processes / task lifecycle writes / external adapter writes unless a narrower executor-specific slice authorizes that capability.
+- [x] Slice 15: Scoped commit for external agent version probe if verification passes. Commit: df9fbc6bb Probe external agent runtime executors.
+- [x] Slice 16: Add first external task-prompt boundary: allowlisted Claude/Codex/OpenCode-style agent receives a no-tool/no-write dry-run prompt, full output is captured as an artifact, and only artifact pointer/hash/summary enters the ledger.
+- [x] Slice 17: Scoped commit for external prompt dry-run if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before enabling external agent tools/file edits/shell commands, task lifecycle writes, or external adapter writes unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
 
@@ -40,6 +42,7 @@ SSOT: this file
 - The first approved runtime boundary is ledger-only start: it may append a durable run record and support idempotent retry, but it still must not invoke external executors, mutate lifecycle, write adapters, or persist learning.
 - The second approved runtime boundary is a governed builtin read-only executor: it may append a completed run result after verifying a started run, but external agent process invocation remains disabled until a narrower executor-specific slice exists.
 - The third approved runtime boundary is external process probing only: allowlisted agent binaries may be invoked with `--version` and their receipt appended, but no task prompt is sent and no external worker is allowed to act on project/task state yet.
+- The fourth approved runtime boundary is external prompt dry-run only: an allowlisted agent may receive a prompt with tools disabled and permission mode constrained; stdout/stderr are stored as an artifact while the ledger stores only pointer/hash/summary. The agent still cannot edit files, run shell tools, mutate lifecycle, or write adapters.
 
 ## Files Changed
 
