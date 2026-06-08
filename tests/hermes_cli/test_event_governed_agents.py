@@ -538,3 +538,106 @@ def test_execute_runtime_boundary_rejects_unknown_executor_and_cli_smoke(tmp_pat
     assert cli_completed["accepted_as"] == "bounded_runtime_run_completed"
     assert cli_completed["runtime_boundary"] == "builtin_readonly_executor_completed"
     assert len(ledger_path.read_text().splitlines()) == 2
+
+
+def test_external_agent_probe_invokes_allowlisted_process_and_appends_probe_result(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    fake_claude = tmp_path / "claude"
+    fake_claude.write_text("#!/bin/sh\necho 'Claude Code 1.2.3'\n")
+    fake_claude.chmod(0o755)
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "claude-code",
+            "worker_id": "claude-probe",
+            "run_purpose": "external_agent_probe",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+
+    probed = ega.probe_external_agent_runtime_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        probe_request={
+            "executor_type": "claude_code",
+            "command_path": str(fake_claude),
+            "evidence_refs": ["artifact://agent-coverage/claude-probe.json"],
+        },
+    )
+
+    assert probed["accepted_as"] == "external_agent_probe_completed"
+    assert probed["run_status"] == "external_probe_completed"
+    assert probed["runtime_boundary"] == "external_agent_version_probe_completed"
+    assert probed["external_executor_invoked"] is True
+    assert probed["allowed_to_mutate_lifecycle"] is False
+    assert probed["external_adapter_write_through_enabled"] is False
+    assert probed["probe"]["returncode"] == 0
+    assert "Claude Code" in probed["probe"]["stdout"]
+    rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+    assert [row["run_status"] for row in rows] == ["started", "external_probe_completed"]
+
+
+def test_external_agent_probe_rejects_unallowlisted_command_and_cli_smoke(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    fake_claude = tmp_path / "claude"
+    fake_claude.write_text("#!/bin/sh\necho 'Claude Code 1.2.3'\n")
+    fake_claude.chmod(0o755)
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "claude-code",
+            "worker_id": "claude-probe-cli",
+            "run_purpose": "external_agent_probe",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+
+    rejected = ega.probe_external_agent_runtime_run(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        probe_request={
+            "executor_type": "claude_code",
+            "command_path": "/bin/sh",
+            "evidence_refs": ["artifact://agent-coverage/rejected-probe.json"],
+        },
+    )
+
+    assert rejected["accepted_as"] == "rejected_external_agent_probe"
+    assert rejected["external_executor_invoked"] is False
+    assert "command_path_basename_mismatch" in rejected["blocked_reasons"]
+    assert len(ledger_path.read_text().splitlines()) == 1
+
+    probe_json = json.dumps(
+        {
+            "executor_type": "claude_code",
+            "command_path": str(fake_claude),
+            "evidence_refs": ["artifact://agent-coverage/cli-probe.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--probe-external-runtime-run",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--probe-request-json",
+            probe_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_probed = json.loads(proc.stdout)
+    assert cli_probed["accepted_as"] == "external_agent_probe_completed"
+    assert cli_probed["external_executor_invoked"] is True
+    assert len(ledger_path.read_text().splitlines()) == 2

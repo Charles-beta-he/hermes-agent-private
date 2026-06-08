@@ -27,8 +27,10 @@ SSOT: this file
 - [x] Slice 10: Add first real started runtime boundary: ledger-only bounded run start with durable JSONL record, idempotent retry, no external executor invocation, no lifecycle mutation, no adapter write-through.
 - [x] Slice 11: Scoped commit for ledger-only runtime start if verification passes. Commit: 9a5440557 Start bounded agent runtime ledger runs.
 - [x] Slice 12: Add first governed executor invocation: allowlisted Hermes builtin read-only executor completes a started run and appends result evidence to ledger; unknown/external executors remain rejected.
-- [x] Slice 13: Scoped commit for builtin read-only executor if verification passes. Commit: this scoped commit.
-- [ ] Boundary: stop before external worker process invocation / task lifecycle writes / external adapter writes unless a separate explicit gate authorizes that slice.
+- [x] Slice 13: Scoped commit for builtin read-only executor if verification passes. Commit: 747f419d9 Execute bounded builtin agent runtime runs.
+- [x] Slice 14: Add first external process boundary: allowlisted Claude/Codex/OpenCode-style agent version probe appends a receipt to ledger; no task prompt/tool execution/lifecycle/adapter write.
+- [x] Slice 15: Scoped commit for external agent version probe if verification passes. Commit: this scoped commit.
+- [ ] Boundary: stop before sending task prompts to external worker processes / task lifecycle writes / external adapter writes unless a narrower executor-specific slice authorizes that capability.
 
 ## Decisions
 
@@ -37,6 +39,7 @@ SSOT: this file
 - Parallelism/fork-join, model routing, and worker adapters should be expressed as contracts before execution.
 - The first approved runtime boundary is ledger-only start: it may append a durable run record and support idempotent retry, but it still must not invoke external executors, mutate lifecycle, write adapters, or persist learning.
 - The second approved runtime boundary is a governed builtin read-only executor: it may append a completed run result after verifying a started run, but external agent process invocation remains disabled until a narrower executor-specific slice exists.
+- The third approved runtime boundary is external process probing only: allowlisted agent binaries may be invoked with `--version` and their receipt appended, but no task prompt is sent and no external worker is allowed to act on project/task state yet.
 
 ## Files Changed
 

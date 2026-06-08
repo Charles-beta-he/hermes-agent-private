@@ -2,8 +2,9 @@
 
 Most helpers are deterministic contract projections. The explicit runtime paths
 first record a ledger-local started run, then may invoke an allowlisted builtin
-read-only executor that appends a completed result. They still do not invoke
-external agent processes, mutate task lifecycle, write memory/skills, send
+read-only executor that appends a completed result. A separate probe path may
+invoke an allowlisted external agent binary with only ``--version``. They still
+do not send task prompts, mutate lifecycle, write memory/skills, send external
 messages, or change cron/provider configuration.
 """
 
@@ -12,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,6 +44,7 @@ UNTRUSTED_SOURCES = frozenset({"webhook", "gateway", "cron", "dashboard", "proje
 WORKER_RESULT_STATUSES = frozenset({"succeeded", "failed", "blocked", "needs_human", "partial"})
 BUILTIN_READONLY_EXECUTORS = frozenset({"hermes_builtin_readonly"})
 BUILTIN_READONLY_ACTIONS = frozenset({"summarize_started_run"})
+EXTERNAL_AGENT_PROBE_COMMANDS = {"claude_code": "claude", "codex": "codex", "opencode": "opencode"}
 CANONICAL_LIFECYCLE_STATUSES = frozenset({"pending", "claimed", "running", "retry", "blocked", "review", "done"})
 ARTIFACT_TYPES = frozenset({"json", "log", "screenshot", "trace", "metrics", "transcript", "report"})
 HOT_PATH_SUMMARY_MAX_CHARS = 240
@@ -673,6 +676,91 @@ def execute_bounded_runtime_run(*, ledger_path: str | Path, run_id: str, executo
     return record
 
 
+def probe_external_agent_runtime_run(*, ledger_path: str | Path, run_id: str, probe_request: dict[str, Any]) -> dict[str, Any]:
+    """Invoke a narrow external agent version probe for a started run.
+
+    This is the first external-process boundary. It only runs an allowlisted
+    binary with ``--version`` and appends the probe receipt; it does not pass a
+    task prompt, invoke tools, mutate lifecycle, or write external adapters.
+    """
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    executor_type = str(probe_request.get("executor_type", "")).strip().lower()
+    command_path = str(probe_request.get("command_path", "")).strip()
+    evidence_refs = probe_request.get("evidence_refs", [])
+    request_digest = _digest(probe_request)
+    rows = _read_runtime_ledger(path)
+    started = next((row for row in rows if row.get("run_id") == normalized_run_id and row.get("run_status") == "started"), None)
+    expected_basename = EXTERNAL_AGENT_PROBE_COMMANDS.get(executor_type)
+    command_basename = Path(command_path).name if command_path else ""
+    blocked_reasons: list[str] = []
+
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if started is None:
+        blocked_reasons.append("started_run_not_found")
+    if expected_basename is None:
+        blocked_reasons.append("executor_type_not_allowlisted")
+    if not command_path:
+        blocked_reasons.append("command_path_required")
+    elif expected_basename is not None and command_basename != expected_basename:
+        blocked_reasons.append("command_path_basename_mismatch")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("external_probe_requires_evidence_refs")
+    if sorted(WORKER_FORBIDDEN_RESULT_KEYS.intersection(probe_request.keys())):
+        blocked_reasons.append("external_probe_request_contains_forbidden_authority_keys")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "external_agent_probe",
+        "run_id": normalized_run_id,
+        "executor_type": executor_type,
+        "command_basename": command_basename,
+        "probe_request_digest": request_digest,
+        "external_executor_invoked": False,
+        "allowed_to_mutate_lifecycle": False,
+        "canonical_lifecycle_unchanged": True,
+        "external_adapter_write_through_enabled": False,
+        "persistent_learning_write_enabled": False,
+        "blocked_reasons": blocked_reasons,
+    }
+
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_external_agent_probe",
+            "run_status": "rejected",
+            "runtime_boundary": "external_agent_version_probe_rejected",
+        }
+
+    assert started is not None
+    proc = subprocess.run([command_path, "--version"], check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+    record = {
+        **base,
+        "accepted_as": "external_agent_probe_completed",
+        "run_status": "external_probe_completed",
+        "runtime_boundary": "external_agent_version_probe_completed",
+        "external_executor_invoked": True,
+        "task_prompt_sent": False,
+        "task_ref": started.get("task_ref"),
+        "worker_type": started.get("worker_type"),
+        "worker_id": started.get("worker_id"),
+        "probe": {
+            "argv": [command_basename, "--version"],
+            "returncode": proc.returncode,
+            "stdout": proc.stdout.strip()[:HOT_PATH_SUMMARY_MAX_CHARS],
+            "stderr": proc.stderr.strip()[:HOT_PATH_SUMMARY_MAX_CHARS],
+            "evidence_refs": evidence_refs,
+        },
+        "probed_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -854,10 +942,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--coverage", action="store_true", help="Emit report-only agent architecture coverage matrix")
     parser.add_argument("--start-runtime-run", action="store_true", help="Record a ledger-only bounded runtime run start")
     parser.add_argument("--execute-runtime-run", action="store_true", help="Execute an allowlisted builtin read-only runtime run")
+    parser.add_argument("--probe-external-runtime-run", action="store_true", help="Run an allowlisted external agent --version probe")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
-    parser.add_argument("--run-id", default="", help="Run id for --execute-runtime-run")
+    parser.add_argument("--run-id", default="", help="Run id for runtime operations")
     parser.add_argument("--executor-request-json", default="{}", help="JSON executor payload for --execute-runtime-run")
+    parser.add_argument("--probe-request-json", default="{}", help="JSON probe payload for --probe-external-runtime-run")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -889,6 +979,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(executor_request, dict):
             parser.error("--executor-request-json must decode to an object")
         result = execute_bounded_runtime_run(ledger_path=args.runtime_ledger, run_id=args.run_id, executor_request=executor_request)
+    elif args.probe_external_runtime_run:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --probe-external-runtime-run")
+        if not args.run_id:
+            parser.error("--run-id is required with --probe-external-runtime-run")
+        probe_request = json.loads(args.probe_request_json)
+        if not isinstance(probe_request, dict):
+            parser.error("--probe-request-json must decode to an object")
+        result = probe_external_agent_runtime_run(ledger_path=args.runtime_ledger, run_id=args.run_id, probe_request=probe_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:
