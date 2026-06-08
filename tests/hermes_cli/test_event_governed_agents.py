@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -776,4 +777,153 @@ def test_external_agent_prompt_dry_run_rejects_tool_or_write_authority_and_cli_s
     cli_dry_run = json.loads(proc.stdout)
     assert cli_dry_run["accepted_as"] == "external_agent_prompt_dry_run_completed"
     assert cli_dry_run["artifact"]["artifact_uri"] == f"file://{artifact_path}"
+    assert len(ledger_path.read_text().splitlines()) == 2
+
+
+def test_external_agent_readonly_context_packet_uses_artifact_context_and_records_output_pointer(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    context_path = tmp_path / "context.md"
+    output_path = tmp_path / "artifacts" / "claude-readonly-context.json"
+    argv_log = tmp_path / "argv.json"
+    fake_claude = tmp_path / "claude"
+    context_path.write_text("# Context\nOnly summarize this artifact.\n", encoding="utf-8")
+    fake_claude.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        f"open({str(argv_log)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+        "print(json.dumps({'result': 'READONLY_CONTEXT_OK'}))\n",
+        encoding="utf-8",
+    )
+    fake_claude.chmod(0o755)
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "claude-code",
+            "worker_id": "claude-readonly-context",
+            "run_purpose": "external_agent_readonly_context",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+
+    result = ega.run_external_agent_readonly_context(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        context_request={
+            "executor_type": "claude_code",
+            "command_path": str(fake_claude),
+            "instruction": "只读分析 context artifact，回复 READONLY_CONTEXT_OK。",
+            "context_artifact_uri": f"file://{context_path}",
+            "context_sha256": hashlib.sha256(context_path.read_bytes()).hexdigest(),
+            "output_artifact_path": str(output_path),
+            "evidence_refs": ["artifact://agent-coverage/readonly-context-request.json"],
+        },
+    )
+
+    assert result["accepted_as"] == "external_agent_readonly_context_completed"
+    assert result["run_status"] == "external_readonly_context_completed"
+    assert result["runtime_boundary"] == "external_agent_readonly_context_completed"
+    assert result["external_executor_invoked"] is True
+    assert result["readonly_context_attached"] is True
+    assert result["task_prompt_sent"] is True
+    assert result["tools_enabled"] is False
+    assert result["write_mode_enabled"] is False
+    assert result["allowed_to_mutate_lifecycle"] is False
+    assert result["context"]["context_artifact_uri"] == f"file://{context_path}"
+    assert result["artifact"]["artifact_uri"] == f"file://{output_path}"
+    assert len(result["artifact"]["sha256"]) == 64
+    output = json.loads(output_path.read_text())
+    assert output["returncode"] == 0
+    assert "READONLY_CONTEXT_OK" in output["stdout"]
+    assert output["context_artifact_uri"] == f"file://{context_path}"
+    argv = json.loads(argv_log.read_text())
+    prompt_arg = argv[argv.index("-p") + 1]
+    assert f"Context artifact: file://{context_path}" in prompt_arg
+    assert "Context sha256:" in prompt_arg
+    assert "--tools" in argv and "" in argv
+    assert "--permission-mode" in argv and "plan" in argv
+    rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+    assert [row["run_status"] for row in rows] == ["started", "external_readonly_context_completed"]
+
+
+def test_external_agent_readonly_context_rejects_inline_context_write_and_cli_smoke(tmp_path) -> None:
+    ledger_path = tmp_path / "agent-runtime-runs.jsonl"
+    context_path = tmp_path / "context.md"
+    output_path = tmp_path / "artifacts" / "claude-readonly-context.json"
+    fake_claude = tmp_path / "claude"
+    context_path.write_text("# Context\nReadonly packet.\n", encoding="utf-8")
+    fake_claude.write_text("#!/bin/sh\necho '{\"result\":\"READONLY_CONTEXT_OK\"}'\n", encoding="utf-8")
+    fake_claude.chmod(0o755)
+    started = ega.start_bounded_runtime_run(
+        request={
+            "task_ref": "task:arch-coverage",
+            "worker_type": "claude-code",
+            "worker_id": "claude-readonly-context-cli",
+            "run_purpose": "external_agent_readonly_context",
+            "evidence_refs": ["artifact://agent-coverage/start-proof.json"],
+        },
+        ledger_path=ledger_path,
+    )
+
+    rejected = ega.run_external_agent_readonly_context(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        context_request={
+            "executor_type": "claude_code",
+            "command_path": str(fake_claude),
+            "instruction": "edit this",
+            "context_artifact_uri": f"file://{context_path}",
+            "context_sha256": hashlib.sha256(context_path.read_bytes()).hexdigest(),
+            "inline_context": "forbidden hot-path blob",
+            "output_artifact_path": str(output_path),
+            "write_mode_enabled": True,
+            "external_write": True,
+            "evidence_refs": ["artifact://agent-coverage/rejected-readonly-context.json"],
+        },
+    )
+
+    assert rejected["accepted_as"] == "rejected_external_agent_readonly_context"
+    assert rejected["external_executor_invoked"] is False
+    assert "inline_context_forbidden" in rejected["blocked_reasons"]
+    assert "write_mode_must_be_disabled" in rejected["blocked_reasons"]
+    assert "context_request_contains_forbidden_authority_keys" in rejected["blocked_reasons"]
+    assert not output_path.exists()
+    assert len(ledger_path.read_text().splitlines()) == 1
+
+    request_json = json.dumps(
+        {
+            "executor_type": "claude_code",
+            "command_path": str(fake_claude),
+            "instruction": "只读 context artifact，回复 READONLY_CONTEXT_OK。",
+            "context_artifact_uri": f"file://{context_path}",
+            "context_sha256": hashlib.sha256(context_path.read_bytes()).hexdigest(),
+            "output_artifact_path": str(output_path),
+            "evidence_refs": ["artifact://agent-coverage/cli-readonly-context.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--run-external-agent-readonly-context",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--context-request-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "external_agent_readonly_context_completed"
+    assert cli_result["context"]["context_artifact_uri"] == f"file://{context_path}"
+    assert cli_result["artifact"]["artifact_uri"] == f"file://{output_path}"
     assert len(ledger_path.read_text().splitlines()) == 2

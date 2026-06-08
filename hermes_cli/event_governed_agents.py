@@ -3,10 +3,11 @@
 Most helpers are deterministic contract projections. The explicit runtime paths
 first record a ledger-local started run, then may invoke an allowlisted builtin
 read-only executor that appends a completed result. Separate external-agent
-paths may run ``--version`` probes or send no-tool/no-write dry-run prompts while
-capturing full output into artifacts and appending only pointers to the ledger.
-They still do not mutate lifecycle, write memory/skills, send external messages,
-or change cron/provider configuration.
+paths may run ``--version`` probes, send no-tool/no-write dry-run prompts, or
+attach read-only context artifact pointers while capturing full output into
+artifacts and appending only pointers to the ledger. They still do not mutate
+lifecycle, write memory/skills, send external messages, or change cron/provider
+configuration.
 """
 
 from __future__ import annotations
@@ -892,6 +893,176 @@ def dry_run_external_agent_prompt(*, ledger_path: str | Path, run_id: str, promp
     return record
 
 
+def run_external_agent_readonly_context(*, ledger_path: str | Path, run_id: str, context_request: dict[str, Any]) -> dict[str, Any]:
+    """Send a no-write/no-tool prompt that references an external context artifact.
+
+    The hot ledger receives only the context pointer/hash and output artifact
+    pointer/hash. Inline context remains forbidden so large evidence stays off
+    the runtime hot path.
+    """
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    executor_type = str(context_request.get("executor_type", "")).strip().lower()
+    command_path = str(context_request.get("command_path", "")).strip()
+    instruction = str(context_request.get("instruction", "")).strip()
+    context_artifact_uri = str(context_request.get("context_artifact_uri", "")).strip()
+    context_sha256 = str(context_request.get("context_sha256", "")).strip().lower()
+    output_artifact_path_raw = str(context_request.get("output_artifact_path", "")).strip()
+    evidence_refs = context_request.get("evidence_refs", [])
+    tools_enabled = bool(context_request.get("tools_enabled", False))
+    write_mode_enabled = bool(context_request.get("write_mode_enabled", False))
+    request_digest = _digest(context_request)
+    rows = _read_runtime_ledger(path)
+    started = next((row for row in rows if row.get("run_id") == normalized_run_id and row.get("run_status") == "started"), None)
+    expected_basename = EXTERNAL_AGENT_PROBE_COMMANDS.get(executor_type)
+    command_basename = Path(command_path).name if command_path else ""
+    output_artifact_path = Path(output_artifact_path_raw) if output_artifact_path_raw else None
+    context_file_path: Path | None = None
+    blocked_reasons: list[str] = []
+
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if started is None:
+        blocked_reasons.append("started_run_not_found")
+    if expected_basename is None:
+        blocked_reasons.append("executor_type_not_allowlisted")
+    if not command_path:
+        blocked_reasons.append("command_path_required")
+    elif expected_basename is not None and command_basename != expected_basename:
+        blocked_reasons.append("command_path_basename_mismatch")
+    if not instruction:
+        blocked_reasons.append("instruction_required")
+    if not context_artifact_uri:
+        blocked_reasons.append("context_artifact_uri_required")
+    elif not context_artifact_uri.startswith("file://"):
+        blocked_reasons.append("context_artifact_uri_must_be_file_uri")
+    else:
+        context_file_path = Path(context_artifact_uri.removeprefix("file://"))
+        if not context_file_path.exists() or not context_file_path.is_file():
+            blocked_reasons.append("context_artifact_not_found")
+    if not context_sha256:
+        blocked_reasons.append("context_sha256_required")
+    elif len(context_sha256) != 64:
+        blocked_reasons.append("context_sha256_invalid")
+    if context_file_path is not None and context_file_path.exists() and context_sha256:
+        actual_sha = hashlib.sha256(context_file_path.read_bytes()).hexdigest()
+        if actual_sha != context_sha256:
+            blocked_reasons.append("context_sha256_mismatch")
+    if "inline_context" in context_request:
+        blocked_reasons.append("inline_context_forbidden")
+    if not output_artifact_path_raw:
+        blocked_reasons.append("output_artifact_path_required")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("readonly_context_requires_evidence_refs")
+    if tools_enabled:
+        blocked_reasons.append("tools_must_be_disabled")
+    if write_mode_enabled:
+        blocked_reasons.append("write_mode_must_be_disabled")
+    if sorted(WORKER_FORBIDDEN_RESULT_KEYS.intersection(context_request.keys())):
+        blocked_reasons.append("context_request_contains_forbidden_authority_keys")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "external_agent_readonly_context",
+        "run_id": normalized_run_id,
+        "executor_type": executor_type,
+        "command_basename": command_basename,
+        "context_request_digest": request_digest,
+        "external_executor_invoked": False,
+        "task_prompt_sent": False,
+        "readonly_context_attached": False,
+        "tools_enabled": False,
+        "write_mode_enabled": False,
+        "allowed_to_mutate_lifecycle": False,
+        "canonical_lifecycle_unchanged": True,
+        "external_adapter_write_through_enabled": False,
+        "persistent_learning_write_enabled": False,
+        "blocked_reasons": blocked_reasons,
+    }
+
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_external_agent_readonly_context",
+            "run_status": "rejected",
+            "runtime_boundary": "external_agent_readonly_context_rejected",
+        }
+
+    assert started is not None
+    assert output_artifact_path is not None
+    prompt = (
+        f"{instruction}\n\n"
+        "Hermes governed readonly context packet.\n"
+        f"Run id: {normalized_run_id}\n"
+        f"Task ref: {started.get('task_ref')}\n"
+        f"Context artifact: {context_artifact_uri}\n"
+        f"Context sha256: {context_sha256}\n\n"
+        "Rules: do not call tools, do not edit files, do not run shell commands, "
+        "do not mutate task lifecycle, and treat the context artifact as readonly evidence."
+    )
+    argv = [
+        command_path,
+        "-p",
+        prompt,
+        "--permission-mode",
+        "plan",
+        "--tools",
+        "",
+        "--no-session-persistence",
+        "--output-format",
+        "json",
+    ]
+    proc = subprocess.run(argv, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    artifact_payload = {
+        "schema_version": SCHEMA_VERSION,
+        "artifact_type": "external_agent_readonly_context",
+        "run_id": normalized_run_id,
+        "executor_type": executor_type,
+        "argv": [command_basename, "-p", "<readonly_context_prompt>", "--permission-mode", "plan", "--tools", "", "--no-session-persistence", "--output-format", "json"],
+        "instruction_digest": hashlib.sha256(instruction.encode("utf-8")).hexdigest(),
+        "context_artifact_uri": context_artifact_uri,
+        "context_sha256": context_sha256,
+        "returncode": proc.returncode,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "evidence_refs": evidence_refs,
+    }
+    output_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_bytes = json.dumps(artifact_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    output_artifact_path.write_bytes(artifact_bytes)
+    record = {
+        **base,
+        "accepted_as": "external_agent_readonly_context_completed",
+        "run_status": "external_readonly_context_completed",
+        "runtime_boundary": "external_agent_readonly_context_completed",
+        "external_executor_invoked": True,
+        "task_prompt_sent": True,
+        "readonly_context_attached": True,
+        "task_ref": started.get("task_ref"),
+        "worker_type": started.get("worker_type"),
+        "worker_id": started.get("worker_id"),
+        "context": {
+            "context_artifact_uri": context_artifact_uri,
+            "sha256": context_sha256,
+            "evidence_refs": evidence_refs,
+        },
+        "artifact": {
+            "artifact_uri": f"file://{output_artifact_path}",
+            "artifact_type": "json",
+            "sha256": hashlib.sha256(artifact_bytes).hexdigest(),
+            "size_bytes": len(artifact_bytes),
+            "summary": (proc.stdout or proc.stderr).strip()[:HOT_PATH_SUMMARY_MAX_CHARS],
+            "evidence_refs": evidence_refs,
+        },
+        "completed_at": _now(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -1075,12 +1246,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute-runtime-run", action="store_true", help="Execute an allowlisted builtin read-only runtime run")
     parser.add_argument("--probe-external-runtime-run", action="store_true", help="Run an allowlisted external agent --version probe")
     parser.add_argument("--dry-run-external-agent-prompt", action="store_true", help="Send a no-tool/no-write prompt to an allowlisted external agent")
+    parser.add_argument("--run-external-agent-readonly-context", action="store_true", help="Send a no-tool/no-write prompt with a readonly context artifact pointer")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
     parser.add_argument("--executor-request-json", default="{}", help="JSON executor payload for --execute-runtime-run")
     parser.add_argument("--probe-request-json", default="{}", help="JSON probe payload for --probe-external-runtime-run")
     parser.add_argument("--prompt-request-json", default="{}", help="JSON prompt payload for --dry-run-external-agent-prompt")
+    parser.add_argument("--context-request-json", default="{}", help="JSON context payload for --run-external-agent-readonly-context")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -1130,6 +1303,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(prompt_request, dict):
             parser.error("--prompt-request-json must decode to an object")
         result = dry_run_external_agent_prompt(ledger_path=args.runtime_ledger, run_id=args.run_id, prompt_request=prompt_request)
+    elif args.run_external_agent_readonly_context:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --run-external-agent-readonly-context")
+        if not args.run_id:
+            parser.error("--run-id is required with --run-external-agent-readonly-context")
+        context_request = json.loads(args.context_request_json)
+        if not isinstance(context_request, dict):
+            parser.error("--context-request-json must decode to an object")
+        result = run_external_agent_readonly_context(ledger_path=args.runtime_ledger, run_id=args.run_id, context_request=context_request)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:
