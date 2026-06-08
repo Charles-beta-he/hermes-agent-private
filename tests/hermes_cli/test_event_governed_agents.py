@@ -2584,3 +2584,186 @@ def test_outbound_outbox_rejects_unverified_source_secret_payload_bad_target_and
     assert cli_result["accepted_as"] == "outbound_outbox_item_enqueued"
     assert cli_result["delivery_status"] == "pending"
     assert cli_result["send_executed"] is False
+
+
+def _make_outbox_enqueue_run(tmp_path):
+    ledger_path, started, intent_record, write_authorization = _write_kanban_authorization_run(tmp_path)
+    db_path = tmp_path / "kanban.db"
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, status TEXT)")
+        conn.execute("INSERT INTO tasks (id, title, status) VALUES (?, ?, ?)", ("kb_arch_task", "Arch", "review"))
+    write = ega.execute_kanban_db_closeout_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "kanban",
+            "target_ref": "kb_arch_task",
+            "target_status": "done",
+            "kanban_db_path": str(db_path),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/kanban-write-execute.json"],
+        },
+    )
+    outbox_path = tmp_path / "outbox.jsonl"
+    outbox = ega.execute_outbound_outbox_enqueue(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        outbox_request={
+            "source_run_status": "kanban_db_write_verified",
+            "source_request_digest": write["request_digest"],
+            "channels": ["telegram", "lark"],
+            "target_id": "ops-review-room",
+            "target_allowlist": ["ops-review-room"],
+            "outbox_path": str(outbox_path),
+            "payload": {"text": "Governed closeout verified; pending delivery."},
+            "evidence_refs": ["artifact://agent-coverage/outbox.json"],
+        },
+    )
+    return ledger_path, started, outbox, outbox_path
+
+
+def test_outbound_delivery_authorization_projects_send_authority_without_sending_and_is_idempotent(tmp_path) -> None:
+    ledger_path, started, outbox, outbox_path = _make_outbox_enqueue_run(tmp_path)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    result = ega.request_outbound_delivery_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        delivery_authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/delivery-auth.json"],
+        },
+    )
+    assert result["accepted_as"] == "outbound_delivery_authorization_projected"
+    assert result["delivery_authorization_id"]
+    assert result["delivery_status"] == "authorized_pending_send"
+    assert result["send_executed"] is False
+    assert result["readback_verified"] is True
+    assert result["channel"] == "telegram"
+
+    replay = ega.request_outbound_delivery_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        delivery_authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/delivery-auth-replay.json"],
+        },
+    )
+    assert replay["idempotent_replay"] is True
+    assert len([json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines() if "outbound_delivery_authorization_projected" in line]) == 1
+
+
+def test_outbound_delivery_authorization_rejects_drift_unauthorized_expired_and_cli_smoke(tmp_path) -> None:
+    ledger_path, started, outbox, outbox_path = _make_outbox_enqueue_run(tmp_path)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    expired = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    rejected_actor = ega.request_outbound_delivery_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        delivery_authorization_request={
+            "actor_id": "worker",
+            "actor_role": "bounded_worker",
+            "decision": "approved",
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/delivery-auth-worker.json"],
+        },
+    )
+    assert rejected_actor["accepted_as"] == "rejected_outbound_delivery_authorization"
+    assert "elevated_actor_required" in rejected_actor["blocked_reasons"]
+    rejected_drift = ega.request_outbound_delivery_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        delivery_authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "discord",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/delivery-auth-drift.json"],
+        },
+    )
+    assert "channel_not_in_outbox_item" in rejected_drift["blocked_reasons"]
+    rejected_expired = ega.request_outbound_delivery_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        delivery_authorization_request={
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "telegram",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "expires_at": expired,
+            "evidence_refs": ["artifact://agent-coverage/delivery-auth-expired.json"],
+        },
+    )
+    assert "authorization_expired" in rejected_expired["blocked_reasons"]
+
+    request_json = json.dumps(
+        {
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "outbox_id": outbox["request_digest"],
+            "outbox_path": str(outbox_path),
+            "channel": "lark",
+            "target_id": "ops-review-room",
+            "payload_hash": outbox["payload_hash"],
+            "expires_at": expires_at,
+            "evidence_refs": ["artifact://agent-coverage/delivery-auth-cli.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--request-outbound-delivery-authorization",
+            "--runtime-ledger",
+            str(ledger_path),
+            "--run-id",
+            started["run_id"],
+            "--delivery-authorization-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "outbound_delivery_authorization_projected"
+    assert cli_result["channel"] == "lark"
+    assert cli_result["send_executed"] is False

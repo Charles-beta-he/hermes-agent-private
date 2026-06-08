@@ -11,12 +11,14 @@ adapter write intent, project an external adapter write authorization, execute
 a local-file adapter harness write-through, execute a digest-bound taskpool
 note closeout, execute a digest-bound Kanban DB closeout, execute a
 digest-bound taskpool/Kanban rollback, or enqueue Lark/Telegram outbox
-notifications without sending. Only the explicit
+notifications without sending, or project elevated delivery authorization
+without sending. Only the explicit
 ledger-local fact mutation can change canonical lifecycle facts, only the
 local-file adapter harness can write adapter-state fixtures, taskpool note
 closeout/rollback can mutate taskpool markdown frontmatter status, Kanban DB
-closeout/rollback can mutate a single tasks.status row, and the outbox executor
-can append pending no-secret notification intents; no path writes memory/skills,
+closeout/rollback can mutate a single tasks.status row, the outbox executor
+can append pending no-secret notification intents, and the delivery authorization
+projection can authorize a future sender without calling platform APIs; no path writes memory/skills,
 outbound messages, or cron/provider configuration.
 """
 
@@ -2525,6 +2527,154 @@ def execute_outbound_outbox_enqueue(*, ledger_path: str | Path, run_id: str, out
     return record
 
 
+def request_outbound_delivery_authorization(*, ledger_path: str | Path, run_id: str, delivery_authorization_request: dict[str, Any]) -> dict[str, Any]:
+    """Project elevated authorization to send a pending outbox item without sending it."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    actor_id = str(delivery_authorization_request.get("actor_id", "")).strip()
+    actor_role = str(delivery_authorization_request.get("actor_role", "")).strip()
+    decision = str(delivery_authorization_request.get("decision", "")).strip().lower()
+    outbox_id = str(delivery_authorization_request.get("outbox_id", "")).strip()
+    outbox_path_raw = str(delivery_authorization_request.get("outbox_path", "")).strip()
+    channel = str(delivery_authorization_request.get("channel", "")).strip().lower()
+    target_id = str(delivery_authorization_request.get("target_id", "")).strip()
+    payload_hash = str(delivery_authorization_request.get("payload_hash", "")).strip()
+    expires_at = str(delivery_authorization_request.get("expires_at", "")).strip()
+    evidence_refs = delivery_authorization_request.get("evidence_refs", [])
+    request_digest = _digest(delivery_authorization_request)
+    delivery_authorization_id = _digest({"run_id": normalized_run_id, "outbox_id": outbox_id, "channel": channel, "target_id": target_id, "payload_hash": payload_hash})
+
+    outbox_event = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "outbound_outbox_item_enqueued"
+            and row.get("request_digest") == outbox_id
+        ),
+        None,
+    )
+    existing = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "outbound_delivery_authorization_projected"
+            and row.get("delivery_authorization_id") == delivery_authorization_id
+        ),
+        None,
+    )
+    if existing is not None:
+        return {**existing, "idempotent_replay": True}
+
+    outbox_item = None
+    blocked_reasons: list[str] = []
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if actor_role not in ELEVATED_DONE_AUTH_ROLES:
+        blocked_reasons.append("elevated_actor_required")
+    if not actor_id:
+        blocked_reasons.append("actor_id_required")
+    if decision != "approved":
+        blocked_reasons.append("delivery_not_approved")
+    if not outbox_id:
+        blocked_reasons.append("outbox_id_required")
+    if outbox_event is None:
+        blocked_reasons.append("pending_outbox_event_required")
+    if not outbox_path_raw:
+        blocked_reasons.append("outbox_path_required")
+    else:
+        outbox_path = Path(outbox_path_raw)
+        if outbox_path.exists() and outbox_path.is_symlink():
+            blocked_reasons.append("outbox_path_is_symlink")
+        elif outbox_path.exists():
+            try:
+                outbox_rows = [json.loads(line) for line in outbox_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+                outbox_item = next((row for row in outbox_rows if row.get("outbox_id") == outbox_id), None)
+                if outbox_item is None:
+                    blocked_reasons.append("outbox_item_readback_required")
+            except (OSError, json.JSONDecodeError):
+                blocked_reasons.append("outbox_readback_failed")
+        else:
+            blocked_reasons.append("outbox_path_missing")
+    if not channel:
+        blocked_reasons.append("channel_required")
+    if channel not in {"telegram", "lark"}:
+        blocked_reasons.append("channel_not_delivery_allowlisted")
+    if outbox_event is not None and channel not in outbox_event.get("channels", []):
+        blocked_reasons.append("channel_not_in_outbox_item")
+    if outbox_item is not None and channel not in outbox_item.get("channels", []):
+        blocked_reasons.append("channel_not_in_outbox_readback")
+    if not target_id:
+        blocked_reasons.append("target_id_required")
+    if outbox_event is not None and outbox_event.get("target_id") != target_id:
+        blocked_reasons.append("target_id_drift")
+    if outbox_item is not None and outbox_item.get("target_id") != target_id:
+        blocked_reasons.append("target_id_readback_drift")
+    if not payload_hash:
+        blocked_reasons.append("payload_hash_required")
+    if outbox_event is not None and outbox_event.get("payload_hash") != payload_hash:
+        blocked_reasons.append("payload_hash_drift")
+    if outbox_item is not None and outbox_item.get("payload_hash") != payload_hash:
+        blocked_reasons.append("payload_hash_readback_drift")
+    if outbox_event is not None and outbox_event.get("delivery_status") != "pending":
+        blocked_reasons.append("outbox_not_pending")
+    if outbox_item is not None and outbox_item.get("delivery_status") != "pending":
+        blocked_reasons.append("outbox_readback_not_pending")
+    if not expires_at:
+        blocked_reasons.append("expires_at_required")
+    else:
+        try:
+            expires_dt = datetime.fromisoformat(expires_at)
+            if expires_dt.tzinfo is None:
+                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+            if expires_dt <= datetime.now(timezone.utc):
+                blocked_reasons.append("authorization_expired")
+        except ValueError:
+            blocked_reasons.append("invalid_expires_at")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("delivery_authorization_requires_evidence_refs")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "outbound_delivery_authorization",
+        "run_id": normalized_run_id,
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+        "decision": decision,
+        "outbox_id": outbox_id,
+        "channel": channel,
+        "target_id": target_id,
+        "payload_hash": payload_hash,
+        "request_digest": request_digest,
+        "delivery_authorization_id": delivery_authorization_id,
+        "expires_at": expires_at,
+        "send_executed": False,
+        "readback_verified": outbox_item is not None,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {**base, "accepted_as": "rejected_outbound_delivery_authorization", "run_status": "rejected", "runtime_boundary": "outbound_delivery_authorization_rejected", "delivery_status": "not_authorized"}
+
+    record = {
+        **base,
+        "accepted_as": "outbound_delivery_authorization_projected",
+        "run_status": "outbound_delivery_authorization_projected",
+        "runtime_boundary": "outbound_delivery_authorization_projection",
+        "delivery_status": "authorized_pending_send",
+        "outbox_path": outbox_path_raw,
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+        "idempotent_replay": False,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def execute_external_adapter_rollback_write(*, ledger_path: str | Path, run_id: str, rollback_request: dict[str, Any]) -> dict[str, Any]:
     """Rollback a previously verified taskpool/Kanban closeout to its recorded previous_status."""
 
@@ -2894,6 +3044,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute-kanban-db-closeout-write", action="store_true", help="Execute authorized Kanban DB closeout by mutating tasks.status and reading it back")
     parser.add_argument("--execute-external-adapter-rollback-write", action="store_true", help="Execute digest-bound rollback for a previously verified taskpool/Kanban closeout")
     parser.add_argument("--execute-outbound-outbox-enqueue", action="store_true", help="Enqueue a pending Lark/Telegram outbox item without sending it")
+    parser.add_argument("--request-outbound-delivery-authorization", action="store_true", help="Project elevated authorization for a pending outbound item without sending it")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -2912,6 +3063,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--kanban-execution-json", default="{}", help="JSON Kanban DB write execution payload for --execute-kanban-db-closeout-write")
     parser.add_argument("--adapter-rollback-json", default="{}", help="JSON rollback payload for --execute-external-adapter-rollback-write")
     parser.add_argument("--outbox-request-json", default="{}", help="JSON outbox enqueue payload for --execute-outbound-outbox-enqueue")
+    parser.add_argument("--delivery-authorization-json", default="{}", help="JSON delivery authorization payload for --request-outbound-delivery-authorization")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -3069,6 +3221,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(outbox_request, dict):
             parser.error("--outbox-request-json must decode to an object")
         result = execute_outbound_outbox_enqueue(ledger_path=args.runtime_ledger, run_id=args.run_id, outbox_request=outbox_request)
+    elif args.request_outbound_delivery_authorization:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --request-outbound-delivery-authorization")
+        if not args.run_id:
+            parser.error("--run-id is required with --request-outbound-delivery-authorization")
+        delivery_authorization = json.loads(args.delivery_authorization_json)
+        if not isinstance(delivery_authorization, dict):
+            parser.error("--delivery-authorization-json must decode to an object")
+        result = request_outbound_delivery_authorization(ledger_path=args.runtime_ledger, run_id=args.run_id, delivery_authorization_request=delivery_authorization)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:
