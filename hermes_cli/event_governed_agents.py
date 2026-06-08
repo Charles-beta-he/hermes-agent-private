@@ -8,11 +8,12 @@ attach read-only context artifact pointers, record validated proposal artifact
 pointers, record multi-model certification promotion packets, project elevated
 done authorizations, execute a ledger-local fact mutation, project an external
 adapter write intent, project an external adapter write authorization, execute
-a local-file adapter harness write-through, or execute a digest-bound taskpool
-note closeout. Only the explicit ledger-local fact
-mutation can change canonical lifecycle facts, only the local-file adapter
-harness can write adapter-state fixtures, and only taskpool note closeout can
-mutate taskpool markdown frontmatter status; no path writes memory/skills,
+a local-file adapter harness write-through, execute a digest-bound taskpool
+note closeout, or execute a digest-bound Kanban DB closeout. Only the explicit
+ledger-local fact mutation can change canonical lifecycle facts, only the
+local-file adapter harness can write adapter-state fixtures, taskpool note
+closeout can mutate taskpool markdown frontmatter status, and Kanban DB closeout
+can mutate a single tasks.status row; no path writes memory/skills,
 outbound messages, or cron/provider configuration.
 """
 
@@ -21,6 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sqlite3
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2182,6 +2184,159 @@ def execute_taskpool_note_closeout_write(*, ledger_path: str | Path, run_id: str
     return record
 
 
+def execute_kanban_db_closeout_write(*, ledger_path: str | Path, run_id: str, execution_request: dict[str, Any]) -> dict[str, Any]:
+    """Execute a digest-bound Kanban DB closeout by mutating only tasks.status."""
+
+    path = Path(ledger_path)
+    normalized_run_id = run_id.strip()
+    rows = _read_runtime_ledger(path)
+    authorization_id = str(execution_request.get("authorization_id", "")).strip()
+    intent_id = str(execution_request.get("intent_id", "")).strip()
+    adapter = str(execution_request.get("adapter", "")).strip().lower()
+    target_ref = str(execution_request.get("target_ref", "")).strip()
+    target_status = str(execution_request.get("target_status", "")).strip().lower()
+    db_path_raw = str(execution_request.get("kanban_db_path", "")).strip()
+    expected_previous_status = str(execution_request.get("expected_previous_status", "")).strip().lower()
+    evidence_refs = execution_request.get("evidence_refs", [])
+    request_digest = _digest(execution_request)
+    auth_record = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "external_adapter_write_authorization_approved"
+            and row.get("authorization_id") == authorization_id
+            and row.get("intent_id") == intent_id
+        ),
+        None,
+    )
+    existing = next(
+        (
+            row
+            for row in rows
+            if row.get("run_id") == normalized_run_id
+            and row.get("run_status") == "kanban_db_write_verified"
+            and row.get("authorization_id") == authorization_id
+            and row.get("intent_id") == intent_id
+            and row.get("target_ref") == target_ref
+            and row.get("target_status") == target_status
+        ),
+        None,
+    )
+    if existing is not None:
+        return {**existing, "idempotent_replay": True}
+
+    blocked_reasons: list[str] = []
+    if not normalized_run_id:
+        blocked_reasons.append("run_id_required")
+    if auth_record is None:
+        blocked_reasons.append("write_authorization_required")
+    if adapter != "kanban":
+        blocked_reasons.append("adapter_must_be_kanban")
+    if target_status != "done":
+        blocked_reasons.append("target_status_must_be_done")
+    if not target_ref:
+        blocked_reasons.append("target_ref_required")
+    if not db_path_raw:
+        blocked_reasons.append("kanban_db_path_required")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        blocked_reasons.append("kanban_write_requires_evidence_refs")
+    if auth_record is not None:
+        if adapter != auth_record.get("adapter"):
+            blocked_reasons.append("execution_adapter_mismatch")
+        if target_ref != auth_record.get("target_ref"):
+            blocked_reasons.append("execution_target_ref_mismatch")
+        if target_status != auth_record.get("target_status"):
+            blocked_reasons.append("execution_target_status_mismatch")
+        expires_at = str(auth_record.get("expires_at", ""))
+        try:
+            expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expires_dt.tzinfo is None:
+                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+            if expires_dt <= datetime.now(timezone.utc):
+                blocked_reasons.append("write_authorization_expired")
+        except ValueError:
+            blocked_reasons.append("write_authorization_expires_at_invalid")
+
+    db_path = Path(db_path_raw) if db_path_raw else None
+    previous_status = ""
+    if db_path is not None:
+        if db_path.is_symlink():
+            blocked_reasons.append("kanban_db_is_symlink")
+        elif not db_path.exists():
+            blocked_reasons.append("kanban_db_missing")
+        elif not db_path.is_file():
+            blocked_reasons.append("kanban_db_not_regular_file")
+        if not blocked_reasons:
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone()
+                    if table is None:
+                        blocked_reasons.append("kanban_tasks_table_missing")
+                    else:
+                        row = conn.execute("SELECT status FROM tasks WHERE id=?", (target_ref,)).fetchone()
+                        if row is None:
+                            blocked_reasons.append("kanban_task_missing")
+                        else:
+                            previous_status = str(row[0] or "").strip().lower()
+                            if expected_previous_status and previous_status != expected_previous_status:
+                                blocked_reasons.append("kanban_previous_status_mismatch")
+            except sqlite3.Error:
+                blocked_reasons.append("kanban_db_unreadable")
+
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "kanban_db_closeout_write_through",
+        "run_id": normalized_run_id,
+        "authorization_id": authorization_id,
+        "intent_id": intent_id,
+        "adapter": adapter,
+        "target_ref": target_ref,
+        "target_status": target_status,
+        "kanban_db_path": db_path_raw,
+        "previous_status": previous_status,
+        "write_executed": False,
+        "readback_verified": False,
+        "rollback_available": False,
+        "external_adapter_write_through_enabled": False,
+        "request_digest": request_digest,
+        "blocked_reasons": blocked_reasons,
+    }
+    if blocked_reasons:
+        return {
+            **base,
+            "accepted_as": "rejected_kanban_db_write_execution",
+            "run_status": "rejected",
+            "runtime_boundary": "kanban_db_write_execution_rejected",
+        }
+
+    assert db_path is not None
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE tasks SET status=? WHERE id=?", (target_status, target_ref))
+        conn.commit()
+        readback = conn.execute("SELECT status FROM tasks WHERE id=?", (target_ref,)).fetchone()
+    readback_status = str(readback[0] if readback else "").strip().lower()
+    readback_verified = readback_status == target_status
+    record = {
+        **base,
+        "accepted_as": "kanban_db_write_verified" if readback_verified else "kanban_db_write_mismatch",
+        "run_status": "kanban_db_write_verified" if readback_verified else "kanban_db_write_mismatch",
+        "runtime_boundary": "kanban_db_closeout_write_through",
+        "write_executed": True,
+        "readback_status": readback_status,
+        "readback_verified": readback_verified,
+        "rollback_available": True,
+        "external_adapter_write_through_enabled": True,
+        "evidence_refs": evidence_refs,
+        "recorded_at": _now(),
+        "idempotent_replay": False,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
 def validate_certification_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate a multi-model certification packet without granting authority."""
 
@@ -2374,6 +2529,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--request-external-adapter-write-authorization", action="store_true", help="Project external adapter write authorization without executing write-through")
     parser.add_argument("--execute-external-adapter-local-file-write", action="store_true", help="Execute authorized external adapter write against a local-file adapter harness and read it back")
     parser.add_argument("--execute-taskpool-note-closeout-write", action="store_true", help="Execute authorized taskpool note closeout by mutating frontmatter status and reading it back")
+    parser.add_argument("--execute-kanban-db-closeout-write", action="store_true", help="Execute authorized Kanban DB closeout by mutating tasks.status and reading it back")
     parser.add_argument("--runtime-ledger", default="", help="JSONL ledger path for runtime run operations")
     parser.add_argument("--runtime-request-json", default="{}", help="JSON request payload for --start-runtime-run")
     parser.add_argument("--run-id", default="", help="Run id for runtime operations")
@@ -2389,6 +2545,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--adapter-authorization-json", default="{}", help="JSON adapter write authorization payload for --request-external-adapter-write-authorization")
     parser.add_argument("--adapter-execution-json", default="{}", help="JSON adapter write execution payload for --execute-external-adapter-local-file-write")
     parser.add_argument("--taskpool-execution-json", default="{}", help="JSON taskpool note write execution payload for --execute-taskpool-note-closeout-write")
+    parser.add_argument("--kanban-execution-json", default="{}", help="JSON Kanban DB write execution payload for --execute-kanban-db-closeout-write")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -2519,6 +2676,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(taskpool_execution, dict):
             parser.error("--taskpool-execution-json must decode to an object")
         result = execute_taskpool_note_closeout_write(ledger_path=args.runtime_ledger, run_id=args.run_id, execution_request=taskpool_execution)
+    elif args.execute_kanban_db_closeout_write:
+        if not args.runtime_ledger:
+            parser.error("--runtime-ledger is required with --execute-kanban-db-closeout-write")
+        if not args.run_id:
+            parser.error("--run-id is required with --execute-kanban-db-closeout-write")
+        kanban_execution = json.loads(args.kanban_execution_json)
+        if not isinstance(kanban_execution, dict):
+            parser.error("--kanban-execution-json must decode to an object")
+        result = execute_kanban_db_closeout_write(ledger_path=args.runtime_ledger, run_id=args.run_id, execution_request=kanban_execution)
     elif args.coverage:
         result = build_agent_architecture_coverage_report()
     else:

@@ -2093,3 +2093,158 @@ def test_taskpool_note_closeout_write_rejects_path_escape_symlink_and_cli_smoke(
     assert cli_result["accepted_as"] == "taskpool_note_write_verified"
     assert cli_result["write_executed"] is True
     assert cli_result["readback_verified"] is True
+
+
+def _write_kanban_authorization_run(tmp_path):
+    ledger_path, started, proposal_path, proposal_record, certification_path, certification_record, authorization_record, fact_record = _write_done_fact_run(tmp_path)
+    intent_record = ega.request_external_adapter_write_intent(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        intent_request={
+            "adapter": "kanban",
+            "target_ref": "kb_arch_task",
+            "target_status": "done",
+            "canonical_fact_digest": fact_record["fact_request_digest"],
+            "readiness_check": {"preflight": "passed", "current_remote_status": "review"},
+            "readback_plan": {"method": "sqlite_select_task_status", "expected_status": "done"},
+            "rollback_plan": {"method": "sqlite_restore_previous_status", "previous_status": "review"},
+            "evidence_refs": ["artifact://agent-coverage/kanban-write-intent.json"],
+        },
+    )
+    write_authorization = ega.request_external_adapter_write_authorization(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        authorization_request={
+            "intent_id": intent_record["intent_id"],
+            "actor_id": "human-admin",
+            "actor_role": "admin",
+            "decision": "approved",
+            "adapter": intent_record["adapter"],
+            "target_ref": intent_record["target_ref"],
+            "target_status": intent_record["target_status"],
+            "canonical_fact_digest": intent_record["canonical_fact_digest"],
+            "intent_request_digest": intent_record["request_digest"],
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+            "evidence_refs": ["artifact://agent-coverage/kanban-write-auth.json"],
+        },
+    )
+    return ledger_path, started, intent_record, write_authorization
+
+
+def test_kanban_db_closeout_write_updates_status_and_readback_idempotently(tmp_path) -> None:
+    ledger_path, started, intent_record, write_authorization = _write_kanban_authorization_run(tmp_path)
+    db_path = tmp_path / "kanban.db"
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, status TEXT)")
+        conn.execute("INSERT INTO tasks (id, title, status) VALUES (?, ?, ?)", ("kb_arch_task", "Arch", "review"))
+
+    result = ega.execute_kanban_db_closeout_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "kanban",
+            "target_ref": "kb_arch_task",
+            "target_status": "done",
+            "kanban_db_path": str(db_path),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/kanban-write-execute.json"],
+        },
+    )
+    assert result["accepted_as"] == "kanban_db_write_verified"
+    assert result["write_executed"] is True
+    assert result["readback_verified"] is True
+    assert result["previous_status"] == "review"
+    assert result["readback_status"] == "done"
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT status FROM tasks WHERE id=?", ("kb_arch_task",)).fetchone()[0] == "done"
+    assert len(ledger_path.read_text().splitlines()) == 8
+
+    replay = ega.execute_kanban_db_closeout_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "kanban",
+            "target_ref": "kb_arch_task",
+            "target_status": "done",
+            "kanban_db_path": str(db_path),
+            "expected_previous_status": "done",
+            "evidence_refs": ["artifact://agent-coverage/kanban-write-replay.json"],
+        },
+    )
+    assert replay["idempotent_replay"] is True
+    assert len(ledger_path.read_text().splitlines()) == 8
+
+
+def test_kanban_db_closeout_write_rejects_symlink_missing_table_and_cli_smoke(tmp_path) -> None:
+    ledger_path, started, intent_record, write_authorization = _write_kanban_authorization_run(tmp_path)
+    db_path = tmp_path / "kanban.db"
+    outside = tmp_path / "outside.db"
+    outside.write_text("outside", encoding="utf-8")
+    db_path.symlink_to(outside)
+
+    rejected = ega.execute_kanban_db_closeout_write(
+        ledger_path=ledger_path,
+        run_id=started["run_id"],
+        execution_request={
+            "authorization_id": write_authorization["authorization_id"],
+            "intent_id": intent_record["intent_id"],
+            "adapter": "kanban",
+            "target_ref": "kb_arch_task",
+            "target_status": "done",
+            "kanban_db_path": str(db_path),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/kanban-symlink-reject.json"],
+        },
+    )
+    assert rejected["accepted_as"] == "rejected_kanban_db_write_execution"
+    assert "kanban_db_is_symlink" in rejected["blocked_reasons"]
+
+    _ledger_path, started2, intent_record2, write_authorization2 = _write_kanban_authorization_run(tmp_path / "cli")
+    cli_db = tmp_path / "cli" / "kanban.db"
+    cli_db.parent.mkdir(parents=True, exist_ok=True)
+    import sqlite3
+    with sqlite3.connect(cli_db) as conn:
+        conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, status TEXT)")
+        conn.execute("INSERT INTO tasks (id, title, status) VALUES (?, ?, ?)", ("kb_arch_task", "Arch", "review"))
+    request_json = json.dumps(
+        {
+            "authorization_id": write_authorization2["authorization_id"],
+            "intent_id": intent_record2["intent_id"],
+            "adapter": "kanban",
+            "target_ref": "kb_arch_task",
+            "target_status": "done",
+            "kanban_db_path": str(cli_db),
+            "expected_previous_status": "review",
+            "evidence_refs": ["artifact://agent-coverage/cli-kanban-write.json"],
+        }
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--execute-kanban-db-closeout-write",
+            "--runtime-ledger",
+            str(_ledger_path),
+            "--run-id",
+            started2["run_id"],
+            "--kanban-execution-json",
+            request_json,
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_result = json.loads(proc.stdout)
+    assert cli_result["accepted_as"] == "kanban_db_write_verified"
+    assert cli_result["write_executed"] is True
+    assert cli_result["readback_verified"] is True
