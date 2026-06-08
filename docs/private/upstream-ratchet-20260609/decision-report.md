@@ -52,6 +52,16 @@ Commands run successfully after conflict resolution:
 - `skill_tracking`: `INSTALLED_NO_DATA_YET` — telemetry/data availability, not a merge blocker.
 - `skill_quality`: `MISSING (118/241 no tests...)` — pre-existing skill coverage governance backlog, not a runtime merge blocker.
 
-## Notes
+## Multi-model consult status
 
-The earlier multi-model consult job did not produce a usable final artifact within the turn budget, so this report records the evidence-grounded local certification result and the concrete verification outputs that were available during the upgrade.
+A late background consult result arrived after the merge and push completed:
+
+- Consult command: `consult_models.py run docs/private/upstream-ratchet-20260609/state.json --tier T2 --quorum 3 --discussion --max-rounds 2 --timeout 300 --keep`
+- Models requested: `claude-opus-4-7`, `gpt-5.5`, `mimo-v2.5-pro`
+- Truth gate: grounded; 3/3 claims verified; evidence coverage 1.0
+- Certification status: `degraded_not_certified`
+- Degradation reason: planner fan-out below min quorum, `2/3`
+- Discussion artifact: `/Users/charles/.hermes/tick-20260608-192415-187042-p1482-29e909f2-846f7707/discussion_result.json`
+- Certification manifest: `/Users/charles/.hermes/tick-20260608-192415-187042-p1482-29e909f2-846f7707/final/certification_manifest.json`
+
+Interpretation: the consult corroborated the factual evidence packet, but it did not reach complete multi-model certification quorum. The upgrade acceptance therefore rests on repository evidence, conflict resolution, post-update gates, and targeted regression tests rather than a full certified quorum.
