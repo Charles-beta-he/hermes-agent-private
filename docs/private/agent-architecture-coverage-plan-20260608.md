@@ -20,7 +20,10 @@ SSOT: this file
 - [x] Slice 3: Scoped commit if verification passes. Commit: 06fbbe238 Add agent architecture coverage contract.
 - [x] Slice 4: Add fork/join graph contract validation as ledger projection only; runtime parallel dispatch remains disabled.
 - [x] Slice 5: Add multi-model certification packet validation; model consensus remains non-fact and cannot mark done.
-- [ ] Slice 6: Scoped commit for graph/certification contracts if verification passes.
+- [x] Slice 6: Scoped commit for graph/certification contracts if verification passes. Commit: 58f086b5f Add agent workflow graph certification contracts.
+- [x] Slice 7: Add artifact pointer contract so evidence remains summary/hash/pointer only in the hot ledger.
+- [x] Slice 8: Add workflow metadata contract for lane/workflow_state/checkpoint substate without lifecycle authority.
+- [ ] Slice 9: Scoped commit for artifact/workflow metadata contracts if verification passes.
 - [ ] Boundary: stop before real runtime worker dispatch / task lifecycle writes / external adapter writes unless a separate explicit human gate authorizes that slice.
 
 ## Decisions

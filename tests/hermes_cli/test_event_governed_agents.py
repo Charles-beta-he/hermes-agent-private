@@ -199,6 +199,80 @@ def test_certification_contract_requires_quorum_truth_gate_and_evidence() -> Non
     assert invalid["unsupported_claims"] == ["AC-1"]
 
 
+def test_artifact_pointer_contract_keeps_hot_path_bounded_and_rejects_inline_blobs() -> None:
+    valid = ega.validate_artifact_pointer_contract(
+        {
+            "artifact_uri": "artifact://agent-coverage/proof.json",
+            "artifact_hash": "sha256:" + "a" * 64,
+            "artifact_type": "json",
+            "summary": "Focused proof output",
+            "size_bytes": 4096,
+        }
+    )
+
+    assert valid["accepted_as"] == "artifact_pointer_contract"
+    assert valid["hot_path_payload_allowed"] is True
+    assert valid["external_artifact_required"] is True
+    assert valid["blocked_reasons"] == []
+
+    inline_blob = ega.validate_artifact_pointer_contract(
+        {
+            "artifact_uri": "artifact://agent-coverage/big-log.txt",
+            "artifact_hash": "sha256:" + "b" * 64,
+            "artifact_type": "transcript",
+            "summary": "x" * 300,
+            "size_bytes": 2_000_000,
+            "inline_content": "raw transcript must not enter hot ledger",
+        }
+    )
+
+    assert inline_blob["accepted_as"] == "rejected_artifact_pointer_projection"
+    assert inline_blob["hot_path_payload_allowed"] is False
+    assert "inline_content_forbidden" in inline_blob["blocked_reasons"]
+    assert "summary_too_long" in inline_blob["blocked_reasons"]
+
+
+def test_workflow_metadata_contract_validates_substate_without_lifecycle_authority() -> None:
+    valid = ega.validate_workflow_metadata_contract(
+        {
+            "task_ref": "task:arch-coverage",
+            "workflow_state": "awaiting_join_evidence",
+            "lane": "agent-architecture",
+            "deadline_at": "2026-06-30T00:00:00Z",
+            "sla_class": "normal",
+            "resource_profile": {"worker_type": "claude-code", "max_parallel": 2},
+            "quota_profile": {"max_cost_usd": 5},
+            "checkpoint": {
+                "required": True,
+                "type": "final_review",
+                "owner": "human",
+                "resume_policy": "after_approval",
+            },
+        }
+    )
+
+    assert valid["accepted_as"] == "workflow_metadata_contract"
+    assert valid["canonical_lifecycle_unchanged"] is True
+    assert valid["allowed_to_mutate_lifecycle"] is False
+    assert valid["blocked_reasons"] == []
+
+    invalid = ega.validate_workflow_metadata_contract(
+        {
+            "task_ref": "task:arch-coverage",
+            "workflow_state": "done",
+            "lane": "agent-architecture",
+            "canonical_status": "done",
+            "checkpoint": {"required": True, "type": "final_review"},
+        }
+    )
+
+    assert invalid["accepted_as"] == "rejected_workflow_metadata_projection"
+    assert invalid["allowed_to_mutate_lifecycle"] is False
+    assert "workflow_state_must_not_be_canonical_lifecycle_status" in invalid["blocked_reasons"]
+    assert "canonical_status_forbidden_in_metadata_contract" in invalid["blocked_reasons"]
+    assert "checkpoint_owner_required" in invalid["blocked_reasons"]
+
+
 def test_control_plane_report_is_json_and_report_only(tmp_path) -> None:
     report = ega.build_control_plane_report()
 

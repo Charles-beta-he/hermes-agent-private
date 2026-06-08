@@ -38,6 +38,9 @@ DANGEROUS_ACTIONS = frozenset(
 )
 UNTRUSTED_SOURCES = frozenset({"webhook", "gateway", "cron", "dashboard", "projection"})
 WORKER_RESULT_STATUSES = frozenset({"succeeded", "failed", "blocked", "needs_human", "partial"})
+CANONICAL_LIFECYCLE_STATUSES = frozenset({"pending", "claimed", "running", "retry", "blocked", "review", "done"})
+ARTIFACT_TYPES = frozenset({"json", "log", "screenshot", "trace", "metrics", "transcript", "report"})
+HOT_PATH_SUMMARY_MAX_CHARS = 240
 WORKER_FORBIDDEN_RESULT_KEYS = frozenset(
     {
         "mark_done",
@@ -304,6 +307,96 @@ def validate_worker_result_contract(
         "proposal_refs": proposal_refs if isinstance(proposal_refs, list) else [],
         "blocked_reasons": blocked_reasons,
         "result_digest": _digest(result),
+    }
+
+
+def validate_artifact_pointer_contract(artifact: dict[str, Any]) -> dict[str, Any]:
+    """Validate that evidence artifacts stay pointer-only in the hot path."""
+
+    artifact_uri = str(artifact.get("artifact_uri", "")).strip()
+    artifact_hash = str(artifact.get("artifact_hash", "")).strip()
+    artifact_type = str(artifact.get("artifact_type", "")).strip().lower()
+    summary = str(artifact.get("summary", ""))
+    size_bytes = int(artifact.get("size_bytes", 0) or 0)
+    errors: list[str] = []
+
+    if not artifact_uri:
+        errors.append("artifact_uri_required")
+    if not artifact_hash.startswith("sha256:") or len(artifact_hash) != 71:
+        errors.append("sha256_artifact_hash_required")
+    if artifact_type not in ARTIFACT_TYPES:
+        errors.append("unsupported_artifact_type")
+    if not summary.strip():
+        errors.append("summary_required")
+    if len(summary) > HOT_PATH_SUMMARY_MAX_CHARS:
+        errors.append("summary_too_long")
+    if size_bytes < 0:
+        errors.append("size_bytes_must_be_non_negative")
+    if "inline_content" in artifact or "content" in artifact or "raw" in artifact:
+        errors.append("inline_content_forbidden")
+
+    accepted = not errors
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "report_only",
+        "accepted_as": "artifact_pointer_contract" if accepted else "rejected_artifact_pointer_projection",
+        "artifact_uri": artifact_uri,
+        "artifact_hash": artifact_hash,
+        "artifact_type": artifact_type,
+        "summary_chars": len(summary),
+        "size_bytes": size_bytes,
+        "hot_path_payload_allowed": accepted,
+        "external_artifact_required": True,
+        "inline_content_allowed": False,
+        "blocked_reasons": errors,
+        "artifact_digest": _digest(artifact),
+    }
+
+
+def validate_workflow_metadata_contract(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Validate workflow metadata as a substate contract without lifecycle authority."""
+
+    task_ref = str(metadata.get("task_ref", "")).strip()
+    workflow_state = str(metadata.get("workflow_state", "")).strip().lower()
+    lane = str(metadata.get("lane", "")).strip()
+    checkpoint = metadata.get("checkpoint", {})
+    errors: list[str] = []
+
+    if not task_ref:
+        errors.append("task_ref_required")
+    if not workflow_state:
+        errors.append("workflow_state_required")
+    if workflow_state in CANONICAL_LIFECYCLE_STATUSES:
+        errors.append("workflow_state_must_not_be_canonical_lifecycle_status")
+    if not lane:
+        errors.append("lane_required")
+    if "canonical_status" in metadata or "task_status" in metadata or "lifecycle_status" in metadata:
+        errors.append("canonical_status_forbidden_in_metadata_contract")
+    if not isinstance(metadata.get("resource_profile", {}), dict):
+        errors.append("resource_profile_must_be_object")
+    if not isinstance(metadata.get("quota_profile", {}), dict):
+        errors.append("quota_profile_must_be_object")
+    if checkpoint:
+        if not isinstance(checkpoint, dict):
+            errors.append("checkpoint_must_be_object")
+            checkpoint = {}
+        elif checkpoint.get("required") and not checkpoint.get("owner"):
+            errors.append("checkpoint_owner_required")
+
+    accepted = not errors
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "report_only",
+        "task_ref": task_ref,
+        "workflow_state": workflow_state,
+        "lane": lane,
+        "accepted_as": "workflow_metadata_contract" if accepted else "rejected_workflow_metadata_projection",
+        "canonical_lifecycle_unchanged": True,
+        "allowed_to_mutate_lifecycle": False,
+        "runtime_dispatch_enabled": False,
+        "checkpoint_required": bool(isinstance(checkpoint, dict) and checkpoint.get("required")),
+        "blocked_reasons": errors,
+        "metadata_digest": _digest(metadata),
     }
 
 
