@@ -51,6 +51,36 @@ logger = logging.getLogger(__name__)
 # Mirrors the constant in ``run_agent`` for tests/imports that look here.
 _MAX_TOOL_WORKERS = 8
 
+# Wall-clock cap for a whole concurrent tool batch.  Individual tools may have
+# their own timeouts, but the agent loop also needs a batch-level boundary so a
+# non-cooperative tool cannot keep refreshing activity heartbeats forever.
+_CONCURRENT_TOOL_BATCH_TIMEOUT_DEFAULT = 1800.0
+_CONCURRENT_TOOL_BATCH_TIMEOUT_ENV = "HERMES_CONCURRENT_TOOL_BATCH_TIMEOUT"
+
+
+def _concurrent_tool_batch_timeout_secs() -> Optional[float]:
+    """Return the concurrent-tool batch wall-clock timeout in seconds.
+
+    ``0`` or a negative value disables the cap for local debugging.  Invalid
+    values fail open to the safe default rather than crashing tool execution.
+    """
+    raw = os.environ.get(_CONCURRENT_TOOL_BATCH_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return _CONCURRENT_TOOL_BATCH_TIMEOUT_DEFAULT
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid %s=%r; using default %.0fs",
+            _CONCURRENT_TOOL_BATCH_TIMEOUT_ENV,
+            raw,
+            _CONCURRENT_TOOL_BATCH_TIMEOUT_DEFAULT,
+        )
+        return _CONCURRENT_TOOL_BATCH_TIMEOUT_DEFAULT
+    if value <= 0:
+        return None
+    return value
+
 
 def _ra():
     """Lazy reference to ``run_agent`` so patches like ``run_agent._set_interrupt`` work."""
@@ -449,7 +479,7 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
 
     # ── Concurrent execution ─────────────────────────────────────────
     # Each slot holds (function_name, function_args, function_result, duration, error_flag, blocked_flag, middleware_trace)
-    results = [None] * num_tools
+    results: list[Any] = [None] * num_tools
     for i, (tc, name, args, middleware_trace, block_result, blocked_by_guardrail) in enumerate(parsed_calls):
         if block_result is not None:
             results[i] = (name, args, block_result, 0.0, True, True, middleware_trace)
@@ -517,7 +547,8 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                 )
                 duration = time.time() - start
                 logger.info("tool %s cancelled (%.2fs)", function_name, duration)
-                results[index] = (function_name, function_args, result, duration, True, False, middleware_trace)
+                if results[index] is None:
+                    results[index] = (function_name, function_args, result, duration, True, False, middleware_trace)
                 return
             except Exception as tool_error:
                 result = f"Error executing tool '{function_name}': {tool_error}"
@@ -528,7 +559,8 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                 logger.info("tool %s failed (%.2fs): %s", function_name, duration, result[:200])
             else:
                 logger.info("tool %s completed (%.2fs, %d chars)", function_name, duration, len(result))
-            results[index] = (function_name, function_args, result, duration, is_error, False, middleware_trace)
+            if results[index] is None:
+                results[index] = (function_name, function_args, result, duration, is_error, False, middleware_trace)
         finally:
             # Tear down worker-tid tracking.  Clear any interrupt bit we may
             # have set so the next task scheduled onto this recycled tid
@@ -557,9 +589,12 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
             if block_result is None
         ]
         futures = []
+        future_to_index = {}
+        executor = None
         if runnable_calls:
             max_workers = min(len(runnable_calls), _MAX_TOOL_WORKERS)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+            try:
                 for i, tc, name, args in runnable_calls:
                     # Propagate the agent turn's ContextVars (e.g.
                     # _approval_session_key) AND thread-local approval/sudo
@@ -568,19 +603,42 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                         propagate_context_to_thread(_run_tool), i, tc, name, args, parsed_calls[i][3]
                     )
                     futures.append(f)
+                    future_to_index[f] = i
 
                 # Wait for all to complete with periodic heartbeats so the
                 # gateway's inactivity monitor doesn't kill us during long
-                # concurrent tool batches. Also check for user interrupts
-                # so we don't block indefinitely when the user sends /stop
-                # or a new message during concurrent tool execution.
+                # concurrent tool batches. Also check for user interrupts and
+                # enforce a batch-level wall-clock cap.  This must not use the
+                # ThreadPoolExecutor context manager: its __exit__ calls
+                # shutdown(wait=True), which would reintroduce the exact hang
+                # this guard is meant to bound.
                 _conc_start = time.time()
+                _deadline_start = time.monotonic()
+                _batch_timeout = _concurrent_tool_batch_timeout_secs()
+                _batch_deadline = (
+                    _deadline_start + _batch_timeout
+                    if _batch_timeout is not None
+                    else None
+                )
                 _interrupt_logged = False
+                _batch_timed_out = False
                 while True:
+                    _wait_timeout = 5.0
+                    if _batch_deadline is not None:
+                        _remaining = _batch_deadline - time.monotonic()
+                        if _remaining <= 0:
+                            _batch_timed_out = True
+                            break
+                        _wait_timeout = min(_wait_timeout, _remaining)
+
                     done, not_done = concurrent.futures.wait(
-                        futures, timeout=5.0,
+                        futures, timeout=_wait_timeout,
                     )
                     if not not_done:
+                        break
+
+                    if _batch_deadline is not None and time.monotonic() >= _batch_deadline:
+                        _batch_timed_out = True
                         break
 
                     # Check for interrupt — the per-thread interrupt signal
@@ -607,14 +665,69 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                     # Heartbeat every ~30s (6 × 5s poll intervals)
                     if _conc_elapsed > 0 and _conc_elapsed % 30 < 6:
                         _still_running = [
-                            parsed_calls[futures.index(f)][1]
+                            parsed_calls[future_to_index[f]][1]
                             for f in not_done
-                            if f in futures
+                            if f in future_to_index
                         ]
                         agent._touch_activity(
                             f"concurrent tools running ({_conc_elapsed}s, "
                             f"{len(not_done)} remaining: {', '.join(_still_running[:3])})"
                         )
+
+                if _batch_timed_out:
+                    _elapsed = time.time() - _conc_start
+                    not_done = [f for f in futures if not f.done()]
+                    agent._vprint(
+                        f"{agent.log_prefix}⚡ Concurrent tool batch timed out "
+                        f"after {_elapsed:.1f}s; returning timeout results for "
+                        f"{len(not_done)} unfinished tool(s)",
+                        force=True,
+                    )
+                    with agent._tool_worker_threads_lock:
+                        _worker_tids = list(agent._tool_worker_threads)
+                    for _wtid in _worker_tids:
+                        try:
+                            _ra()._set_interrupt(True, _wtid)
+                        except Exception:
+                            pass
+                    for f in not_done:
+                        f.cancel()
+                    for f in not_done:
+                        idx = future_to_index.get(f)
+                        if idx is None or results[idx] is not None:
+                            continue
+                        tc, name, args, middleware_trace, _block_result, _blocked = parsed_calls[idx]
+                        function_result = (
+                            f"Error executing tool '{name}': concurrent tool batch "
+                            f"exceeded wall-clock timeout of {_batch_timeout:.1f}s"
+                        )
+                        _emit_terminal_post_tool_call(
+                            agent,
+                            function_name=name,
+                            function_args=args,
+                            result=function_result,
+                            effective_task_id=effective_task_id,
+                            tool_call_id=getattr(tc, "id", "") or "",
+                            duration_ms=int(_elapsed * 1000),
+                            status="error",
+                            error_type="concurrent_tool_batch_timeout",
+                            error_message=function_result,
+                            middleware_trace=list(middleware_trace),
+                        )
+                        results[idx] = (
+                            name,
+                            args,
+                            function_result,
+                            _elapsed,
+                            True,
+                            False,
+                            middleware_trace,
+                        )
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    executor = None
+            finally:
+                if executor is not None:
+                    executor.shutdown(wait=True, cancel_futures=True)
     finally:
         if spinner:
             # Build a summary message for the spinner stop

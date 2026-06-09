@@ -11,6 +11,8 @@ import io
 import json
 import logging
 import re
+import threading
+import time
 import uuid
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -2429,6 +2431,43 @@ class TestConcurrentToolExecution:
         # Second tool should succeed
         assert messages[1]["tool_call_id"] == "c2"
         assert "success" in messages[1]["content"]
+
+    def test_concurrent_batch_timeout_returns_without_waiting_for_stuck_tool(self, agent, monkeypatch):
+        """A stuck concurrent tool must not block the agent loop forever."""
+        monkeypatch.setenv("HERMES_CONCURRENT_TOOL_BATCH_TIMEOUT", "0.05")
+        release_stuck_tool = threading.Event()
+        tc1 = _mock_tool_call(name="web_search", arguments='{"q": "stuck"}', call_id="c1")
+        tc2 = _mock_tool_call(name="web_search", arguments='{"q": "fast"}', call_id="c2")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
+        messages = []
+
+        def fake_handle(name, args, task_id, **kwargs):
+            if args.get("q") == "stuck":
+                release_stuck_tool.wait(timeout=5)
+                return "late_result"
+            return "fast_result"
+
+        started = time.monotonic()
+        try:
+            with patch("run_agent.handle_function_call", side_effect=fake_handle):
+                agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
+            elapsed = time.monotonic() - started
+
+            assert elapsed < 1.0
+            assert len(messages) == 2
+            assert messages[0]["tool_call_id"] == "c1"
+            assert messages[1]["tool_call_id"] == "c2"
+            assert "concurrent tool batch" in messages[0]["content"].lower()
+            assert "timeout" in messages[0]["content"].lower()
+            assert "fast_result" in messages[1]["content"]
+        finally:
+            release_stuck_tool.set()
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                with agent._tool_worker_threads_lock:
+                    if not agent._tool_worker_threads:
+                        break
+                time.sleep(0.01)
 
     def test_concurrent_interrupt_before_start(self, agent):
         """If interrupt is requested before concurrent execution, all tools are skipped."""
