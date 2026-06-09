@@ -332,3 +332,59 @@ def test_sentinel_can_be_disabled(tmp_path, monkeypatch):
     root = tmp_path / "state" / "selfcheck"
     assert not (root / "wakeups.jsonl").exists()
     assert run_sentinel_tick(source="test") == []
+
+
+def test_l1_auto_repair_rebuilds_missing_projection_from_ledger(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+    root = tmp_path / "state" / "selfcheck"
+    (root / "component_status.json").unlink()
+
+    emitted = run_sentinel_tick(source="test", debounce_seconds=0)
+
+    assert any(w.kind == "projection_incomplete" for w in emitted)
+    attempts = _jsonl(root / "repair_attempts.jsonl")
+    auto = [a for a in attempts if a.get("action_id") == "selfcheck.l1.rebuild_projections"]
+    assert auto
+    assert auto[-1]["status"] == "applied_verified"
+    assert auto[-1]["external_send_executed"] is False
+    assert auto[-1]["shell_executed"] is False
+    assert auto[-1]["lifecycle_mutated"] is False
+    assert (root / "component_status.json").exists()
+
+
+def test_l1_auto_repair_archives_expired_authorization_idempotently(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    decision = observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+    plan = decision.repair_plans[0]
+    auth = authorize_repair_plan(plan.id, request_digest=plan.request_digest, actor="operator", ttl_seconds=1)
+
+    import agent.selfcheck_operator as sco
+
+    monkeypatch.setattr(sco, "_now", lambda: 9999999999.0)
+    first = run_sentinel_tick(source="test", debounce_seconds=0)
+    second = run_sentinel_tick(source="test", debounce_seconds=0)
+
+    assert any(w.kind == "authorization_expired" for w in first)
+    assert any(w.kind == "authorization_expired" for w in second)
+    archived = _jsonl(root := tmp_path / "state" / "selfcheck" / "archived_authorizations.jsonl")
+    assert len([a for a in archived if a["authorization_id"] == auth.id]) == 1
+    attempts = _jsonl((tmp_path / "state" / "selfcheck") / "repair_attempts.jsonl")
+    auto = [a for a in attempts if a.get("action_id") == "selfcheck.l1.archive_expired_authorizations"]
+    assert len(auto) == 1
+    assert auto[0]["adapter_mutated"] is False
+
+
+def test_l1_auto_repair_can_be_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMES_SELFCHECK_AUTO_REPAIR", "0")
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+    root = tmp_path / "state" / "selfcheck"
+    (root / "component_status.json").unlink()
+
+    emitted = run_sentinel_tick(source="test", debounce_seconds=0)
+
+    assert any(w.kind == "projection_incomplete" for w in emitted)
+    attempts_path = root / "repair_attempts.jsonl"
+    attempts = _jsonl(attempts_path) if attempts_path.exists() else []
+    assert not [a for a in attempts if a.get("mode") == "l1_auto"]

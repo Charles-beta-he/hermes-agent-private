@@ -608,6 +608,17 @@ def _sentinel_enabled() -> bool:
     return raw not in {"0", "false", "off", "no", "disabled"}
 
 
+def _auto_repair_enabled() -> bool:
+    """Whether the resident operator may run allowlisted L1 local repairs.
+
+    This intentionally opens only ledger-local/projection-maintenance actions.
+    External sends, provider/config changes, task lifecycle mutations, and shell
+    commands remain outside this capability boundary.
+    """
+    raw = os.environ.get("HERMES_SELFCHECK_AUTO_REPAIR", "1").strip().lower()
+    return raw not in {"0", "false", "off", "no", "disabled"}
+
+
 def _sentinel_threshold(name: str, default: int) -> int:
     raw = os.environ.get(f"HERMES_SELFCHECK_SENTINEL_{name.upper()}", "").strip()
     if not raw:
@@ -670,6 +681,8 @@ def _build_sentinel_wakeups(root: Path, *, source: str, now_epoch: float) -> lis
     latest = _read_json_file(root / "latest_findings.json")
     components = _read_json_file(root / "component_status.json")
     findings = list(latest.get("findings") or []) if isinstance(latest.get("findings"), list) else []
+    if not findings:
+        findings = _read_jsonl_tail(root / "findings.jsonl", limit=50)
     plans = _read_jsonl_tail(root / "repair_plans.jsonl", limit=200)
     attempts = _read_jsonl_tail(root / "repair_attempts.jsonl", limit=200)
     coalesced = _read_jsonl_tail(root / "coalesced.jsonl", limit=200)
@@ -721,6 +734,7 @@ def _build_sentinel_wakeups(root: Path, *, source: str, now_epoch: float) -> lis
             ))
 
     expiry_threshold = _sentinel_threshold("AUTH_EXPIRY_SECONDS", 300)
+    expired = []
     expiring = []
     for auth in authorizations:
         if auth.get("decision") != "approved":
@@ -729,8 +743,20 @@ def _build_sentinel_wakeups(root: Path, *, source: str, now_epoch: float) -> lis
             expires = float(auth.get("expires_at_epoch") or 0)
         except (TypeError, ValueError):
             continue
-        if now_epoch <= expires <= now_epoch + expiry_threshold:
+        if expires < now_epoch:
+            expired.append(auth)
+        elif now_epoch <= expires <= now_epoch + expiry_threshold:
             expiring.append(auth)
+    if expired:
+        wakeups.append(_make_wakeup(
+            kind="authorization_expired",
+            severity="P2",
+            status=status,
+            reason=f"{len(expired)} repair authorization(s) expired and can be locally archived",
+            source=source,
+            evidence_refs=[f"repair_authorization:{a.get('id')}" for a in expired[:5]],
+            ts=now_epoch,
+        ))
     if expiring:
         wakeups.append(_make_wakeup(
             kind="authorization_expiring",
@@ -807,6 +833,164 @@ def _append_sentinel_outputs(root: Path, wakeup: SentinelWakeup, *, ts: float) -
         _append_jsonl(root / "pending_alerts.jsonl", pending_alert)
 
 
+def _append_l1_auto_attempt(
+    root: Path,
+    *,
+    action_id: str,
+    wakeup: SentinelWakeup,
+    status: str,
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    verification: Sequence[str],
+    note: str,
+    ts: float,
+) -> RepairAttempt:
+    payload = {
+        "action_id": action_id,
+        "wakeup_id": wakeup.id,
+        "mode": "l1_auto",
+        "request_digest": wakeup.request_digest,
+    }
+    attempt = RepairAttempt(
+        id="attempt-" + hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16],
+        plan_id=f"sentinel:{wakeup.id}",
+        action_id=action_id,
+        mode="l1_auto",
+        status=status,
+        started_at=_utc_ts(ts),
+        completed_at=_utc_ts(ts),
+        request_digest=wakeup.request_digest,
+        authorization_id="auto-l1-allowlist",
+        before=dict(before),
+        after=dict(after),
+        verification=[str(v) for v in verification],
+        note=_sanitize_text(note, 300),
+    )
+    existing = _read_jsonl_tail(root / "repair_attempts.jsonl", limit=2000)
+    if not any(str(r.get("id")) == attempt.id for r in existing):
+        record = asdict(attempt)
+        record.update({
+            "schema_version": _SCHEMA_VERSION,
+            "created_at": _utc_ts(ts),
+            "created_at_epoch": ts,
+            "runtime_boundary": "l1_auto_allowlist",
+            "side_effect_scope": "ledger_local_projection_only",
+            "external_send_executed": False,
+            "shell_executed": False,
+            "lifecycle_mutated": False,
+            "adapter_mutated": False,
+        })
+        _append_jsonl(root / "repair_attempts.jsonl", record)
+    return attempt
+
+
+def _archive_expired_authorizations(root: Path, *, wakeup: SentinelWakeup, ts: float) -> RepairAttempt | None:
+    authorizations = _read_jsonl_tail(root / "repair_authorizations.jsonl", limit=2000)
+    expired: list[dict[str, Any]] = []
+    archived_ids = {str(x.get("authorization_id")) for x in _read_jsonl_tail(root / "archived_authorizations.jsonl", limit=2000)}
+    for auth in authorizations:
+        if str(auth.get("id")) in archived_ids:
+            continue
+        if auth.get("decision") != "approved":
+            continue
+        try:
+            expires = float(auth.get("expires_at_epoch") or 0)
+        except (TypeError, ValueError):
+            continue
+        if expires < ts:
+            expired.append(auth)
+    if not expired:
+        return None
+    before = {
+        "expired_authorization_count": len(expired),
+        "archived_authorization_count": len(archived_ids),
+        "archive": _safe_read_path(root / "archived_authorizations.jsonl"),
+    }
+    for auth in expired:
+        _append_jsonl(root / "archived_authorizations.jsonl", {
+            "schema_version": _SCHEMA_VERSION,
+            "authorization_id": auth.get("id"),
+            "plan_id": auth.get("plan_id"),
+            "action_id": auth.get("action_id"),
+            "expired_at_epoch": auth.get("expires_at_epoch"),
+            "archived_at": _utc_ts(ts),
+            "archived_at_epoch": ts,
+            "source_wakeup_id": wakeup.id,
+            "raw_authorization_hash": _stable_digest(auth),
+        })
+    after_archived = {str(x.get("authorization_id")) for x in _read_jsonl_tail(root / "archived_authorizations.jsonl", limit=2000)}
+    after = {
+        "expired_authorization_count": len(expired),
+        "archived_authorization_count": len(after_archived),
+        "archive": _safe_read_path(root / "archived_authorizations.jsonl"),
+    }
+    return _append_l1_auto_attempt(
+        root,
+        action_id="selfcheck.l1.archive_expired_authorizations",
+        wakeup=wakeup,
+        status="applied_verified",
+        before=before,
+        after=after,
+        verification=[
+            "expired authorizations were copied to archived_authorizations.jsonl",
+            "source repair_authorizations.jsonl remained append-only and unmodified",
+            "no shell command executed",
+            "no external message sent",
+            "no task lifecycle or adapter state mutated",
+        ],
+        note="allowlisted L1 local archive completed",
+        ts=ts,
+    )
+
+
+def _execute_l1_auto_repairs(root: Path, wakeups: Sequence[SentinelWakeup], *, ts: float) -> list[RepairAttempt]:
+    """Run all currently opened L1 auto repairs under a strict allowlist."""
+    if not _auto_repair_enabled():
+        return []
+    attempts: list[RepairAttempt] = []
+    for wakeup in wakeups:
+        if wakeup.kind == "projection_incomplete":
+            before = {
+                "health_summary": _safe_read_path(root / "health_summary.json"),
+                "latest_findings": _safe_read_path(root / "latest_findings.json"),
+                "component_status": _safe_read_path(root / "component_status.json"),
+                "sentinel_status": _safe_read_path(root / "sentinel_status.json"),
+            }
+            _rebuild_projections(root, now_epoch=ts)
+            _rebuild_sentinel_projection(root, now_epoch=ts)
+            after = {
+                "health_summary": _safe_read_path(root / "health_summary.json"),
+                "latest_findings": _safe_read_path(root / "latest_findings.json"),
+                "component_status": _safe_read_path(root / "component_status.json"),
+                "sentinel_status": _safe_read_path(root / "sentinel_status.json"),
+            }
+            attempts.append(_append_l1_auto_attempt(
+                root,
+                action_id="selfcheck.l1.rebuild_projections",
+                wakeup=wakeup,
+                status="applied_verified",
+                before=before,
+                after=after,
+                verification=[
+                    "derived projection files were regenerated from append-only ledgers",
+                    "no source ledger was deleted or rewritten",
+                    "no shell command executed",
+                    "no external message sent",
+                    "no task lifecycle or adapter state mutated",
+                ],
+                note="allowlisted L1 projection rebuild completed",
+                ts=ts,
+            ))
+        elif wakeup.kind == "authorization_expired":
+            attempt = _archive_expired_authorizations(root, wakeup=wakeup, ts=ts)
+            if attempt is not None:
+                attempts.append(attempt)
+    if attempts:
+        _rebuild_projections(root, now_epoch=ts)
+        _rebuild_sentinel_projection(root, now_epoch=ts)
+    return attempts
+
+
 def _rebuild_sentinel_projection(root: Path, *, now_epoch: float | None = None) -> None:
     ts = now_epoch or _now()
     wakeups = _read_jsonl_tail(root / "wakeups.jsonl", limit=100)
@@ -834,7 +1018,6 @@ def run_sentinel_tick(*, source: str = "manual", debounce_seconds: int | None = 
         return []
     ts = _now()
     with _LEDGER_LOCK:
-        _rebuild_projections(root, now_epoch=ts)
         wakeups = _build_sentinel_wakeups(root, source=source, now_epoch=ts)
         debounce = _DEFAULT_DEBOUNCE_SECONDS if debounce_seconds is None else max(0, int(debounce_seconds))
         recent = _recent_wakeup_fingerprints(root, window_seconds=debounce, now_epoch=ts) if debounce else set()
@@ -854,6 +1037,7 @@ def run_sentinel_tick(*, source: str = "manual", debounce_seconds: int | None = 
             _append_sentinel_outputs(root, wakeup, ts=ts)
             recent.add(wakeup.request_digest)
             emitted.append(wakeup)
+        _execute_l1_auto_repairs(root, emitted, ts=ts)
         _rebuild_sentinel_projection(root, now_epoch=ts)
         return emitted
 
@@ -864,11 +1048,14 @@ def _run_sentinel_after_ingest(root: Path, *, source: str, now_epoch: float) -> 
     try:
         wakeups = _build_sentinel_wakeups(root, source=source, now_epoch=now_epoch)
         recent = _recent_wakeup_fingerprints(root, window_seconds=_DEFAULT_DEBOUNCE_SECONDS, now_epoch=now_epoch)
+        emitted: list[SentinelWakeup] = []
         for wakeup in wakeups:
             if wakeup.request_digest in recent:
                 continue
             _append_sentinel_outputs(root, wakeup, ts=now_epoch)
             recent.add(wakeup.request_digest)
+            emitted.append(wakeup)
+        _execute_l1_auto_repairs(root, emitted, ts=now_epoch)
         _rebuild_sentinel_projection(root, now_epoch=now_epoch)
     except Exception as exc:  # pragma: no cover - defensive hot-path guard
         logger.debug("selfcheck sentinel wakeup failed: %s", exc, exc_info=True)
