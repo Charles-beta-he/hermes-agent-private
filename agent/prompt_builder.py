@@ -309,6 +309,22 @@ TASK_COMPLETION_GUIDANCE = (
     "is always better than inventing a result."
 )
 
+# Universal complex-task planning gate. This is intentionally short and
+# prompt-level: it nudges runtime behavior without mutating task state,
+# auto-enqueueing work, or pretending Hermes has a trained world model.
+OBJECTIVE_MODEL_PATH_GUIDANCE = (
+    "# Objective-model-path gate\n"
+    "For complex, high-risk, multi-path, production-grade, or explicitly "
+    "'全盘推进' tasks, start by establishing a compact objective model before "
+    "irreversible action: success criteria, constraints/non-goals, current "
+    "state/evidence, viable paths, likely consequences/risks, chosen path, and "
+    "verification evidence. Load `objective-model-path-verification` when the "
+    "skills tools are available and the trigger matches. Keep this gate concise "
+    "and operational; do not inflate it into claims of a real learned world model. "
+    "Stop at permission, safety, or evidence boundaries instead of silently "
+    "downgrading the task."
+)
+
 # OpenAI GPT/Codex-specific execution guidance.  Addresses known failure modes
 # where GPT models abandon work on partial results, skip prerequisite lookups,
 # hallucinate instead of using tools, and declare "done" without verification.

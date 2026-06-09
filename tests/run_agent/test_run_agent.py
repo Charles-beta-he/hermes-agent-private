@@ -1420,6 +1420,70 @@ class TestTaskCompletionGuidance:
             assert TASK_COMPLETION_GUIDANCE not in a._build_system_prompt()
 
 
+class TestObjectiveModelPathGuidance:
+    """Tests for the universal objective/model/path planning gate
+    (config.yaml ``agent.objective_model_path_guidance``)."""
+
+    def _make_agent(self, objective_model_path_guidance=True, tools=None):
+        tool_names = tools if tools is not None else ("terminal", "skill_view", "skill_manage")
+        with (
+            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs(*tool_names)),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("run_agent.OpenAI"),
+            patch(
+                "hermes_cli.config.load_config",
+                return_value={"agent": {"objective_model_path_guidance": objective_model_path_guidance}},
+            ),
+        ):
+            a = AIAgent(
+                model="anthropic/claude-opus-4.8",
+                api_key="test-key-1234567890",
+                base_url="https://openrouter.ai/api/v1",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+            a.client = MagicMock()
+            return a
+
+    def test_default_injects_for_tool_enabled_agent(self):
+        from agent.prompt_builder import OBJECTIVE_MODEL_PATH_GUIDANCE
+
+        agent = self._make_agent()
+        prompt = agent._build_system_prompt()
+        assert OBJECTIVE_MODEL_PATH_GUIDANCE in prompt
+        assert "objective-model-path-verification" in prompt
+
+    def test_false_disables(self):
+        from agent.prompt_builder import OBJECTIVE_MODEL_PATH_GUIDANCE
+
+        agent = self._make_agent(objective_model_path_guidance=False)
+        assert OBJECTIVE_MODEL_PATH_GUIDANCE not in agent._build_system_prompt()
+
+    def test_no_tools_no_injection(self):
+        from agent.prompt_builder import OBJECTIVE_MODEL_PATH_GUIDANCE
+
+        with (
+            patch("run_agent.get_tool_definitions", return_value=[]),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("run_agent.OpenAI"),
+            patch(
+                "hermes_cli.config.load_config",
+                return_value={"agent": {"objective_model_path_guidance": True}},
+            ),
+        ):
+            a = AIAgent(
+                api_key="test-key-1234567890",
+                base_url="https://openrouter.ai/api/v1",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+                enabled_toolsets=[],
+            )
+            a.client = MagicMock()
+            assert OBJECTIVE_MODEL_PATH_GUIDANCE not in a._build_system_prompt()
+
+
 class TestEnvironmentProbeIntegration:
     """Tests for the local Python toolchain probe wiring (config.yaml
     ``agent.environment_probe``).  The probe itself is unit-tested in

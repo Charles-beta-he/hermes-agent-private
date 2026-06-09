@@ -1263,6 +1263,11 @@ def init_agent(
     # targets.
     agent._task_completion_guidance = bool(_agent_section.get("task_completion_guidance", True))
 
+    # Universal objective/model/path planning gate for complex, high-risk,
+    # multi-path, production-grade, or explicitly "全盘推进" tasks.  Default
+    # True; prompt-only and safe to disable for lean prompts.
+    agent._objective_model_path_guidance = bool(_agent_section.get("objective_model_path_guidance", True))
+
     # Local Python toolchain probe toggle.  Default True.  When False,
     # the probe is skipped entirely (no subprocess calls, no system-prompt
     # line).  Useful for users on exotic setups where the probe heuristics
