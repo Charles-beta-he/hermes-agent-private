@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from agent.selfcheck_operator import (
+    authorize_repair_plan,
     observe_cron_job_result,
     observe_event,
     observe_gateway_delivery,
@@ -13,6 +14,7 @@ from agent.selfcheck_operator import (
     observe_turn_result,
     read_health_summary,
     read_recent_findings,
+    run_authorized_repair_plan,
     run_repair_plan_dry_run,
 )
 
@@ -191,3 +193,94 @@ def test_taskpool_event_and_dry_run_repair_attempt(tmp_path, monkeypatch):
     assert attempts[-1]["status"] == "dry_run_verified"
     summary = read_health_summary()
     assert summary["waiting_for_judgement"] == 0
+
+
+def test_authorized_repair_plan_requires_digest_and_records_attempt(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    decision = observe_gateway_delivery(
+        platform="telegram",
+        chat_id="123",
+        success=False,
+        error="adapter send failed",
+    )
+    plan = decision.repair_plans[0]
+
+    auth = authorize_repair_plan(
+        plan.id,
+        request_digest=plan.request_digest,
+        actor="operator-policy-test",
+        ttl_seconds=60,
+        evidence_refs=["test:selfcheck_authorization"],
+        note="bounded readback approval",
+    )
+    attempt1 = run_authorized_repair_plan(
+        auth.id,
+        plan_id=plan.id,
+        request_digest=plan.request_digest,
+    )
+    attempt2 = run_authorized_repair_plan(
+        auth.id,
+        plan_id=plan.id,
+        request_digest=plan.request_digest,
+    )
+
+    assert auth.decision == "approved"
+    assert attempt1.status == "authorized_readback_verified"
+    assert attempt1.id == attempt2.id
+    assert attempt1.authorization_id == auth.id
+    root = tmp_path / "state" / "selfcheck"
+    authorizations = _jsonl(root / "repair_authorizations.jsonl")
+    attempts = _jsonl(root / "repair_attempts.jsonl")
+    assert len(authorizations) == 1
+    assert len(attempts) == 1
+    assert read_health_summary()["waiting_for_judgement"] == 0
+
+
+def test_authorization_rejects_digest_drift_and_secret_like_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    decision = observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+    plan = decision.repair_plans[0]
+
+    try:
+        authorize_repair_plan(plan.id, request_digest="sha256:wrong", actor="operator")
+    except ValueError as exc:
+        assert "digest mismatch" in str(exc)
+    else:
+        raise AssertionError("expected digest mismatch rejection")
+
+    try:
+        authorize_repair_plan(
+            plan.id,
+            request_digest=plan.request_digest,
+            actor="operator",
+            evidence_refs=["token=abc123"],
+        )
+    except ValueError as exc:
+        assert "secret-like" in str(exc)
+    else:
+        raise AssertionError("expected secret-like evidence rejection")
+
+
+def test_authorized_repair_plan_rejects_expired_authorization(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    decision = observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+    plan = decision.repair_plans[0]
+    auth = authorize_repair_plan(
+        plan.id,
+        request_digest=plan.request_digest,
+        actor="operator",
+        ttl_seconds=1,
+    )
+
+    import agent.selfcheck_operator as sco
+
+    monkeypatch.setattr(sco, "_now", lambda: 9999999999.0)
+    try:
+        run_authorized_repair_plan(auth.id, plan_id=plan.id, request_digest=plan.request_digest)
+    except ValueError as exc:
+        assert "expired" in str(exc)
+    else:
+        raise AssertionError("expected expired authorization rejection")

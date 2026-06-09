@@ -77,6 +77,20 @@ class RepairPlan:
 
 
 @dataclass(frozen=True)
+class RepairAuthorization:
+    id: str
+    plan_id: str
+    action_id: str
+    decision: str
+    actor: str
+    created_at: str
+    expires_at: str
+    request_digest: str
+    evidence_refs: list[str]
+    note: str
+
+
+@dataclass(frozen=True)
 class RepairAttempt:
     id: str
     plan_id: str
@@ -86,6 +100,7 @@ class RepairAttempt:
     started_at: str
     completed_at: str
     request_digest: str
+    authorization_id: str
     before: dict[str, Any]
     after: dict[str, Any]
     verification: list[str]
@@ -200,6 +215,19 @@ def _sanitize_text(text: Any, limit: int = 600) -> str:
     raw = raw.replace("\x00", "")
     raw = " ".join(raw.split())
     return raw[:limit]
+
+
+def _contains_secret_like(value: Any) -> bool:
+    text = json.dumps(value, ensure_ascii=False, default=_json_default) if not isinstance(value, str) else value
+    return bool(re.search(r"(?i)\b(api[_-]?key|token|secret|password|authorization|credential)\b", text))
+
+
+def _load_plan(root: Path, plan_id: str) -> dict[str, Any]:
+    plans = _read_jsonl_tail(root / "repair_plans.jsonl", limit=2000)
+    plan = next((p for p in reversed(plans) if str(p.get("id")) == str(plan_id)), None)
+    if plan is None:
+        raise ValueError(f"repair plan not found: {plan_id}")
+    return plan
 
 
 def _event_id(event: Mapping[str, Any]) -> str:
@@ -483,16 +511,21 @@ def _rebuild_projections(root: Path, *, now_epoch: float | None = None) -> None:
     findings = _read_jsonl_tail(root / "findings.jsonl", limit=500)
     plans = _read_jsonl_tail(root / "repair_plans.jsonl", limit=500)
     attempts = _read_jsonl_tail(root / "repair_attempts.jsonl", limit=500)
+    authorizations = _read_jsonl_tail(root / "repair_authorizations.jsonl", limit=500)
     recent_events = _read_jsonl_tail(root / "events.jsonl", limit=200)
 
     closed_plan_ids = {
         str(a.get("plan_id"))
         for a in attempts
-        if a.get("status") in {"dry_run_verified", "applied_verified", "superseded"}
+        if a.get("status") in {"dry_run_verified", "authorized_readback_verified", "applied_verified", "superseded"}
     }
     waiting_plans = [
         p for p in plans
         if p.get("status") == "waiting_for_judgement" and str(p.get("id")) not in closed_plan_ids
+    ]
+    active_authorizations = [
+        a for a in authorizations
+        if a.get("decision") == "approved" and float(a.get("expires_at_epoch") or 0) >= ts
     ]
 
     by_component: dict[str, dict[str, Any]] = {}
@@ -535,6 +568,7 @@ def _rebuild_projections(root: Path, *, now_epoch: float | None = None) -> None:
         "component_count": len(by_component),
         "finding_count_tail": len(findings),
         "waiting_for_judgement": len(waiting_plans),
+        "active_authorizations": len(active_authorizations),
         "recent_event_count_tail": len(recent_events),
         "components": sorted(by_component),
     }
@@ -589,20 +623,88 @@ def _dry_run_action(plan: Mapping[str, Any], root: Path) -> tuple[dict[str, Any]
     return before, after, verification, note
 
 
-def run_repair_plan_dry_run(plan_id: str, *, request_digest: str | None = None) -> RepairAttempt:
-    """Append a governed repair_attempt for a plan without executing side effects.
+def _load_authorization(root: Path, authorization_id: str) -> dict[str, Any]:
+    authorizations = _read_jsonl_tail(root / "repair_authorizations.jsonl", limit=2000)
+    auth = next((a for a in reversed(authorizations) if str(a.get("id")) == str(authorization_id)), None)
+    if auth is None:
+        raise ValueError(f"repair authorization not found: {authorization_id}")
+    return auth
 
-    This is the first executor boundary: it consumes an exact plan id (and,
-    when provided, an exact digest), performs only local readback, and records a
-    repair_attempt.  Real L1+ mutation executors must be separate allowlisted
-    actions with before/after verification and authorization.
+
+def authorize_repair_plan(
+    plan_id: str,
+    *,
+    request_digest: str,
+    actor: str,
+    ttl_seconds: int = 900,
+    decision: str = "approved",
+    evidence_refs: Sequence[str] | None = None,
+    note: str = "",
+) -> RepairAuthorization:
+    """Create a short-lived, digest-bound repair authorization.
+
+    This boundary still performs no repair.  It records an exact actor/plan/
+    digest/TTL decision that later executor calls must consume.
     """
     root = ledger_dir()
     ts = _now()
-    plans = _read_jsonl_tail(root / "repair_plans.jsonl", limit=1000)
-    plan = next((p for p in reversed(plans) if str(p.get("id")) == str(plan_id)), None)
-    if plan is None:
-        raise ValueError(f"repair plan not found: {plan_id}")
+    plan = _load_plan(root, plan_id)
+    expected_digest = str(plan.get("request_digest") or "")
+    if request_digest != expected_digest:
+        raise ValueError("repair plan digest mismatch")
+    if decision not in {"approved", "rejected"}:
+        raise ValueError("decision must be approved or rejected")
+    if not actor or _contains_secret_like(actor):
+        raise ValueError("actor is required and must not contain secret-like text")
+    refs = [str(x) for x in evidence_refs or [] if x]
+    if _contains_secret_like(refs) or _contains_secret_like(note):
+        raise ValueError("authorization evidence/note must not contain secret-like text")
+    ttl = max(1, min(int(ttl_seconds), 24 * 3600))
+    expires = ts + ttl
+    payload = {
+        "plan_id": plan_id,
+        "action_id": plan.get("action_id"),
+        "decision": decision,
+        "actor": actor,
+        "request_digest": request_digest,
+        "expires_at_epoch": expires,
+    }
+    auth = RepairAuthorization(
+        id="auth-" + hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16],
+        plan_id=plan_id,
+        action_id=str(plan.get("action_id") or ""),
+        decision=decision,
+        actor=actor,
+        created_at=_utc_ts(ts),
+        expires_at=_utc_ts(expires),
+        request_digest=request_digest,
+        evidence_refs=refs,
+        note=_sanitize_text(note, 300),
+    )
+    with _LEDGER_LOCK:
+        record = asdict(auth)
+        record.update({
+            "schema_version": _SCHEMA_VERSION,
+            "created_at_epoch": ts,
+            "expires_at_epoch": expires,
+        })
+        existing = _read_jsonl_tail(root / "repair_authorizations.jsonl", limit=2000)
+        if not any(str(r.get("id")) == auth.id for r in existing):
+            _append_jsonl(root / "repair_authorizations.jsonl", record)
+        _rebuild_projections(root, now_epoch=ts)
+    return auth
+
+
+def run_repair_plan_dry_run(plan_id: str, *, request_digest: str | None = None) -> RepairAttempt:
+    """Append a governed repair_attempt for a plan without executing side effects.
+
+    This compatibility boundary consumes an exact plan id (and, when provided,
+    an exact digest), performs only local readback, and records a repair_attempt.
+    Production mutation remains closed behind explicit authorization.
+    """
+    root = ledger_dir()
+    ts = _now()
+    plan = _load_plan(root, plan_id)
     expected_digest = str(plan.get("request_digest") or "")
     if request_digest and request_digest != expected_digest:
         raise ValueError("repair plan digest mismatch")
@@ -623,6 +725,7 @@ def run_repair_plan_dry_run(plan_id: str, *, request_digest: str | None = None) 
         started_at=_utc_ts(ts),
         completed_at=_utc_ts(ts),
         request_digest=expected_digest,
+        authorization_id="",
         before=before,
         after=after,
         verification=verification,
@@ -635,7 +738,79 @@ def run_repair_plan_dry_run(plan_id: str, *, request_digest: str | None = None) 
             "created_at": _utc_ts(ts),
             "created_at_epoch": ts,
         })
-        _append_jsonl(root / "repair_attempts.jsonl", record)
+        existing = _read_jsonl_tail(root / "repair_attempts.jsonl", limit=2000)
+        if not any(str(r.get("id")) == attempt.id for r in existing):
+            _append_jsonl(root / "repair_attempts.jsonl", record)
+        _rebuild_projections(root, now_epoch=ts)
+    return attempt
+
+
+def run_authorized_repair_plan(
+    authorization_id: str,
+    *,
+    plan_id: str,
+    request_digest: str,
+    mode: str = "authorized_readback",
+) -> RepairAttempt:
+    """Consume a live authorization and run the enterprise safe executor boundary.
+
+    Current production-safe executor is intentionally readback-only.  It proves
+    authorization consumption, exact digest binding, TTL enforcement, idempotent
+    attempt records, and no shell/send/lifecycle mutation.
+    """
+    if mode != "authorized_readback":
+        raise ValueError("only authorized_readback mode is enabled")
+    root = ledger_dir()
+    ts = _now()
+    plan = _load_plan(root, plan_id)
+    auth = _load_authorization(root, authorization_id)
+    if auth.get("decision") != "approved":
+        raise ValueError("repair authorization is not approved")
+    if str(auth.get("plan_id")) != str(plan_id):
+        raise ValueError("authorization plan mismatch")
+    if str(auth.get("request_digest")) != request_digest or str(plan.get("request_digest")) != request_digest:
+        raise ValueError("repair plan digest mismatch")
+    if float(auth.get("expires_at_epoch") or 0) < ts:
+        raise ValueError("repair authorization expired")
+    before, after, verification, note = _dry_run_action(plan, root)
+    verification = [
+        f"authorization consumed: {authorization_id}",
+        "exact plan id and request digest matched",
+        "authorization TTL is still valid",
+        *verification,
+    ]
+    attempt_payload = {
+        "authorization_id": authorization_id,
+        "plan_id": plan_id,
+        "action_id": plan.get("action_id"),
+        "mode": mode,
+        "request_digest": request_digest,
+    }
+    attempt = RepairAttempt(
+        id="attempt-" + hashlib.sha256(json.dumps(attempt_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16],
+        plan_id=plan_id,
+        action_id=str(plan.get("action_id") or ""),
+        mode=mode,
+        status="authorized_readback_verified",
+        started_at=_utc_ts(ts),
+        completed_at=_utc_ts(ts),
+        request_digest=request_digest,
+        authorization_id=authorization_id,
+        before=before,
+        after=after,
+        verification=verification,
+        note=note,
+    )
+    with _LEDGER_LOCK:
+        record = asdict(attempt)
+        record.update({
+            "schema_version": _SCHEMA_VERSION,
+            "created_at": _utc_ts(ts),
+            "created_at_epoch": ts,
+        })
+        existing = _read_jsonl_tail(root / "repair_attempts.jsonl", limit=2000)
+        if not any(str(r.get("id")) == attempt.id for r in existing):
+            _append_jsonl(root / "repair_attempts.jsonl", record)
         _rebuild_projections(root, now_epoch=ts)
     return attempt
 
@@ -921,7 +1096,9 @@ __all__ = [
     "Finding",
     "OperatorDecision",
     "RepairAttempt",
+    "RepairAuthorization",
     "RepairPlan",
+    "authorize_repair_plan",
     "ledger_dir",
     "observe_cron_job_result",
     "observe_event",
@@ -931,5 +1108,6 @@ __all__ = [
     "observe_turn_result",
     "read_health_summary",
     "read_recent_findings",
+    "run_authorized_repair_plan",
     "run_repair_plan_dry_run",
 ]
