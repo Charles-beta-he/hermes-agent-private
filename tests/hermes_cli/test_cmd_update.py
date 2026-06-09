@@ -49,8 +49,11 @@ def mock_args():
 # ``shutil.which`` so the existing test setup keeps working without
 # per-test changes.
 @pytest.fixture(autouse=True)
-def _patch_managed_uv(request):
+def _patch_managed_uv(request, monkeypatch, tmp_path):
     """Make managed_uv helpers follow shutil.which mocking in tests."""
+    # Keep branch-resolution tests independent from the developer machine's
+    # real ~/.hermes/install.json private-channel metadata.
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes-home"))
     import shutil
 
     # resolve_uv delegates to shutil.which("uv") so that test patches
@@ -111,6 +114,57 @@ class TestCmdUpdatePip:
 
 class TestCmdUpdateBranchFallback:
     """cmd_update falls back to main when current branch has no remote counterpart."""
+
+    def test_resolve_update_branch_prefers_install_metadata(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / "hermes-home"
+        hermes_home.mkdir()
+        (hermes_home / "install.json").write_text(
+            '{"channel":"charles-private","branch":"private/main"}\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        from hermes_cli import main as hm
+
+        assert hm._resolve_update_branch(SimpleNamespace(branch=None)) == "private/main"
+
+    def test_resolve_update_branch_explicit_overrides_install_metadata(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / "hermes-home"
+        hermes_home.mkdir()
+        (hermes_home / "install.json").write_text(
+            '{"channel":"charles-private","branch":"private/main"}\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        from hermes_cli import main as hm
+
+        assert hm._resolve_update_branch(SimpleNamespace(branch="main")) == "main"
+
+    @patch("shutil.which", return_value=None)
+    @patch("subprocess.run")
+    def test_update_uses_install_metadata_branch(
+        self, mock_run, _mock_which, mock_args, tmp_path, monkeypatch
+    ):
+        hermes_home = tmp_path / "hermes-home"
+        hermes_home.mkdir()
+        (hermes_home / "install.json").write_text(
+            '{"channel":"charles-private","branch":"private/main"}\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        mock_run.side_effect = _make_run_side_effect(
+            branch="private/main", verify_ok=True, commit_count="0"
+        )
+
+        cmd_update(mock_args)
+
+        commands = [" ".join(str(a) for a in c.args[0]) for c in mock_run.call_args_list]
+        assert any("fetch origin private/main" in c for c in commands)
+        rev_list_cmds = [c for c in commands if "rev-list" in c]
+        assert len(rev_list_cmds) == 1
+        assert "origin/private/main" in rev_list_cmds[0]
+        assert not any("origin/main" in c for c in rev_list_cmds)
 
     @patch("shutil.which", return_value=None)
     @patch("subprocess.run")

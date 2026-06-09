@@ -29,24 +29,41 @@
 
 ---
 
-## 快速安装
+## 快速安装 — Charles 私有发行版
+
+这是 Charles 维护的 Hermes 私有发行分支。请先确认 Charles 已给你的 GitHub
+账号开通 `Charles-beta-he/hermes-agent-private` 私仓权限。不要使用官方一键安装
+`https://hermes-agent.nousresearch.com/install.sh`，那会安装 NousResearch 公共版，
+不会写入私有更新通道元数据。
+
+### 推荐：GitHub CLI（macOS、Linux、WSL2）
 
 ```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+gh auth login
+gh auth setup-git
+gh repo clone Charles-beta-he/hermes-agent-private ~/.hermes/hermes-agent -- --branch private/main --single-branch
+~/.hermes/hermes-agent/scripts/install-private.sh
 ```
 
-支持 Linux、macOS、WSL2 和 Android (Termux)。安装程序会自动处理平台特定的配置。
+### SSH 备用路径
 
-> **Android / Termux：** 已测试的手动安装路径请参考 [Termux 指南](https://hermes-agent.nousresearch.com/docs/getting-started/termux)。在 Termux 上，Hermes 会安装精选的 `.[termux]` 扩展，因为完整的 `.[all]` 扩展会拉取 Android 不兼容的语音依赖。
->
-> **Windows：** 原生 Windows 不受支持。请安装 [WSL2](https://learn.microsoft.com/zh-cn/windows/wsl/install) 并运行上述命令。
+```bash
+mkdir -p ~/.hermes
+git clone --branch private/main --single-branch git@github.com:Charles-beta-he/hermes-agent-private.git ~/.hermes/hermes-agent
+~/.hermes/hermes-agent/scripts/install-private.sh
+```
 
 安装后：
 
 ```bash
 source ~/.bashrc    # 重新加载 shell（或: source ~/.zshrc）
 hermes              # 开始对话！
+hermes update       # 后续会自动更新 origin/private/main
 ```
+
+如果 GitHub 显示 `404` / `Repository not found`，通常是没有接受私仓邀请，
+或当前登录的 GitHub 账号还没有权限。官方 Hermes 文档仍可作为功能参考，
+但私有版安装与更新以本 README 为准。
 
 ---
 

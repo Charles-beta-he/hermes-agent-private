@@ -31,39 +31,37 @@
 
 ---
 
-## فوری انسٹالیشن (Quick Install)
+## فوری انسٹالیشن (Quick Install) — Charles private distribution
 
-### لینکس (Linux)، میک او ایس (macOS)، ڈبلیو ایس ایل ٹو (WSL2)، ٹرمکس (Termux)
+This private branch must be installed from `Charles-beta-he/hermes-agent-private`
+after Charles grants your GitHub account access. Do not use the official
+`https://hermes-agent.nousresearch.com/install.sh` one-liner for this private
+distribution; it installs the public NousResearch build.
+
+### Recommended: GitHub CLI
 
 <div dir="ltr">
 
 ```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+gh auth login
+gh auth setup-git
+gh repo clone Charles-beta-he/hermes-agent-private ~/.hermes/hermes-agent -- --branch private/main --single-branch
+~/.hermes/hermes-agent/scripts/install-private.sh
 ```
 
 </div>
 
-### ونڈوز (نیٹو، پاور شیل)
-
-> **توجہ فرمائیں:** مقامی ونڈوز (Native Windows) پر ہرمیس بغیر WSL کے چلتا ہے — CLI، گیٹ وے، TUI، اور ٹولز سب مقامی طور پر کام کرتے ہیں۔ اگر آپ WSL2 استعمال کرنا پسند کرتے ہیں، تو اوپر دی گئی لینکس/میک او ایس کی کمانڈ وہاں بھی کام کرے گی۔ کوئی مسئلہ نظر آیا؟ براہ کرم [مسائل (issues) درج کریں](https://github.com/NousResearch/hermes-agent/issues)۔
-
-اسے پاور شیل (PowerShell) میں چلائیں:
+### SSH fallback
 
 <div dir="ltr">
 
-```powershell
-iex (irm https://hermes-agent.nousresearch.com/install.ps1)
+```bash
+mkdir -p ~/.hermes
+git clone --branch private/main --single-branch git@github.com:Charles-beta-he/hermes-agent-private.git ~/.hermes/hermes-agent
+~/.hermes/hermes-agent/scripts/install-private.sh
 ```
 
 </div>
-
-انسٹالر سب کچھ خود سنبھالتا ہے: uv، Python 3.11، Node.js، ripgrep، ffmpeg، **اور ایک پورٹ ایبل (portable) گٹ بیش (Git Bash)** (یعنی MinGit، جو `%LOCALAPPDATA%\hermes\git` میں ان پیک ہوتا ہے — اس کے لیے ایڈمن کی اجازت درکار نہیں، اور یہ سسٹم کے کسی بھی گٹ انسٹال سے بالکل الگ ہے)۔ ہرمیس اس بنڈل شدہ گٹ بیش کو شیل کمانڈز چلانے کے لیے استعمال کرتا ہے۔
-
-اگر آپ کے پاس پہلے سے گٹ (Git) انسٹال ہے، تو انسٹالر اسے شناخت کر لیتا ہے اور اسے ہی استعمال کرتا ہے۔ بصورت دیگر آپ کو صرف ~45MB کے MinGit ڈاؤنلوڈ کی ضرورت ہوگی — یہ آپ کے سسٹم کے گٹ پر کوئی اثر نہیں ڈالے گا۔
-
-> **اینڈرائیڈ (Android) / ٹرمکس (Termux):** ٹیسٹ کیا گیا مینوئل طریقہ [Termux گائیڈ](https://hermes-agent.nousresearch.com/docs/getting-started/termux) میں موجود ہے۔ ٹرمکس پر ہرمیس ایک مخصوص `.[termux]` ایکسٹرا انسٹال کرتا ہے کیونکہ مکمل `.[all]` ایکسٹرا میں ایسی وائس ڈیپینڈینسیز شامل ہیں جو اینڈرائیڈ کے ساتھ مطابقت نہیں رکھتیں۔
->
-> **ونڈوز (Windows):** مقامی ونڈوز کی مکمل سپورٹ موجود ہے — اوپر دی گئی پاور شیل کی کمانڈ سب کچھ انسٹال کر دیتی ہے۔ اگر آپ WSL2 استعمال کرنا چاہتے ہیں، تو لینکس کی کمانڈ وہاں کام کرتی ہے۔ مقامی ونڈوز میں انسٹالیشن `%LOCALAPPDATA%\hermes` میں ہوتی ہے؛ جبکہ WSL2 میں لینکس کی طرح `~/.hermes` میں ہوتی ہے۔ ہرمیس کا وہ واحد فیچر جسے فی الحال خاص طور پر WSL2 کی ضرورت ہے وہ براؤزر پر مبنی ڈیش بورڈ چیٹ پین ہے (یہ POSIX PTY استعمال کرتا ہے — کلاسک CLI اور گیٹ وے دونوں مقامی طور پر چلتے ہیں)۔
 
 انسٹالیشن کے بعد:
 
@@ -72,6 +70,7 @@ iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 ```bash
 source ~/.bashrc    # شیل کو ری لوڈ کریں (یا: source ~/.zshrc)
 hermes              # بات چیت شروع کریں!
+hermes update       # later: updates origin/private/main automatically
 ```
 
 </div>

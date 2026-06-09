@@ -7408,15 +7408,51 @@ def _finalize_update_output(state):
             pass
 
 
-def _resolve_update_branch(args) -> str:
-    """Normalize ``args.branch`` into a non-empty branch name.
+def _load_install_metadata() -> dict:
+    """Read installer channel metadata from ``$HERMES_HOME/install.json``.
 
-    Centralizes the "default to main, accept --branch override, treat empty
-    or whitespace-only values as the default" parsing so every consumer of
-    ``--branch`` (check path, git-update path, ZIP-fallback path) agrees on
-    the same answer.
+    Private/fork distributions can stamp this file during installation so
+    ordinary ``hermes update`` follows the installed channel instead of
+    silently falling back to the public ``main`` branch.  Best-effort only:
+    malformed or missing metadata must never break the update command.
     """
-    return (getattr(args, "branch", None) or "main").strip() or "main"
+    try:
+        from hermes_constants import get_hermes_home
+
+        metadata_path = get_hermes_home() / "install.json"
+        raw = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _install_metadata_branch() -> Optional[str]:
+    metadata = _load_install_metadata()
+    branch = metadata.get("branch")
+    if isinstance(branch, str) and branch.strip():
+        return branch.strip()
+    return None
+
+
+def _resolve_update_branch(args) -> str:
+    """Normalize the update branch.
+
+    Precedence:
+    1. explicit ``--branch``;
+    2. installer metadata from ``$HERMES_HOME/install.json``;
+    3. public default ``main``.
+
+    The metadata layer lets private distributions install from e.g.
+    ``origin/private/main`` while keeping the user-facing update command as
+    simply ``hermes update``.
+    """
+    explicit = getattr(args, "branch", None)
+    if explicit is not None and str(explicit).strip():
+        return str(explicit).strip()
+    metadata_branch = _install_metadata_branch()
+    if metadata_branch:
+        return metadata_branch
+    return "main"
 
 
 def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
