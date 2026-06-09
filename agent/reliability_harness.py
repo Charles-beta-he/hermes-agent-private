@@ -14,6 +14,7 @@ import json
 import re
 import sqlite3
 import sys
+import sysconfig
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -575,12 +576,38 @@ def _suggest_fix_layer(failure_type: str | None) -> str:
     return "regression_case_or_fix"
 
 
+def bundled_cases_dir() -> Path:
+    """Return the packaged seed eval cases directory.
+
+    Supports both source checkouts and installed distributions that ship evals
+    through ``setup.py`` data_files.  The function is intentionally explicit so
+    enterprise/private-repo installs can self-check their bundled reliability
+    baseline without relying on a user-local profile path.
+    """
+
+    candidates = [
+        Path(__file__).resolve().parents[1] / "evals" / "cases",  # source checkout
+        Path(sys.prefix) / "evals" / "cases",  # setup.py data_files install
+        Path(sysconfig.get_path("data") or sys.prefix) / "evals" / "cases",
+    ]
+    for candidate in candidates:
+        if candidate.exists() and any(candidate.glob("*.json")):
+            return candidate
+    raise FileNotFoundError(
+        "Bundled eval cases not found. Pass --cases-dir explicitly or reinstall a distribution that packages evals/cases."
+    )
+
+
+def _resolve_cases_dir(value: str | None) -> Path:
+    return Path(value) if value else bundled_cases_dir()
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Hermes offline Agent Reliability Harness")
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="Run a single eval case offline")
-    run.add_argument("--cases-dir", required=True)
+    run.add_argument("--cases-dir", help="Eval cases directory; defaults to bundled evals/cases")
     run.add_argument("--runs-dir", required=True)
     run.add_argument("--case", required=True)
     run.add_argument("--response-text", default="")
@@ -588,7 +615,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--json", action="store_true")
 
     list_cases = sub.add_parser("list", help="List eval cases")
-    list_cases.add_argument("--cases-dir", required=True)
+    list_cases.add_argument("--cases-dir", help="Eval cases directory; defaults to bundled evals/cases")
     list_cases.add_argument("--json", action="store_true")
     return parser
 
@@ -597,7 +624,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command == "list":
-        cases = CaseRegistry(args.cases_dir).list_cases()
+        cases = CaseRegistry(_resolve_cases_dir(args.cases_dir)).list_cases()
         payload = [{"id": c.id, "workflow": c.workflow, "risk": c.risk, "case_hash": c.case_hash} for c in cases]
         if args.json:
             print(json.dumps(payload, ensure_ascii=False))
@@ -607,7 +634,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
-        harness = EvalHarness(cases_dir=args.cases_dir, runs_dir=args.runs_dir, router_mode=args.router_mode)
+        harness = EvalHarness(cases_dir=_resolve_cases_dir(args.cases_dir), runs_dir=args.runs_dir, router_mode=args.router_mode)
         result = harness.run_case(args.case, response_text=args.response_text)
         payload = result.as_dict()
         if args.json:
