@@ -1,0 +1,11 @@
+{
+  "id": "direct-basic-answer",
+  "input": "只回复 OK",
+  "workflow": "direct",
+  "risk": "low",
+  "allowed_tools": [],
+  "forbidden_side_effects": ["send_message", "memory_write", "cronjob"],
+  "expected_artifacts": [],
+  "acceptance": {"contains": ["OK"]},
+  "graders": ["tool_code"]
+}
