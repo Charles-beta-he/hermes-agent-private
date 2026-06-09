@@ -388,3 +388,48 @@ def test_l1_auto_repair_can_be_disabled(tmp_path, monkeypatch):
     attempts_path = root / "repair_attempts.jsonl"
     attempts = _jsonl(attempts_path) if attempts_path.exists() else []
     assert not [a for a in attempts if a.get("mode") == "l1_auto"]
+
+
+def test_pending_alerts_auto_create_local_notification_outbox_and_dry_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+
+    root = tmp_path / "state" / "selfcheck"
+    outbox = _jsonl(root / "notification_outbox.jsonl")
+    authorizations = _jsonl(root / "delivery_authorizations.jsonl")
+    dry_runs = _jsonl(root / "delivery_dry_runs.jsonl")
+    assert len(outbox) >= 1
+    assert outbox[0]["channel"] == "local"
+    assert outbox[0]["target_id"] == "selfcheck-local"
+    assert outbox[0]["payload_body_stored"] is False
+    assert outbox[0]["external_send_executed"] is False
+    assert len(authorizations) == len(outbox)
+    assert authorizations[0]["decision"] == "approved"
+    assert authorizations[0]["token_read"] is False
+    assert len(dry_runs) == len(outbox)
+    assert dry_runs[0]["status"] == "local_delivery_dry_run_verified"
+    assert dry_runs[0]["send_executed"] is False
+    assert dry_runs[0]["token_read"] is False
+    assert read_sentinel_status()["notification_outbox_tail"] == len(outbox)
+    assert read_sentinel_status()["local_delivery_dry_runs_tail"] == len(dry_runs)
+
+
+def test_notification_outbox_is_idempotent_and_can_be_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+    root = tmp_path / "state" / "selfcheck"
+    before_outbox = len(_jsonl(root / "notification_outbox.jsonl"))
+    before_dry_runs = len(_jsonl(root / "delivery_dry_runs.jsonl"))
+    assert before_outbox >= 1
+    assert before_dry_runs == before_outbox
+    run_sentinel_tick(source="test")
+    assert len(_jsonl(root / "notification_outbox.jsonl")) == before_outbox
+    assert len(_jsonl(root / "delivery_dry_runs.jsonl")) == before_dry_runs
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "disabled"))
+    monkeypatch.setenv("HERMES_SELFCHECK_NOTIFICATION_OUTBOX", "0")
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+    disabled_root = tmp_path / "disabled" / "state" / "selfcheck"
+    assert not (disabled_root / "notification_outbox.jsonl").exists()
+    assert not (disabled_root / "delivery_dry_runs.jsonl").exists()

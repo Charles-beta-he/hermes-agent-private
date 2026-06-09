@@ -619,6 +619,11 @@ def _auto_repair_enabled() -> bool:
     return raw not in {"0", "false", "off", "no", "disabled"}
 
 
+def _notification_outbox_enabled() -> bool:
+    raw = os.environ.get("HERMES_SELFCHECK_NOTIFICATION_OUTBOX", "1").strip().lower()
+    return raw not in {"0", "false", "off", "no", "disabled"}
+
+
 def _sentinel_threshold(name: str, default: int) -> int:
     raw = os.environ.get(f"HERMES_SELFCHECK_SENTINEL_{name.upper()}", "").strip()
     if not raw:
@@ -659,7 +664,6 @@ def _make_wakeup(
         "severity": severity,
         "status": status,
         "reason": _sanitize_text(reason, 240),
-        "source": source,
         "evidence_refs": list(evidence_refs),
     }
     digest = _stable_digest(payload)
@@ -991,16 +995,137 @@ def _execute_l1_auto_repairs(root: Path, wakeups: Sequence[SentinelWakeup], *, t
     return attempts
 
 
+def _notification_outbox_records(root: Path, *, ts: float) -> None:
+    """Convert local pending alerts into governed notification outbox records.
+
+    This is an event-governed boundary: it creates local intents, local delivery
+    authorizations, and local channel dry-runs only.  It never calls platform
+    APIs, reads tokens, or sends external messages.
+    """
+    if not _notification_outbox_enabled():
+        return
+    alerts = _read_jsonl_tail(root / "pending_alerts.jsonl", limit=500)
+    if not alerts:
+        return
+    outbox_existing = _read_jsonl_tail(root / "notification_outbox.jsonl", limit=1000)
+    auth_existing = _read_jsonl_tail(root / "delivery_authorizations.jsonl", limit=1000)
+    dry_existing = _read_jsonl_tail(root / "delivery_dry_runs.jsonl", limit=1000)
+    outbox_ids = {str(x.get("id")) for x in outbox_existing}
+    auth_ids = {str(x.get("id")) for x in auth_existing}
+    dry_ids = {str(x.get("id")) for x in dry_existing}
+    for alert in alerts:
+        if alert.get("status") != "pending_local_alert":
+            continue
+        summary = _sanitize_text(alert.get("summary"), 300)
+        payload_hash = _stable_digest({
+            "summary": summary,
+            "severity": alert.get("severity"),
+            "wakeup_id": alert.get("wakeup_id"),
+            "request_digest": alert.get("request_digest"),
+        })
+        outbox_payload = {
+            "source_alert_id": alert.get("wakeup_id"),
+            "channel": "local",
+            "target_id": "selfcheck-local",
+            "payload_hash": payload_hash,
+        }
+        outbox_id = "outbox-" + hashlib.sha256(json.dumps(outbox_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        if outbox_id not in outbox_ids:
+            _append_jsonl(root / "notification_outbox.jsonl", {
+                "schema_version": _SCHEMA_VERSION,
+                "id": outbox_id,
+                "status": "pending_delivery_authorization",
+                "channel": "local",
+                "target_id": "selfcheck-local",
+                "source_alert_id": alert.get("wakeup_id"),
+                "severity": alert.get("severity"),
+                "payload_hash": payload_hash,
+                "payload_summary": summary,
+                "payload_body_stored": False,
+                "created_at": _utc_ts(ts),
+                "created_at_epoch": ts,
+                "request_digest": _stable_digest(outbox_payload),
+                "external_send_executed": False,
+                "token_read": False,
+            })
+            outbox_ids.add(outbox_id)
+        auth_payload = {
+            "outbox_id": outbox_id,
+            "channel": "local",
+            "target_id": "selfcheck-local",
+            "payload_hash": payload_hash,
+            "decision": "approved",
+            "actor": "policy:selfcheck-local-alert",
+        }
+        auth_id = "delivery-auth-" + hashlib.sha256(json.dumps(auth_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        if auth_id not in auth_ids:
+            _append_jsonl(root / "delivery_authorizations.jsonl", {
+                "schema_version": _SCHEMA_VERSION,
+                "id": auth_id,
+                "outbox_id": outbox_id,
+                "channel": "local",
+                "target_id": "selfcheck-local",
+                "payload_hash": payload_hash,
+                "decision": "approved",
+                "actor": "policy:selfcheck-local-alert",
+                "created_at": _utc_ts(ts),
+                "created_at_epoch": ts,
+                "expires_at": _utc_ts(ts + 900),
+                "expires_at_epoch": ts + 900,
+                "request_digest": _stable_digest(auth_payload),
+                "external_send_executed": False,
+                "token_read": False,
+            })
+            auth_ids.add(auth_id)
+        dry_payload = {
+            "delivery_authorization_id": auth_id,
+            "outbox_id": outbox_id,
+            "channel": "local",
+            "target_id": "selfcheck-local",
+            "payload_hash": payload_hash,
+        }
+        dry_id = "delivery-dry-run-" + hashlib.sha256(json.dumps(dry_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        if dry_id not in dry_ids:
+            _append_jsonl(root / "delivery_dry_runs.jsonl", {
+                "schema_version": _SCHEMA_VERSION,
+                "id": dry_id,
+                "status": "local_delivery_dry_run_verified",
+                "delivery_authorization_id": auth_id,
+                "outbox_id": outbox_id,
+                "channel": "local",
+                "target_id": "selfcheck-local",
+                "payload_hash": payload_hash,
+                "platform_payload_hash": _stable_digest({"channel": "local", "summary": summary}),
+                "created_at": _utc_ts(ts),
+                "created_at_epoch": ts,
+                "request_digest": _stable_digest(dry_payload),
+                "send_executed": False,
+                "external_send_executed": False,
+                "token_read": False,
+                "verification": [
+                    "local notification outbox dry-run only",
+                    "no platform API called",
+                    "no token or credential read",
+                    "payload body not persisted; hash and summary only",
+                ],
+            })
+            dry_ids.add(dry_id)
+
+
 def _rebuild_sentinel_projection(root: Path, *, now_epoch: float | None = None) -> None:
     ts = now_epoch or _now()
     wakeups = _read_jsonl_tail(root / "wakeups.jsonl", limit=100)
     alerts = _read_jsonl_tail(root / "pending_alerts.jsonl", limit=100)
+    outbox = _read_jsonl_tail(root / "notification_outbox.jsonl", limit=100)
+    delivery_dry_runs = _read_jsonl_tail(root / "delivery_dry_runs.jsonl", limit=100)
     projection = {
         "schema_version": _SCHEMA_VERSION,
         "generated_at": _utc_ts(ts),
         "generated_at_epoch": ts,
         "wakeup_count_tail": len(wakeups),
         "pending_local_alerts": len([a for a in alerts if a.get("status") == "pending_local_alert"]),
+        "notification_outbox_tail": len(outbox),
+        "local_delivery_dry_runs_tail": len(delivery_dry_runs),
         "latest_wakeup": wakeups[-1] if wakeups else None,
     }
     _write_json(root / "sentinel_status.json", projection)
@@ -1038,6 +1163,7 @@ def run_sentinel_tick(*, source: str = "manual", debounce_seconds: int | None = 
             recent.add(wakeup.request_digest)
             emitted.append(wakeup)
         _execute_l1_auto_repairs(root, emitted, ts=ts)
+        _notification_outbox_records(root, ts=ts)
         _rebuild_sentinel_projection(root, now_epoch=ts)
         return emitted
 
@@ -1056,6 +1182,7 @@ def _run_sentinel_after_ingest(root: Path, *, source: str, now_epoch: float) -> 
             recent.add(wakeup.request_digest)
             emitted.append(wakeup)
         _execute_l1_auto_repairs(root, emitted, ts=now_epoch)
+        _notification_outbox_records(root, ts=now_epoch)
         _rebuild_sentinel_projection(root, now_epoch=now_epoch)
     except Exception as exc:  # pragma: no cover - defensive hot-path guard
         logger.debug("selfcheck sentinel wakeup failed: %s", exc, exc_info=True)
