@@ -724,8 +724,17 @@ def _build_sentinel_wakeups(root: Path, *, source: str, now_epoch: float) -> lis
         ))
 
     repeated_threshold = _sentinel_threshold("REPEATED_THRESHOLD", 3)
-    if repeated_threshold and len(coalesced) >= repeated_threshold:
-        recent = [c for c in coalesced if float(c.get("created_at_epoch") or 0) >= now_epoch - _DEFAULT_DEBOUNCE_SECONDS]
+    if repeated_threshold:
+        # Only user/runtime findings count as repeated-findings.  Sentinel wakeup
+        # debounce records are internal noise-control bookkeeping; counting them
+        # here creates a feedback loop where the sentinel alerts about its own
+        # suppressed wakeups and then sends the user repeated selfcheck spam.
+        recent = [
+            c for c in coalesced
+            if c.get("reason") == "debounced_recent_fingerprint"
+            and c.get("finding_id")
+            and float(c.get("created_at_epoch") or 0) >= now_epoch - _DEFAULT_DEBOUNCE_SECONDS
+        ]
         if len(recent) >= repeated_threshold:
             wakeups.append(_make_wakeup(
                 kind="repeated_fingerprint",
@@ -1282,8 +1291,19 @@ def _run_sentinel_after_ingest(root: Path, *, source: str, now_epoch: float) -> 
 
 
 def _telegram_sender_enabled() -> bool:
-    raw = os.environ.get("HERMES_SELFCHECK_TELEGRAM_LIVE_SEND", "1").strip().lower()
-    return raw not in {"0", "false", "off", "no", "disabled"}
+    # External Telegram sends are a live platform side effect.  Keep the resident
+    # sender default-off; operators can still enable it explicitly after the
+    # local outbox/dry-run evidence is reviewed.
+    raw = os.environ.get("HERMES_SELFCHECK_TELEGRAM_LIVE_SEND", "0").strip().lower()
+    return raw in {"1", "true", "on", "yes", "enabled"}
+
+
+def _telegram_delivery_batch_limit() -> int:
+    raw = os.environ.get("HERMES_SELFCHECK_TELEGRAM_BATCH_LIMIT", "5").strip()
+    try:
+        return max(1, min(int(raw), 20))
+    except ValueError:
+        return 5
 
 
 def _load_outbox_by_id(root: Path, outbox_id: str) -> dict[str, Any] | None:
@@ -1309,15 +1329,25 @@ def run_telegram_delivery_tick(*, sender: Any | None = None) -> list[dict[str, A
         raise ValueError("Telegram target must be an explicit telegram: allowlist reference")
     ts = _now()
     receipts = _read_jsonl_tail(root / "delivery_receipts.jsonl", limit=2000)
-    sent_dry_ids = {str(r.get("delivery_dry_run_id")) for r in receipts if r.get("status") == "sent_verified"}
+    # Treat every recorded receipt as terminal for the automatic sender.  A
+    # failed platform send should not be retried every cron tick forever; any
+    # replay must be a fresh governed action with new evidence/authorization.
+    processed_dry_ids = {
+        str(r.get("delivery_dry_run_id"))
+        for r in receipts
+        if r.get("status") in {"sent_verified", "send_failed"}
+    }
+    batch_limit = _telegram_delivery_batch_limit()
     dry_runs = _read_jsonl_tail(root / "delivery_dry_runs.jsonl", limit=2000)
     emitted: list[dict[str, Any]] = []
     if sender is None:
         from tools.send_message_tool import _handle_send as sender  # type: ignore
     with _LEDGER_LOCK:
         for dry in dry_runs:
+            if len(emitted) >= batch_limit:
+                break
             dry_id = str(dry.get("id") or "")
-            if not dry_id or dry_id in sent_dry_ids:
+            if not dry_id or dry_id in processed_dry_ids:
                 continue
             if dry.get("status") != "telegram_delivery_dry_run_verified":
                 continue

@@ -436,9 +436,87 @@ def test_notification_outbox_is_idempotent_and_can_be_disabled(tmp_path, monkeyp
     assert not (disabled_root / "delivery_dry_runs.jsonl").exists()
 
 
+def test_repeated_fingerprint_wakeup_ignores_sentinel_debounce_bookkeeping(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+
+    for _ in range(4):
+        run_sentinel_tick(source="test", debounce_seconds=300)
+
+    root = tmp_path / "state" / "selfcheck"
+    coalesced = _jsonl(root / "coalesced.jsonl")
+    assert any(c.get("reason") == "debounced_recent_wakeup" for c in coalesced)
+    wakeups = _jsonl(root / "wakeups.jsonl")
+    assert not [w for w in wakeups if w.get("kind") == "repeated_fingerprint"]
+
+
+def test_telegram_delivery_tick_does_not_auto_retry_failed_receipt(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_TARGET", "telegram:he cheng")
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_LIVE_SEND", "1")
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+
+    calls = []
+
+    def failing_sender(payload):
+        calls.append(payload)
+        return '{"success": false, "error": "rate limited"}'
+
+    first = run_telegram_delivery_tick(sender=failing_sender)
+    second = run_telegram_delivery_tick(sender=failing_sender)
+
+    assert first
+    assert not second
+    assert len(calls) == len(first)
+    receipts = _jsonl(tmp_path / "state" / "selfcheck" / "delivery_receipts.jsonl")
+    assert receipts[0]["status"] == "send_failed"
+    assert receipts[0]["external_send_executed"] is False
+
+
+def test_telegram_delivery_tick_respects_batch_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_TARGET", "telegram:he cheng")
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_LIVE_SEND", "1")
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_BATCH_LIMIT", "2")
+    root = tmp_path / "state" / "selfcheck"
+    root.mkdir(parents=True)
+    for idx in range(5):
+        payload_hash = f"payload-{idx}"
+        outbox_id = f"outbox-{idx}"
+        dry_id = f"delivery-dry-run-{idx}"
+        with (root / "notification_outbox.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "id": outbox_id,
+                "channel": "telegram",
+                "target_id": "telegram:he cheng",
+                "source_alert_id": f"wakeup-{idx}",
+                "payload_hash": payload_hash,
+                "payload_summary": f"alert {idx}",
+            }) + "\n")
+        with (root / "delivery_dry_runs.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "id": dry_id,
+                "status": "telegram_delivery_dry_run_verified",
+                "channel": "telegram",
+                "target_id": "telegram:he cheng",
+                "outbox_id": outbox_id,
+                "payload_hash": payload_hash,
+                "delivery_authorization_id": f"delivery-auth-{idx}",
+            }) + "\n")
+
+    calls = []
+    emitted = run_telegram_delivery_tick(sender=lambda payload: calls.append(payload) or '{"success": true}')
+
+    assert len(emitted) == 2
+    assert len(calls) == 2
+    receipts = _jsonl(root / "delivery_receipts.jsonl")
+    assert len(receipts) == 2
+
+
 def test_telegram_delivery_tick_sends_verified_dry_run_once(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_TARGET", "telegram:he cheng")
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_LIVE_SEND", "1")
     observe_gateway_delivery(platform="telegram", success=False, error="send failed")
 
     calls = []
@@ -460,6 +538,16 @@ def test_telegram_delivery_tick_sends_verified_dry_run_once(tmp_path, monkeypatc
     assert receipts[0]["external_send_executed"] is True
     assert receipts[0]["token_value_persisted"] is False
     assert receipts[0]["payload_body_persisted"] is False
+
+
+def test_telegram_delivery_tick_is_default_off_for_live_platform_send(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_TARGET", "telegram:he cheng")
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+
+    calls = []
+    assert run_telegram_delivery_tick(sender=lambda payload: calls.append(payload) or '{"success": true}') == []
+    assert calls == []
 
 
 def test_telegram_delivery_tick_respects_capability_and_target_allowlist(tmp_path, monkeypatch):
