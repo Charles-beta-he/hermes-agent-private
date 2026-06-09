@@ -71,6 +71,17 @@ hermes chat --toolsets skills -q "What skills do you have?"
 hermes chat --toolsets skills -q "Show me the axolotl skill"
 ```
 
+## Governed External Skill Intake
+
+When evaluating community or third-party skills, start with a read-only intake audit before installation:
+
+```bash
+hermes skills intake https://github.com/acme/hermes-skills
+hermes skills intake skills-sh/anthropics/skills/pdf --json
+```
+
+`hermes skills intake` reuses Hermes's governed external-skill audit pipeline and does not install anything. The report captures candidate discovery, compatibility scores/grades, compatibility signals, required environment variables, tool/package prerequisites, and policy reason codes so you can decide whether to proceed with `hermes skills install`.
+
 ## Progressive Disclosure
 
 Skills use a token-efficient loading pattern:

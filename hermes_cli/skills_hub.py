@@ -737,6 +737,96 @@ def do_inspect(identifier: str, console: Optional[Console] = None) -> None:
     c.print()
 
 
+def _render_intake_report(report: dict[str, Any], console: Console) -> None:
+    env = report.get("environment", {}) or {}
+    console.print()
+    console.print(
+        Panel(
+            "\n".join(
+                [
+                    f"[bold]Schema:[/] {report.get('schema_version', 'unknown')}",
+                    f"[bold]Audited at:[/] {report.get('audited_at', 'unknown')}",
+                    f"[bold]Platform:[/] {env.get('platform', 'unknown')}",
+                    f"[bold]Node on host:[/] {env.get('node_on_host', False)}",
+                    f"[bold]Candidates:[/] {report.get('candidate_count', 0)}",
+                ]
+            ),
+            title="External Skill Intake Audit",
+        )
+    )
+
+    for result in report.get("results", []):
+        candidate = result.get("candidate", "(unknown)")
+        status = result.get("evaluation_status", "unknown")
+        reasons = result.get("reason_codes") or []
+        discovery = result.get("skill_discovery") or {}
+        candidate_score = result.get("compatibility_score") or {}
+        console.print(
+            Panel(
+                "\n".join(
+                    [
+                        f"[bold]Candidate:[/] {candidate}",
+                        f"[bold]Status:[/] {status}",
+                        f"[bold]Compatibility score:[/] {candidate_score.get('score', 'unknown')} ({candidate_score.get('grade', '?')})",
+                        f"[bold]Discovery:[/] audited {discovery.get('audited_count', 0)}"
+                        + (
+                            f" / discovered {discovery.get('discovered_count')}"
+                            if discovery.get("discovered_count") is not None
+                            else ""
+                        ),
+                        f"[bold]Reason codes:[/] {', '.join(reasons) if reasons else 'none'}",
+                    ]
+                ),
+                title="Candidate summary",
+            )
+        )
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Skill", style="bold cyan")
+        table.add_column("Status")
+        table.add_column("Score")
+        table.add_column("Source", style="dim")
+        table.add_column("Trust", style="dim")
+        table.add_column("Reasons")
+
+        skills = result.get("skills") or []
+        for skill in skills:
+            skill_score = skill.get("compatibility_score") or {}
+            table.add_row(
+                str(skill.get("name") or skill.get("identifier") or "unknown"),
+                str(skill.get("evaluation_status") or "unknown"),
+                f"{skill_score.get('score', 'unknown')} ({skill_score.get('grade', '?')})",
+                str(skill.get("source") or "unknown"),
+                str(skill.get("trust_level") or "unknown"),
+                ", ".join(skill.get("reason_codes") or []) or "none",
+            )
+
+        if skills:
+            console.print(table)
+        else:
+            console.print("[dim]No resolvable skills were audited for this candidate.[/]")
+        console.print()
+
+
+def do_intake(
+    candidates: list[str],
+    *,
+    max_skills_per_repo: int = 5,
+    console: Optional[Console] = None,
+    as_json: bool = False,
+) -> dict[str, Any]:
+    """Run the governed read-only intake audit for external skill candidates."""
+    from tools.skills_intake_audit import audit_candidates
+
+    c = console or _console
+    report = audit_candidates(candidates, max_skills_per_repo=max_skills_per_repo)
+    if as_json:
+        c.print_json(data=report)
+    else:
+        _render_intake_report(report, c)
+    return report
+
+
 def browse_skills(page: int = 1, page_size: int = 20, source: str = "all") -> dict:
     """Paginated hub browse for programmatic callers (e.g. TUI gateway).
 
@@ -1566,6 +1656,12 @@ def skills_command(args) -> None:
                    name_override=getattr(args, "name", "") or "")
     elif action == "inspect":
         do_inspect(args.identifier)
+    elif action == "intake":
+        do_intake(
+            args.candidates,
+            max_skills_per_repo=getattr(args, "max_skills_per_repo", 5),
+            as_json=getattr(args, "json", False),
+        )
     elif action == "list":
         do_list(
             source_filter=args.source,
@@ -1621,7 +1717,7 @@ def skills_command(args) -> None:
             return
         do_tap(tap_action, repo=repo)
     else:
-        _console.print("Usage: hermes skills [browse|search|install|inspect|list|check|update|audit|health|uninstall|reset|opt-out|opt-in|publish|snapshot|tap]\n")
+        _console.print("Usage: hermes skills [browse|search|install|inspect|intake|list|check|update|audit|health|uninstall|reset|opt-out|opt-in|publish|snapshot|tap]\n")
         _console.print("Run 'hermes skills <command> --help' for details.\n")
 
 
@@ -1748,6 +1844,37 @@ def handle_skills_slash(cmd: str, console: Optional[Console] = None) -> None:
             return
         do_inspect(args[0], console=c)
 
+    elif action == "intake":
+        if not args:
+            c.print("[bold red]Usage:[/] /skills intake <candidate...> [--max-skills-per-repo N] [--json]\n")
+            return
+        as_json = False
+        max_skills_per_repo = 5
+        candidates = []
+        i = 0
+        while i < len(args):
+            if args[i] == "--json":
+                as_json = True
+                i += 1
+            elif args[i] == "--max-skills-per-repo" and i + 1 < len(args):
+                try:
+                    max_skills_per_repo = int(args[i + 1])
+                except ValueError:
+                    pass
+                i += 2
+            else:
+                candidates.append(args[i])
+                i += 1
+        if not candidates:
+            c.print("[bold red]Usage:[/] /skills intake <candidate...> [--max-skills-per-repo N] [--json]\n")
+            return
+        do_intake(
+            candidates,
+            max_skills_per_repo=max_skills_per_repo,
+            console=c,
+            as_json=as_json,
+        )
+
     elif action == "list":
         source_filter = "all"
         enabled_only = "--enabled-only" in args or "--enabled" in args
@@ -1844,6 +1971,7 @@ def _print_skills_help(console: Console) -> None:
         "  [cyan]search[/] <query>              Search registries for skills\n"
         "  [cyan]install[/] <identifier>        Install a skill (with security scan)\n"
         "  [cyan]inspect[/] <identifier>        Preview a skill without installing\n"
+        "  [cyan]intake[/] <candidate...>       Governed read-only audit before install\n"
         "  [cyan]list[/] [--source hub|builtin|local] [--enabled-only]\n"
         "       List installed skills; --enabled-only filters to the active profile's live set\n"
         "  [cyan]check[/] [name]                Check hub skills for upstream updates\n"

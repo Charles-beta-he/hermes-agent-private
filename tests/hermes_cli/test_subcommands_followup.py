@@ -64,3 +64,26 @@ def test_mcp_and_acp_accept_hooks_flag():
     # acp takes --accept-hooks at top level
     ns = parser.parse_args(["acp", "--accept-hooks"])
     assert ns.accept_hooks is True
+
+
+def test_skills_parser_supports_intake_subcommand():
+    parser = argparse.ArgumentParser(prog="hermes")
+    sub = parser.add_subparsers(dest="command")
+    handler = _h("skills")
+    build_skills_parser(sub, cmd_skills=handler)
+
+    ns = parser.parse_args([
+        "skills",
+        "intake",
+        "https://github.com/acme/skills",
+        "--max-skills-per-repo",
+        "7",
+        "--json",
+    ])
+
+    assert ns.command == "skills"
+    assert ns.skills_action == "intake"
+    assert ns.candidates == ["https://github.com/acme/skills"]
+    assert ns.max_skills_per_repo == 7
+    assert ns.json is True
+    assert ns.func is handler

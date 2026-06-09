@@ -1001,6 +1001,8 @@ hermes skills search react --source skills-sh
 hermes skills search https://mintlify.com/docs --source well-known
 hermes skills inspect official/security/1password
 hermes skills inspect skills-sh/vercel-labs/json-render/json-render-react
+hermes skills intake https://github.com/acme/hermes-skills
+hermes skills intake https://github.com/acme/hermes-skills --max-skills-per-repo 10 --json
 hermes skills install official/migration/openclaw-migration
 hermes skills install skills-sh/anthropics/skills/pdf --force
 hermes skills install https://sharethis.chat/SKILL.md                     # Direct URL (single-file SKILL.md)
@@ -1018,6 +1020,7 @@ hermes skills opt-in --sync            # undo: remove marker and re-seed now
 Notes:
 - `--force` can override non-dangerous policy blocks for third-party/community skills.
 - `--force` does not override a `dangerous` scan verdict.
+- `hermes skills intake ...` is a read-only preflight for external repositories, identifiers, and direct URLs. It surfaces discovery counts, compatibility scores/grades, compatibility signals, prerequisites, and policy reasons before you install anything.
 - `--source skills-sh` searches the public `skills.sh` directory.
 - `--source well-known` lets you point Hermes at a site exposing `/.well-known/skills/index.json`.
 - `--source browse-sh` searches [browse.sh](https://browse.sh)'s catalog of 200+ site-specific browser-automation skills. Identifiers look like `browse-sh/airbnb.com/search-listings-ddgioa`.

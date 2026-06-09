@@ -299,6 +299,150 @@ def _summarize_findings(findings: list[Any], *, limit: int = 8) -> list[dict[str
     return out
 
 
+# ---------------------------------------------------------------------------
+# Compatibility scoring
+# ---------------------------------------------------------------------------
+# Each reason code maps to a point deduction from a base of 100.
+# Hard-fail codes (platform, guard_dangerous, node_fail_closed) zero the score
+# immediately.  Review codes carry graduated penalties so operators can set
+# intake thresholds (e.g. "auto-install >= 80, queue for review >= 50").
+_SCORE_DEDUCTIONS: dict[str, int] = {
+    # --- hard-fail (handled by zeroing below, but listed for documentation) ---
+    "unsupported_platform": 100,
+    "guard_dangerous": 100,
+    "node_engine_fail_closed": 100,
+    "bundle_unresolvable": 100,
+    # --- review-level penalties ---
+    "guard_policy_blocked": 30,
+    "guard_confirmation_required": 15,
+    "missing_required_commands": 15,
+    "missing_required_environment_variables": 10,
+    "environment_filter_mismatch": 10,
+    "node_runtime_unbounded": 10,
+    "missing_commit_evidence": 10,
+    "missing_license_evidence": 10,
+    "license_missing_spdx": 5,
+    "github_source_unavailable": 100,
+    "no_skill_candidates_discovered": 100,
+    "unsupported_candidate": 100,
+}
+_HARD_FAIL_CODES = {
+    "unsupported_platform",
+    "guard_dangerous",
+    "node_engine_fail_closed",
+    "bundle_unresolvable",
+    "github_source_unavailable",
+    "no_skill_candidates_discovered",
+    "unsupported_candidate",
+}
+
+
+def _grade_for_score(score: int) -> str:
+    if score >= 90:
+        return "A"
+    if score >= 75:
+        return "B"
+    if score >= 50:
+        return "C"
+    if score >= 25:
+        return "D"
+    return "F"
+
+
+def _compute_compatibility_score(
+    reason_codes: list[str],
+    *,
+    missing_commands: list[str] | None = None,
+    missing_env_vars: list[str] | None = None,
+) -> dict[str, Any]:
+    """Compute a 0-100 compatibility score from reason codes.
+
+    Returns a dict with ``score`` (int), ``grade`` (str), and
+    ``breakdown`` (list of ``{"code": str, "deduction": int}``).
+
+    Hard-fail codes immediately zero the score.  Per-item penalties for
+    ``missing_required_commands`` and ``missing_required_environment_variables``
+    scale with the actual count of missing items (15 pts each for commands,
+    10 pts each for env vars) rather than a flat deduction.
+    """
+    if not reason_codes:
+        return {"score": 100, "grade": "A", "breakdown": []}
+
+    # Check hard-fail first.
+    hard_fail = [c for c in reason_codes if c in _HARD_FAIL_CODES]
+    if hard_fail:
+        return {
+            "score": 0,
+            "grade": "F",
+            "breakdown": [{"code": c, "deduction": 100} for c in hard_fail],
+        }
+
+    total_deduction = 0
+    breakdown: list[dict[str, Any]] = []
+    for code in sorted(set(reason_codes)):
+        if code == "missing_required_commands" and missing_commands:
+            deduction = 15 * len(missing_commands)
+        elif code == "missing_required_environment_variables" and missing_env_vars:
+            deduction = 10 * len(missing_env_vars)
+        else:
+            deduction = _SCORE_DEDUCTIONS.get(code, 10)
+        total_deduction += deduction
+        breakdown.append({"code": code, "deduction": deduction})
+
+    score = max(0, 100 - total_deduction)
+    return {"score": score, "grade": _grade_for_score(score), "breakdown": breakdown}
+
+
+def _aggregate_compatibility_score(
+    audited_skills: list[dict[str, Any]],
+    candidate_errors: list[str],
+) -> dict[str, Any]:
+    """Aggregate a candidate-level score from skill reports + candidate errors.
+
+    The overall candidate score is the minimum of each audited skill score and
+    the standalone score implied by candidate-level discovery/normalization
+    errors. This stays fail-closed without double-penalizing repositories by
+    summing every review code across every discovered skill.
+    """
+    components: list[dict[str, Any]] = []
+
+    if candidate_errors:
+        candidate_component = _compute_compatibility_score(candidate_errors)
+        components.append(
+            {
+                "scope": "candidate",
+                "label": "candidate_errors",
+                **candidate_component,
+            }
+        )
+
+    for item in audited_skills:
+        item_score = item.get("compatibility_score") or {"score": 0, "grade": "F", "breakdown": []}
+        components.append(
+            {
+                "scope": "skill",
+                "label": item.get("name") or item.get("identifier") or "unknown",
+                **item_score,
+            }
+        )
+
+    if not components:
+        return {
+            "score": 0,
+            "grade": "F",
+            "aggregate_method": "min_component_score",
+            "components": [],
+        }
+
+    score = min(int(component.get("score", 0)) for component in components)
+    return {
+        "score": score,
+        "grade": _grade_for_score(score),
+        "aggregate_method": "min_component_score",
+        "components": components,
+    }
+
+
 def _status_from_reason_sets(incompatible: list[str], review: list[str]) -> str:
     if incompatible:
         return "incompatible"
@@ -514,6 +658,12 @@ def evaluate_bundle(
     skill_name = str(frontmatter.get("name") or getattr(meta, "name", "") or bundle.name)
     description = str(frontmatter.get("description") or getattr(meta, "description", "") or "")
     platforms = frontmatter.get("platforms") if isinstance(frontmatter.get("platforms"), list) else []
+    reason_codes = sorted(set(incompatible_codes + review_codes))
+    compatibility_score = _compute_compatibility_score(
+        reason_codes,
+        missing_commands=prerequisites["missing_required_commands"],
+        missing_env_vars=prerequisites["missing_required_environment_variables"],
+    )
 
     return {
         "name": skill_name,
@@ -546,8 +696,9 @@ def evaluate_bundle(
             "install_allowed": allow,
             "install_reason": allow_reason,
         },
+        "compatibility_score": compatibility_score,
         "evaluation_status": status,
-        "reason_codes": sorted(set(incompatible_codes + review_codes)),
+        "reason_codes": reason_codes,
     }
 
 
@@ -633,6 +784,7 @@ def audit_candidates(
                     "max_skills_per_repo": max_skills_per_repo,
                 },
                 "evaluation_status": _aggregate_statuses(aggregate_statuses),
+                "compatibility_score": _aggregate_compatibility_score(audited_skills, candidate_errors),
                 "reason_codes": sorted(aggregate_reasons),
                 "skills": audited_skills,
             }

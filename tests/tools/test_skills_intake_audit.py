@@ -95,6 +95,8 @@ Body
     assert report["evaluation_status"] == "incompatible"
     assert "node_engine_fail_closed" in report["reason_codes"]
     assert report["compatibility"]["node_runtime"]["minimum_major"] == 25
+    assert report["compatibility_score"]["score"] == 0
+    assert report["compatibility_score"]["grade"] == "F"
 
 
 def test_evaluate_bundle_marks_unbounded_node_as_review_needed(monkeypatch):
@@ -115,6 +117,8 @@ Body
 
     assert report["evaluation_status"] == "review_needed"
     assert "node_runtime_unbounded" in report["reason_codes"]
+    assert report["compatibility_score"]["score"] == 90
+    assert report["compatibility_score"]["grade"] == "A"
 
 
 def test_evaluate_bundle_ignores_template_javascript_without_runtime_evidence(monkeypatch):
@@ -190,10 +194,17 @@ Use safely.
     assert result["skill_discovery"]["discovered_count"] == 2
     assert result["skill_discovery"]["audited_count"] == 2
     assert result["evaluation_status"] == "review_needed"
+    assert result["compatibility_score"]["score"] == 90
+    assert result["compatibility_score"]["grade"] == "A"
     skill_statuses = {skill["name"]: skill["evaluation_status"] for skill in result["skills"]}
+    skill_scores = {skill["name"]: skill["compatibility_score"]["score"] for skill in result["skills"]}
     assert skill_statuses == {
         "compatible-skill": "compatible",
         "review-skill": "review_needed",
+    }
+    assert skill_scores == {
+        "compatible-skill": 100,
+        "review-skill": 90,
     }
 
 
@@ -292,3 +303,20 @@ Body
     assert report["evaluation_status"] == "review_needed"
     assert "missing_commit_evidence" in report["reason_codes"]
     assert "missing_license_evidence" in report["reason_codes"]
+    assert report["compatibility_score"]["score"] == 80
+    assert report["compatibility_score"]["grade"] == "B"
+
+
+def test_audit_candidates_no_discovered_repo_skills_is_hard_fail(monkeypatch):
+    report = audit_candidates(
+        ["https://github.com/acme/empty-skills"],
+        sources=[DummySource("github")],
+        github_source=FakeGitHubSource([]),
+        max_skills_per_repo=5,
+    )
+
+    result = report["results"][0]
+    assert result["evaluation_status"] == "incompatible"
+    assert result["reason_codes"] == ["no_skill_candidates_discovered"]
+    assert result["compatibility_score"]["score"] == 0
+    assert result["compatibility_score"]["grade"] == "F"

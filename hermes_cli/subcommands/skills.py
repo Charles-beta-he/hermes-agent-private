@@ -96,6 +96,31 @@ def build_skills_parser(subparsers, *, cmd_skills: Callable) -> None:
     )
     skills_inspect.add_argument("identifier", help="Skill identifier")
 
+    skills_intake = skills_subparsers.add_parser(
+        "intake",
+        help="Governed read-only intake audit for external skill candidates",
+        description=(
+            "Audit external skill identifiers, GitHub repos, or direct URLs before installation. "
+            "Reports compatibility, prerequisites, source evidence, and guard findings without mutating ~/.hermes/skills/."
+        ),
+    )
+    skills_intake.add_argument(
+        "candidates",
+        nargs="+",
+        help="Skill identifiers, GitHub repo/tree URLs, or direct SKILL.md URLs to audit",
+    )
+    skills_intake.add_argument(
+        "--max-skills-per-repo",
+        type=int,
+        default=5,
+        help="When auditing a GitHub repo URL, cap how many discovered skills are evaluated (default: 5)",
+    )
+    skills_intake.add_argument(
+        "--json",
+        action="store_true",
+        help="Output the full deterministic JSON report for scripting/proof capture",
+    )
+
     skills_list = skills_subparsers.add_parser("list", help="List installed skills")
     skills_list.add_argument(
         "--source", default="all", choices=["all", "hub", "builtin", "local"]

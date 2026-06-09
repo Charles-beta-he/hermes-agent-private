@@ -5,7 +5,7 @@ import pytest
 from rich.console import Console
 
 from cli import ChatConsole
-from hermes_cli.skills_hub import do_check, do_install, do_list, do_update, handle_skills_slash
+from hermes_cli.skills_hub import do_check, do_install, do_intake, do_list, do_update, handle_skills_slash
 
 
 class _DummyLockFile:
@@ -247,6 +247,69 @@ def test_do_update_reinstalls_outdated_skills(monkeypatch):
 
     assert installs == [("skills-sh/example/repo/hub-skill", "category", True)]
     assert "Updated 1 skill" in output
+
+
+def test_do_intake_renders_summary(monkeypatch):
+    report = {
+        "schema_version": "hermes_external_skill_intake_v1",
+        "audited_at": "2026-06-10T00:00:00Z",
+        "candidate_count": 1,
+        "environment": {"platform": "macos", "node_on_host": True},
+        "results": [
+            {
+                "candidate": "https://github.com/acme/skills",
+                "evaluation_status": "review_needed",
+                "compatibility_score": {"score": 90, "grade": "A", "aggregate_method": "min_component_score", "components": []},
+                "reason_codes": ["missing_required_environment_variables"],
+                "skill_discovery": {"audited_count": 1, "discovered_count": 2},
+                "skills": [
+                    {
+                        "name": "demo-skill",
+                        "evaluation_status": "review_needed",
+                        "compatibility_score": {"score": 90, "grade": "A", "breakdown": [{"code": "missing_required_environment_variables", "deduction": 10}]},
+                        "source": "github",
+                        "trust_level": "community",
+                        "reason_codes": ["missing_required_environment_variables"],
+                    }
+                ],
+            }
+        ],
+    }
+    monkeypatch.setattr("tools.skills_intake_audit.audit_candidates", lambda *a, **k: report)
+
+    sink = StringIO()
+    console = Console(file=sink, force_terminal=False, color_system=None)
+    out = do_intake(["https://github.com/acme/skills"], console=console)
+
+    rendered = sink.getvalue()
+    assert out == report
+    assert "External Skill Intake Audit" in rendered
+    assert "demo-skill" in rendered
+    assert "review_needed" in rendered
+    assert "90 (A)" in rendered
+
+
+def test_handle_skills_slash_intake_dispatches(monkeypatch):
+    captured = {}
+
+    def _fake_do_intake(candidates, *, max_skills_per_repo=5, console=None, as_json=False):
+        captured["candidates"] = candidates
+        captured["max_skills_per_repo"] = max_skills_per_repo
+        captured["as_json"] = as_json
+        return {}
+
+    monkeypatch.setattr("hermes_cli.skills_hub.do_intake", _fake_do_intake)
+
+    handle_skills_slash(
+        "/skills intake https://github.com/acme/skills --max-skills-per-repo 7 --json",
+        console=Console(file=StringIO(), force_terminal=False, color_system=None),
+    )
+
+    assert captured == {
+        "candidates": ["https://github.com/acme/skills"],
+        "max_skills_per_repo": 7,
+        "as_json": True,
+    }
 
 
 def test_handle_skills_slash_search_accepts_chatconsole_without_status_errors():
