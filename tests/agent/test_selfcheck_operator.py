@@ -7,10 +7,13 @@ from types import SimpleNamespace
 from agent.selfcheck_operator import (
     observe_cron_job_result,
     observe_event,
+    observe_gateway_delivery,
     observe_provider_error,
+    observe_taskpool_event,
     observe_turn_result,
     read_health_summary,
     read_recent_findings,
+    run_repair_plan_dry_run,
 )
 
 
@@ -145,3 +148,46 @@ def test_provider_error_creates_provider_projection(tmp_path, monkeypatch):
     assert "model_call" in finding.blocks_what
     summary = read_health_summary()
     assert "provider" in summary["components"]
+
+
+def test_gateway_delivery_failure_creates_projection(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    decision = observe_gateway_delivery(
+        platform="telegram",
+        chat_id="123",
+        thread_id="456",
+        success=False,
+        error="platform send failed",
+    )
+
+    assert decision.findings
+    finding = decision.findings[0]
+    assert finding.component == "gateway"
+    assert finding.severity == "P1"
+    assert "external_delivery" in finding.blocks_what
+    assert "gateway" in read_health_summary()["components"]
+
+
+def test_taskpool_event_and_dry_run_repair_attempt(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    decision = observe_taskpool_event(
+        event_type="transition_rejected",
+        summary="transition rejected: done without proof",
+        task_id="task-123",
+        status="review",
+        evidence_refs=["task:task-123"],
+    )
+
+    assert decision.repair_plans
+    plan = decision.repair_plans[0]
+    attempt = run_repair_plan_dry_run(plan.id, request_digest=plan.request_digest)
+
+    assert attempt.status == "dry_run_verified"
+    assert attempt.plan_id == plan.id
+    root = tmp_path / "state" / "selfcheck"
+    attempts = _jsonl(root / "repair_attempts.jsonl")
+    assert attempts[-1]["status"] == "dry_run_verified"
+    summary = read_health_summary()
+    assert summary["waiting_for_judgement"] == 0

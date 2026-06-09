@@ -77,6 +77,22 @@ class RepairPlan:
 
 
 @dataclass(frozen=True)
+class RepairAttempt:
+    id: str
+    plan_id: str
+    action_id: str
+    mode: str
+    status: str
+    started_at: str
+    completed_at: str
+    request_digest: str
+    before: dict[str, Any]
+    after: dict[str, Any]
+    verification: list[str]
+    note: str
+
+
+@dataclass(frozen=True)
 class OperatorDecision:
     event_id: str
     accepted: bool
@@ -339,6 +355,33 @@ def _classify_event(event: Mapping[str, Any]) -> list[Finding]:
             action="classify auth/quota/context/client/image-routing before fallback changes",
         )
 
+    elif event_type.startswith("gateway.") or component == "gateway":
+        severity = "P1" if any(x in event_type for x in ("send_failed", "delivery_failed")) else "P2"
+        add(
+            fp_suffix=_slug(event.get("fingerprint_hint") or event.get("platform") or event_type),
+            severity=severity,
+            symptom=f"Gateway delivery path degraded: {summary}",
+            confidence=0.84,
+            blocks=("external_delivery", "user_notification"),
+            action="classify target/config/adapter/platform failure before replaying delivery",
+        )
+
+    elif event_type.startswith("taskpool.") or component == "taskpool":
+        if any(x in text for x in ("stale", "claim", "running", "worker failed", "transition rejected", "done without proof")):
+            severity = "P1"
+        elif any(x in text for x in ("dispatchable=0", "no_dispatchable", "blocked", "eligibility")):
+            severity = "P2"
+        else:
+            severity = "P3"
+        add(
+            fp_suffix=_slug(event.get("fingerprint_hint") or event_type),
+            severity=severity,
+            symptom=f"Taskpool control-plane signal: {summary}",
+            confidence=0.82,
+            blocks=("taskpool_progress",),
+            action="diagnose canonical ledger/adapters/proof gates before mutating task lifecycle",
+        )
+
     elif event_type.startswith("tool.") or component == "tool":
         add(
             fp_suffix=_slug(event.get("tool_name") or event_type),
@@ -439,7 +482,18 @@ def _rebuild_projections(root: Path, *, now_epoch: float | None = None) -> None:
     ts = now_epoch or _now()
     findings = _read_jsonl_tail(root / "findings.jsonl", limit=500)
     plans = _read_jsonl_tail(root / "repair_plans.jsonl", limit=500)
+    attempts = _read_jsonl_tail(root / "repair_attempts.jsonl", limit=500)
     recent_events = _read_jsonl_tail(root / "events.jsonl", limit=200)
+
+    closed_plan_ids = {
+        str(a.get("plan_id"))
+        for a in attempts
+        if a.get("status") in {"dry_run_verified", "applied_verified", "superseded"}
+    }
+    waiting_plans = [
+        p for p in plans
+        if p.get("status") == "waiting_for_judgement" and str(p.get("id")) not in closed_plan_ids
+    ]
 
     by_component: dict[str, dict[str, Any]] = {}
     for finding in findings:
@@ -472,7 +526,6 @@ def _rebuild_projections(root: Path, *, now_epoch: float | None = None) -> None:
             if block not in blocks:
                 blocks.append(block)
 
-    waiting_plans = [p for p in plans if p.get("status") == "waiting_for_judgement"]
     health_rank = max((int(v.get("highest_rank") or 0) for v in by_component.values()), default=0)
     summary = {
         "schema_version": _SCHEMA_VERSION,
@@ -501,6 +554,90 @@ def _rebuild_projections(root: Path, *, now_epoch: float | None = None) -> None:
     _write_json(root / "health_summary.json", summary)
     _write_json(root / "latest_findings.json", latest)
     _write_json(root / "component_status.json", component_status)
+
+
+def _safe_read_path(path: Path) -> dict[str, Any]:
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        return {"path": str(path), "exists": False, "error": exc.__class__.__name__}
+    return {
+        "path": str(path),
+        "exists": True,
+        "size": stat.st_size,
+        "mtime": stat.st_mtime,
+    }
+
+
+def _dry_run_action(plan: Mapping[str, Any], root: Path) -> tuple[dict[str, Any], dict[str, Any], list[str], str]:
+    """Run a governed dry-run/readback action without mutating external state."""
+    action_id = str(plan.get("action_id") or "")
+    before = {
+        "ledger_dir": _safe_read_path(root),
+        "findings": _safe_read_path(root / "findings.jsonl"),
+        "plans": _safe_read_path(root / "repair_plans.jsonl"),
+        "attempts": _safe_read_path(root / "repair_attempts.jsonl"),
+    }
+    after = dict(before)
+    verification = [
+        "dry-run only: no shell command executed",
+        "dry-run only: no external message sent",
+        "dry-run only: no task lifecycle or adapter state mutated",
+        f"plan action_id observed: {action_id}",
+    ]
+    note = "diagnostic dry-run/readback completed; awaiting human/policy judgement for any real repair"
+    return before, after, verification, note
+
+
+def run_repair_plan_dry_run(plan_id: str, *, request_digest: str | None = None) -> RepairAttempt:
+    """Append a governed repair_attempt for a plan without executing side effects.
+
+    This is the first executor boundary: it consumes an exact plan id (and,
+    when provided, an exact digest), performs only local readback, and records a
+    repair_attempt.  Real L1+ mutation executors must be separate allowlisted
+    actions with before/after verification and authorization.
+    """
+    root = ledger_dir()
+    ts = _now()
+    plans = _read_jsonl_tail(root / "repair_plans.jsonl", limit=1000)
+    plan = next((p for p in reversed(plans) if str(p.get("id")) == str(plan_id)), None)
+    if plan is None:
+        raise ValueError(f"repair plan not found: {plan_id}")
+    expected_digest = str(plan.get("request_digest") or "")
+    if request_digest and request_digest != expected_digest:
+        raise ValueError("repair plan digest mismatch")
+    before, after, verification, note = _dry_run_action(plan, root)
+    attempt_payload = {
+        "plan_id": plan_id,
+        "action_id": plan.get("action_id"),
+        "mode": "dry_run",
+        "request_digest": expected_digest,
+        "started_at": _utc_ts(ts),
+    }
+    attempt = RepairAttempt(
+        id="attempt-" + hashlib.sha256(json.dumps(attempt_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16],
+        plan_id=plan_id,
+        action_id=str(plan.get("action_id") or ""),
+        mode="dry_run",
+        status="dry_run_verified",
+        started_at=_utc_ts(ts),
+        completed_at=_utc_ts(ts),
+        request_digest=expected_digest,
+        before=before,
+        after=after,
+        verification=verification,
+        note=note,
+    )
+    with _LEDGER_LOCK:
+        record = asdict(attempt)
+        record.update({
+            "schema_version": _SCHEMA_VERSION,
+            "created_at": _utc_ts(ts),
+            "created_at_epoch": ts,
+        })
+        _append_jsonl(root / "repair_attempts.jsonl", record)
+        _rebuild_projections(root, now_epoch=ts)
+    return attempt
 
 
 def observe_event(event: Mapping[str, Any], *, debounce_seconds: int | None = None) -> OperatorDecision:
@@ -707,6 +844,65 @@ def observe_provider_error(
     return observe_event(event)
 
 
+def observe_gateway_delivery(
+    *,
+    platform: str | None = None,
+    chat_id: str | None = None,
+    thread_id: str | None = None,
+    success: bool = False,
+    error: Any = None,
+    summary: str | None = None,
+    source: str | None = None,
+) -> OperatorDecision:
+    """System-level gateway/send-message delivery trigger."""
+    if success:
+        event_type = "gateway.send_completed"
+        text = _sanitize_text(summary or "gateway send completed")
+    else:
+        event_type = "gateway.send_failed"
+        text = _sanitize_text(summary or error or "gateway send failed")
+    event = {
+        "event_type": event_type,
+        "trigger": source or "gateway_delivery",
+        "component": "gateway",
+        "platform": platform or "",
+        "chat_id": _sanitize_text(chat_id, 120),
+        "thread_id": _sanitize_text(thread_id, 120),
+        "success": bool(success),
+        "fingerprint_hint": _slug(f"{platform or 'unknown'}.{text}"),
+        "summary": text,
+        "error": None if success else text,
+        "evidence_refs": [x for x in [f"gateway_platform:{platform}" if platform else None] if x],
+    }
+    return observe_event(event)
+
+
+def observe_taskpool_event(
+    *,
+    event_type: str,
+    summary: str,
+    task_id: str | None = None,
+    status: str | None = None,
+    actor: str | None = None,
+    fingerprint_hint: str | None = None,
+    evidence_refs: Sequence[str] | None = None,
+) -> OperatorDecision:
+    """System-level taskpool/control-plane trigger for external scripts/hooks."""
+    normalized_event_type = event_type if event_type.startswith("taskpool.") else f"taskpool.{event_type}"
+    event = {
+        "event_type": normalized_event_type,
+        "trigger": "taskpool_event",
+        "component": "taskpool",
+        "task_id": task_id or "",
+        "status": status or "",
+        "actor": actor or "",
+        "fingerprint_hint": fingerprint_hint or _slug(normalized_event_type),
+        "summary": _sanitize_text(summary),
+        "evidence_refs": [str(x) for x in evidence_refs or [] if x],
+    }
+    return observe_event(event)
+
+
 def read_recent_findings(*, limit: int = 20) -> list[dict[str, Any]]:
     """Read recent findings for reports/tests without adding a CLI dependency."""
     return _read_jsonl_tail(ledger_dir() / "findings.jsonl", limit=limit)
@@ -724,12 +920,16 @@ def read_health_summary() -> dict[str, Any]:
 __all__ = [
     "Finding",
     "OperatorDecision",
+    "RepairAttempt",
     "RepairPlan",
     "ledger_dir",
     "observe_cron_job_result",
     "observe_event",
+    "observe_gateway_delivery",
     "observe_provider_error",
+    "observe_taskpool_event",
     "observe_turn_result",
     "read_health_summary",
     "read_recent_findings",
+    "run_repair_plan_dry_run",
 ]

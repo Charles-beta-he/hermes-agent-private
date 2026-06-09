@@ -80,6 +80,23 @@ def _error(message: str) -> dict:
     return {"error": _sanitize_error_text(message)}
 
 
+def _observe_gateway_send_failure(platform_name: str, chat_id=None, thread_id=None, error=None, *, source="send_message_tool") -> None:
+    """Best-effort selfcheck hook for native send_message/gateway failures."""
+    try:
+        from agent.selfcheck_operator import observe_gateway_delivery
+
+        observe_gateway_delivery(
+            platform=platform_name,
+            chat_id=str(chat_id or ""),
+            thread_id=str(thread_id or ""),
+            success=False,
+            error=_sanitize_error_text(error),
+            source=source,
+        )
+    except Exception:
+        logger.debug("selfcheck operator gateway observer failed", exc_info=True)
+
+
 def _telegram_retry_delay(exc: Exception, attempt: int) -> float | None:
     retry_after = getattr(exc, "retry_after", None)
     if retry_after is not None:
@@ -225,7 +242,9 @@ def _handle_send(args):
     try:
         platform = Platform(platform_name)
     except (ValueError, KeyError):
-        return tool_error(f"Unknown platform: {platform_name}")
+        msg = f"Unknown platform: {platform_name}"
+        _observe_gateway_send_failure(platform_name, chat_id, thread_id, msg)
+        return tool_error(msg)
 
     pconfig = config.platforms.get(platform)
     if not pconfig or not pconfig.enabled:
@@ -246,9 +265,13 @@ def _handle_send(args):
                     },
                 )
             else:
-                return tool_error(f"Platform '{platform_name}' is not configured. Set up credentials in ~/.hermes/config.yaml or environment variables.")
+                msg = f"Platform '{platform_name}' is not configured. Set up credentials in ~/.hermes/config.yaml or environment variables."
+                _observe_gateway_send_failure(platform_name, chat_id, thread_id, msg)
+                return tool_error(msg)
         else:
-            return tool_error(f"Platform '{platform_name}' is not configured. Set up credentials in ~/.hermes/config.yaml or environment variables.")
+            msg = f"Platform '{platform_name}' is not configured. Set up credentials in ~/.hermes/config.yaml or environment variables."
+            _observe_gateway_send_failure(platform_name, chat_id, thread_id, msg)
+            return tool_error(msg)
 
     from gateway.platforms.base import BasePlatformAdapter
 
@@ -346,8 +369,10 @@ def _handle_send(args):
 
         if isinstance(result, dict) and "error" in result:
             result["error"] = _sanitize_error_text(result["error"])
+            _observe_gateway_send_failure(platform_name, chat_id, thread_id, result["error"])
         return json.dumps(result)
     except Exception as e:
+        _observe_gateway_send_failure(platform_name, chat_id, thread_id, f"Send failed: {e}")
         return json.dumps(_error(f"Send failed: {e}"))
 
 
