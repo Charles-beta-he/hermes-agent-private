@@ -42,13 +42,6 @@ except Exception:  # pragma: no cover - fail-soft import guard
     memory_write_gate = None
 
 try:
-    from agent.norm_write_guard import WriteGuardConflict, conflict_payload, durable_write_guard
-except Exception:  # pragma: no cover - keep memory available during partial installs
-    WriteGuardConflict = None
-    conflict_payload = None
-    durable_write_guard = None
-
-try:
     from agent.abstraction_governance import review_memory_write
 except Exception:  # pragma: no cover - keep memory available during partial installs
     review_memory_write = None

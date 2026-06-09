@@ -19,14 +19,6 @@ from tools import file_state
 from agent.redact import redact_sensitive_text
 
 try:
-    from agent.norm_write_guard import WriteGuardConflict, conflict_payload, durable_write_guard, file_content_hash
-except Exception:  # pragma: no cover - keep file tools available during partial installs
-    WriteGuardConflict = None
-    conflict_payload = None
-    durable_write_guard = None
-    file_content_hash = None
-
-try:
     from agent.abstraction_governance import classify_durable_write_path, review_durable_write
 except Exception:  # pragma: no cover - defensive for standalone tool imports
     classify_durable_write_path = None  # type: ignore[assignment]

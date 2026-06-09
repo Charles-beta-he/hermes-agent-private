@@ -73,9 +73,13 @@ These are evidence/WIP sources, not active capabilities.
 
 ## Recommended next actions
 
-1. If only runtime stability matters: no immediate action required. Current upgraded branch is clean, pushed, and verified.
-2. If old safety governance matters: prioritize `norm_governance_control_plane`, specifically whether `agent.norm_write_guard` should be restored or retired from optional imports.
-3. If taskpool correctness matters: restore `taskpool_validation_security_gates` as report-only tests/scripts first, not lifecycle-blocking gates.
-4. If browser auditability matters: restore `browser_replay_evidence` tests/docs around current `tools/browser_tool.py` before adding new behavior.
-5. If reflective automation matters: restore `post_chat_reflection_and_run_envelope` only behind default-off/suggest-only gates.
-6. Update `docs/private/overlay-registry.md` so partial overlays are not overstated as fully active.
+As of follow-up closure commit, there are no active upgrade-blocking old-capability remnants. The remaining old-line surfaces are explicitly classified as retired/quarantined evidence, not current product debt:
+
+1. `norm_governance_control_plane`: retired from runtime. Stale optional imports of `agent.norm_write_guard` were removed from file/memory/skill tools and covered by `tests/tools/test_retired_norm_governance_remnants.py`.
+2. `taskpool_validation_security_gates`: retired as a lifecycle-blocking gate. Any future restoration must start as report-only tests/scripts.
+3. `browser_replay_evidence`: retired as an active/public capability because current `tools/browser_tool.py` does not implement replay bundle persistence. Historical docs/tests remain only in backup refs/stashes.
+4. `post_chat_reflection_and_run_envelope`: retired as active runtime because it would introduce a competing ledger/control-plane and possible cron/reflection writes. Historical evidence remains in backup refs/stashes.
+5. `mcp_semantic_probes`: retired as active runtime gate. Non-mutating semantic MCP probes may be restored later as report-only diagnostics, but are not claimed active now.
+6. `overlay-registry.md` was corrected so partial overlays no longer claim absent modules/tools/tests as active.
+
+Stashes listed above are preserved as historical evidence/WIP sources. They are not active capabilities and should not be popped wholesale; future use requires a new scoped ratchet tranche with tests.

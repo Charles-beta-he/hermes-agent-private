@@ -45,12 +45,6 @@ from typing import Dict, Any, List, Optional, Tuple
 from utils import atomic_replace, is_truthy_value
 from hermes_cli.config import cfg_get
 
-try:
-    from agent.norm_write_guard import WriteGuardConflict, conflict_payload, durable_write_guard
-except Exception:  # pragma: no cover - keep skill management available during partial installs
-    WriteGuardConflict = None
-    conflict_payload = None
-    durable_write_guard = None
 
 try:
     from agent.abstraction_governance import review_durable_write
