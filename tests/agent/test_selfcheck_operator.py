@@ -18,6 +18,7 @@ from agent.selfcheck_operator import (
     run_authorized_repair_plan,
     run_repair_plan_dry_run,
     run_sentinel_tick,
+    run_telegram_delivery_tick,
 )
 
 
@@ -433,3 +434,46 @@ def test_notification_outbox_is_idempotent_and_can_be_disabled(tmp_path, monkeyp
     disabled_root = tmp_path / "disabled" / "state" / "selfcheck"
     assert not (disabled_root / "notification_outbox.jsonl").exists()
     assert not (disabled_root / "delivery_dry_runs.jsonl").exists()
+
+
+def test_telegram_delivery_tick_sends_verified_dry_run_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_TARGET", "telegram:he cheng")
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+
+    calls = []
+
+    def fake_sender(payload):
+        calls.append(payload)
+        return '{"success": true, "message_id": 42}'
+
+    first = run_telegram_delivery_tick(sender=fake_sender)
+    second = run_telegram_delivery_tick(sender=fake_sender)
+
+    assert first
+    assert not second
+    assert len(calls) == len(first)
+    assert calls[0]["target"] == "telegram:he cheng"
+    root = tmp_path / "state" / "selfcheck"
+    receipts = _jsonl(root / "delivery_receipts.jsonl")
+    assert receipts[0]["status"] == "sent_verified"
+    assert receipts[0]["external_send_executed"] is True
+    assert receipts[0]["token_value_persisted"] is False
+    assert receipts[0]["payload_body_persisted"] is False
+
+
+def test_telegram_delivery_tick_respects_capability_and_target_allowlist(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_TARGET", "telegram:he cheng")
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_LIVE_SEND", "0")
+    assert run_telegram_delivery_tick(sender=lambda payload: '{"success": true}') == []
+
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_LIVE_SEND", "1")
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_TARGET", "slack:general")
+    try:
+        run_telegram_delivery_tick(sender=lambda payload: '{"success": true}')
+    except ValueError as exc:
+        assert "Telegram target" in str(exc)
+    else:
+        raise AssertionError("expected invalid target to be rejected")

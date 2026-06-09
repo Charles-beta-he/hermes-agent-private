@@ -1111,6 +1111,99 @@ def _notification_outbox_records(root: Path, *, ts: float) -> None:
             })
             dry_ids.add(dry_id)
 
+        telegram_target = os.environ.get("HERMES_SELFCHECK_TELEGRAM_TARGET", "telegram:he cheng").strip()
+        telegram_enabled = os.environ.get("HERMES_SELFCHECK_TELEGRAM_OUTBOX", "1").strip().lower() not in {"0", "false", "off", "no", "disabled"}
+        if not telegram_enabled or not telegram_target.startswith("telegram:") or _contains_secret_like(telegram_target):
+            continue
+        telegram_outbox_payload = {
+            "source_alert_id": alert.get("wakeup_id"),
+            "channel": "telegram",
+            "target_id": telegram_target,
+            "payload_hash": payload_hash,
+        }
+        telegram_outbox_id = "outbox-" + hashlib.sha256(json.dumps(telegram_outbox_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        if telegram_outbox_id not in outbox_ids:
+            _append_jsonl(root / "notification_outbox.jsonl", {
+                "schema_version": _SCHEMA_VERSION,
+                "id": telegram_outbox_id,
+                "status": "pending_delivery_authorization",
+                "channel": "telegram",
+                "target_id": telegram_target,
+                "source_alert_id": alert.get("wakeup_id"),
+                "severity": alert.get("severity"),
+                "payload_hash": payload_hash,
+                "payload_summary": summary,
+                "payload_body_stored": False,
+                "created_at": _utc_ts(ts),
+                "created_at_epoch": ts,
+                "request_digest": _stable_digest(telegram_outbox_payload),
+                "external_send_executed": False,
+                "token_read": False,
+            })
+            outbox_ids.add(telegram_outbox_id)
+        telegram_auth_payload = {
+            "outbox_id": telegram_outbox_id,
+            "channel": "telegram",
+            "target_id": telegram_target,
+            "payload_hash": payload_hash,
+            "decision": "approved",
+            "actor": "policy:selfcheck-telegram-alert",
+        }
+        telegram_auth_id = "delivery-auth-" + hashlib.sha256(json.dumps(telegram_auth_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        if telegram_auth_id not in auth_ids:
+            _append_jsonl(root / "delivery_authorizations.jsonl", {
+                "schema_version": _SCHEMA_VERSION,
+                "id": telegram_auth_id,
+                "outbox_id": telegram_outbox_id,
+                "channel": "telegram",
+                "target_id": telegram_target,
+                "payload_hash": payload_hash,
+                "decision": "approved",
+                "actor": "policy:selfcheck-telegram-alert",
+                "created_at": _utc_ts(ts),
+                "created_at_epoch": ts,
+                "expires_at": _utc_ts(ts + 900),
+                "expires_at_epoch": ts + 900,
+                "request_digest": _stable_digest(telegram_auth_payload),
+                "external_send_executed": False,
+                "token_read": False,
+            })
+            auth_ids.add(telegram_auth_id)
+        telegram_dry_payload = {
+            "delivery_authorization_id": telegram_auth_id,
+            "outbox_id": telegram_outbox_id,
+            "channel": "telegram",
+            "target_id": telegram_target,
+            "payload_hash": payload_hash,
+        }
+        telegram_dry_id = "delivery-dry-run-" + hashlib.sha256(json.dumps(telegram_dry_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        if telegram_dry_id not in dry_ids:
+            _append_jsonl(root / "delivery_dry_runs.jsonl", {
+                "schema_version": _SCHEMA_VERSION,
+                "id": telegram_dry_id,
+                "status": "telegram_delivery_dry_run_verified",
+                "delivery_authorization_id": telegram_auth_id,
+                "outbox_id": telegram_outbox_id,
+                "channel": "telegram",
+                "target_id": telegram_target,
+                "payload_hash": payload_hash,
+                "platform_payload_hash": _stable_digest({"channel": "telegram", "target_id": telegram_target, "summary": summary}),
+                "created_at": _utc_ts(ts),
+                "created_at_epoch": ts,
+                "request_digest": _stable_digest(telegram_dry_payload),
+                "send_executed": False,
+                "external_send_executed": False,
+                "token_read": False,
+                "verification": [
+                    "telegram delivery dry-run only",
+                    "target is explicitly allowlisted by HERMES_SELFCHECK_TELEGRAM_TARGET/default",
+                    "no platform API called at dry-run boundary",
+                    "no token or credential read at dry-run boundary",
+                    "payload body not persisted; hash and summary only",
+                ],
+            })
+            dry_ids.add(telegram_dry_id)
+
 
 def _rebuild_sentinel_projection(root: Path, *, now_epoch: float | None = None) -> None:
     ts = now_epoch or _now()
@@ -1186,6 +1279,86 @@ def _run_sentinel_after_ingest(root: Path, *, source: str, now_epoch: float) -> 
         _rebuild_sentinel_projection(root, now_epoch=now_epoch)
     except Exception as exc:  # pragma: no cover - defensive hot-path guard
         logger.debug("selfcheck sentinel wakeup failed: %s", exc, exc_info=True)
+
+
+def _telegram_sender_enabled() -> bool:
+    raw = os.environ.get("HERMES_SELFCHECK_TELEGRAM_LIVE_SEND", "1").strip().lower()
+    return raw not in {"0", "false", "off", "no", "disabled"}
+
+
+def _load_outbox_by_id(root: Path, outbox_id: str) -> dict[str, Any] | None:
+    for rec in reversed(_read_jsonl_tail(root / "notification_outbox.jsonl", limit=2000)):
+        if str(rec.get("id")) == outbox_id:
+            return rec
+    return None
+
+
+def run_telegram_delivery_tick(*, sender: Any | None = None) -> list[dict[str, Any]]:
+    """Consume verified Telegram dry-runs and send to the allowlisted Telegram target.
+
+    This is the first live platform boundary.  It is intentionally narrow:
+    source must be `telegram_delivery_dry_run_verified`, target must match
+    `HERMES_SELFCHECK_TELEGRAM_TARGET` (default `telegram:he cheng`), payloads
+    are reconstructed from summaries only, and receipts never persist tokens.
+    """
+    if not _enabled() or not _telegram_sender_enabled():
+        return []
+    root = ledger_dir()
+    target = os.environ.get("HERMES_SELFCHECK_TELEGRAM_TARGET", "telegram:he cheng").strip()
+    if not target.startswith("telegram:") or _contains_secret_like(target):
+        raise ValueError("Telegram target must be an explicit telegram: allowlist reference")
+    ts = _now()
+    receipts = _read_jsonl_tail(root / "delivery_receipts.jsonl", limit=2000)
+    sent_dry_ids = {str(r.get("delivery_dry_run_id")) for r in receipts if r.get("status") == "sent_verified"}
+    dry_runs = _read_jsonl_tail(root / "delivery_dry_runs.jsonl", limit=2000)
+    emitted: list[dict[str, Any]] = []
+    if sender is None:
+        from tools.send_message_tool import _handle_send as sender  # type: ignore
+    with _LEDGER_LOCK:
+        for dry in dry_runs:
+            dry_id = str(dry.get("id") or "")
+            if not dry_id or dry_id in sent_dry_ids:
+                continue
+            if dry.get("status") != "telegram_delivery_dry_run_verified":
+                continue
+            if dry.get("channel") != "telegram" or dry.get("target_id") != target:
+                continue
+            outbox = _load_outbox_by_id(root, str(dry.get("outbox_id") or ""))
+            if not outbox:
+                continue
+            if outbox.get("payload_hash") != dry.get("payload_hash"):
+                continue
+            summary = _sanitize_text(outbox.get("payload_summary"), 300)
+            message = f"Hermes selfcheck alert: {summary}\n\nsource={outbox.get('source_alert_id')}"
+            result_raw = sender({"target": target, "message": message})
+            try:
+                result = json.loads(result_raw) if isinstance(result_raw, str) else dict(result_raw)
+            except Exception:
+                result = {"error": "unparseable sender result"}
+            success = bool(result.get("success")) and not result.get("error")
+            receipt = {
+                "schema_version": _SCHEMA_VERSION,
+                "id": "delivery-receipt-" + hashlib.sha256(json.dumps({"dry_run_id": dry_id, "target": target}, sort_keys=True).encode("utf-8")).hexdigest()[:16],
+                "delivery_dry_run_id": dry_id,
+                "delivery_authorization_id": dry.get("delivery_authorization_id"),
+                "outbox_id": dry.get("outbox_id"),
+                "channel": "telegram",
+                "target_id": target,
+                "status": "sent_verified" if success else "send_failed",
+                "created_at": _utc_ts(ts),
+                "created_at_epoch": ts,
+                "request_digest": _stable_digest({"dry_run_id": dry_id, "target": target, "payload_hash": dry.get("payload_hash")}),
+                "external_send_executed": success,
+                "token_value_persisted": False,
+                "payload_body_persisted": False,
+                "message_id": result.get("message_id") or result.get("id"),
+                "error_type": _sanitize_text(result.get("error"), 120) if result.get("error") else None,
+            }
+            if not any(str(r.get("id")) == receipt["id"] for r in receipts):
+                _append_jsonl(root / "delivery_receipts.jsonl", receipt)
+                receipts.append(receipt)
+            emitted.append(receipt)
+    return emitted
 
 
 def _safe_read_path(path: Path) -> dict[str, Any]:
@@ -1718,4 +1891,5 @@ __all__ = [
     "run_authorized_repair_plan",
     "run_repair_plan_dry_run",
     "run_sentinel_tick",
+    "run_telegram_delivery_tick",
 ]
