@@ -2127,11 +2127,30 @@ def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> i
                     error = "Agent completed but produced empty response (model error, timeout, or misconfiguration)"
 
                 mark_job_run(job["id"], success, error, delivery_error=delivery_error)
+                try:
+                    from agent.selfcheck_operator import observe_cron_job_result
+
+                    observe_cron_job_result(
+                        job=job,
+                        success=success,
+                        error=error,
+                        delivery_error=delivery_error,
+                        output_file=str(output_file) if output_file else None,
+                        final_response=final_response,
+                    )
+                except Exception as _selfcheck_err:
+                    logger.debug("selfcheck operator cron observer failed for job %s: %s", job["id"], _selfcheck_err)
                 return True
 
             except Exception as e:
                 logger.error("Error processing job %s: %s", job['id'], e)
                 mark_job_run(job["id"], False, str(e))
+                try:
+                    from agent.selfcheck_operator import observe_cron_job_result
+
+                    observe_cron_job_result(job=job, success=False, error=str(e))
+                except Exception as _selfcheck_err:
+                    logger.debug("selfcheck operator cron observer failed for job %s: %s", job["id"], _selfcheck_err)
                 return False
 
         # Partition due jobs: jobs with a per-job workdir and/or profile touch

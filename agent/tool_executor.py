@@ -133,6 +133,39 @@ def _cancelled_tool_result(reason: str = "user interrupt") -> str:
     )
 
 
+def _observe_tool_failure(
+    agent,
+    *,
+    function_name: str,
+    result: Any,
+    effective_task_id: str,
+    tool_call_id: str,
+) -> None:
+    """Best-effort system-level self-check trigger for degraded tool paths."""
+    try:
+        from agent.selfcheck_operator import observe_event
+
+        observe_event({
+            "event_type": "tool.failed",
+            "trigger": "tool_result",
+            "component": "tool",
+            "tool_name": function_name,
+            "session_id": getattr(agent, "session_id", "") or "",
+            "task_id": effective_task_id or "",
+            "turn_id": getattr(agent, "_current_turn_id", "") or "",
+            "tool_call_id": tool_call_id or "",
+            "summary": _multimodal_text_summary(result)[:600],
+            "evidence_refs": [
+                x for x in [
+                    f"session:{getattr(agent, 'session_id', '')}" if getattr(agent, "session_id", "") else None,
+                    f"tool_call:{tool_call_id}" if tool_call_id else None,
+                ] if x
+            ],
+        })
+    except Exception as exc:
+        logger.debug("selfcheck operator tool observer failed for %s: %s", function_name, exc)
+
+
 def _emit_cancelled_terminal_post_tool_call(
     agent,
     *,
@@ -785,6 +818,13 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                 _err_text = _multimodal_text_summary(function_result)
                 result_preview = _err_text[:200] if len(_err_text) > 200 else _err_text
                 logger.warning("Tool %s returned error (%.2fs): %s", function_name, tool_duration, result_preview)
+                _observe_tool_failure(
+                    agent,
+                    function_name=function_name,
+                    result=function_result,
+                    effective_task_id=effective_task_id,
+                    tool_call_id=getattr(tc, "id", "") or "",
+                )
 
             # Track file-mutation outcome for the turn-end verifier.
             # `blocked` calls never actually ran — don't let a guardrail
@@ -1413,6 +1453,13 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
             )
         if _is_error_result:
             logger.warning("Tool %s returned error (%.2fs): %s", function_name, tool_duration, result_preview)
+            _observe_tool_failure(
+                agent,
+                function_name=function_name,
+                result=function_result,
+                effective_task_id=effective_task_id,
+                tool_call_id=getattr(tool_call, "id", "") or "",
+            )
         else:
             logger.info("tool %s completed (%.2fs, %d chars)", function_name, tool_duration, _result_len)
 

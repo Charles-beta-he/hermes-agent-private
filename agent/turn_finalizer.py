@@ -386,6 +386,27 @@ def finalize_turn(
                 api_call_count=api_call_count,
             )
             relay_result["kanban_failure_recorded"] = True
+        try:
+            from agent.selfcheck_operator import observe_turn_result
+
+            _operator_decision = observe_turn_result(
+                agent=agent,
+                result=relay_result,
+                messages=relay_result.get("messages") or messages,
+                user_message=user_message,
+                original_user_message=original_user_message,
+                effective_task_id=effective_task_id,
+                turn_id=turn_id,
+                failed_file_mutations=getattr(agent, "_turn_failed_file_mutations", None) or {},
+            )
+            relay_result["selfcheck_operator"] = {
+                "event_id": _operator_decision.event_id,
+                "findings": [f.id for f in _operator_decision.findings],
+                "repair_plans": [p.id for p in _operator_decision.repair_plans],
+                "ledger_dir": _operator_decision.ledger_dir,
+            }
+        except Exception as exc:
+            logger.debug("selfcheck operator turn observer failed: %s", exc)
         return relay_result
     if _kanban_budget_task and _is_auto_relay_exit_reason(_turn_exit_reason):
         _record_kanban_budget_failure(
@@ -394,6 +415,33 @@ def finalize_turn(
             api_call_count=api_call_count,
         )
         result["kanban_failure_recorded"] = True
+
+    # System-level self-check operator trigger.  This is not a CLI entrypoint:
+    # every turn boundary emits a compact event into the append-only operator
+    # ledger, and abnormal/user-requested cases materialize findings plus
+    # judgement-waiting repair plans.  The embedded operator is detect/plan
+    # only; it never mutates adapters or runs shell commands.
+    try:
+        from agent.selfcheck_operator import observe_turn_result
+
+        _operator_decision = observe_turn_result(
+            agent=agent,
+            result=result,
+            messages=messages,
+            user_message=user_message,
+            original_user_message=original_user_message,
+            effective_task_id=effective_task_id,
+            turn_id=turn_id,
+            failed_file_mutations=getattr(agent, "_turn_failed_file_mutations", None) or {},
+        )
+        result["selfcheck_operator"] = {
+            "event_id": _operator_decision.event_id,
+            "findings": [f.id for f in _operator_decision.findings],
+            "repair_plans": [p.id for p in _operator_decision.repair_plans],
+            "ledger_dir": _operator_decision.ledger_dir,
+        }
+    except Exception as exc:
+        logger.debug("selfcheck operator turn observer failed: %s", exc)
 
     # Background memory/skill review — runs AFTER the response is delivered
     # so it never competes with the user's task for model attention.
