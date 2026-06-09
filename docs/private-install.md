@@ -1,7 +1,8 @@
 # Charles private Hermes installation
 
 This document is the operator/user contract for the Charles-maintained private
-Hermes distribution.
+Hermes distribution. For the broader repository/state split of Charles' own
+installation, see `docs/private-self-installation-layers.md`.
 
 ## Default user flow
 
