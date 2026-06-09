@@ -14,8 +14,10 @@ from agent.selfcheck_operator import (
     observe_turn_result,
     read_health_summary,
     read_recent_findings,
+    read_sentinel_status,
     run_authorized_repair_plan,
     run_repair_plan_dry_run,
+    run_sentinel_tick,
 )
 
 
@@ -284,3 +286,49 @@ def test_authorized_repair_plan_rejects_expired_authorization(tmp_path, monkeypa
         assert "expired" in str(exc)
     else:
         raise AssertionError("expected expired authorization rejection")
+
+
+def test_sentinel_auto_wakes_after_degraded_event_without_sending_or_repairing(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+
+    root = tmp_path / "state" / "selfcheck"
+    wakeups = _jsonl(root / "wakeups.jsonl")
+    diagnosis = _jsonl(root / "diagnosis_packets.jsonl")
+    alerts = _jsonl(root / "pending_alerts.jsonl")
+    status = read_sentinel_status()
+
+    assert any(w["kind"] == "health_degraded" for w in wakeups)
+    assert all(w["side_effects_executed"] is False for w in wakeups)
+    assert diagnosis[-1]["side_effects_executed"] is False
+    assert alerts[-1]["delivery"] == "local_only_no_platform_send"
+    assert status["pending_local_alerts"] >= 1
+
+
+def test_sentinel_manual_tick_is_idempotent_and_readonly(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    observe_taskpool_event(event_type="worker_failed", summary="worker failed", task_id="task-1")
+    root = tmp_path / "state" / "selfcheck"
+    before_attempts = root / "repair_attempts.jsonl"
+    before_attempt_count = len(_jsonl(before_attempts)) if before_attempts.exists() else 0
+
+    first = run_sentinel_tick(source="test", debounce_seconds=0)
+    second = run_sentinel_tick(source="test", debounce_seconds=300)
+
+    assert first
+    assert second == []
+    assert read_sentinel_status()["wakeup_count_tail"] >= 1
+    after_attempt_count = len(_jsonl(before_attempts)) if before_attempts.exists() else 0
+    assert after_attempt_count == before_attempt_count
+
+
+def test_sentinel_can_be_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMES_SELFCHECK_SENTINEL", "0")
+
+    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+
+    root = tmp_path / "state" / "selfcheck"
+    assert not (root / "wakeups.jsonl").exists()
+    assert run_sentinel_tick(source="test") == []

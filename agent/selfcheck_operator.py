@@ -77,6 +77,19 @@ class RepairPlan:
 
 
 @dataclass(frozen=True)
+class SentinelWakeup:
+    id: str
+    kind: str
+    severity: str
+    status: str
+    reason: str
+    source: str
+    request_digest: str
+    evidence_refs: list[str]
+    created_at: str
+
+
+@dataclass(frozen=True)
 class RepairAuthorization:
     id: str
     plan_id: str
@@ -590,6 +603,277 @@ def _rebuild_projections(root: Path, *, now_epoch: float | None = None) -> None:
     _write_json(root / "component_status.json", component_status)
 
 
+def _sentinel_enabled() -> bool:
+    raw = os.environ.get("HERMES_SELFCHECK_SENTINEL", "").strip().lower()
+    return raw not in {"0", "false", "off", "no", "disabled"}
+
+
+def _sentinel_threshold(name: str, default: int) -> int:
+    raw = os.environ.get(f"HERMES_SELFCHECK_SENTINEL_{name.upper()}", "").strip()
+    if not raw:
+        return default
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
+
+
+def _recent_wakeup_fingerprints(root: Path, *, window_seconds: int, now_epoch: float) -> set[str]:
+    cutoff = now_epoch - max(1, window_seconds)
+    seen: set[str] = set()
+    for rec in _read_jsonl_tail(root / "wakeups.jsonl", limit=200):
+        try:
+            if float(rec.get("created_at_epoch") or 0) < cutoff:
+                continue
+        except (TypeError, ValueError):
+            continue
+        fp = str(rec.get("fingerprint") or "")
+        if fp:
+            seen.add(fp)
+    return seen
+
+
+def _make_wakeup(
+    *,
+    kind: str,
+    severity: str,
+    status: str,
+    reason: str,
+    source: str,
+    evidence_refs: Sequence[str],
+    ts: float,
+) -> SentinelWakeup:
+    payload = {
+        "kind": kind,
+        "severity": severity,
+        "status": status,
+        "reason": _sanitize_text(reason, 240),
+        "source": source,
+        "evidence_refs": list(evidence_refs),
+    }
+    digest = _stable_digest(payload)
+    return SentinelWakeup(
+        id="wakeup-" + hashlib.sha256(digest.encode("utf-8")).hexdigest()[:16],
+        kind=kind,
+        severity=severity,
+        status=status,
+        reason=_sanitize_text(reason, 240),
+        source=source,
+        request_digest=digest,
+        evidence_refs=[str(x) for x in evidence_refs if x],
+        created_at=_utc_ts(ts),
+    )
+
+
+def _build_sentinel_wakeups(root: Path, *, source: str, now_epoch: float) -> list[SentinelWakeup]:
+    summary = _read_json_file(root / "health_summary.json")
+    latest = _read_json_file(root / "latest_findings.json")
+    components = _read_json_file(root / "component_status.json")
+    findings = list(latest.get("findings") or []) if isinstance(latest.get("findings"), list) else []
+    plans = _read_jsonl_tail(root / "repair_plans.jsonl", limit=200)
+    attempts = _read_jsonl_tail(root / "repair_attempts.jsonl", limit=200)
+    coalesced = _read_jsonl_tail(root / "coalesced.jsonl", limit=200)
+    authorizations = _read_jsonl_tail(root / "repair_authorizations.jsonl", limit=200)
+
+    closed_plan_ids = {
+        str(a.get("plan_id")) for a in attempts
+        if a.get("status") in {"dry_run_verified", "authorized_readback_verified", "applied_verified", "superseded"}
+    }
+    waiting = [p for p in plans if p.get("status") == "waiting_for_judgement" and str(p.get("id")) not in closed_plan_ids]
+    wakeups: list[SentinelWakeup] = []
+    status = str(summary.get("overall_status") or "green")
+    if status in {"red", "yellow"}:
+        sev = "P0" if status == "red" else "P1"
+        wakeups.append(_make_wakeup(
+            kind="health_degraded",
+            severity=sev,
+            status=status,
+            reason=f"selfcheck health is {status}; components={','.join(summary.get('components') or [])}",
+            source=source,
+            evidence_refs=["file:health_summary.json", "file:component_status.json"],
+            ts=now_epoch,
+        ))
+
+    waiting_threshold = _sentinel_threshold("waiting_THRESHOLD", 1)
+    if len(waiting) >= max(1, waiting_threshold):
+        wakeups.append(_make_wakeup(
+            kind="judgement_required",
+            severity="P1" if status in {"red", "yellow"} else "P2",
+            status=status,
+            reason=f"{len(waiting)} repair plan(s) are waiting for judgement",
+            source=source,
+            evidence_refs=[f"repair_plan:{p.get('id')}" for p in waiting[:5]],
+            ts=now_epoch,
+        ))
+
+    repeated_threshold = _sentinel_threshold("REPEATED_THRESHOLD", 3)
+    if repeated_threshold and len(coalesced) >= repeated_threshold:
+        recent = [c for c in coalesced if float(c.get("created_at_epoch") or 0) >= now_epoch - _DEFAULT_DEBOUNCE_SECONDS]
+        if len(recent) >= repeated_threshold:
+            wakeups.append(_make_wakeup(
+                kind="repeated_fingerprint",
+                severity="P1",
+                status=status,
+                reason=f"{len(recent)} repeated finding(s) coalesced inside debounce window",
+                source=source,
+                evidence_refs=[f"finding:{c.get('finding_id')}" for c in recent[-5:]],
+                ts=now_epoch,
+            ))
+
+    expiry_threshold = _sentinel_threshold("AUTH_EXPIRY_SECONDS", 300)
+    expiring = []
+    for auth in authorizations:
+        if auth.get("decision") != "approved":
+            continue
+        try:
+            expires = float(auth.get("expires_at_epoch") or 0)
+        except (TypeError, ValueError):
+            continue
+        if now_epoch <= expires <= now_epoch + expiry_threshold:
+            expiring.append(auth)
+    if expiring:
+        wakeups.append(_make_wakeup(
+            kind="authorization_expiring",
+            severity="P2",
+            status=status,
+            reason=f"{len(expiring)} repair authorization(s) expire soon",
+            source=source,
+            evidence_refs=[f"repair_authorization:{a.get('id')}" for a in expiring[:5]],
+            ts=now_epoch,
+        ))
+
+    # Projection integrity is a product-level invariant: if a status projection is
+    # missing while findings exist, wake the operator to rebuild/diagnose.  This
+    # still performs no repair beyond writing the sentinel ledger below.
+    if findings and not components.get("components"):
+        wakeups.append(_make_wakeup(
+            kind="projection_incomplete",
+            severity="P1",
+            status=status,
+            reason="findings exist but component_status projection is empty or unreadable",
+            source=source,
+            evidence_refs=["file:latest_findings.json", "file:component_status.json"],
+            ts=now_epoch,
+        ))
+    return wakeups
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _append_sentinel_outputs(root: Path, wakeup: SentinelWakeup, *, ts: float) -> None:
+    record = asdict(wakeup)
+    record.update({
+        "schema_version": _SCHEMA_VERSION,
+        "created_at_epoch": ts,
+        "fingerprint": wakeup.request_digest,
+        "side_effects_executed": False,
+        "runtime_boundary": "sentinel_wakeup",
+    })
+    _append_jsonl(root / "wakeups.jsonl", record)
+    diagnosis = {
+        "schema_version": _SCHEMA_VERSION,
+        "wakeup_id": wakeup.id,
+        "kind": wakeup.kind,
+        "severity": wakeup.severity,
+        "status": wakeup.status,
+        "summary": wakeup.reason,
+        "created_at": _utc_ts(ts),
+        "created_at_epoch": ts,
+        "request_digest": wakeup.request_digest,
+        "recommended_next": "review_health_projection_and_authorize_exact_repair_plan_if_needed",
+        "evidence_refs": wakeup.evidence_refs,
+        "side_effects_executed": False,
+    }
+    _append_jsonl(root / "diagnosis_packets.jsonl", diagnosis)
+    if wakeup.severity in {"P0", "P1"}:
+        pending_alert = {
+            "schema_version": _SCHEMA_VERSION,
+            "wakeup_id": wakeup.id,
+            "status": "pending_local_alert",
+            "severity": wakeup.severity,
+            "summary": wakeup.reason,
+            "created_at": _utc_ts(ts),
+            "created_at_epoch": ts,
+            "delivery": "local_only_no_platform_send",
+            "request_digest": wakeup.request_digest,
+            "evidence_refs": wakeup.evidence_refs,
+        }
+        _append_jsonl(root / "pending_alerts.jsonl", pending_alert)
+
+
+def _rebuild_sentinel_projection(root: Path, *, now_epoch: float | None = None) -> None:
+    ts = now_epoch or _now()
+    wakeups = _read_jsonl_tail(root / "wakeups.jsonl", limit=100)
+    alerts = _read_jsonl_tail(root / "pending_alerts.jsonl", limit=100)
+    projection = {
+        "schema_version": _SCHEMA_VERSION,
+        "generated_at": _utc_ts(ts),
+        "generated_at_epoch": ts,
+        "wakeup_count_tail": len(wakeups),
+        "pending_local_alerts": len([a for a in alerts if a.get("status") == "pending_local_alert"]),
+        "latest_wakeup": wakeups[-1] if wakeups else None,
+    }
+    _write_json(root / "sentinel_status.json", projection)
+
+
+def run_sentinel_tick(*, source: str = "manual", debounce_seconds: int | None = None) -> list[SentinelWakeup]:
+    """Actively wake the selfcheck control plane without executing repairs.
+
+    This is safe for cron/finalizer/background use: it reads projections and
+    append-only ledgers, emits wakeups/diagnosis/local-alert intents, and never
+    runs shell commands, sends platform messages, or mutates task/provider state.
+    """
+    root = ledger_dir()
+    if not _enabled() or not _sentinel_enabled():
+        return []
+    ts = _now()
+    with _LEDGER_LOCK:
+        _rebuild_projections(root, now_epoch=ts)
+        wakeups = _build_sentinel_wakeups(root, source=source, now_epoch=ts)
+        debounce = _DEFAULT_DEBOUNCE_SECONDS if debounce_seconds is None else max(0, int(debounce_seconds))
+        recent = _recent_wakeup_fingerprints(root, window_seconds=debounce, now_epoch=ts) if debounce else set()
+        emitted: list[SentinelWakeup] = []
+        for wakeup in wakeups:
+            if debounce and wakeup.request_digest in recent:
+                _append_jsonl(root / "coalesced.jsonl", {
+                    "schema_version": _SCHEMA_VERSION,
+                    "wakeup_id": wakeup.id,
+                    "fingerprint": wakeup.request_digest,
+                    "component": "selfcheck_sentinel",
+                    "created_at": _utc_ts(ts),
+                    "created_at_epoch": ts,
+                    "reason": "debounced_recent_wakeup",
+                })
+                continue
+            _append_sentinel_outputs(root, wakeup, ts=ts)
+            recent.add(wakeup.request_digest)
+            emitted.append(wakeup)
+        _rebuild_sentinel_projection(root, now_epoch=ts)
+        return emitted
+
+
+def _run_sentinel_after_ingest(root: Path, *, source: str, now_epoch: float) -> None:
+    if not _sentinel_enabled():
+        return
+    try:
+        wakeups = _build_sentinel_wakeups(root, source=source, now_epoch=now_epoch)
+        recent = _recent_wakeup_fingerprints(root, window_seconds=_DEFAULT_DEBOUNCE_SECONDS, now_epoch=now_epoch)
+        for wakeup in wakeups:
+            if wakeup.request_digest in recent:
+                continue
+            _append_sentinel_outputs(root, wakeup, ts=now_epoch)
+            recent.add(wakeup.request_digest)
+        _rebuild_sentinel_projection(root, now_epoch=now_epoch)
+    except Exception as exc:  # pragma: no cover - defensive hot-path guard
+        logger.debug("selfcheck sentinel wakeup failed: %s", exc, exc_info=True)
+
+
 def _safe_read_path(path: Path) -> dict[str, Any]:
     try:
         stat = path.stat()
@@ -692,6 +976,7 @@ def authorize_repair_plan(
         if not any(str(r.get("id")) == auth.id for r in existing):
             _append_jsonl(root / "repair_authorizations.jsonl", record)
         _rebuild_projections(root, now_epoch=ts)
+        _run_sentinel_after_ingest(root, source="authorization", now_epoch=ts)
     return auth
 
 
@@ -742,6 +1027,7 @@ def run_repair_plan_dry_run(plan_id: str, *, request_digest: str | None = None) 
         if not any(str(r.get("id")) == attempt.id for r in existing):
             _append_jsonl(root / "repair_attempts.jsonl", record)
         _rebuild_projections(root, now_epoch=ts)
+        _rebuild_sentinel_projection(root, now_epoch=ts)
     return attempt
 
 
@@ -812,6 +1098,7 @@ def run_authorized_repair_plan(
         if not any(str(r.get("id")) == attempt.id for r in existing):
             _append_jsonl(root / "repair_attempts.jsonl", record)
         _rebuild_projections(root, now_epoch=ts)
+        _rebuild_sentinel_projection(root, now_epoch=ts)
     return attempt
 
 
@@ -885,6 +1172,7 @@ def observe_event(event: Mapping[str, Any], *, debounce_seconds: int | None = No
                 _append_jsonl(root / "repair_plans.jsonl", rec)
                 emitted_plans.append(plan)
             _rebuild_projections(root, now_epoch=ts)
+            _run_sentinel_after_ingest(root, source="observe_event", now_epoch=ts)
             return OperatorDecision(
                 event_id=event_id,
                 accepted=True,
@@ -1085,10 +1373,13 @@ def read_recent_findings(*, limit: int = 20) -> list[dict[str, Any]]:
 
 def read_health_summary() -> dict[str, Any]:
     """Read the resident health projection if one has been generated."""
-    try:
-        data = json.loads((ledger_dir() / "health_summary.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    data = _read_json_file(ledger_dir() / "health_summary.json")
+    return data if isinstance(data, dict) else {}
+
+
+def read_sentinel_status() -> dict[str, Any]:
+    """Read the resident sentinel wake-up projection if one has been generated."""
+    data = _read_json_file(ledger_dir() / "sentinel_status.json")
     return data if isinstance(data, dict) else {}
 
 
@@ -1098,6 +1389,7 @@ __all__ = [
     "RepairAttempt",
     "RepairAuthorization",
     "RepairPlan",
+    "SentinelWakeup",
     "authorize_repair_plan",
     "ledger_dir",
     "observe_cron_job_result",
@@ -1108,6 +1400,8 @@ __all__ = [
     "observe_turn_result",
     "read_health_summary",
     "read_recent_findings",
+    "read_sentinel_status",
     "run_authorized_repair_plan",
     "run_repair_plan_dry_run",
+    "run_sentinel_tick",
 ]
