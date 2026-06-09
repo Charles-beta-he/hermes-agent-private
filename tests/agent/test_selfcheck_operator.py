@@ -7,7 +7,9 @@ from types import SimpleNamespace
 from agent.selfcheck_operator import (
     observe_cron_job_result,
     observe_event,
+    observe_provider_error,
     observe_turn_result,
+    read_health_summary,
     read_recent_findings,
 )
 
@@ -99,3 +101,47 @@ def test_cron_delivery_failure_creates_p1_finding(tmp_path, monkeypatch):
     assert "scheduled_delivery" in finding.blocks_what
     recent = read_recent_findings(limit=5)
     assert recent[-1]["component"] == "cron"
+
+
+def test_projections_are_rebuilt_after_findings(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    observe_cron_job_result(
+        job={"id": "job-1", "name": "Daily"},
+        success=True,
+        delivery_error="gateway unavailable",
+        output_file="/tmp/out.md",
+        final_response="hello",
+    )
+
+    root = tmp_path / "state" / "selfcheck"
+    summary = json.loads((root / "health_summary.json").read_text(encoding="utf-8"))
+    latest = json.loads((root / "latest_findings.json").read_text(encoding="utf-8"))
+    components = json.loads((root / "component_status.json").read_text(encoding="utf-8"))
+
+    assert summary["overall_status"] == "yellow"
+    assert summary["waiting_for_judgement"] == 1
+    assert latest["findings"][-1]["component"] == "cron"
+    assert components["components"]["cron"]["status"] == "yellow"
+    assert read_health_summary()["overall_status"] == "yellow"
+
+
+def test_provider_error_creates_provider_projection(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    decision = observe_provider_error(
+        provider="openai-codex",
+        model="gpt-5.5",
+        error=RuntimeError("OpenAI client closed"),
+        session_id="sess-provider",
+        turn_id="turn-provider",
+        api_call_count=2,
+    )
+
+    assert decision.findings
+    finding = decision.findings[0]
+    assert finding.component == "provider"
+    assert finding.severity == "P1"
+    assert "model_call" in finding.blocks_what
+    summary = read_health_summary()
+    assert "provider" in summary["components"]

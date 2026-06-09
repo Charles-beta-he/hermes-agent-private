@@ -2639,6 +2639,22 @@ def run_conversation(
                     agent._client_log_context(),
                     _error_summary,
                 )
+                try:
+                    from agent.selfcheck_operator import observe_provider_error
+
+                    observe_provider_error(
+                        provider=getattr(agent, "provider", "") or "",
+                        model=getattr(agent, "model", "") or "",
+                        error=api_error,
+                        summary=f"{error_type}: {_error_summary}",
+                        session_id=getattr(agent, "session_id", "") or "",
+                        task_id=effective_task_id,
+                        turn_id=turn_id,
+                        api_call_count=api_call_count,
+                        fingerprint_hint=f"{error_type}.{getattr(api_error, 'status_code', '') or 'no_status'}",
+                    )
+                except Exception as _selfcheck_err:
+                    logger.debug("selfcheck operator provider observer failed: %s", _selfcheck_err)
 
                 _provider = getattr(agent, "provider", "unknown")
                 _base = getattr(agent, "base_url", "unknown")

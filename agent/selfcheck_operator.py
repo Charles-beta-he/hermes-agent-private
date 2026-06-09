@@ -123,6 +123,33 @@ def _append_jsonl(path: Path, record: Mapping[str, Any]) -> None:
         fh.write(line + "\n")
 
 
+def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    """Atomically write a compact projection file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2, default=_json_default) + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def _read_jsonl_tail(path: Path, *, limit: int) -> list[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-max(1, limit):]
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
 def _read_recent_fingerprints(path: Path, *, window_seconds: int) -> set[str]:
     cutoff = _now() - max(1, int(window_seconds))
     seen: set[str] = set()
@@ -388,6 +415,94 @@ def _plan_for_finding(finding: Finding) -> RepairPlan | None:
     )
 
 
+def _severity_rank(severity: Any) -> int:
+    return {"P0": 4, "P1": 3, "P2": 2, "P3": 1}.get(str(severity or "").upper(), 0)
+
+
+def _status_for_rank(rank: int) -> str:
+    if rank >= 4:
+        return "red"
+    if rank >= 3:
+        return "yellow"
+    if rank >= 1:
+        return "watch"
+    return "green"
+
+
+def _rebuild_projections(root: Path, *, now_epoch: float | None = None) -> None:
+    """Maintain read-optimized projections from the append-only ledger.
+
+    Projection writes are best-effort and derived; the ledger remains the source
+    of truth.  Keeping this inside the operator gives resident surfaces a stable
+    status artifact without requiring a CLI command to aggregate JSONL.
+    """
+    ts = now_epoch or _now()
+    findings = _read_jsonl_tail(root / "findings.jsonl", limit=500)
+    plans = _read_jsonl_tail(root / "repair_plans.jsonl", limit=500)
+    recent_events = _read_jsonl_tail(root / "events.jsonl", limit=200)
+
+    by_component: dict[str, dict[str, Any]] = {}
+    for finding in findings:
+        component = str(finding.get("component") or "runtime")
+        item = by_component.setdefault(
+            component,
+            {
+                "component": component,
+                "status": "green",
+                "highest_severity": "",
+                "highest_rank": 0,
+                "open_findings": 0,
+                "latest_finding_id": "",
+                "latest_fingerprint": "",
+                "latest_seen_at": "",
+                "blocks_what": [],
+            },
+        )
+        rank = _severity_rank(finding.get("severity"))
+        item["open_findings"] += 1
+        if rank >= int(item.get("highest_rank") or 0):
+            item["highest_rank"] = rank
+            item["highest_severity"] = finding.get("severity") or ""
+            item["status"] = _status_for_rank(rank)
+            item["latest_finding_id"] = finding.get("id") or ""
+            item["latest_fingerprint"] = finding.get("fingerprint") or ""
+            item["latest_seen_at"] = finding.get("created_at") or ""
+        blocks = item.setdefault("blocks_what", [])
+        for block in finding.get("blocks_what") or []:
+            if block not in blocks:
+                blocks.append(block)
+
+    waiting_plans = [p for p in plans if p.get("status") == "waiting_for_judgement"]
+    health_rank = max((int(v.get("highest_rank") or 0) for v in by_component.values()), default=0)
+    summary = {
+        "schema_version": _SCHEMA_VERSION,
+        "generated_at": _utc_ts(ts),
+        "generated_at_epoch": ts,
+        "overall_status": _status_for_rank(health_rank),
+        "component_count": len(by_component),
+        "finding_count_tail": len(findings),
+        "waiting_for_judgement": len(waiting_plans),
+        "recent_event_count_tail": len(recent_events),
+        "components": sorted(by_component),
+    }
+    latest = {
+        "schema_version": _SCHEMA_VERSION,
+        "generated_at": _utc_ts(ts),
+        "findings": findings[-50:],
+    }
+    component_status = {
+        "schema_version": _SCHEMA_VERSION,
+        "generated_at": _utc_ts(ts),
+        "components": {
+            key: {k: v for k, v in value.items() if k != "highest_rank"}
+            for key, value in sorted(by_component.items())
+        },
+    }
+    _write_json(root / "health_summary.json", summary)
+    _write_json(root / "latest_findings.json", latest)
+    _write_json(root / "component_status.json", component_status)
+
+
 def observe_event(event: Mapping[str, Any], *, debounce_seconds: int | None = None) -> OperatorDecision:
     """Ingest a runtime event and append derived findings/plans to the ledger.
 
@@ -457,6 +572,7 @@ def observe_event(event: Mapping[str, Any], *, debounce_seconds: int | None = No
                 })
                 _append_jsonl(root / "repair_plans.jsonl", rec)
                 emitted_plans.append(plan)
+            _rebuild_projections(root, now_epoch=ts)
             return OperatorDecision(
                 event_id=event_id,
                 accepted=True,
@@ -554,20 +670,55 @@ def observe_cron_job_result(
     return observe_event(event)
 
 
+def observe_provider_error(
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    error: Any = None,
+    summary: str | None = None,
+    session_id: str | None = None,
+    task_id: str | None = None,
+    turn_id: str | None = None,
+    api_call_count: int | None = None,
+    fingerprint_hint: str | None = None,
+) -> OperatorDecision:
+    """System-level provider/router degradation trigger.
+
+    Provider exceptions can occur before a normal turn result exists.  This seam
+    lets the runtime record auth/quota/context/client/image-routing failures in
+    the same ledger and projections as turn/tool/cron findings.
+    """
+    text = _sanitize_text(summary or error or "provider error")
+    event = {
+        "event_type": "provider.error",
+        "trigger": "provider_exception",
+        "component": "provider",
+        "provider": provider or "",
+        "model": model or "",
+        "session_id": session_id or "",
+        "task_id": task_id or "",
+        "turn_id": turn_id or "",
+        "api_calls": api_call_count,
+        "fingerprint_hint": fingerprint_hint or _slug(text),
+        "summary": text,
+        "error": text,
+        "evidence_refs": [x for x in [f"session:{session_id}" if session_id else None, f"turn:{turn_id}" if turn_id else None] if x],
+    }
+    return observe_event(event)
+
+
 def read_recent_findings(*, limit: int = 20) -> list[dict[str, Any]]:
     """Read recent findings for reports/tests without adding a CLI dependency."""
-    path = ledger_dir() / "findings.jsonl"
+    return _read_jsonl_tail(ledger_dir() / "findings.jsonl", limit=limit)
+
+
+def read_health_summary() -> dict[str, Any]:
+    """Read the resident health projection if one has been generated."""
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-max(1, limit):]
-    except OSError:
-        return []
-    out: list[dict[str, Any]] = []
-    for line in lines:
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
+        data = json.loads((ledger_dir() / "health_summary.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 __all__ = [
@@ -577,6 +728,8 @@ __all__ = [
     "ledger_dir",
     "observe_cron_job_result",
     "observe_event",
+    "observe_provider_error",
     "observe_turn_result",
+    "read_health_summary",
     "read_recent_findings",
 ]
