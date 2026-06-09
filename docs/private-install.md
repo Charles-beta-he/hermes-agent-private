@@ -10,16 +10,20 @@ Charles first grants the user's GitHub account access to:
 
   https://github.com/Charles-beta-he/hermes-agent-private
 
-Then the user installs with GitHub CLI:
+Then the recommended flow is GitHub CLI plus the automated bootstrap:
 
 ```bash
 gh auth login
 gh auth setup-git
-gh repo clone Charles-beta-he/hermes-agent-private ~/.hermes/hermes-agent -- --branch private/main --single-branch
-~/.hermes/hermes-agent/scripts/install-private.sh
+gh api -H "Accept: application/vnd.github.raw" \
+  repos/Charles-beta-he/hermes-agent-private/contents/scripts/bootstrap-private.sh?ref=private/main \
+  | bash
 ```
 
-SSH fallback:
+The bootstrap prints this recommendation, verifies access, clones or refreshes
+`~/.hermes/hermes-agent`, and delegates to `scripts/install-private.sh`.
+
+Manual SSH fallback remains available:
 
 ```bash
 mkdir -p ~/.hermes

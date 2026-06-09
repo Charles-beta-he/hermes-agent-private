@@ -161,6 +161,7 @@ Landing zone:
 
 Examples:
 
+- `scripts/bootstrap-private.sh`
 - `scripts/install-private.sh`
 - `hermes_cli/main.py` update-channel behavior
 - installer tests

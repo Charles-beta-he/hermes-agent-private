@@ -37,16 +37,21 @@ account access. Do **not** use the official one-liner
 `https://hermes-agent.nousresearch.com/install.sh` for this distribution — that
 installs the public NousResearch build and skips the private channel metadata.
 
-### Recommended: GitHub CLI (macOS, Linux, WSL2)
+### Recommended: GitHub CLI automated bootstrap (macOS, Linux, WSL2)
 
 ```bash
 gh auth login
 gh auth setup-git
-gh repo clone Charles-beta-he/hermes-agent-private ~/.hermes/hermes-agent -- --branch private/main --single-branch
-~/.hermes/hermes-agent/scripts/install-private.sh
+gh api -H "Accept: application/vnd.github.raw" \
+  repos/Charles-beta-he/hermes-agent-private/contents/scripts/bootstrap-private.sh?ref=private/main \
+  | bash
 ```
 
-### SSH fallback
+The bootstrap prints the recommended path, verifies private-repo access, clones or
+refreshes `~/.hermes/hermes-agent`, then runs `scripts/install-private.sh` to
+stamp the private update channel.
+
+### Manual SSH fallback
 
 ```bash
 mkdir -p ~/.hermes

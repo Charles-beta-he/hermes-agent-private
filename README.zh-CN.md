@@ -36,16 +36,20 @@
 `https://hermes-agent.nousresearch.com/install.sh`，那会安装 NousResearch 公共版，
 不会写入私有更新通道元数据。
 
-### 推荐：GitHub CLI（macOS、Linux、WSL2）
+### 推荐：GitHub CLI 自动化 bootstrap（macOS、Linux、WSL2）
 
 ```bash
 gh auth login
 gh auth setup-git
-gh repo clone Charles-beta-he/hermes-agent-private ~/.hermes/hermes-agent -- --branch private/main --single-branch
-~/.hermes/hermes-agent/scripts/install-private.sh
+gh api -H "Accept: application/vnd.github.raw" \
+  repos/Charles-beta-he/hermes-agent-private/contents/scripts/bootstrap-private.sh?ref=private/main \
+  | bash
 ```
 
-### SSH 备用路径
+bootstrap 会先打印推荐路径，再自动验证私仓权限、clone/刷新
+`~/.hermes/hermes-agent`，最后运行 `scripts/install-private.sh` 写入私有更新通道。
+
+### SSH 手动备用路径
 
 ```bash
 mkdir -p ~/.hermes
