@@ -44,6 +44,21 @@ def build_mission_parser(subparsers) -> None:
     list_cmd.add_argument("--json", action="store_true", help="Emit JSON")
     list_cmd.set_defaults(func=cmd_mission)
 
+    inbox = sub.add_parser("inbox", help="List open mission decisions that need user input")
+    inbox.add_argument("--all", action="store_true", help="Include decisions attached to terminal missions")
+    inbox.add_argument("--json", action="store_true", help="Emit JSON")
+    inbox.set_defaults(func=cmd_mission)
+
+    board = sub.add_parser("board", help="Show mission control board with budget, cron, and next action")
+    board.add_argument("--all", action="store_true", help="Include done/cancelled missions")
+    board.add_argument("--json", action="store_true", help="Emit JSON")
+    board.set_defaults(func=cmd_mission)
+
+    doctor = sub.add_parser("doctor", help="Check whether a mission can actually keep advancing")
+    doctor.add_argument("mission_id")
+    doctor.add_argument("--json", action="store_true", help="Emit JSON")
+    doctor.set_defaults(func=cmd_mission)
+
     status = sub.add_parser("status", help="Show mission state, open decisions, and recent events")
     status.add_argument("mission_id")
     status.add_argument("--limit", type=int, default=20, help="Recent event limit")

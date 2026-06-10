@@ -416,16 +416,7 @@ class MissionStore:
             ).fetchall()
         events = []
         for row in rows:
-            events.append(
-                {
-                    "event_id": row["event_id"],
-                    "mission_id": row["mission_id"],
-                    "event_type": row["event_type"],
-                    "summary": row["summary"],
-                    "payload": _json_loads(row["payload_json"], {}),
-                    "created_at": row["created_at"],
-                }
-            )
+            events.append(self._event_from_row(row))
         return events
 
     def request_decision(
@@ -519,6 +510,153 @@ class MissionStore:
                 (mission_id,),
             ).fetchall()
         return [self._row_to_decision(row) for row in rows]
+
+    def inbox(self, *, include_done: bool = False) -> list[dict[str, Any]]:
+        terminal = {"done", "failed", "cancelled"}
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT d.*, m.direction, m.status AS mission_status, m.stage
+                FROM mission_decisions d
+                JOIN missions m ON m.mission_id = d.mission_id
+                WHERE d.status = 'open'
+                ORDER BY d.created_at ASC
+                """
+            ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            if not include_done and row["mission_status"] in terminal:
+                continue
+            decision = self._row_to_decision(row)
+            items.append(
+                {
+                    "mission_id": decision.mission_id,
+                    "mission_status": row["mission_status"],
+                    "stage": row["stage"],
+                    "direction": row["direction"],
+                    "decision": decision_to_dict(decision),
+                    "decide_command": render_decision_next_command(decision),
+                }
+            )
+        return items
+
+    def board(self, *, include_done: bool = False) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for mission in self.list_missions(include_done=include_done):
+            open_decisions = self.open_decisions(mission.mission_id)
+            used_ticks = self.count_events(mission.mission_id, {"tick_prompt_created"})
+            cron_events = self.list_events_by_type(mission.mission_id, "mission_cron_installed", limit=1)
+            max_ticks = mission.budget.max_ticks
+            cron_installed = bool(cron_events)
+            if open_decisions:
+                next_step = f"decide {open_decisions[0].decision_id}"
+            elif mission.status == "paused":
+                next_step = f"hermes mission resume {mission.mission_id}"
+            elif mission.status == "active" and not cron_installed:
+                next_step = f"hermes mission install-cron {mission.mission_id}"
+            elif max_ticks is not None and used_ticks >= max_ticks:
+                next_step = f"hermes mission report {mission.mission_id}"
+            else:
+                next_step = f"hermes mission report {mission.mission_id}"
+            rows.append(
+                {
+                    "mission_id": mission.mission_id,
+                    "status": mission.status,
+                    "stage": mission.stage,
+                    "direction": mission.direction,
+                    "ticks_used": used_ticks,
+                    "ticks_max": max_ticks,
+                    "cron_installed": cron_installed,
+                    "needs_user": bool(open_decisions),
+                    "open_decision_id": open_decisions[0].decision_id if open_decisions else None,
+                    "next_step": next_step,
+                }
+            )
+        return rows
+
+    def list_events_by_type(self, mission_id: str, event_type: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        if event_type not in VALID_EVENT_TYPES:
+            raise ValueError(f"invalid mission event type: {event_type}")
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM mission_events WHERE mission_id = ? AND event_type = ? ORDER BY created_at DESC LIMIT ?",
+                (mission_id, event_type, int(limit)),
+            ).fetchall()
+        return [self._event_from_row(row) for row in rows]
+
+    def doctor(self, mission_id: str) -> dict[str, Any]:
+        mission = self.get_mission(mission_id)
+        if not mission:
+            raise KeyError(mission_id)
+        open_decisions = self.open_decisions(mission_id)
+        used_ticks = self.count_events(mission_id, {"tick_prompt_created"})
+        script_path = _hermes_home() / "scripts" / mission_tick_script_name(mission_id)
+        cron_jobs = self._find_cron_jobs_for_mission(mission_id)
+        checks = []
+        def add(name: str, status: str, detail: str = "") -> None:
+            checks.append({"name": name, "status": status, "detail": detail})
+        add("mission exists", "ok", mission_id)
+        add("status", "ok" if mission.status == "active" else "warn", mission.status)
+        add("open decisions", "warn" if open_decisions else "ok", str(len(open_decisions)))
+        budget_status = "ok"
+        if mission.budget.max_ticks is not None and used_ticks >= mission.budget.max_ticks:
+            budget_status = "warn"
+        add("tick budget", budget_status, f"{used_ticks}/{mission.budget.max_ticks}")
+        add("tick script", "ok" if script_path.exists() else "warn", str(script_path))
+        add("cron job", "ok" if cron_jobs else "warn", f"{len(cron_jobs)} matching job(s)")
+        return {
+            "mission": mission_to_dict(mission),
+            "checks": checks,
+            "open_decisions": [decision_to_dict(d) for d in open_decisions],
+            "cron_jobs": cron_jobs,
+            "script_path": str(script_path),
+            "next_step": self._doctor_next_step(mission, open_decisions, bool(cron_jobs), used_ticks),
+        }
+
+    def _doctor_next_step(self, mission: Mission, open_decisions: list[DecisionRequest], has_cron: bool, used_ticks: int) -> str:
+        if open_decisions:
+            return render_decision_next_command(open_decisions[0])
+        if mission.status == "paused":
+            return f"hermes mission resume {mission.mission_id}"
+        if mission.status != "active":
+            return f"hermes mission report {mission.mission_id}"
+        if mission.budget.max_ticks is not None and used_ticks >= mission.budget.max_ticks:
+            return f"hermes mission report {mission.mission_id}"
+        if not has_cron:
+            return f"hermes mission install-cron {mission.mission_id}"
+        return f"hermes mission report {mission.mission_id}"
+
+    def _find_cron_jobs_for_mission(self, mission_id: str) -> list[dict[str, Any]]:
+        jobs_file = _hermes_home() / "cron" / "jobs.json"
+        if not jobs_file.exists():
+            return []
+        try:
+            raw = json.loads(jobs_file.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if isinstance(raw, dict):
+            jobs = raw.get("jobs", [])
+        elif isinstance(raw, list):
+            jobs = raw
+        else:
+            jobs = []
+        if not isinstance(jobs, list):
+            return []
+        script_name = mission_tick_script_name(mission_id)
+        matches = []
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            if job.get("script") == script_name or mission_id in str(job.get("name", "")) or mission_id in str(job.get("prompt", "")):
+                matches.append({
+                    "id": job.get("id"),
+                    "name": job.get("name"),
+                    "enabled": job.get("enabled"),
+                    "state": job.get("state"),
+                    "next_run_at": job.get("next_run_at"),
+                    "script": job.get("script"),
+                })
+        return matches
 
     def append_stage_report(
         self,
@@ -668,9 +806,18 @@ class MissionStore:
         if decisions:
             lines.extend(["", "Open decisions:"])
             for d in decisions:
-                opts = "; ".join(d.options) if d.options else "open answer"
-                lines.append(f"- {d.decision_id}: {d.question} ({opts})")
+                lines.extend(render_decision_block(d))
         return "\n".join(lines)
+
+    def _event_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "event_id": row["event_id"],
+            "mission_id": row["mission_id"],
+            "event_type": row["event_type"],
+            "summary": row["summary"],
+            "payload": _json_loads(row["payload_json"], {}),
+            "created_at": row["created_at"],
+        }
 
     def _row_to_mission(self, row: sqlite3.Row) -> Mission:
         budget_raw = _json_loads(row["budget_json"], {})
@@ -736,6 +883,36 @@ def decision_to_dict(decision: DecisionRequest) -> dict[str, Any]:
     return asdict(decision)
 
 
+def _quote_decision_answer(text: str) -> str:
+    safe = text.replace('"', '\\"').strip()
+    return f'"{safe}"' if safe else '"<answer>"'
+
+
+def render_decision_next_command(decision: DecisionRequest) -> str:
+    suggested = decision.recommended_option or (decision.options[0] if decision.options else "<answer>")
+    return f"hermes mission decide {decision.decision_id} {_quote_decision_answer(suggested)}"
+
+
+def render_decision_block(decision: DecisionRequest) -> list[str]:
+    lines = [f"- {decision.decision_id}: {decision.question}"]
+    if decision.options:
+        lines.append("  Options:")
+        for index, option in enumerate(decision.options, start=1):
+            lines.append(f"    {index}. {option}")
+    if decision.recommended_option:
+        lines.append(f"  Recommended: {decision.recommended_option}")
+    lines.append("  Decide:")
+    lines.append(f"    {render_decision_next_command(decision)}")
+    return lines
+
+
+def _truncate(text: str, limit: int) -> str:
+    clean = " ".join(str(text).split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: max(0, limit - 1)] + "…"
+
+
 def build_tick_prompt(mission: Mission, recent_events: list[dict[str, Any]], answered_decisions: list[DecisionRequest]) -> str:
     """Build the bounded user-role prompt for one mission advancement tick."""
 
@@ -792,6 +969,60 @@ def _print_json(data: Any) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+def _print_inbox(items: list[dict[str, Any]]) -> None:
+    if not items:
+        print("No open mission decisions.")
+        return
+    print("Open Mission Decisions")
+    print("")
+    for index, item in enumerate(items, start=1):
+        decision = item["decision"]
+        print(f"{index}. {item['mission_id']}  {item['mission_status']}  stage={item['stage']}")
+        print(f"   Direction: {_truncate(item['direction'], 96)}")
+        print(f"   Decision: {decision['question']}")
+        if decision.get("options"):
+            print("   Options:")
+            for opt_index, option in enumerate(decision["options"], start=1):
+                print(f"     {opt_index}. {option}")
+        if decision.get("recommended_option"):
+            print(f"   Recommended: {decision['recommended_option']}")
+        print("   Decide:")
+        print(f"     {item['decide_command']}")
+        print("")
+
+
+def _print_board(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        print("No missions found.")
+        return
+    print("Mission Board")
+    print("")
+    print(f"{'ID':<28} {'Status':<17} {'Ticks':<9} {'Cron':<5} {'User':<5} Next")
+    for row in rows:
+        ticks = f"{row['ticks_used']}/{row['ticks_max']}"
+        cron = "yes" if row["cron_installed"] else "no"
+        user = "yes" if row["needs_user"] else "no"
+        print(f"{row['mission_id']:<28} {row['status']:<17} {ticks:<9} {cron:<5} {user:<5} {row['next_step']}")
+        print(f"  {_truncate(row['direction'], 110)}")
+
+
+def _print_doctor(result: dict[str, Any]) -> None:
+    mission = result["mission"]
+    print(f"Mission Doctor: {mission['mission_id']}")
+    print("")
+    for check in result["checks"]:
+        marker = "ok" if check["status"] == "ok" else "warn"
+        print(f"[{marker}] {check['name']}: {check['detail']}")
+    if result.get("cron_jobs"):
+        print("")
+        print("Cron jobs:")
+        for job in result["cron_jobs"]:
+            print(f"- {job.get('id')} {job.get('state')} next={job.get('next_run_at')} script={job.get('script')}")
+    print("")
+    print("Next step:")
+    print(f"  {result['next_step']}")
+
+
 def cmd_mission(args: argparse.Namespace) -> int:
     store = MissionStore(getattr(args, "db", None))
     command = getattr(args, "mission_command", None)
@@ -834,6 +1065,27 @@ def cmd_mission(args: argparse.Namespace) -> int:
                         continue
                     print(f"{m['mission_id']}\t{m['status']}\t{m['stage']}\t{m['cadence']}\t{m['direction'][:80]}")
             return 0
+        if command == "inbox":
+            items = store.inbox(include_done=bool(args.all))
+            if args.json:
+                _print_json(items)
+            else:
+                _print_inbox(items)
+            return 0
+        if command == "board":
+            rows = store.board(include_done=bool(args.all))
+            if args.json:
+                _print_json(rows)
+            else:
+                _print_board(rows)
+            return 0
+        if command == "doctor":
+            result = store.doctor(args.mission_id)
+            if args.json:
+                _print_json(result)
+            else:
+                _print_doctor(result)
+            return 0
         if command == "status":
             mission = store.get_mission(args.mission_id)
             if not mission:
@@ -867,6 +1119,8 @@ def cmd_mission(args: argparse.Namespace) -> int:
                 _print_json(decision_to_dict(decision))
             else:
                 print(f"Decision requested: {decision.decision_id}")
+                for line in render_decision_block(decision):
+                    print(line)
             return 0
         if command == "handoff":
             decision = store.request_decision(args.mission_id, args.question, args.option or [], args.recommend or "")
@@ -875,6 +1129,9 @@ def cmd_mission(args: argparse.Namespace) -> int:
             else:
                 print(f"Human intervention required: {decision.decision_id}")
                 print(f"Mission {decision.mission_id} is blocked_on_human until answered.")
+                print("")
+                for line in render_decision_block(decision):
+                    print(line)
             return 0
         if command == "stage-report":
             event = store.append_stage_report(

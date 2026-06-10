@@ -5,7 +5,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hermes_cli.missions import MissionBudget, MissionStore, install_mission_tick_script, mission_tick_script_name
+from hermes_cli.missions import (
+    MissionBudget,
+    MissionStore,
+    install_mission_tick_script,
+    mission_tick_script_name,
+    render_decision_next_command,
+)
 
 
 def test_mission_cron_script_emits_prompt_and_consumes_budget(tmp_path: Path) -> None:
@@ -129,3 +135,42 @@ def test_stage_report_and_handoff_are_durable_ledger_gates(tmp_path: Path) -> No
     tick = store.tick(mission.mission_id, dry_run=False)
     assert tick["status"] == "blocked_on_human"
     assert tick["prompt"] == ""
+
+
+def test_mission_inbox_board_and_doctor_surface_next_actions(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    store = MissionStore(tmp_path / "missions.db")
+    active = store.create_mission(
+        direction="Active long direction for board",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=5),
+        enable=True,
+    )
+    blocked = store.create_mission(
+        direction="Blocked long direction for inbox",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=5),
+        enable=True,
+    )
+    decision = store.request_decision(
+        blocked.mission_id,
+        "Choose route?",
+        ["A", "B"],
+        "A",
+    )
+
+    inbox = store.inbox()
+    assert len(inbox) == 1
+    assert inbox[0]["mission_id"] == blocked.mission_id
+    assert inbox[0]["decide_command"] == render_decision_next_command(decision)
+
+    board = {row["mission_id"]: row for row in store.board()}
+    assert board[blocked.mission_id]["needs_user"] is True
+    assert board[blocked.mission_id]["open_decision_id"] == decision.decision_id
+    assert board[active.mission_id]["next_step"] == f"hermes mission install-cron {active.mission_id}"
+
+    doctor = store.doctor(active.mission_id)
+    assert doctor["next_step"] == f"hermes mission install-cron {active.mission_id}"
+    assert any(check["name"] == "tick script" and check["status"] == "warn" for check in doctor["checks"])
