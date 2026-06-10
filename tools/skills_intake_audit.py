@@ -560,22 +560,26 @@ def _repo_evidence_for_bundle(
                 "updated_at": repo_data.get("updated_at"),
                 "pushed_at": repo_data.get("pushed_at"),
             },
+            "skill_blobs": {},
         }
         if github_source is not None:
             tree = github_source._get_repo_tree(repo)
             if tree is not None:
                 _default_branch, entries = tree
-                skill_md_path = f"{skill_path}/SKILL.md"
                 for entry in entries:
-                    if entry.get("type") == "blob" and entry.get("path") == skill_md_path:
-                        cached["skill_blob"] = {
-                            "path": skill_md_path,
-                            "sha": entry.get("sha"),
-                            "url": entry.get("url"),
-                        }
-                        break
+                    if entry.get("type") != "blob":
+                        continue
+                    entry_path = entry.get("path")
+                    if not isinstance(entry_path, str) or not entry_path.endswith("/SKILL.md"):
+                        continue
+                    cached["skill_blobs"][entry_path] = {
+                        "path": entry_path,
+                        "sha": entry.get("sha"),
+                        "url": entry.get("url"),
+                    }
         repo_cache[repo] = cached
 
+    skill_md_path = f"{skill_path}/SKILL.md"
     return {
         "repo": repo,
         "path": skill_path,
@@ -585,7 +589,7 @@ def _repo_evidence_for_bundle(
         "head_commit": cached.get("head_commit"),
         "license": cached.get("license"),
         "repo_activity": cached.get("repo_activity"),
-        "skill_blob": cached.get("skill_blob"),
+        "skill_blob": (cached.get("skill_blobs") or {}).get(skill_md_path),
     }
 
 

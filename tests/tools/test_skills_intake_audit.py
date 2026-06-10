@@ -206,6 +206,11 @@ Use safely.
         "compatible-skill": 100,
         "review-skill": 90,
     }
+    skill_blobs = {skill["name"]: skill["source_evidence"]["skill_blob"]["path"] for skill in result["skills"]}
+    assert skill_blobs == {
+        "compatible-skill": "compatible-skill/SKILL.md",
+        "review-skill": "review-skill/SKILL.md",
+    }
 
 
 def test_audit_candidates_limits_direct_urls_to_url_source(monkeypatch):
