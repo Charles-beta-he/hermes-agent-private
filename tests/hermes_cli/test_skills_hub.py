@@ -6,7 +6,15 @@ import pytest
 from rich.console import Console
 
 from cli import ChatConsole
-from hermes_cli.skills_hub import do_check, do_install, do_intake, do_list, do_update, handle_skills_slash
+from hermes_cli.skills_hub import (
+    do_check,
+    do_install,
+    do_intake,
+    do_list,
+    do_stage_candidate,
+    do_update,
+    handle_skills_slash,
+)
 
 
 class _DummyLockFile:
@@ -827,3 +835,31 @@ def test_do_intake_writes_output_artifact(monkeypatch, tmp_path):
     assert out == report
     assert json.loads(output.read_text()) == report
     assert "Wrote intake proof artifact" in sink.getvalue()
+
+
+def test_do_stage_candidate_writes_review_only_artifact(tmp_path):
+    base = tmp_path / "base" / "SKILL.md"
+    candidate = tmp_path / "candidate" / "SKILL.md"
+    base.parent.mkdir(parents=True)
+    candidate.parent.mkdir(parents=True)
+    base.write_text("---\nname: release\ndescription: Use when checking release notes with evidence.\n---\n\nOld\n", encoding="utf-8")
+    candidate.write_text("---\nname: release\ndescription: Use when checking release notes with evidence.\n---\n\nNew\n", encoding="utf-8")
+    output = tmp_path / "stage" / "release.json"
+    sink = StringIO()
+    console = Console(file=sink, force_terminal=False, color_system=None)
+
+    report = do_stage_candidate(
+        base_skill=str(base),
+        candidate_skill=str(candidate),
+        evidence=["artifact:/tmp/proof.json"],
+        verification=["pytest tests/tools/test_skill_candidate_staging.py"],
+        rollback=["discard staged artifact"],
+        output=str(output),
+        console=console,
+    )
+
+    assert report["schema_version"] == "hermes_skill_candidate_staging_v1"
+    assert report["status"] == "staged"
+    assert report["apply_policy"] == "review_only_no_direct_apply"
+    assert json.loads(output.read_text())["status"] == "staged"
+    assert "Skill candidate staged" in sink.getvalue()

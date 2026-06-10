@@ -833,6 +833,39 @@ def do_intake(
     return report
 
 
+def do_stage_candidate(
+    *,
+    base_skill: str,
+    candidate_skill: str,
+    evidence: list[str],
+    verification: list[str],
+    rollback: list[str],
+    output: str,
+    console: Optional[Console] = None,
+    as_json: bool = False,
+) -> dict[str, Any]:
+    """Generate a review-only skill candidate staging artifact."""
+    from tools.skill_candidate_staging import stage_skill_candidate
+
+    c = console or _console
+    report = stage_skill_candidate(
+        base_skill=base_skill,
+        candidate_skill=candidate_skill,
+        evidence=evidence,
+        verification=verification,
+        rollback=rollback,
+        output=output,
+    )
+    if as_json:
+        c.print_json(data=report)
+    else:
+        status_style = "green" if report.get("status") == "staged" else "yellow"
+        c.print(f"[{status_style}]Skill candidate {report.get('status')}:[/] {report.get('artifact_path', output)}")
+        if report.get("rejection_reasons"):
+            c.print("Reasons: " + ", ".join(report["rejection_reasons"]))
+    return report
+
+
 def browse_skills(page: int = 1, page_size: int = 20, source: str = "all") -> dict:
     """Paginated hub browse for programmatic callers (e.g. TUI gateway).
 
@@ -1668,6 +1701,16 @@ def skills_command(args) -> None:
             max_skills_per_repo=getattr(args, "max_skills_per_repo", 5),
             as_json=getattr(args, "json", False),
             output=getattr(args, "output", None),
+        )
+    elif action == "stage-candidate":
+        do_stage_candidate(
+            base_skill=args.base_skill,
+            candidate_skill=args.candidate_skill,
+            evidence=getattr(args, "evidence", []),
+            verification=getattr(args, "verification", []),
+            rollback=getattr(args, "rollback", []),
+            output=args.output,
+            as_json=getattr(args, "json", False),
         )
     elif action == "list":
         do_list(

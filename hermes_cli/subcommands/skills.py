@@ -125,6 +125,22 @@ def build_skills_parser(subparsers, *, cmd_skills: Callable) -> None:
         help="Write the deterministic JSON report to PATH as a proof artifact",
     )
 
+    skills_stage = skills_subparsers.add_parser(
+        "stage-candidate",
+        help="Generate a review-only skill patch candidate artifact",
+        description=(
+            "Create a Hermes-native staged skill candidate JSON containing evidence, diff, "
+            "verification, rollback, and deterministic checks. Does not apply the patch."
+        ),
+    )
+    skills_stage.add_argument("--base-skill", required=True, help="Installed/base SKILL.md path for diff context")
+    skills_stage.add_argument("--candidate-skill", required=True, help="Proposed candidate SKILL.md path")
+    skills_stage.add_argument("--evidence", action="append", default=[], help="Evidence ref; repeat for multiple refs")
+    skills_stage.add_argument("--verification", action="append", default=[], help="Verification command/check; repeat for multiple checks")
+    skills_stage.add_argument("--rollback", action="append", default=[], help="Rollback instruction; repeat for multiple steps")
+    skills_stage.add_argument("--output", required=True, help="Write the staging artifact JSON to PATH")
+    skills_stage.add_argument("--json", action="store_true", help="Output the full staging JSON report")
+
     skills_list = skills_subparsers.add_parser("list", help="List installed skills")
     skills_list.add_argument(
         "--source", default="all", choices=["all", "hub", "builtin", "local"]
