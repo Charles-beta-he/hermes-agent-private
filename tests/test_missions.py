@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from hermes_cli.missions import MissionBudget, MissionStore, install_mission_tick_script, mission_tick_script_name
+
+
+def test_mission_cron_script_emits_prompt_and_consumes_budget(tmp_path: Path) -> None:
+    db = tmp_path / "missions.db"
+    scripts = tmp_path / "scripts"
+    store = MissionStore(db)
+    mission = store.create_mission(
+        direction="持续推进一个高抽象方向",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=1, max_turns_per_tick=3),
+        success_criteria=["输出证据化阶段报告"],
+        enable=True,
+    )
+    script = install_mission_tick_script(mission.mission_id, scripts_dir=scripts)
+    assert script.name == mission_tick_script_name(mission.mission_id)
+    assert script.exists()
+
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(tmp_path),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**__import__("os").environ, "HERMES_HOME": str(tmp_path)},
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "[Hermes Mission Tick]" in result.stdout
+    assert mission.mission_id in result.stdout
+
+    exhausted = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(tmp_path),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**__import__("os").environ, "HERMES_HOME": str(tmp_path)},
+        timeout=30,
+    )
+    assert exhausted.returncode == 0, exhausted.stderr
+    assert "budget exhausted" in exhausted.stdout.lower()
+
+
+def test_install_cron_creates_agent_job_with_dynamic_tick_script(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    # Import after HERMES_HOME is set because cron.jobs stores its home at import time.
+    import cron.jobs as cron_jobs
+
+    monkeypatch.setattr(cron_jobs, "HERMES_DIR", tmp_path)
+    monkeypatch.setattr(cron_jobs, "CRON_DIR", tmp_path / "cron")
+    monkeypatch.setattr(cron_jobs, "JOBS_FILE", tmp_path / "cron" / "jobs.json")
+    monkeypatch.setattr(cron_jobs, "OUTPUT_DIR", tmp_path / "cron" / "output")
+
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="Hermes 自进化长期方向",
+        cadence="every 2h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=5),
+        enable=True,
+    )
+
+    result = store.install_cron(
+        mission.mission_id,
+        schedule="every 3h",
+        deliver="local",
+        enabled_toolsets=["terminal", "file"],
+    )
+
+    script = Path(result["script"])
+    assert script.exists()
+    job = result["job"]
+    assert job["script"] == script.name
+    assert job["no_agent"] is False
+    assert job["schedule_display"] == "every 180m"
+    assert job["enabled_toolsets"] == ["terminal", "file"]
+    jobs = json.loads((tmp_path / "cron" / "jobs.json").read_text())
+    assert jobs["jobs"][0]["id"] == job["id"]
+    assert store.count_events(mission.mission_id, {"mission_cron_installed"}) == 1
+
+    blocked = store.install_cron
+    try:
+        blocked(mission.mission_id, profile="other")
+    except ValueError as exc:
+        assert "--profile" in str(exc)
+    else:
+        raise AssertionError("profile-specific install should fail closed until profile script home is supported")
+
+
+def test_stage_report_and_handoff_are_durable_ledger_gates(tmp_path: Path) -> None:
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="长期方向",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=3),
+        enable=True,
+    )
+
+    event = store.append_stage_report(
+        mission.mission_id,
+        summary="完成一轮真实验证",
+        evidence=["uv run pytest -q tests/test_missions.py => 2 passed"],
+        risks=["仍需端到端 cron runner 测试"],
+        next_step="补齐自动回写",
+    )
+    assert event["event_type"] == "stage_report"
+    assert store.count_events(mission.mission_id, {"stage_report"}) == 1
+
+    decision = store.request_decision(
+        mission.mission_id,
+        "是否允许安装默认本地 cron？",
+        ["允许", "暂不"],
+        "允许",
+    )
+    assert decision.status == "open"
+    current = store.get_mission(mission.mission_id)
+    assert current is not None
+    assert current.status == "blocked_on_human"
+    tick = store.tick(mission.mission_id, dry_run=False)
+    assert tick["status"] == "blocked_on_human"
+    assert tick["prompt"] == ""

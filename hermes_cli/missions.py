@@ -35,6 +35,7 @@ VALID_EVENT_TYPES = {
     "mission_cancelled",
     "mission_completed",
     "mission_failed",
+    "mission_cron_installed",
     "tick_dry_run",
     "tick_prompt_created",
     "stage_report",
@@ -121,6 +122,74 @@ def _mission_db_path(path: str | Path | None = None) -> Path:
         return Path(get_hermes_home()).expanduser() / "missions.db"
     except Exception:
         return Path.home() / ".hermes" / "missions.db"
+
+
+def _hermes_home() -> Path:
+    try:
+        from hermes_constants import get_hermes_home
+
+        return Path(get_hermes_home()).expanduser()
+    except Exception:
+        return Path.home() / ".hermes"
+
+
+def mission_tick_script_name(mission_id: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in mission_id)
+    return f"mission_tick_{safe}.py"
+
+
+def render_mission_tick_script(mission_id: str) -> str:
+    """Return the per-mission cron data-collection script content."""
+
+    return f'''#!/usr/bin/env python3
+"""Generated Hermes mission tick script for {mission_id}."""
+from __future__ import annotations
+
+import json
+import sys
+
+from hermes_cli.missions import MissionStore
+
+MISSION_ID = {mission_id!r}
+
+
+def main() -> int:
+    store = MissionStore()
+    result = store.tick(MISSION_ID, dry_run=False)
+    status = result.get("status")
+    if status in {{"prompt_created", "dry_run"}} and result.get("prompt"):
+        print(result["prompt"])
+        return 0
+    if status == "blocked_on_human":
+        print("[Hermes Mission blocked on human decision]")
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if status == "budget_exhausted":
+        print("[Hermes Mission budget exhausted]")
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    # No actionable prompt. Empty stdout keeps agent cron quiet when configured
+    # as a watchdog; explicit status is kept in the mission ledger.
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
+def install_mission_tick_script(mission_id: str, *, scripts_dir: str | Path | None = None) -> Path:
+    """Install/update the per-mission cron script under HERMES_HOME/scripts."""
+
+    base = Path(scripts_dir).expanduser() if scripts_dir else _hermes_home() / "scripts"
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / mission_tick_script_name(mission_id)
+    path.write_text(render_mission_tick_script(mission_id), encoding="utf-8")
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+    return path
 
 
 class MissionStore:
@@ -451,6 +520,31 @@ class MissionStore:
             ).fetchall()
         return [self._row_to_decision(row) for row in rows]
 
+    def append_stage_report(
+        self,
+        mission_id: str,
+        *,
+        summary: str,
+        evidence: Iterable[str] = (),
+        risks: Iterable[str] = (),
+        next_step: str = "",
+        needs_user: bool = False,
+    ) -> dict[str, Any]:
+        mission = self.get_mission(mission_id)
+        if not mission:
+            raise KeyError(mission_id)
+        summary = summary.strip()
+        if not summary:
+            raise ValueError("stage report summary is required")
+        payload = {
+            "evidence": [str(x).strip() for x in evidence if str(x).strip()],
+            "risks": [str(x).strip() for x in risks if str(x).strip()],
+            "next_step": next_step.strip(),
+            "needs_user": bool(needs_user),
+        }
+        event = self.append_event(mission_id, "stage_report", summary, payload)
+        return event
+
     def tick(self, mission_id: str, *, dry_run: bool = True) -> dict[str, Any]:
         mission = self.get_mission(mission_id)
         if not mission:
@@ -491,6 +585,59 @@ class MissionStore:
                 (mission_id, int(limit)),
             ).fetchall()
         return [self._row_to_decision(row) for row in rows]
+
+    def install_cron(
+        self,
+        mission_id: str,
+        *,
+        schedule: str | None = None,
+        deliver: str | None = None,
+        name: str | None = None,
+        profile: str | None = None,
+        enabled_toolsets: list[str] | None = None,
+        scripts_dir: str | Path | None = None,
+    ) -> dict[str, Any]:
+        """Install a recurring agent cron job that advances this mission.
+
+        The cron job is agent-based: a per-mission script emits the current tick
+        prompt at runtime, and the scheduler injects that prompt into the normal
+        Hermes agent.  The script only creates ledger events and never performs
+        external side effects itself.
+        """
+
+        mission = self.get_mission(mission_id)
+        if not mission:
+            raise KeyError(mission_id)
+        if profile:
+            raise ValueError("mission install-cron --profile is not supported yet; install from the target profile session so the script and job share one HERMES_HOME")
+        script_path = install_mission_tick_script(mission_id, scripts_dir=scripts_dir)
+        script_name = script_path.name
+        try:
+            from cron.jobs import create_job
+        except Exception as exc:  # pragma: no cover - import failure is environment-specific
+            raise RuntimeError(f"cron job support unavailable: {exc}") from exc
+        prompt = (
+            "Advance the Hermes Mission using the mission tick prompt provided by the pre-run script. "
+            "Respect all mission blocked actions, evidence requirements, budget boundaries, and human-intervention rules. "
+            "If the script reports blocked_on_human or budget_exhausted, do not continue work; summarize the blocker and required user decision."
+        )
+        job = create_job(
+            prompt=prompt,
+            schedule=schedule or mission.cadence,
+            name=name or f"Mission {mission_id}",
+            deliver=deliver or mission.deliver,
+            script=script_name,
+            no_agent=False,
+            enabled_toolsets=enabled_toolsets,
+            profile=profile,
+        )
+        self.append_event(
+            mission_id,
+            "mission_cron_installed",
+            f"cron job installed: {job.get('id')}",
+            {"job_id": job.get("id"), "script": script_name, "schedule": schedule or mission.cadence, "deliver": deliver or mission.deliver},
+        )
+        return {"job": job, "script": str(script_path)}
 
     def report(self, mission_id: str, limit: int = 20) -> str:
         mission = self.get_mission(mission_id)
@@ -633,7 +780,11 @@ Rules:
 1. Prefer read-only discovery, local drafts, tests, and evidence collection.
 2. If the next step requires a value judgment, permission escalation, external side effect, destructive action, or evidence you cannot obtain, stop and output a Human Intervention Packet with 2-4 options and a recommendation.
 3. Do not claim completion without real evidence. Distinguish completed, verified, drafted, blocked, and assumed.
-4. End with a stage report: progress, evidence, risks, next step, and whether user input is needed.
+4. Before ending a successful or partially successful tick, write a durable mission stage report with:
+   hermes mission stage-report {mission.mission_id} --summary "<what changed>" --evidence "<real proof path/command/result>" --risk "<risk if any>" --next-step "<next bounded step>"
+5. If user input is needed, create the durable decision gate instead of only describing it:
+   hermes mission handoff {mission.mission_id} --question "<decision needed>" --option "<option A>" --option "<option B>" --recommend "<recommended option>"
+6. End with a concise stage report: progress, evidence, risks, next step, and whether user input is needed.
 """.strip()
 
 
@@ -717,6 +868,28 @@ def cmd_mission(args: argparse.Namespace) -> int:
             else:
                 print(f"Decision requested: {decision.decision_id}")
             return 0
+        if command == "handoff":
+            decision = store.request_decision(args.mission_id, args.question, args.option or [], args.recommend or "")
+            if args.json:
+                _print_json(decision_to_dict(decision))
+            else:
+                print(f"Human intervention required: {decision.decision_id}")
+                print(f"Mission {decision.mission_id} is blocked_on_human until answered.")
+            return 0
+        if command == "stage-report":
+            event = store.append_stage_report(
+                args.mission_id,
+                summary=args.summary,
+                evidence=args.evidence or [],
+                risks=args.risk or [],
+                next_step=args.next_step or "",
+                needs_user=bool(args.needs_user),
+            )
+            if args.json:
+                _print_json(event)
+            else:
+                print(f"Stage report recorded: {event['event_id']}")
+            return 0
         if command == "decide":
             decision = store.answer_decision(args.decision_id, " ".join(args.answer))
             if args.json:
@@ -730,6 +903,24 @@ def cmd_mission(args: argparse.Namespace) -> int:
                 _print_json(result)
             else:
                 print(result.get("prompt") or json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if command == "install-cron":
+            result = store.install_cron(
+                args.mission_id,
+                schedule=args.schedule,
+                deliver=args.deliver,
+                name=args.name,
+                profile=args.profile,
+                enabled_toolsets=args.toolset,
+            )
+            if args.json:
+                _print_json(result)
+            else:
+                job = result["job"]
+                print(f"Installed mission cron job {job['id']}")
+                print(f"Script: {result['script']}")
+                print(f"Schedule: {job.get('schedule_display')}")
+                print(f"Deliver: {job.get('deliver')}")
             return 0
         if command == "report":
             report = store.report(args.mission_id, limit=args.limit)
