@@ -5,6 +5,10 @@ import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
 from agent import health_records
 from agent.health_records import (
     ensure_health_schema,
@@ -91,3 +95,70 @@ def test_cron_and_browser_automation_write_health_records(tmp_path, monkeypatch)
     assert by_key[("browser_automation", "browser_click")]["status"] == "degraded"
     assert by_key[("browser_automation", "browser_click")]["failure_rate"] == 1.0
     assert summary["schema"] == "hermes_health_records_v1"
+
+
+@pytest.mark.asyncio
+async def test_api_health_summary_route_returns_latest_records(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    record_health_observation(
+        chain_type="cron",
+        target_id="job-ok",
+        target_label="Daily OK",
+        status="success",
+        success=True,
+    )
+    record_health_observation(
+        chain_type="browser_automation",
+        target_id="browser_click",
+        target_label="Browser Click",
+        status="degraded",
+        success=False,
+        error_message="timeout",
+    )
+
+    from gateway.config import PlatformConfig
+    from gateway.platforms.api_server import APIServerAdapter, cors_middleware
+
+    adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={}))
+    app = web.Application(middlewares=[cors_middleware])
+    app.router.add_get("/health/summary", adapter._handle_health_summary)
+
+    async with TestClient(TestServer(app)) as cli:
+        resp = await cli.get("/health/summary?limit=10")
+        assert resp.status == 200
+        payload = await resp.json()
+
+    assert payload["schema"] == "hermes_health_records_v1"
+    assert payload["status"] == "degraded"
+    assert payload["record_count"] == 2
+    assert {(r["chain_type"], r["target_id"], r["status"]) for r in payload["records"]} == {
+        ("cron", "job-ok", "success"),
+        ("browser_automation", "browser_click", "degraded"),
+    }
+
+
+def test_selfcheck_health_cli_reads_same_table(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    record_health_observation(
+        chain_type="cron",
+        target_id="job-ok",
+        status="success",
+        success=True,
+    )
+    record_health_observation(
+        chain_type="browser_automation",
+        target_id="browser_click",
+        status="degraded",
+        success=False,
+        error_message="timeout",
+    )
+
+    from hermes_cli.main import cmd_selfcheck
+
+    rc = cmd_selfcheck(SimpleNamespace(selfcheck_command="health", json=True, chain_type=None, limit=10))
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert payload["schema"] == "hermes_health_records_v1"
+    assert payload["status"] == "degraded"
+    assert {r["chain_type"] for r in payload["records"]} == {"cron", "browser_automation"}
