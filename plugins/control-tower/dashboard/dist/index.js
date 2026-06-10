@@ -73,6 +73,12 @@
         </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
+      <section class="control-tower-card control-tower-missions-card">
+        <p class="control-tower-eyebrow">Mission control</p>
+        <h2>High-level directions</h2>
+        <p>Tracks active long-running Missions, open human decisions, cron readiness, and the next operator action.</p>
+        <div id="control-tower-missions">Loading missions…</div>
+      </section>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
     </section>
   `;
@@ -82,7 +88,51 @@
 
   const snapshotEl = document.getElementById('control-tower-snapshot');
   const summaryEl = document.getElementById('control-tower-summary');
+  const missionsEl = document.getElementById('control-tower-missions');
   let latestSnapshot = null;
+
+  const authFetch = (url, options) => {
+    const sdk = window.__HERMES_PLUGIN_SDK__;
+    if (sdk?.authedFetch) return sdk.authedFetch(url, options);
+    const headers = new Headers(options?.headers || {});
+    const token = window.__HERMES_SESSION_TOKEN__;
+    if (token && !headers.has('X-Hermes-Session-Token')) headers.set('X-Hermes-Session-Token', token);
+    return window.fetch(url, { ...options, headers, credentials: options?.credentials || 'include' });
+  };
+
+  const renderMissions = (data) => {
+    if (!missionsEl) return;
+    const board = data?.board || [];
+    const inbox = data?.inbox || [];
+    if (!board.length && !inbox.length) {
+      missionsEl.innerHTML = '<p>No active Missions yet.</p>';
+      return;
+    }
+    const rows = board.map((m) => `
+      <tr>
+        <td><code>${m.mission_id}</code></td>
+        <td>${m.status}</td>
+        <td>${m.ticks_used}/${m.ticks_max ?? '∞'}</td>
+        <td>${m.cron_installed ? 'yes' : 'no'}</td>
+        <td>${m.needs_user ? 'yes' : 'no'}</td>
+        <td><code>${m.next_step}</code></td>
+      </tr>
+      <tr class="control-tower-mission-direction"><td colspan="6">${m.direction}</td></tr>
+    `).join('');
+    const decisions = inbox.map((item) => {
+      const d = item.decision;
+      const options = (d.options || []).map((option) => `<li>${option}</li>`).join('');
+      return `<li><strong>${d.question}</strong><ul>${options}</ul><p>Recommended: ${d.recommended_option || '—'}</p><code>${item.decide_command}</code></li>`;
+    }).join('');
+    missionsEl.innerHTML = `
+      <p><strong>${board.length}</strong> mission(s), <strong>${inbox.length}</strong> open decision(s).</p>
+      <table class="control-tower-missions-table">
+        <thead><tr><th>ID</th><th>Status</th><th>Ticks</th><th>Cron</th><th>User</th><th>Next</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${inbox.length ? `<h3>Needs your decision</h3><ul>${decisions}</ul>` : '<p>No open human decisions.</p>'}
+    `;
+  };
 
   const renderSummary = (data) => {
     const pending = data?.human_inbox?.pending_count ?? 0;
@@ -157,9 +207,20 @@
     }
   };
 
+  const loadMissions = () => {
+    if (missionsEl) missionsEl.textContent = 'Loading missions…';
+    authFetch('/api/plugins/control-tower/missions')
+      .then((response) => response.json())
+      .then((data) => renderMissions(data))
+      .catch((error) => {
+        if (missionsEl) missionsEl.textContent = `Mission load failed: ${error}`;
+      });
+  };
+
   const loadSnapshot = () => {
     if (snapshotEl) snapshotEl.textContent = 'Loading snapshot…';
-    fetch('/api/plugins/control-tower/snapshot')
+    loadMissions();
+    authFetch('/api/plugins/control-tower/snapshot')
       .then((response) => response.json())
       .then((data) => {
         latestSnapshot = data;
@@ -172,7 +233,7 @@
   };
 
   const proposeRefresh = () => {
-    fetch('/api/plugins/control-tower/commands/propose', {
+    authFetch('/api/plugins/control-tower/commands/propose', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -199,7 +260,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No pending approval to decide.';
       return;
     }
-    fetch(`/api/plugins/control-tower/approvals/${encodeURIComponent(approval.approval_id)}/decision`, {
+    authFetch(`/api/plugins/control-tower/approvals/${encodeURIComponent(approval.approval_id)}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -222,7 +283,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No proposed command to plan.';
       return;
     }
-    fetch(`/api/plugins/control-tower/commands/${encodeURIComponent(command.command_id)}/executor-plan`, {
+    authFetch(`/api/plugins/control-tower/commands/${encodeURIComponent(command.command_id)}/executor-plan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -246,7 +307,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No executor plan to review.';
       return;
     }
-    fetch(`/api/plugins/control-tower/executor-plans/${encodeURIComponent(plan.plan_id)}/policy-review`, {
+    authFetch(`/api/plugins/control-tower/executor-plans/${encodeURIComponent(plan.plan_id)}/policy-review`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -270,7 +331,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No read-only eligible policy review to execute.';
       return;
     }
-    fetch(`/api/plugins/control-tower/executor-plans/${encodeURIComponent(review.plan_id)}/execute-read-only`, {
+    authFetch(`/api/plugins/control-tower/executor-plans/${encodeURIComponent(review.plan_id)}/execute-read-only`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -289,7 +350,7 @@
   };
 
   const recordSampleEvidence = () => {
-    fetch('/api/plugins/control-tower/evidence', {
+    authFetch('/api/plugins/control-tower/evidence', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -314,7 +375,7 @@
   };
 
   const evaluateEvidenceGate = () => {
-    fetch('/api/plugins/control-tower/evidence-gates/evaluate', {
+    authFetch('/api/plugins/control-tower/evidence-gates/evaluate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -343,7 +404,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No satisfied evidence gate review to authorize.';
       return;
     }
-    fetch(`/api/plugins/control-tower/evidence-gates/${encodeURIComponent(review.evidence_review_id)}/closeout-authorization`, {
+    authFetch(`/api/plugins/control-tower/evidence-gates/${encodeURIComponent(review.evidence_review_id)}/closeout-authorization`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -369,7 +430,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No pending closeout authorization to approve.';
       return;
     }
-    fetch(`/api/plugins/control-tower/closeout-authorizations/${encodeURIComponent(authorization.closeout_authorization_id)}/decision`, {
+    authFetch(`/api/plugins/control-tower/closeout-authorizations/${encodeURIComponent(authorization.closeout_authorization_id)}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -398,7 +459,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No approved closeout authorization to execute.';
       return;
     }
-    fetch(`/api/plugins/control-tower/closeout-authorizations/${encodeURIComponent(authorization.closeout_authorization_id)}/execute`, {
+    authFetch(`/api/plugins/control-tower/closeout-authorizations/${encodeURIComponent(authorization.closeout_authorization_id)}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -431,7 +492,7 @@
       if (snapshotEl) snapshotEl.textContent = `Closeout run ${run.closeout_execution_id} has no safe taskpool external_ref.`;
       return;
     }
-    fetch(`/api/plugins/control-tower/closeout-executions/${encodeURIComponent(run.closeout_execution_id)}/external-write-intent`, {
+    authFetch(`/api/plugins/control-tower/closeout-executions/${encodeURIComponent(run.closeout_execution_id)}/external-write-intent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -461,7 +522,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No external write intent to review.';
       return;
     }
-    fetch(`/api/plugins/control-tower/external-write-intents/${encodeURIComponent(intent.external_write_intent_id)}/review`, {
+    authFetch(`/api/plugins/control-tower/external-write-intents/${encodeURIComponent(intent.external_write_intent_id)}/review`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -489,7 +550,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No external write review to authorize.';
       return;
     }
-    fetch(`/api/plugins/control-tower/external-write-reviews/${encodeURIComponent(review.external_write_review_id)}/authorization`, {
+    authFetch(`/api/plugins/control-tower/external-write-reviews/${encodeURIComponent(review.external_write_review_id)}/authorization`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -517,7 +578,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No external write authorization to approve.';
       return;
     }
-    fetch(`/api/plugins/control-tower/external-write-authorizations/${encodeURIComponent(authorization.external_write_authorization_id)}/decision`, {
+    authFetch(`/api/plugins/control-tower/external-write-authorizations/${encodeURIComponent(authorization.external_write_authorization_id)}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -546,7 +607,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No approved external write authorization to preflight.';
       return;
     }
-    fetch(`/api/plugins/control-tower/external-write-authorizations/${encodeURIComponent(authorization.external_write_authorization_id)}/execution-preflight`, {
+    authFetch(`/api/plugins/control-tower/external-write-authorizations/${encodeURIComponent(authorization.external_write_authorization_id)}/execution-preflight`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -575,7 +636,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No approved adapter external write preflight to execute.';
       return;
     }
-    fetch(`/api/plugins/control-tower/external-write-preflights/${encodeURIComponent(preflight.external_write_preflight_id)}/execute`, {
+    authFetch(`/api/plugins/control-tower/external-write-preflights/${encodeURIComponent(preflight.external_write_preflight_id)}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -606,7 +667,7 @@
       if (snapshotEl) snapshotEl.textContent = 'No digest-bound adapter external write run to rollback.';
       return;
     }
-    fetch(`/api/plugins/control-tower/external-write-runs/${encodeURIComponent(run.external_write_execution_id)}/rollback`, {
+    authFetch(`/api/plugins/control-tower/external-write-runs/${encodeURIComponent(run.external_write_execution_id)}/rollback`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -683,4 +744,8 @@
     .getElementById('control-tower-rollback-external-write')
     ?.addEventListener('click', rollbackFirstExternalWriteRun);
   loadSnapshot();
+
+  if (window.__HERMES_PLUGINS__) {
+    window.__HERMES_PLUGINS__.register('control-tower', () => null);
+  }
 })();

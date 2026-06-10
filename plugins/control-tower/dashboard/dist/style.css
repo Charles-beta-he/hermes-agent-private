@@ -64,3 +64,33 @@
   border-radius: 12px;
   background: color-mix(in srgb, CanvasText 8%, transparent);
 }
+
+.control-tower-missions-card {
+  margin-top: 18px;
+}
+
+.control-tower-missions-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.control-tower-missions-table th,
+.control-tower-missions-table td {
+  border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.control-tower-mission-direction td {
+  opacity: 0.74;
+  font-size: 12px;
+  padding-top: 2px;
+}
+
+.control-tower-missions-card code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

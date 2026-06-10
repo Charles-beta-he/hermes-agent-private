@@ -16,6 +16,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from hermes_cli import control_tower
+from hermes_cli.missions import MissionStore
 
 router = APIRouter()
 
@@ -150,6 +151,16 @@ class ExternalAdapterWriteExecutionRequest(BaseModel):
 def get_snapshot():
     """Return the read-only Control Tower Phase 1 snapshot."""
     return control_tower.build_snapshot()
+
+
+@router.get("/missions")
+def get_missions():
+    """Return Mission control-plane projections for the dashboard."""
+    store = MissionStore()
+    return {
+        "board": store.board(),
+        "inbox": store.inbox(),
+    }
 
 
 @router.post("/commands/propose")
