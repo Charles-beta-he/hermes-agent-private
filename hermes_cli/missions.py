@@ -1,0 +1,742 @@
+"""Mission control-plane primitives for long-running Hermes directions.
+
+A Mission is a durable, default-off objective contract for high-level user
+directions.  It does not execute arbitrary agent work by itself.  Instead it
+records direction, budgets, stage cadence, decision requests, and evidence/event
+history, then produces bounded prompts that a scheduler or human can hand to the
+normal Hermes agent loop.
+
+Design invariants:
+- default-off: newly-created missions are paused unless explicitly enabled;
+- evidence-first: progress is append-only mission_events, not chat memory;
+- human gate: unresolved decision requests block ticks;
+- bounded autonomy: every mission must carry an explicit budget boundary;
+- no external side effects here: this module only mutates the local mission DB.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sqlite3
+import time
+import uuid
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Iterable
+
+VALID_MISSION_STATUSES = {"active", "paused", "blocked_on_human", "done", "failed", "cancelled"}
+ACTIVE_MISSION_STATUSES = {"active", "blocked_on_human"}
+VALID_EVENT_TYPES = {
+    "mission_created",
+    "mission_enabled",
+    "mission_paused",
+    "mission_resumed",
+    "mission_cancelled",
+    "mission_completed",
+    "mission_failed",
+    "tick_dry_run",
+    "tick_prompt_created",
+    "stage_report",
+    "decision_requested",
+    "decision_recorded",
+    "budget_exhausted",
+}
+
+
+@dataclass
+class MissionBudget:
+    """Hard budget boundary for a long-running mission."""
+
+    max_ticks: int | None = None
+    max_turns_per_tick: int | None = None
+    max_total_usd: float | None = None
+
+    def validate(self) -> None:
+        if self.max_ticks is None:
+            raise ValueError("mission budget requires --max-ticks as an enforceable tick boundary")
+        if self.max_ticks <= 0:
+            raise ValueError("--max-ticks must be > 0")
+        if self.max_turns_per_tick is not None and self.max_turns_per_tick <= 0:
+            raise ValueError("--max-turns-per-tick must be > 0")
+        if self.max_total_usd is not None and self.max_total_usd <= 0:
+            raise ValueError("--max-total-usd must be > 0")
+
+
+@dataclass
+class Mission:
+    mission_id: str
+    direction: str
+    status: str
+    cadence: str
+    deliver: str
+    budget: MissionBudget
+    stage: str = "intake"
+    constraints: list[str] = field(default_factory=list)
+    non_goals: list[str] = field(default_factory=list)
+    success_criteria: list[str] = field(default_factory=list)
+    allowed_actions: list[str] = field(default_factory=list)
+    blocked_actions: list[str] = field(default_factory=list)
+    plan_ref: str = ""
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+
+@dataclass
+class DecisionRequest:
+    decision_id: str
+    mission_id: str
+    question: str
+    options: list[str]
+    recommended_option: str = ""
+    status: str = "open"
+    answer: str = ""
+    created_at: float = 0.0
+    answered_at: float | None = None
+
+
+def _now() -> float:
+    return time.time()
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _json_loads(raw: str | None, default: Any) -> Any:
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except Exception:
+        return default
+
+
+def _mission_db_path(path: str | Path | None = None) -> Path:
+    if path:
+        return Path(path).expanduser()
+    try:
+        from hermes_constants import get_hermes_home
+
+        return Path(get_hermes_home()).expanduser() / "missions.db"
+    except Exception:
+        return Path.home() / ".hermes" / "missions.db"
+
+
+class MissionStore:
+    """SQLite-backed mission ledger."""
+
+    _TRANSITIONS = {
+        "paused": {"active", "cancelled", "done", "failed", "blocked_on_human"},
+        "active": {"paused", "blocked_on_human", "done", "failed", "cancelled"},
+        "blocked_on_human": {"active", "paused", "failed", "cancelled"},
+        "done": set(),
+        "failed": set(),
+        "cancelled": set(),
+    }
+
+    def __init__(self, path: str | Path | None = None):
+        self.path = _mission_db_path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.path))
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS missions (
+                    mission_id TEXT PRIMARY KEY,
+                    direction TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    cadence TEXT NOT NULL,
+                    deliver TEXT NOT NULL,
+                    budget_json TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    constraints_json TEXT NOT NULL,
+                    non_goals_json TEXT NOT NULL,
+                    success_criteria_json TEXT NOT NULL,
+                    allowed_actions_json TEXT NOT NULL,
+                    blocked_actions_json TEXT NOT NULL,
+                    plan_ref TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mission_events (
+                    event_id TEXT PRIMARY KEY,
+                    mission_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    payload_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    FOREIGN KEY(mission_id) REFERENCES missions(mission_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mission_decisions (
+                    decision_id TEXT PRIMARY KEY,
+                    mission_id TEXT NOT NULL,
+                    question TEXT NOT NULL,
+                    options_json TEXT NOT NULL,
+                    recommended_option TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    answer TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL,
+                    answered_at REAL,
+                    FOREIGN KEY(mission_id) REFERENCES missions(mission_id)
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mission_events_mission_time ON mission_events(mission_id, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mission_decisions_open ON mission_decisions(mission_id, status)")
+
+    def create_mission(
+        self,
+        *,
+        direction: str,
+        cadence: str,
+        deliver: str = "local",
+        budget: MissionBudget,
+        constraints: Iterable[str] = (),
+        non_goals: Iterable[str] = (),
+        success_criteria: Iterable[str] = (),
+        allowed_actions: Iterable[str] = (),
+        blocked_actions: Iterable[str] = (),
+        enable: bool = False,
+        mission_id: str | None = None,
+    ) -> Mission:
+        direction = direction.strip()
+        if not direction:
+            raise ValueError("mission direction is required")
+        if not cadence.strip():
+            raise ValueError("mission cadence is required")
+        budget.validate()
+        mission_id = mission_id or f"msn_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        now = _now()
+        status = "active" if enable else "paused"
+        blocked = list(blocked_actions) or default_blocked_actions()
+        mission = Mission(
+            mission_id=mission_id,
+            direction=direction,
+            status=status,
+            cadence=cadence.strip(),
+            deliver=deliver.strip() or "local",
+            budget=budget,
+            constraints=[str(x).strip() for x in constraints if str(x).strip()],
+            non_goals=[str(x).strip() for x in non_goals if str(x).strip()],
+            success_criteria=[str(x).strip() for x in success_criteria if str(x).strip()],
+            allowed_actions=[str(x).strip() for x in allowed_actions if str(x).strip()],
+            blocked_actions=blocked,
+            created_at=now,
+            updated_at=now,
+        )
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO missions (
+                    mission_id, direction, status, cadence, deliver, budget_json, stage,
+                    constraints_json, non_goals_json, success_criteria_json,
+                    allowed_actions_json, blocked_actions_json, plan_ref, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                self._mission_values(mission),
+            )
+        self.append_event(
+            mission_id,
+            "mission_created",
+            "mission created" + (" and enabled" if enable else " paused by default"),
+            {"default_off": not enable, "cadence": mission.cadence, "deliver": mission.deliver},
+        )
+        if enable:
+            self.append_event(mission_id, "mission_enabled", "mission explicitly enabled", {})
+        return self.get_mission(mission_id)  # type: ignore[return-value]
+
+    def _mission_values(self, mission: Mission) -> tuple[Any, ...]:
+        return (
+            mission.mission_id,
+            mission.direction,
+            mission.status,
+            mission.cadence,
+            mission.deliver,
+            _json_dumps(asdict(mission.budget)),
+            mission.stage,
+            _json_dumps(mission.constraints),
+            _json_dumps(mission.non_goals),
+            _json_dumps(mission.success_criteria),
+            _json_dumps(mission.allowed_actions),
+            _json_dumps(mission.blocked_actions),
+            mission.plan_ref,
+            mission.created_at,
+            mission.updated_at,
+        )
+
+    def get_mission(self, mission_id: str) -> Mission | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM missions WHERE mission_id = ?", (mission_id,)).fetchone()
+        return self._row_to_mission(row) if row else None
+
+    def list_missions(self, include_done: bool = False) -> list[Mission]:
+        if include_done:
+            query = "SELECT * FROM missions ORDER BY updated_at DESC"
+            params: tuple[Any, ...] = ()
+        else:
+            placeholders = ",".join("?" for _ in ACTIVE_MISSION_STATUSES | {"paused"})
+            query = f"SELECT * FROM missions WHERE status IN ({placeholders}) ORDER BY updated_at DESC"
+            params = tuple(sorted(ACTIVE_MISSION_STATUSES | {"paused"}))
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_mission(row) for row in rows]
+
+    def set_status(self, mission_id: str, status: str, reason: str = "") -> Mission:
+        if status not in VALID_MISSION_STATUSES:
+            raise ValueError(f"invalid mission status: {status}")
+        current = self.get_mission(mission_id)
+        if not current:
+            raise KeyError(mission_id)
+        if status != current.status and status not in self._TRANSITIONS.get(current.status, set()):
+            raise ValueError(f"illegal mission transition: {current.status} -> {status}")
+        now = _now()
+        with self._connect() as conn:
+            conn.execute("UPDATE missions SET status = ?, updated_at = ? WHERE mission_id = ?", (status, now, mission_id))
+        event_type = {
+            "active": "mission_resumed",
+            "paused": "mission_paused",
+            "cancelled": "mission_cancelled",
+            "done": "mission_completed",
+            "failed": "mission_failed",
+        }.get(status, "mission_paused")
+        self.append_event(mission_id, event_type, reason or f"status -> {status}", {"status": status})
+        return self.get_mission(mission_id)  # type: ignore[return-value]
+
+    def append_event(self, mission_id: str, event_type: str, summary: str = "", payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        if event_type not in VALID_EVENT_TYPES:
+            raise ValueError(f"invalid mission event type: {event_type}")
+        if not self.get_mission(mission_id):
+            raise KeyError(mission_id)
+        event = {
+            "event_id": f"evt_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+            "mission_id": mission_id,
+            "event_type": event_type,
+            "summary": summary,
+            "payload": payload or {},
+            "created_at": _now(),
+        }
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO mission_events (event_id, mission_id, event_type, summary, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (event["event_id"], mission_id, event_type, summary, _json_dumps(payload or {}), event["created_at"]),
+            )
+            conn.execute("UPDATE missions SET updated_at = ? WHERE mission_id = ?", (event["created_at"], mission_id))
+        return event
+
+    def list_events(self, mission_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM mission_events WHERE mission_id = ? ORDER BY created_at DESC LIMIT ?",
+                (mission_id, int(limit)),
+            ).fetchall()
+        events = []
+        for row in rows:
+            events.append(
+                {
+                    "event_id": row["event_id"],
+                    "mission_id": row["mission_id"],
+                    "event_type": row["event_type"],
+                    "summary": row["summary"],
+                    "payload": _json_loads(row["payload_json"], {}),
+                    "created_at": row["created_at"],
+                }
+            )
+        return events
+
+    def request_decision(
+        self,
+        mission_id: str,
+        question: str,
+        options: Iterable[str] = (),
+        recommended_option: str = "",
+    ) -> DecisionRequest:
+        current = self.get_mission(mission_id)
+        if not current:
+            raise KeyError(mission_id)
+        if "blocked_on_human" not in self._TRANSITIONS.get(current.status, set()) and current.status != "blocked_on_human":
+            raise ValueError(f"cannot request decision for mission in terminal state: {current.status}")
+        question = question.strip()
+        if not question:
+            raise ValueError("decision question is required")
+        now = _now()
+        decision = DecisionRequest(
+            decision_id=f"dec_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+            mission_id=mission_id,
+            question=question,
+            options=[str(x).strip() for x in options if str(x).strip()],
+            recommended_option=recommended_option.strip(),
+            created_at=now,
+        )
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO mission_decisions (decision_id, mission_id, question, options_json, recommended_option, status, answer, created_at, answered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    decision.decision_id,
+                    mission_id,
+                    decision.question,
+                    _json_dumps(decision.options),
+                    decision.recommended_option,
+                    decision.status,
+                    decision.answer,
+                    decision.created_at,
+                    decision.answered_at,
+                ),
+            )
+            conn.execute("UPDATE missions SET status = ?, updated_at = ? WHERE mission_id = ?", ("blocked_on_human", now, mission_id))
+        self.append_event(
+            mission_id,
+            "decision_requested",
+            question,
+            {"decision_id": decision.decision_id, "options": decision.options, "recommended_option": decision.recommended_option},
+        )
+        return decision
+
+    def answer_decision(self, decision_id: str, answer: str) -> DecisionRequest:
+        answer = answer.strip()
+        if not answer:
+            raise ValueError("decision answer is required")
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM mission_decisions WHERE decision_id = ?", (decision_id,)).fetchone()
+        if not row:
+            raise KeyError(decision_id)
+        if row["status"] != "open":
+            raise ValueError(f"decision is not open: {decision_id}")
+        mission = self.get_mission(row["mission_id"])
+        if not mission:
+            raise KeyError(row["mission_id"])
+        if mission.status in {"done", "failed", "cancelled"}:
+            raise ValueError(f"cannot answer decision for terminal mission: {mission.status}")
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE mission_decisions SET status = ?, answer = ?, answered_at = ? WHERE decision_id = ?",
+                ("answered", answer, now, decision_id),
+            )
+            remaining = conn.execute(
+                "SELECT COUNT(*) AS n FROM mission_decisions WHERE mission_id = ? AND status = 'open' AND decision_id != ?",
+                (row["mission_id"], decision_id),
+            ).fetchone()
+            remaining_open = int(remaining["n"] if remaining else 0)
+            next_status = "active" if mission.status == "blocked_on_human" and remaining_open == 0 else mission.status
+            conn.execute("UPDATE missions SET status = ?, updated_at = ? WHERE mission_id = ?", (next_status, now, row["mission_id"]))
+        self.append_event(row["mission_id"], "decision_recorded", answer, {"decision_id": decision_id})
+        return self.get_decision(decision_id)  # type: ignore[return-value]
+
+    def get_decision(self, decision_id: str) -> DecisionRequest | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM mission_decisions WHERE decision_id = ?", (decision_id,)).fetchone()
+        return self._row_to_decision(row) if row else None
+
+    def open_decisions(self, mission_id: str) -> list[DecisionRequest]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM mission_decisions WHERE mission_id = ? AND status = 'open' ORDER BY created_at ASC",
+                (mission_id,),
+            ).fetchall()
+        return [self._row_to_decision(row) for row in rows]
+
+    def tick(self, mission_id: str, *, dry_run: bool = True) -> dict[str, Any]:
+        mission = self.get_mission(mission_id)
+        if not mission:
+            raise KeyError(mission_id)
+        open_decisions = self.open_decisions(mission_id)
+        if open_decisions:
+            return {
+                "status": "blocked_on_human",
+                "mission": mission_to_dict(mission),
+                "open_decisions": [decision_to_dict(d) for d in open_decisions],
+                "prompt": "",
+            }
+        if mission.status != "active":
+            return {"status": "noop", "reason": f"mission status is {mission.status}", "mission": mission_to_dict(mission), "prompt": ""}
+        used_ticks = self.count_events(mission_id, {"tick_prompt_created"})
+        if mission.budget.max_ticks is not None and used_ticks >= mission.budget.max_ticks:
+            self.set_status(mission_id, "paused", reason="max tick budget exhausted")
+            self.append_event(mission_id, "budget_exhausted", "max tick budget exhausted", {"max_ticks": mission.budget.max_ticks})
+            return {"status": "budget_exhausted", "mission": mission_to_dict(self.get_mission(mission_id)), "prompt": ""}
+        prompt = build_tick_prompt(mission, self.list_events(mission_id, limit=12), self.answered_decisions(mission_id, limit=5))
+        event_type = "tick_dry_run" if dry_run else "tick_prompt_created"
+        self.append_event(mission_id, event_type, "mission tick prompt generated", {"dry_run": dry_run, "used_ticks_before": used_ticks})
+        return {"status": "dry_run" if dry_run else "prompt_created", "mission": mission_to_dict(mission), "prompt": prompt}
+
+    def count_events(self, mission_id: str, event_types: set[str]) -> int:
+        placeholders = ",".join("?" for _ in event_types)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM mission_events WHERE mission_id = ? AND event_type IN ({placeholders})",
+                (mission_id, *sorted(event_types)),
+            ).fetchone()
+        return int(row["n"] if row else 0)
+
+    def answered_decisions(self, mission_id: str, limit: int = 5) -> list[DecisionRequest]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM mission_decisions WHERE mission_id = ? AND status = 'answered' ORDER BY answered_at DESC LIMIT ?",
+                (mission_id, int(limit)),
+            ).fetchall()
+        return [self._row_to_decision(row) for row in rows]
+
+    def report(self, mission_id: str, limit: int = 20) -> str:
+        mission = self.get_mission(mission_id)
+        if not mission:
+            raise KeyError(mission_id)
+        events = self.list_events(mission_id, limit=limit)
+        decisions = self.open_decisions(mission_id)
+        lines = [
+            f"Mission: {mission.mission_id}",
+            f"Status: {mission.status}",
+            f"Stage: {mission.stage}",
+            f"Cadence: {mission.cadence}",
+            f"Deliver: {mission.deliver}",
+            "",
+            "Direction:",
+            mission.direction,
+            "",
+            "Budget:",
+            json.dumps(asdict(mission.budget), ensure_ascii=False, sort_keys=True),
+            "",
+            "Recent events:",
+        ]
+        if events:
+            for event in events:
+                lines.append(f"- {event['event_type']}: {event['summary']}")
+        else:
+            lines.append("- none")
+        if decisions:
+            lines.extend(["", "Open decisions:"])
+            for d in decisions:
+                opts = "; ".join(d.options) if d.options else "open answer"
+                lines.append(f"- {d.decision_id}: {d.question} ({opts})")
+        return "\n".join(lines)
+
+    def _row_to_mission(self, row: sqlite3.Row) -> Mission:
+        budget_raw = _json_loads(row["budget_json"], {})
+        budget = MissionBudget(
+            max_ticks=budget_raw.get("max_ticks"),
+            max_turns_per_tick=budget_raw.get("max_turns_per_tick"),
+            max_total_usd=budget_raw.get("max_total_usd"),
+        )
+        return Mission(
+            mission_id=row["mission_id"],
+            direction=row["direction"],
+            status=row["status"],
+            cadence=row["cadence"],
+            deliver=row["deliver"],
+            budget=budget,
+            stage=row["stage"],
+            constraints=_json_loads(row["constraints_json"], []),
+            non_goals=_json_loads(row["non_goals_json"], []),
+            success_criteria=_json_loads(row["success_criteria_json"], []),
+            allowed_actions=_json_loads(row["allowed_actions_json"], []),
+            blocked_actions=_json_loads(row["blocked_actions_json"], []),
+            plan_ref=row["plan_ref"] or "",
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _row_to_decision(self, row: sqlite3.Row) -> DecisionRequest:
+        return DecisionRequest(
+            decision_id=row["decision_id"],
+            mission_id=row["mission_id"],
+            question=row["question"],
+            options=_json_loads(row["options_json"], []),
+            recommended_option=row["recommended_option"] or "",
+            status=row["status"],
+            answer=row["answer"] or "",
+            created_at=row["created_at"],
+            answered_at=row["answered_at"],
+        )
+
+
+def default_blocked_actions() -> list[str]:
+    return [
+        "external_message_send",
+        "remote_push_or_merge",
+        "production_deploy",
+        "payment_or_purchase",
+        "secret_or_credential_write",
+        "destructive_delete",
+        "memory_skill_cron_config_write_without_explicit_scope",
+        "create_or_modify_mission_budget_or_cadence",
+    ]
+
+
+def mission_to_dict(mission: Mission | None) -> dict[str, Any] | None:
+    if mission is None:
+        return None
+    data = asdict(mission)
+    data["budget"] = asdict(mission.budget)
+    return data
+
+
+def decision_to_dict(decision: DecisionRequest) -> dict[str, Any]:
+    return asdict(decision)
+
+
+def build_tick_prompt(mission: Mission, recent_events: list[dict[str, Any]], answered_decisions: list[DecisionRequest]) -> str:
+    """Build the bounded user-role prompt for one mission advancement tick."""
+
+    criteria = "\n".join(f"- {x}" for x in mission.success_criteria) or "- produce evidence-backed stage progress"
+    constraints = "\n".join(f"- {x}" for x in mission.constraints) or "- preserve existing behavior; stop at permission/risk/evidence boundaries"
+    non_goals = "\n".join(f"- {x}" for x in mission.non_goals) or "- do not perform external side effects without explicit authorization"
+    blocked = "\n".join(f"- {x}" for x in mission.blocked_actions)
+    decisions = "\n".join(f"- {d.question} => {d.answer}" for d in answered_decisions) or "- none"
+    events = "\n".join(f"- {e['event_type']}: {e['summary']}" for e in recent_events) or "- none"
+    max_turns = mission.budget.max_turns_per_tick or 8
+    total_budget = mission.budget.max_total_usd if mission.budget.max_total_usd is not None else "not-set"
+    return f"""[Hermes Mission Tick]
+Mission ID: {mission.mission_id}
+Stage: {mission.stage}
+Direction:
+{mission.direction}
+
+Success criteria:
+{criteria}
+
+Constraints:
+{constraints}
+
+Non-goals:
+{non_goals}
+
+Blocked actions unless an explicit human decision authorizes a narrower digest:
+{blocked}
+
+Recent human decisions:
+{decisions}
+
+Recent mission evidence/events:
+{events}
+
+Budget boundary:
+- enforceable remaining tick budget is tracked by the mission ledger
+- total USD marker: {total_budget}
+
+Advance this mission by exactly one bounded stage slice, within {max_turns} tool-calling turns if tools are needed.
+Rules:
+1. Prefer read-only discovery, local drafts, tests, and evidence collection.
+2. If the next step requires a value judgment, permission escalation, external side effect, destructive action, or evidence you cannot obtain, stop and output a Human Intervention Packet with 2-4 options and a recommendation.
+3. Do not claim completion without real evidence. Distinguish completed, verified, drafted, blocked, and assumed.
+4. End with a stage report: progress, evidence, risks, next step, and whether user input is needed.
+""".strip()
+
+
+def _print_json(data: Any) -> None:
+    print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def cmd_mission(args: argparse.Namespace) -> int:
+    store = MissionStore(getattr(args, "db", None))
+    command = getattr(args, "mission_command", None)
+    try:
+        if command == "create":
+            budget = MissionBudget(
+                max_ticks=getattr(args, "max_ticks", None),
+                max_turns_per_tick=getattr(args, "max_turns_per_tick", None),
+                max_total_usd=getattr(args, "max_total_usd", None),
+            )
+            mission = store.create_mission(
+                direction=args.direction,
+                cadence=args.cadence,
+                deliver=args.deliver,
+                budget=budget,
+                constraints=args.constraint or [],
+                non_goals=args.non_goal or [],
+                success_criteria=args.success or [],
+                allowed_actions=args.allow_action or [],
+                blocked_actions=args.block_action or [],
+                enable=bool(args.enable),
+            )
+            if args.json:
+                _print_json(mission_to_dict(mission))
+            else:
+                print(f"Created mission {mission.mission_id} ({mission.status})")
+                if mission.status == "paused":
+                    print("Default-off: run `hermes mission resume <id>` before scheduled ticks can advance it.")
+            return 0
+        if command in {"list", "ls"}:
+            missions = [mission_to_dict(m) for m in store.list_missions(include_done=bool(args.all))]
+            if args.json:
+                _print_json(missions)
+            else:
+                if not missions:
+                    print("No missions found.")
+                    return 0
+                for m in missions:
+                    if not m:
+                        continue
+                    print(f"{m['mission_id']}\t{m['status']}\t{m['stage']}\t{m['cadence']}\t{m['direction'][:80]}")
+            return 0
+        if command == "status":
+            mission = store.get_mission(args.mission_id)
+            if not mission:
+                raise KeyError(args.mission_id)
+            payload = mission_to_dict(mission) or {}
+            payload["open_decisions"] = [decision_to_dict(d) for d in store.open_decisions(args.mission_id)]
+            payload["recent_events"] = store.list_events(args.mission_id, limit=args.limit)
+            if args.json:
+                _print_json(payload)
+            else:
+                print(store.report(args.mission_id, limit=args.limit))
+            return 0
+        if command == "pause":
+            mission = store.set_status(args.mission_id, "paused", reason=args.reason or "manual pause")
+            print(f"Mission {mission.mission_id} paused")
+            return 0
+        if command == "resume":
+            if store.open_decisions(args.mission_id):
+                print("Cannot resume: mission has open decisions. Use `hermes mission decide <decision-id> <answer>`.")
+                return 2
+            mission = store.set_status(args.mission_id, "active", reason=args.reason or "manual resume")
+            print(f"Mission {mission.mission_id} active")
+            return 0
+        if command == "cancel":
+            mission = store.set_status(args.mission_id, "cancelled", reason=args.reason or "manual cancel")
+            print(f"Mission {mission.mission_id} cancelled")
+            return 0
+        if command == "ask":
+            decision = store.request_decision(args.mission_id, args.question, args.option or [], args.recommend or "")
+            if args.json:
+                _print_json(decision_to_dict(decision))
+            else:
+                print(f"Decision requested: {decision.decision_id}")
+            return 0
+        if command == "decide":
+            decision = store.answer_decision(args.decision_id, " ".join(args.answer))
+            if args.json:
+                _print_json(decision_to_dict(decision))
+            else:
+                print(f"Decision recorded for {decision.decision_id}; mission resumed")
+            return 0
+        if command == "tick":
+            result = store.tick(args.mission_id, dry_run=not bool(args.create_prompt_event))
+            if args.json:
+                _print_json(result)
+            else:
+                print(result.get("prompt") or json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if command == "report":
+            report = store.report(args.mission_id, limit=args.limit)
+            print(report)
+            return 0
+    except (KeyError, ValueError) as exc:
+        print(f"Error: {exc}")
+        return 2
+    print("Run `hermes mission --help` for usage.")
+    return 2
