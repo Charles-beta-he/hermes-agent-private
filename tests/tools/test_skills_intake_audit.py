@@ -97,6 +97,8 @@ Body
     assert report["compatibility"]["node_runtime"]["minimum_major"] == 25
     assert report["compatibility_score"]["score"] == 0
     assert report["compatibility_score"]["grade"] == "F"
+    assert report["hermes_compatibility"]["install_guidance"] == "do_not_install"
+    assert report["hermes_compatibility"]["runtime_constraints"] == ["node >=25"]
 
 
 def test_evaluate_bundle_marks_unbounded_node_as_review_needed(monkeypatch):
@@ -119,6 +121,8 @@ Body
     assert "node_runtime_unbounded" in report["reason_codes"]
     assert report["compatibility_score"]["score"] == 90
     assert report["compatibility_score"]["grade"] == "A"
+    assert report["hermes_compatibility"]["install_guidance"] == "manual_review_required"
+    assert report["hermes_compatibility"]["runtime_constraints"] == ["node runtime detected without engines.node bound"]
 
 
 def test_evaluate_bundle_ignores_template_javascript_without_runtime_evidence(monkeypatch):
@@ -178,7 +182,7 @@ Use safely.
 
     report = audit_candidates(
         ["https://github.com/good/repo"],
-        sources=[DummySource()],
+        sources=[DummySource("github")],
         github_source=FakeGitHubSource(
             [
                 {"type": "blob", "path": "compatible-skill/SKILL.md"},
@@ -275,6 +279,14 @@ Body
     assert captured["identifier"] == "octo/repo/skills/gh-skill"
     assert captured["sources"] == ["github"]
     assert report["results"][0]["evaluation_status"] == "compatible"
+    skill = report["results"][0]["skills"][0]
+    assert skill["hermes_compatibility"]["install_guidance"] == "eligible_for_reviewed_install"
+    assert skill["hermes_compatibility"]["source_evidence_refs"] == {
+        "repo_url": "https://github.com/octo/repo",
+        "skill_url": "https://github.com/octo/repo/tree/main/skills/gh-skill",
+        "head_commit": "abc123",
+        "license": "MIT",
+    }
 
 
 def test_evaluate_bundle_requires_github_commit_and_license_evidence(monkeypatch):
@@ -325,3 +337,51 @@ def test_audit_candidates_no_discovered_repo_skills_is_hard_fail(monkeypatch):
     assert result["reason_codes"] == ["no_skill_candidates_discovered"]
     assert result["compatibility_score"]["score"] == 0
     assert result["compatibility_score"]["grade"] == "F"
+
+
+def test_github_skill_url_without_github_source_fails_closed(monkeypatch):
+    def fake_resolve(identifier, sources):
+        raise AssertionError(f"GitHub candidate must not resolve through non-GitHub sources: {sources!r}")
+
+    monkeypatch.setattr("tools.skills_intake_audit._resolve_source_meta_and_bundle", fake_resolve)
+
+    report = audit_candidates(
+        ["https://github.com/octo/repo/tree/main/skills/gh-skill"],
+        sources=[DummySource("url"), DummySource("skills-sh")],
+    )
+
+    result = report["results"][0]
+    assert result["evaluation_status"] == "incompatible"
+    assert result["reason_codes"] == ["bundle_unresolvable", "github_source_unavailable"]
+    assert result["skills"] == [
+        {
+            "identifier": "octo/repo/skills/gh-skill",
+            "evaluation_status": "incompatible",
+            "reason_codes": ["bundle_unresolvable"],
+        }
+    ]
+
+
+def test_audit_candidates_accepts_generator_candidates(monkeypatch):
+    monkeypatch.setattr("tools.skills_intake_audit._repo_evidence_for_bundle", lambda *a, **k: _mock_source_evidence("octo/repo", "skills/gh-skill"))
+
+    def fake_resolve(identifier, sources):
+        return FakeMeta("gh-skill"), _bundle(
+            identifier,
+            """---
+name: gh-skill
+description: github skill
+platforms: [macos]
+---
+Body
+""",
+        ), DummySource("github")
+
+    monkeypatch.setattr("tools.skills_intake_audit._resolve_source_meta_and_bundle", fake_resolve)
+    candidates = (c for c in ["https://github.com/octo/repo/tree/main/skills/gh-skill"])
+
+    report = audit_candidates(candidates, sources=[DummySource("github")])
+
+    assert report["candidate_count"] == 1
+    assert len(report["results"]) == 1
+    assert report["results"][0]["evaluation_status"] == "compatible"

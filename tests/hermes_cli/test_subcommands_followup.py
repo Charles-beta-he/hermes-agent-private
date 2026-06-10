@@ -79,6 +79,8 @@ def test_skills_parser_supports_intake_subcommand():
         "--max-skills-per-repo",
         "7",
         "--json",
+        "--output",
+        "/tmp/intake.json",
     ])
 
     assert ns.command == "skills"
@@ -86,4 +88,5 @@ def test_skills_parser_supports_intake_subcommand():
     assert ns.candidates == ["https://github.com/acme/skills"]
     assert ns.max_skills_per_repo == 7
     assert ns.json is True
+    assert ns.output == "/tmp/intake.json"
     assert ns.func is handler

@@ -393,6 +393,68 @@ def _compute_compatibility_score(
     return {"score": score, "grade": _grade_for_score(score), "breakdown": breakdown}
 
 
+def _hermes_compatibility_summary(
+    *,
+    status: str,
+    score: dict[str, Any],
+    reason_codes: list[str],
+    source_evidence: dict[str, Any],
+    node_runtime: NodeRuntimeSignal,
+) -> dict[str, Any]:
+    """Human-readable Hermes compatibility explanation for intake reviewers.
+
+    The machine fields above are optimized for gates and scripts; this compact
+    summary is the auditable explanation reviewers need before a candidate can
+    leave intake. It deliberately points back to evidence fields instead of
+    duplicating raw provenance.
+    """
+    missing_evidence: list[str] = []
+    if source_evidence.get("repo"):
+        if not source_evidence.get("head_commit"):
+            missing_evidence.append("head_commit")
+        if not source_evidence.get("license"):
+            missing_evidence.append("license")
+        if not source_evidence.get("skill_blob"):
+            missing_evidence.append("skill_blob")
+
+    runtime_constraints: list[str] = []
+    if node_runtime.detected:
+        if node_runtime.engine_range:
+            runtime_constraints.append(f"node {node_runtime.engine_range}")
+        else:
+            runtime_constraints.append("node runtime detected without engines.node bound")
+
+    if status == "compatible":
+        summary = "Compatible with Hermes skill intake gates; source evidence and guard checks passed."
+        install_guidance = "eligible_for_reviewed_install"
+    elif status == "review_needed":
+        summary = "Requires reviewer decision before install; inspect reason_codes, prerequisites, and source evidence."
+        install_guidance = "manual_review_required"
+    else:
+        summary = "Incompatible with governed intake; do not install unless the blocker is remediated and re-audited."
+        install_guidance = "do_not_install"
+
+    raw_head_commit = source_evidence.get("head_commit")
+    raw_license_meta = source_evidence.get("license")
+    head_commit: dict[str, Any] = raw_head_commit if isinstance(raw_head_commit, dict) else {}
+    license_meta: dict[str, Any] = raw_license_meta if isinstance(raw_license_meta, dict) else {}
+    return {
+        "summary": summary,
+        "install_guidance": install_guidance,
+        "score": score.get("score"),
+        "grade": score.get("grade"),
+        "reason_codes": reason_codes,
+        "runtime_constraints": runtime_constraints,
+        "source_evidence_refs": {
+            "repo_url": source_evidence.get("repo_url"),
+            "skill_url": source_evidence.get("skill_url"),
+            "head_commit": head_commit.get("sha"),
+            "license": license_meta.get("spdx_id"),
+        },
+        "missing_source_evidence": missing_evidence,
+    }
+
+
 def _aggregate_compatibility_score(
     audited_skills: list[dict[str, Any]],
     candidate_errors: list[str],
@@ -467,7 +529,11 @@ def _aggregate_statuses(statuses: list[str]) -> str:
 def _filtered_sources_for_candidate(ref: CandidateRef, sources: list[Any]) -> list[Any]:
     if ref.kind in {"github_repo_url", "github_skill_url"}:
         filtered = [src for src in sources if getattr(src, "source_id", lambda: "")() == "github"]
-        return filtered or sources
+        # GitHub URLs carry repo/path semantics that only the GitHub adapter can
+        # validate safely. Do not fall back to generic URL / marketplace
+        # sources, otherwise a GitHub-looking candidate could be resolved by an
+        # unrelated adapter and bypass commit/license evidence checks.
+        return filtered
     if ref.kind != "url":
         return sources
     filtered = [src for src in sources if getattr(src, "source_id", lambda: "")() == "url"]
@@ -668,6 +734,13 @@ def evaluate_bundle(
         missing_commands=prerequisites["missing_required_commands"],
         missing_env_vars=prerequisites["missing_required_environment_variables"],
     )
+    hermes_compatibility = _hermes_compatibility_summary(
+        status=status,
+        score=compatibility_score,
+        reason_codes=reason_codes,
+        source_evidence=source_evidence,
+        node_runtime=node_runtime,
+    )
 
     return {
         "name": skill_name,
@@ -701,6 +774,7 @@ def evaluate_bundle(
             "install_reason": allow_reason,
         },
         "compatibility_score": compatibility_score,
+        "hermes_compatibility": hermes_compatibility,
         "evaluation_status": status,
         "reason_codes": reason_codes,
     }
@@ -713,6 +787,7 @@ def audit_candidates(
     sources: Optional[list[Any]] = None,
     github_source: Any = None,
 ) -> dict[str, Any]:
+    candidate_list = list(candidates)
     auth = GitHubAuth()
     sources = sources or create_source_router(auth)
     if github_source is None:
@@ -720,7 +795,7 @@ def audit_candidates(
     repo_cache: dict[str, dict[str, Any]] = {}
 
     results: list[dict[str, Any]] = []
-    for raw_candidate in candidates:
+    for raw_candidate in candidate_list:
         ref = _normalize_candidate(raw_candidate)
         candidate_sources = _filtered_sources_for_candidate(ref, sources)
         identifiers: list[str] = []
@@ -744,7 +819,18 @@ def audit_candidates(
             candidate_errors.append("unsupported_candidate")
 
         audited_skills: list[dict[str, Any]] = []
+        if identifiers and not candidate_sources:
+            candidate_errors.append("github_source_unavailable" if ref.kind in {"github_repo_url", "github_skill_url"} else "bundle_unresolvable")
         for identifier in identifiers:
+            if not candidate_sources:
+                audited_skills.append(
+                    {
+                        "identifier": identifier,
+                        "evaluation_status": "incompatible",
+                        "reason_codes": ["bundle_unresolvable"],
+                    }
+                )
+                continue
             meta, bundle, _matched_source = _resolve_source_meta_and_bundle(identifier, candidate_sources)
             if not bundle:
                 audited_skills.append(
@@ -801,7 +887,7 @@ def audit_candidates(
             "platform": os.uname().sysname.lower() if hasattr(os, "uname") else os.name,
             "node_on_host": shutil.which("node") is not None,
         },
-        "candidate_count": len(list(candidates)) if not isinstance(candidates, list) else len(candidates),
+        "candidate_count": len(candidate_list),
         "results": results,
     }
 

@@ -120,6 +120,10 @@ def build_skills_parser(subparsers, *, cmd_skills: Callable) -> None:
         action="store_true",
         help="Output the full deterministic JSON report for scripting/proof capture",
     )
+    skills_intake.add_argument(
+        "--output",
+        help="Write the deterministic JSON report to PATH as a proof artifact",
+    )
 
     skills_list = skills_subparsers.add_parser("list", help="List installed skills")
     skills_list.add_argument(

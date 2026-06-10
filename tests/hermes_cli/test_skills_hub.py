@@ -1,3 +1,4 @@
+import json
 from io import StringIO
 from unittest.mock import patch
 
@@ -292,16 +293,17 @@ def test_do_intake_renders_summary(monkeypatch):
 def test_handle_skills_slash_intake_dispatches(monkeypatch):
     captured = {}
 
-    def _fake_do_intake(candidates, *, max_skills_per_repo=5, console=None, as_json=False):
+    def _fake_do_intake(candidates, *, max_skills_per_repo=5, console=None, as_json=False, output=None):
         captured["candidates"] = candidates
         captured["max_skills_per_repo"] = max_skills_per_repo
         captured["as_json"] = as_json
+        captured["output"] = output
         return {}
 
     monkeypatch.setattr("hermes_cli.skills_hub.do_intake", _fake_do_intake)
 
     handle_skills_slash(
-        "/skills intake https://github.com/acme/skills --max-skills-per-repo 7 --json",
+        "/skills intake https://github.com/acme/skills --max-skills-per-repo 7 --output /tmp/intake.json --json",
         console=Console(file=StringIO(), force_terminal=False, color_system=None),
     )
 
@@ -309,6 +311,7 @@ def test_handle_skills_slash_intake_dispatches(monkeypatch):
         "candidates": ["https://github.com/acme/skills"],
         "max_skills_per_repo": 7,
         "as_json": True,
+        "output": "/tmp/intake.json",
     }
 
 
@@ -806,3 +809,21 @@ def test_do_search_json_flag_emits_full_identifiers(capsys):
     # Table render must be suppressed — sink should be empty (no "Searching for:" header).
     assert "Searching for:" not in sink.getvalue()
 
+
+
+def test_do_intake_writes_output_artifact(monkeypatch, tmp_path):
+    report = {
+        "schema_version": "hermes_external_skill_intake_v1",
+        "candidate_count": 1,
+        "results": [],
+    }
+    monkeypatch.setattr("tools.skills_intake_audit.audit_candidates", lambda *a, **k: report)
+    sink = StringIO()
+    console = Console(file=sink, force_terminal=False, color_system=None)
+    output = tmp_path / "intake-proof.json"
+
+    out = do_intake(["https://github.com/acme/skills"], console=console, output=str(output))
+
+    assert out == report
+    assert json.loads(output.read_text()) == report
+    assert "Wrote intake proof artifact" in sink.getvalue()

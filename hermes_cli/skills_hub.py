@@ -814,12 +814,18 @@ def do_intake(
     max_skills_per_repo: int = 5,
     console: Optional[Console] = None,
     as_json: bool = False,
+    output: Optional[str] = None,
 ) -> dict[str, Any]:
     """Run the governed read-only intake audit for external skill candidates."""
     from tools.skills_intake_audit import audit_candidates
 
     c = console or _console
     report = audit_candidates(candidates, max_skills_per_repo=max_skills_per_repo)
+    if output:
+        output_path = Path(output).expanduser()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        c.print(f"[green]Wrote intake proof artifact:[/] {output_path}")
     if as_json:
         c.print_json(data=report)
     else:
@@ -1661,6 +1667,7 @@ def skills_command(args) -> None:
             args.candidates,
             max_skills_per_repo=getattr(args, "max_skills_per_repo", 5),
             as_json=getattr(args, "json", False),
+            output=getattr(args, "output", None),
         )
     elif action == "list":
         do_list(
@@ -1846,10 +1853,11 @@ def handle_skills_slash(cmd: str, console: Optional[Console] = None) -> None:
 
     elif action == "intake":
         if not args:
-            c.print("[bold red]Usage:[/] /skills intake <candidate...> [--max-skills-per-repo N] [--json]\n")
+            c.print("[bold red]Usage:[/] /skills intake <candidate...> [--max-skills-per-repo N] [--output PATH] [--json]\n")
             return
         as_json = False
         max_skills_per_repo = 5
+        output = None
         candidates = []
         i = 0
         while i < len(args):
@@ -1862,17 +1870,21 @@ def handle_skills_slash(cmd: str, console: Optional[Console] = None) -> None:
                 except ValueError:
                     pass
                 i += 2
+            elif args[i] == "--output" and i + 1 < len(args):
+                output = args[i + 1]
+                i += 2
             else:
                 candidates.append(args[i])
                 i += 1
         if not candidates:
-            c.print("[bold red]Usage:[/] /skills intake <candidate...> [--max-skills-per-repo N] [--json]\n")
+            c.print("[bold red]Usage:[/] /skills intake <candidate...> [--max-skills-per-repo N] [--output PATH] [--json]\n")
             return
         do_intake(
             candidates,
             max_skills_per_repo=max_skills_per_repo,
             console=c,
             as_json=as_json,
+            output=output,
         )
 
     elif action == "list":
