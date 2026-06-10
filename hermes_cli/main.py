@@ -3984,6 +3984,32 @@ def cmd_status(args):
     show_status(args)
 
 
+def cmd_selfcheck(args):
+    """Selfcheck inspection helpers."""
+    sub = getattr(args, "selfcheck_command", None)
+    if sub in {None, "health"}:
+        import json as _json
+        from agent.health_records import read_health_summary
+
+        summary = read_health_summary(
+            chain_type=getattr(args, "chain_type", None),
+            limit=getattr(args, "limit", 100),
+        )
+        if getattr(args, "json", False):
+            print(_json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2))
+        else:
+            print(f"Hermes health summary: {summary.get('status')} ({summary.get('record_count', 0)} records)")
+            for rec in summary.get("records", [])[: getattr(args, "limit", 100)]:
+                print(
+                    f"- {rec.get('chain_type')}/{rec.get('target_id')}: "
+                    f"{rec.get('status')} score={rec.get('effective_health_score')} "
+                    f"failure_rate={rec.get('failure_rate')}"
+                )
+        return 0
+    print(f"Unknown selfcheck subcommand: {sub}", file=sys.stderr)
+    return 1
+
+
 def cmd_cron(args):
     """Cron job management."""
     from hermes_cli.cron import cron_command
@@ -10855,6 +10881,25 @@ def main():
     # status command  (parser built in hermes_cli/subcommands/status.py)
     # =========================================================================
     build_status_parser(subparsers, cmd_status=cmd_status)
+
+    # =========================================================================
+    # selfcheck command — read unified runtime health records
+    # =========================================================================
+    selfcheck_parser = subparsers.add_parser(
+        "selfcheck",
+        help="Inspect Hermes selfcheck and health projections",
+        description="Inspect governed Hermes selfcheck projections and unified health records.",
+    )
+    selfcheck_subparsers = selfcheck_parser.add_subparsers(dest="selfcheck_command")
+    selfcheck_health = selfcheck_subparsers.add_parser(
+        "health",
+        help="Print unified health records from state.db",
+    )
+    selfcheck_health.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    selfcheck_health.add_argument("--chain-type", help="Filter by chain type, e.g. cron or browser_automation")
+    selfcheck_health.add_argument("--limit", type=int, default=100, help="Maximum records to return")
+    selfcheck_health.set_defaults(func=cmd_selfcheck)
+    selfcheck_parser.set_defaults(func=cmd_selfcheck)
 
     # =========================================================================
     # cron command  (parser built in hermes_cli/subcommands/cron.py)

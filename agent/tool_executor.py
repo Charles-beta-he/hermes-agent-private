@@ -166,6 +166,39 @@ def _observe_tool_failure(
         logger.debug("selfcheck operator tool observer failed for %s: %s", function_name, exc)
 
 
+def _observe_tool_health(
+    agent,
+    *,
+    function_name: str,
+    result: Any,
+    is_error: bool,
+    effective_task_id: str,
+    tool_call_id: str,
+) -> None:
+    """Best-effort unified health record for browser automation tool calls."""
+    if not str(function_name or "").startswith("browser_"):
+        return
+    try:
+        from agent.health_records import record_health_observation
+
+        record_health_observation(
+            chain_type="browser_automation",
+            target_id=function_name,
+            target_label=function_name.replace("_", " "),
+            status="degraded" if is_error else "success",
+            success=not is_error,
+            error_message=_multimodal_text_summary(result)[:600] if is_error else None,
+            details={
+                "session_id": getattr(agent, "session_id", "") or "",
+                "task_id": effective_task_id or "",
+                "turn_id": getattr(agent, "_current_turn_id", "") or "",
+                "tool_call_id": tool_call_id or "",
+            },
+        )
+    except Exception as exc:
+        logger.debug("health record browser tool observer failed for %s: %s", function_name, exc)
+
+
 def _emit_cancelled_terminal_post_tool_call(
     agent,
     *,
@@ -814,6 +847,14 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                     failed=is_error,
                 )
 
+            _observe_tool_health(
+                agent,
+                function_name=function_name,
+                result=function_result,
+                is_error=is_error,
+                effective_task_id=effective_task_id,
+                tool_call_id=getattr(tc, "id", "") or "",
+            )
             if is_error:
                 _err_text = _multimodal_text_summary(function_result)
                 result_preview = _err_text[:200] if len(_err_text) > 200 else _err_text
@@ -1462,6 +1503,14 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
             )
         else:
             logger.info("tool %s completed (%.2fs, %d chars)", function_name, tool_duration, _result_len)
+        _observe_tool_health(
+            agent,
+            function_name=function_name,
+            result=function_result,
+            is_error=_is_error_result,
+            effective_task_id=effective_task_id,
+            tool_call_id=getattr(tool_call, "id", "") or "",
+        )
 
         # Track file-mutation outcome for the turn-end verifier.  See
         # the concurrent path for the rationale; both paths must feed

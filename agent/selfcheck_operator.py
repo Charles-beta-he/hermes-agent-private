@@ -1772,6 +1772,26 @@ def observe_cron_job_result(
     if success and not str(final_response or "").strip():
         event_type = "cron.empty_response"
         summary_parts.append("agent completed with empty response")
+    summary_text = "; ".join(summary_parts) or "cron job completed"
+    cron_success = bool(success) and not delivery_error and not (success and not str(final_response or "").strip())
+    try:
+        from agent.health_records import record_health_observation
+
+        record_health_observation(
+            chain_type="cron",
+            target_id=str(job.get("id") or "unknown"),
+            target_label=str(job.get("name") or job.get("id") or "cron job"),
+            status="success" if cron_success else "degraded",
+            success=cron_success,
+            error_message=error or delivery_error or (None if cron_success else summary_text),
+            details={
+                "event_type": event_type,
+                "output_file": output_file,
+                "has_final_response": bool(str(final_response or "").strip()),
+            },
+        )
+    except Exception as exc:
+        logger.debug("health record cron observation failed: %s", exc)
     event = {
         "event_type": event_type,
         "trigger": "cron_scheduler",
@@ -1779,7 +1799,7 @@ def observe_cron_job_result(
         "job_id": job.get("id"),
         "job_name": job.get("name"),
         "success": bool(success),
-        "summary": "; ".join(summary_parts) or "cron job completed",
+        "summary": summary_text,
         "error": error,
         "delivery_error": delivery_error,
         "evidence_refs": [x for x in [f"cron_job:{job.get('id')}", f"file:{output_file}" if output_file else None] if x],

@@ -1096,6 +1096,17 @@ class APIServerAdapter(BasePlatformAdapter):
             "pid": os.getpid(),
         })
 
+    async def _handle_health_summary(self, request: "web.Request") -> "web.Response":
+        """GET /health/summary — unified health records from state.db."""
+        from agent.health_records import read_health_summary
+
+        chain_type = request.query.get("chain_type") or None
+        try:
+            limit = int(request.query.get("limit", "100"))
+        except ValueError:
+            limit = 100
+        return web.json_response(read_health_summary(chain_type=chain_type, limit=limit))
+
     async def _handle_models(self, request: "web.Request") -> "web.Response":
         """GET /v1/models — return hermes-agent as an available model."""
         auth_err = self._check_auth(request)
@@ -1175,6 +1186,7 @@ class APIServerAdapter(BasePlatformAdapter):
             "endpoints": {
                 "health": {"method": "GET", "path": "/health"},
                 "health_detailed": {"method": "GET", "path": "/health/detailed"},
+                "health_summary": {"method": "GET", "path": "/health/summary"},
                 "models": {"method": "GET", "path": "/v1/models"},
                 "chat_completions": {"method": "POST", "path": "/v1/chat/completions"},
                 "responses": {"method": "POST", "path": "/v1/responses"},
@@ -4151,7 +4163,9 @@ class APIServerAdapter(BasePlatformAdapter):
             assert self._app is not None
             self._app.router.add_get("/health", self._handle_health)
             self._app.router.add_get("/health/detailed", self._handle_health_detailed)
+            self._app.router.add_get("/health/summary", self._handle_health_summary)
             self._app.router.add_get("/v1/health", self._handle_health)
+            self._app.router.add_get("/v1/health/summary", self._handle_health_summary)
             self._app.router.add_get("/v1/models", self._handle_models)
             self._app.router.add_get("/v1/capabilities", self._handle_capabilities)
             self._app.router.add_get("/v1/skills", self._handle_skills)
