@@ -121,6 +121,12 @@ def test_stage_report_and_handoff_are_durable_ledger_gates(tmp_path: Path) -> No
     )
     assert event["event_type"] == "stage_report"
     assert store.count_events(mission.mission_id, {"stage_report"}) == 1
+    report = store.report(mission.mission_id)
+    assert "Evidence:" in report
+    assert "uv run pytest -q tests/test_missions.py => 2 passed" in report
+    assert "Risks:" in report
+    assert "仍需端到端 cron runner 测试" in report
+    assert "Next step: 补齐自动回写" in report
 
     decision = store.request_decision(
         mission.mission_id,

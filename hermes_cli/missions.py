@@ -800,7 +800,7 @@ class MissionStore:
         ]
         if events:
             for event in events:
-                lines.append(f"- {event['event_type']}: {event['summary']}")
+                lines.extend(render_event_block(event))
         else:
             lines.append("- none")
         if decisions:
@@ -903,6 +903,31 @@ def render_decision_block(decision: DecisionRequest) -> list[str]:
         lines.append(f"  Recommended: {decision.recommended_option}")
     lines.append("  Decide:")
     lines.append(f"    {render_decision_next_command(decision)}")
+    return lines
+
+
+def render_event_block(event: dict[str, Any]) -> list[str]:
+    """Render a ledger event with evidence-bearing stage report details."""
+
+    lines = [f"- {event['event_type']}: {event['summary']}"]
+    if event.get("event_type") != "stage_report":
+        return lines
+    payload = event.get("payload") or {}
+    evidence = payload.get("evidence") or []
+    if evidence:
+        lines.append("  Evidence:")
+        for item in evidence:
+            lines.append(f"    - {item}")
+    risks = payload.get("risks") or []
+    if risks:
+        lines.append("  Risks:")
+        for item in risks:
+            lines.append(f"    - {item}")
+    next_step = str(payload.get("next_step") or "").strip()
+    if next_step:
+        lines.append(f"  Next step: {next_step}")
+    if payload.get("needs_user"):
+        lines.append("  Needs user: yes")
     return lines
 
 
