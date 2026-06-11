@@ -5416,10 +5416,101 @@ def _workflow_map_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _mission_flow_signal_snapshot(*, stale_after_seconds: int = 900, limit_per_mission: int = 10) -> dict[str, Any]:
+    """Return a read-only projection of pending Mission flow signals.
+
+    Mission remains the canonical fact source for mission objectives and flow
+    signals; Control Tower only surfaces their pending/stale state so operators
+    can see why a mission cron should run or why the watchdog should intervene.
+    """
+
+    try:
+        from hermes_cli.missions import MissionStore
+    except Exception as exc:
+        return {
+            "role": "read_only_projection",
+            "canonical": False,
+            "available": False,
+            "status": "unavailable",
+            "reason": str(exc),
+            "pending_count": 0,
+            "stale_count": 0,
+            "missions": [],
+        }
+
+    try:
+        store = MissionStore()
+        missions = store.list_missions(include_done=False)
+        now_ts = datetime.now(timezone.utc).timestamp()
+        rows: list[dict[str, Any]] = []
+        pending_count = 0
+        stale_count = 0
+        for mission in missions:
+            pending = store.pending_flow_signals(mission.mission_id, limit=limit_per_mission)
+            stale_ids = {
+                signal.signal_id
+                for signal in store.stale_flow_signals(
+                    mission.mission_id,
+                    older_than_seconds=stale_after_seconds,
+                    limit=limit_per_mission,
+                )
+            }
+            signal_rows = []
+            for signal in pending:
+                age_seconds = max(0, int(now_ts - signal.created_at)) if signal.created_at else 0
+                is_stale = signal.signal_id in stale_ids
+                pending_count += 1
+                if is_stale:
+                    stale_count += 1
+                signal_rows.append(
+                    {
+                        "signal_id": signal.signal_id,
+                        "source_event_id": signal.source_event_id,
+                        "signal_type": signal.signal_type,
+                        "status": signal.status,
+                        "age_seconds": age_seconds,
+                        "stale": is_stale,
+                        "payload": signal.payload,
+                    }
+                )
+            if signal_rows:
+                rows.append(
+                    {
+                        "mission_id": mission.mission_id,
+                        "stage": mission.stage,
+                        "status": mission.status,
+                        "cadence": mission.cadence,
+                        "pending_signals": signal_rows,
+                    }
+                )
+        return {
+            "role": "read_only_projection",
+            "canonical": False,
+            "source": "Mission ledger",
+            "status": "ok",
+            "stale_after_seconds": int(stale_after_seconds),
+            "pending_count": pending_count,
+            "stale_count": stale_count,
+            "missions": rows,
+        }
+    except Exception as exc:
+        return {
+            "role": "read_only_projection",
+            "canonical": False,
+            "available": False,
+            "status": "error",
+            "reason": str(exc),
+            "pending_count": 0,
+            "stale_count": 0,
+            "missions": [],
+        }
+
+
 def build_snapshot() -> dict[str, Any]:
     """Build the Phase 1 read-only Control Tower snapshot."""
     ledger = init_ledger()
     kanban_adapter = observe_kanban_adapter()
+    mission_flow_signals = _mission_flow_signal_snapshot()
     with sqlite3.connect(ledger) as conn:
         conn.row_factory = sqlite3.Row
         last_seq = conn.execute("SELECT COALESCE(MAX(sequence), 0) FROM events").fetchone()[0]
@@ -5477,7 +5568,9 @@ def build_snapshot() -> dict[str, Any]:
             "brain": {"role": "projection_adapter", "canonical": False},
             "cron": {"role": "watchdog_adapter", "canonical": False},
             "gateway": {"role": "event_ingress_adapter", "canonical": False},
+            "mission_flow": {"role": "projection_adapter", "canonical": False},
         },
+        "mission_flow_signals": mission_flow_signals,
         "taskpool_health": _taskpool_health_from_tasks(tasks),
         "next_dispatchable": _next_dispatchable_from_tasks(tasks),
         "top_blockers": blockers[:5],

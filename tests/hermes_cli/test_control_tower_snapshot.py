@@ -7,6 +7,7 @@ from pathlib import Path
 
 from hermes_cli import control_tower
 from hermes_cli import kanban_db as kb
+from hermes_cli.missions import MissionBudget, MissionStore
 
 
 def test_init_ledger_creates_single_fact_source_schema(tmp_path, monkeypatch):
@@ -82,6 +83,56 @@ def test_control_tower_snapshot_is_read_only_and_labels_adapters(tmp_path, monke
     assert snapshot["ui_host"]["plugin_name"] == "control-tower"
     assert "kanban" in snapshot["adapters"]
     assert snapshot["adapters"]["kanban"]["role"] == "projection_adapter"
+    assert snapshot["adapters"]["mission_flow"] == {"role": "projection_adapter", "canonical": False}
+    assert snapshot["mission_flow_signals"] == {
+        "role": "read_only_projection",
+        "canonical": False,
+        "source": "Mission ledger",
+        "status": "ok",
+        "stale_after_seconds": 900,
+        "pending_count": 0,
+        "stale_count": 0,
+        "missions": [],
+    }
+
+
+def test_snapshot_projects_pending_and_stale_mission_flow_signals(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    store = MissionStore()
+    mission = store.create_mission(
+        mission_id="msn_test_flow",
+        direction="Keep mission flow visible in Control Tower",
+        cadence="every 6h",
+        budget=MissionBudget(max_ticks=3),
+        enable=False,
+    )
+    event = store.append_event(
+        mission.mission_id,
+        "stage_report",
+        "local projection smoke",
+        {"evidence": "unit-test"},
+        enqueue_flow=True,
+    )
+    with sqlite3.connect(home / "missions.db") as conn:
+        conn.execute(
+            "UPDATE mission_flow_signals SET created_at = created_at - 901 WHERE source_event_id = ?",
+            (event["event_id"],),
+        )
+
+    snapshot = control_tower.build_snapshot()
+
+    mission_flow = snapshot["mission_flow_signals"]
+    assert mission_flow["status"] == "ok"
+    assert mission_flow["pending_count"] == 1
+    assert mission_flow["stale_count"] == 1
+    assert mission_flow["missions"][0]["mission_id"] == "msn_test_flow"
+    signal = mission_flow["missions"][0]["pending_signals"][0]
+    assert signal["source_event_id"] == event["event_id"]
+    assert signal["signal_type"] == "stage_report"
+    assert signal["status"] == "pending"
+    assert signal["stale"] is True
+    assert signal["age_seconds"] >= 900
 
 
 def test_record_adapter_observation_dedupes_by_hash(tmp_path, monkeypatch):
