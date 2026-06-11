@@ -66,8 +66,36 @@
 }
 
 .control-tower-missions-card,
-.control-tower-mission-flow-card {
+.control-tower-mission-flow-card,
+.control-tower-operator-overview-card {
   margin-top: 18px;
+}
+
+.control-tower-operator-headline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: 14px;
+  padding: 12px;
+  background: color-mix(in srgb, Canvas 82%, currentColor 18%);
+}
+
+.control-tower-operator-headline strong {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.control-tower-alert {
+  margin: 6px 0;
+}
+
+.control-tower-alert-critical {
+  color: #d92d20;
+}
+
+.control-tower-alert-warning {
+  color: #b54708;
 }
 
 .control-tower-missions-table {

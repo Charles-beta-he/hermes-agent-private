@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import subprocess
 from pathlib import Path
 
 from hermes_cli import control_tower
@@ -109,6 +110,21 @@ def test_control_tower_snapshot_is_read_only_and_labels_adapters(tmp_path, monke
         "consumed_count": 0,
         "avg_consumed_latency_seconds": None,
         "missions": [],
+    }
+    assert snapshot["operator_overview"] == {
+        "status": "idle",
+        "progressable": False,
+        "headline": "No active workflow pressure observed.",
+        "recommended_next_action": "refresh_or_wait_for_events",
+        "critical_alerts": [],
+        "blocker_summary": [],
+        "evidence_debt": {
+            "total_evidence": 0,
+            "stale_or_conflicting": 0,
+            "status": "empty",
+        },
+        "human_gate": {"pending_count": 0, "status": "clear"},
+        "source_drift": {"status": "not_checked", "reason": "not part of isolated snapshot fixture"},
     }
 
 
@@ -254,6 +270,9 @@ def test_snapshot_observes_kanban_as_projection_adapter(tmp_path, monkeypatch):
     assert snapshot["adapters"]["kanban"]["observed_tasks"] == 1
     assert snapshot["taskpool_health"]["active"] == 1
     assert snapshot["taskpool_health"]["ready"] == 1
+    assert snapshot["operator_overview"]["status"] == "progressable"
+    assert snapshot["operator_overview"]["progressable"] is True
+    assert snapshot["operator_overview"]["recommended_next_action"] == "dispatch_next_ready_task"
     assert snapshot["next_dispatchable"] == {
         "adapter": "kanban",
         "external_ref": f"task:{task_id}",
@@ -265,6 +284,65 @@ def test_snapshot_observes_kanban_as_projection_adapter(tmp_path, monkeypatch):
     with sqlite3.connect(home / "control_tower.db") as ledger:
         event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events")]
     assert event_types == ["TaskObservedFromAdapter"]
+
+
+def test_operator_overview_highlights_no_dispatch_when_all_tasks_are_blocked(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    kb.init_db()
+    conn = kb.connect()
+    try:
+        kb.create_task(
+            conn,
+            title="Blocked Control Tower optimization",
+            assignee="default",
+            priority=9,
+            initial_status="blocked",
+        )
+    finally:
+        conn.close()
+
+    snapshot = control_tower.build_snapshot()
+
+    overview = snapshot["operator_overview"]
+    assert overview["status"] == "blocked"
+    assert overview["progressable"] is False
+    assert overview["recommended_next_action"] == "triage_blockers"
+    assert overview["critical_alerts"] == [
+        {
+            "kind": "no_dispatchable_work",
+            "severity": "critical",
+            "message": "1 active task(s) but no dispatchable next task.",
+        }
+    ]
+    assert overview["blocker_summary"] == [
+        {"reason": "kanban_status_blocked", "count": 1}
+    ]
+
+
+def test_source_drift_snapshot_reports_git_branch_dirty_and_ahead(tmp_path):
+    repo = tmp_path / "repo"
+    remote = tmp_path / "remote.git"
+    repo.mkdir()
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    (repo / "README.md").write_text("initial\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=repo, check=True)
+    subprocess.run(["git", "push", "-u", "origin", "HEAD"], cwd=repo, check=True, capture_output=True, text=True)
+    (repo / "README.md").write_text("changed\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-am", "local change"], cwd=repo, check=True, capture_output=True, text=True)
+    (repo / "scratch.txt").write_text("dirty\n", encoding="utf-8")
+
+    drift = control_tower._source_drift_snapshot(repo_root=repo, isolated_fixture=False)
+
+    assert drift["status"] == "dirty"
+    assert drift["ahead"] is True
+    assert drift["dirty"] is True
+    assert drift["branch_line"].startswith("## ")
 
 
 def test_propose_command_records_command_and_audit_event_without_execution(tmp_path, monkeypatch):

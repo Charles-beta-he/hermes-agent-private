@@ -74,6 +74,23 @@ def test_control_tower_dashboard_renders_mission_flow_operator_panel():
     assert "control-tower-mission-flow-card" in style
 
 
+def test_control_tower_dashboard_renders_operator_overview_as_first_screen():
+    repo_root = Path(__file__).resolve().parents[2]
+    index_js = repo_root / "plugins" / "control-tower" / "dashboard" / "dist" / "index.js"
+    style_css = repo_root / "plugins" / "control-tower" / "dashboard" / "dist" / "style.css"
+
+    script = index_js.read_text(encoding="utf-8")
+    style = style_css.read_text(encoding="utf-8")
+
+    assert "control-tower-operator-overview" in script
+    assert "Operator Overview" in script
+    assert "renderOperatorOverview(data)" in script
+    assert "operator_overview" in script
+    assert "Recommended next action" in script
+    assert "Critical alerts" in script
+    assert "control-tower-operator-overview-card" in style
+
+
 def test_control_tower_dashboard_plugin_proposes_command_without_execution(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))

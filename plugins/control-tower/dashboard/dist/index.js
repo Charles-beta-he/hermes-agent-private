@@ -73,6 +73,12 @@
         </button>
       </div>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
+      <section class="control-tower-card control-tower-operator-overview-card">
+        <p class="control-tower-eyebrow">Operator Overview</p>
+        <h2>Can Hermes progress now?</h2>
+        <p>First-screen read-only answer for progressability, blockers, critical alerts, human gates, and evidence debt.</p>
+        <div id="control-tower-operator-overview">Loading operator overview…</div>
+      </section>
       <section class="control-tower-card control-tower-missions-card">
         <p class="control-tower-eyebrow">Mission control</p>
         <h2>High-level directions</h2>
@@ -94,6 +100,7 @@
 
   const snapshotEl = document.getElementById('control-tower-snapshot');
   const summaryEl = document.getElementById('control-tower-summary');
+  const operatorOverviewEl = document.getElementById('control-tower-operator-overview');
   const missionsEl = document.getElementById('control-tower-missions');
   const missionFlowEl = document.getElementById('control-tower-mission-flow');
   let latestSnapshot = null;
@@ -223,6 +230,45 @@
     `;
   };
 
+  const renderOperatorOverview = (data) => {
+    if (!operatorOverviewEl) return;
+    const overview = data?.operator_overview;
+    if (!overview) {
+      operatorOverviewEl.textContent = 'Operator overview unavailable: snapshot missing operator_overview.';
+      return;
+    }
+    const alerts = (overview.critical_alerts || []).map((alert) => `
+      <li class="control-tower-alert control-tower-alert-${alert.severity || 'info'}">
+        <strong>${alert.kind || 'alert'}</strong>: ${alert.message || ''}
+      </li>
+    `).join('');
+    const blockers = (overview.blocker_summary || []).map((item) => `
+      <li><code>${item.reason}</code> × ${item.count}</li>
+    `).join('');
+    const evidence = overview.evidence_debt || {};
+    const human = overview.human_gate || {};
+    const sourceDrift = overview.source_drift || {};
+    operatorOverviewEl.innerHTML = `
+      <div class="control-tower-operator-headline control-tower-operator-${overview.status}">
+        <strong>${overview.status || 'unknown'}</strong>
+        <span>${overview.headline || 'No headline available.'}</span>
+      </div>
+      <div class="control-tower-summary">
+        <span>Progressable: <strong>${overview.progressable ? 'yes' : 'no'}</strong></span>
+        <span>Recommended next action: <strong>${overview.recommended_next_action || '—'}</strong></span>
+        <span>Human gate: <strong>${human.status || 'unknown'} (${human.pending_count ?? 0})</strong></span>
+        <span>Evidence: <strong>${evidence.status || 'unknown'}</strong></span>
+        <span>Stale/conflicting evidence: <strong>${evidence.stale_or_conflicting ?? 0}</strong></span>
+        <span>Source drift: <strong>${sourceDrift.status || 'unknown'}</strong></span>
+      </div>
+      <h3>Critical alerts</h3>
+      ${alerts ? `<ul>${alerts}</ul>` : '<p>No critical alerts.</p>'}
+      <h3>Blocker summary</h3>
+      ${blockers ? `<ul>${blockers}</ul>` : '<p>No blockers observed.</p>'}
+    `;
+  };
+
+
   const renderSummary = (data) => {
     const pending = data?.human_inbox?.pending_count ?? 0;
     const decided = data?.human_inbox?.decided_count ?? 0;
@@ -314,6 +360,7 @@
       .then((data) => {
         latestSnapshot = data;
         renderSummary(data);
+        renderOperatorOverview(data);
         renderMissionFlow(data);
         if (snapshotEl) snapshotEl.textContent = JSON.stringify(data, null, 2);
       })

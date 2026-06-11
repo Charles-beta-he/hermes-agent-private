@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -5658,8 +5659,160 @@ def _mission_taskpool_bridge_snapshot(*, limit_per_mission: int = 5) -> dict[str
         }
 
 
+def _source_drift_snapshot(
+    *,
+    repo_root: Path | None = None,
+    isolated_fixture: bool | None = None,
+) -> dict[str, Any]:
+    """Return a compact git source-drift projection for the operator screen."""
+
+    if isolated_fixture is None:
+        isolated_fixture = get_hermes_home() != Path.home() / ".hermes"
+    if isolated_fixture:
+        return {"status": "not_checked", "reason": "not part of isolated snapshot fixture"}
+    root = repo_root or Path(__file__).resolve().parents[1]
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--short", "--branch"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as exc:
+        return {"status": "error", "reason": str(exc)}
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    branch_line = lines[0] if lines else ""
+    dirty_lines = lines[1:]
+    ahead = "[ahead" in branch_line
+    behind = "behind" in branch_line
+    dirty = bool(dirty_lines)
+    if dirty:
+        status = "dirty"
+    elif ahead or behind:
+        status = "diverged" if ahead and behind else ("ahead" if ahead else "behind")
+    else:
+        status = "clean"
+    return {
+        "status": status,
+        "branch_line": branch_line,
+        "ahead": ahead,
+        "behind": behind,
+        "dirty": dirty,
+        "dirty_count": len(dirty_lines),
+    }
+
+
+def _operator_overview_snapshot(
+    *,
+    taskpool_health: dict[str, Any],
+    next_dispatchable: dict[str, Any] | None,
+    blockers: list[dict[str, Any]],
+    mission_flow_signals: dict[str, Any],
+    evidence_summary: dict[str, Any],
+    human_inbox: dict[str, Any],
+    source_drift: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the first-screen operator projection.
+
+    This projection is intentionally derived from already-read snapshot data. It
+    does not execute diagnostics or mutate lifecycle state; it only turns raw
+    projections into the answer an operator needs first: can Hermes progress,
+    why not, and what is the next safe action?
+    """
+
+    active = int(taskpool_health.get("active") or 0)
+    pending_human = int(human_inbox.get("pending_count") or 0)
+    stale_signals = int(mission_flow_signals.get("stale_count") or 0)
+    total_evidence = sum(
+        int(evidence_summary.get(maturity) or 0)
+        for maturity in ["advisory", "observed", "verified", "certified", "release_confirmed"]
+    )
+    stale_or_conflicting = int(evidence_summary.get("stale_or_conflicting") or 0)
+    source_drift = source_drift or {"status": "not_checked", "reason": "not part of isolated snapshot fixture"}
+    critical_alerts: list[dict[str, Any]] = []
+    if active and next_dispatchable is None:
+        critical_alerts.append(
+            {
+                "kind": "no_dispatchable_work",
+                "severity": "critical",
+                "message": f"{active} active task(s) but no dispatchable next task.",
+            }
+        )
+    if stale_signals:
+        critical_alerts.append(
+            {
+                "kind": "stale_mission_signals",
+                "severity": "warning",
+                "message": f"{stale_signals} mission flow signal(s) are stale.",
+            }
+        )
+    if pending_human:
+        critical_alerts.append(
+            {
+                "kind": "human_gate_pending",
+                "severity": "warning",
+                "message": f"{pending_human} human approval item(s) are pending.",
+            }
+        )
+    blocker_counts: dict[str, int] = {}
+    for blocker in blockers:
+        reason = str(blocker.get("reason") or "unknown")
+        blocker_counts[reason] = blocker_counts.get(reason, 0) + 1
+    blocker_summary = [
+        {"reason": reason, "count": count}
+        for reason, count in sorted(blocker_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    evidence_debt = {
+        "total_evidence": total_evidence,
+        "stale_or_conflicting": stale_or_conflicting,
+        "status": "empty" if total_evidence == 0 else ("degraded" if stale_or_conflicting else "ok"),
+    }
+    human_gate = {
+        "pending_count": pending_human,
+        "status": "waiting" if pending_human else "clear",
+    }
+    if next_dispatchable is not None:
+        status = "progressable"
+        headline = "Next dispatchable workflow is available."
+        recommended_next_action = "dispatch_next_ready_task"
+        progressable = True
+    elif active:
+        status = "blocked"
+        headline = "Active workflow pressure exists, but no task is dispatchable."
+        recommended_next_action = "triage_blockers"
+        progressable = False
+    elif stale_signals:
+        status = "degraded"
+        headline = "No active task pressure, but mission flow has stale signals."
+        recommended_next_action = "run_read_only_mission_flow_diagnosis"
+        progressable = False
+    elif pending_human:
+        status = "waiting_for_human"
+        headline = "Workflow is waiting for human approval."
+        recommended_next_action = "review_human_inbox"
+        progressable = False
+    else:
+        status = "idle"
+        headline = "No active workflow pressure observed."
+        recommended_next_action = "refresh_or_wait_for_events"
+        progressable = False
+    return {
+        "status": status,
+        "progressable": progressable,
+        "headline": headline,
+        "recommended_next_action": recommended_next_action,
+        "critical_alerts": critical_alerts,
+        "blocker_summary": blocker_summary,
+        "evidence_debt": evidence_debt,
+        "human_gate": human_gate,
+        "source_drift": source_drift,
+    }
+
+
 def build_snapshot() -> dict[str, Any]:
-    """Build the Phase 1 read-only Control Tower snapshot."""
+    """Build the Control Tower snapshot."""
     ledger = init_ledger()
     kanban_adapter = observe_kanban_adapter()
     mission_flow_signals = _mission_flow_signal_snapshot()
@@ -5700,6 +5853,22 @@ def build_snapshot() -> dict[str, Any]:
         for task in tasks
         if task.get("status") == "blocked"
     ]
+    taskpool_health = _taskpool_health_from_tasks(tasks)
+    next_dispatchable = _next_dispatchable_from_tasks(tasks)
+    evidence_summary = {
+        **evidence_counts,
+        "stale_or_conflicting": stale_or_conflicting,
+    }
+    source_drift = _source_drift_snapshot()
+    operator_overview = _operator_overview_snapshot(
+        taskpool_health=taskpool_health,
+        next_dispatchable=next_dispatchable,
+        blockers=blockers,
+        mission_flow_signals=mission_flow_signals,
+        evidence_summary=evidence_summary,
+        human_inbox=human_inbox,
+        source_drift=source_drift,
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now(),
@@ -5726,8 +5895,9 @@ def build_snapshot() -> dict[str, Any]:
         },
         "mission_flow_signals": mission_flow_signals,
         "mission_taskpool_bridge": mission_taskpool_bridge,
-        "taskpool_health": _taskpool_health_from_tasks(tasks),
-        "next_dispatchable": _next_dispatchable_from_tasks(tasks),
+        "operator_overview": operator_overview,
+        "taskpool_health": taskpool_health,
+        "next_dispatchable": next_dispatchable,
         "top_blockers": blockers[:5],
         "command_registry": command_registry,
         "human_inbox": human_inbox,
@@ -5747,9 +5917,6 @@ def build_snapshot() -> dict[str, Any]:
         "external_adapter_write_rollback_runs": external_adapter_write_rollback_runs,
         "worker_runs": [],
         "cron_watchdogs": [],
-        "evidence_summary": {
-            **evidence_counts,
-            "stale_or_conflicting": stale_or_conflicting,
-        },
+        "evidence_summary": evidence_summary,
         "adapter_conflicts": [] if conflict_count == 0 else [{"count": conflict_count}],
     }
