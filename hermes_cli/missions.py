@@ -527,6 +527,22 @@ class MissionStore:
             ).fetchall()
         return [self._row_to_flow_signal(row) for row in rows]
 
+    def stale_flow_signals(self, mission_id: str, *, older_than_seconds: int = 900, limit: int = 20) -> list[MissionFlowSignal]:
+        """Return pending flow signals old enough to need watchdog attention."""
+
+        cutoff = _now() - max(0, int(older_than_seconds))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM mission_flow_signals
+                WHERE mission_id = ? AND status = 'pending' AND created_at <= ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (mission_id, cutoff, int(limit)),
+            ).fetchall()
+        return [self._row_to_flow_signal(row) for row in rows]
+
     def consume_flow_signal(self, signal_id: str) -> MissionFlowSignal:
         now = _now()
         with self._connect() as conn:
@@ -760,6 +776,7 @@ class MissionStore:
         open_decisions = self.open_decisions(mission_id)
         used_ticks = self.count_events(mission_id, {"tick_prompt_created"})
         pending_signals = self.pending_flow_signals(mission_id, limit=20)
+        stale_signals = self.stale_flow_signals(mission_id, limit=20)
         script_path = _hermes_home() / "scripts" / mission_tick_script_name(mission_id)
         cron_jobs = self._find_cron_jobs_for_mission(mission_id)
         checks = []
@@ -773,6 +790,7 @@ class MissionStore:
             budget_status = "warn"
         add("tick budget", budget_status, f"{used_ticks}/{mission.budget.max_ticks}")
         add("pending flow signals", "warn" if pending_signals and not cron_jobs else "ok", str(len(pending_signals)))
+        add("stale flow signals", "warn" if stale_signals else "ok", str(len(stale_signals)))
         add("tick script", "ok" if script_path.exists() else "warn", str(script_path))
         add("cron job", "ok" if cron_jobs else "warn", f"{len(cron_jobs)} matching job(s)")
         return {
@@ -780,12 +798,20 @@ class MissionStore:
             "checks": checks,
             "open_decisions": [decision_to_dict(d) for d in open_decisions],
             "pending_flow_signals": [flow_signal_to_dict(s) for s in pending_signals],
+            "stale_flow_signals": [flow_signal_to_dict(s) for s in stale_signals],
             "cron_jobs": cron_jobs,
             "script_path": str(script_path),
-            "next_step": self._doctor_next_step(mission, open_decisions, bool(cron_jobs), used_ticks),
+            "next_step": self._doctor_next_step(mission, open_decisions, bool(cron_jobs), used_ticks, bool(stale_signals)),
         }
 
-    def _doctor_next_step(self, mission: Mission, open_decisions: list[DecisionRequest], has_cron: bool, used_ticks: int) -> str:
+    def _doctor_next_step(
+        self,
+        mission: Mission,
+        open_decisions: list[DecisionRequest],
+        has_cron: bool,
+        used_ticks: int,
+        has_stale_signals: bool = False,
+    ) -> str:
         if open_decisions:
             return render_decision_next_command(open_decisions[0])
         if mission.status == "paused":
@@ -796,6 +822,8 @@ class MissionStore:
             return f"hermes mission report {mission.mission_id}"
         if not has_cron:
             return f"hermes mission install-cron {mission.mission_id}"
+        if has_stale_signals:
+            return f"hermes mission dispatch-events {mission.mission_id}"
         return f"hermes mission report {mission.mission_id}"
 
     def _find_cron_jobs_for_mission(self, mission_id: str) -> list[dict[str, Any]]:

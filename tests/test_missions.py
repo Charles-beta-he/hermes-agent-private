@@ -181,3 +181,52 @@ def test_mission_inbox_board_and_doctor_surface_next_actions(tmp_path: Path, mon
     doctor = store.doctor(active.mission_id)
     assert doctor["next_step"] == f"hermes mission install-cron {active.mission_id}"
     assert any(check["name"] == "tick script" and check["status"] == "warn" for check in doctor["checks"])
+
+
+def test_mission_doctor_surfaces_stale_flow_signal_watchdog_action(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="Event-driven mission",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=5),
+        enable=True,
+    )
+    event = store.append_stage_report(
+        mission.mission_id,
+        summary="enqueue flow signal",
+        evidence=["unit fixture"],
+        next_step="dispatch stale signal",
+    )
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE mission_flow_signals SET created_at = created_at - 3600 WHERE source_event_id = ?",
+            (event["event_id"],),
+        )
+    cron_dir = tmp_path / "cron"
+    cron_dir.mkdir()
+    (cron_dir / "jobs.json").write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "id": "job-stale",
+                        "name": f"Mission {mission.mission_id}",
+                        "enabled": True,
+                        "state": "idle",
+                        "next_run_at": None,
+                        "script": mission_tick_script_name(mission.mission_id),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    doctor = store.doctor(mission.mission_id)
+
+    assert len(doctor["pending_flow_signals"]) == 2
+    assert len(doctor["stale_flow_signals"]) == 1
+    assert doctor["next_step"] == f"hermes mission dispatch-events {mission.mission_id}"
+    assert any(check["name"] == "stale flow signals" and check["status"] == "warn" for check in doctor["checks"])
