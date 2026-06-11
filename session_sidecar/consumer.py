@@ -11,6 +11,7 @@ Provides:
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -296,13 +297,28 @@ def _inject_test_sidecar(*, status: str = "succeeded",
     """Produce a test sidecar for verification purposes.
 
     ``entrypoint`` selects one of the producer names accepted by
-    ``produce_and_write``.  Producer signatures differ, so keep the fixture
-    kwargs to the common evidence/status/duration subset and add only
-    producer-specific optional fields.
+    ``produce_and_write``.  Producer signatures differ, so fixture kwargs are
+    normalised and then filtered to the target producer signature.  This keeps
+    the shell bridge tolerant of taskpool-style metadata such as ``task_id``
+    when a specific producer does not accept that field.
     """
-    from session_sidecar.producers import produce_and_write
+    from session_sidecar.producers import (
+        browser_producer,
+        cli_producer,
+        cron_producer,
+        gateway_producer,
+        produce_and_write,
+        script_producer,
+    )
 
-    producer = entrypoint
+    producer = "browser" if entrypoint in {"automation", "browser"} else entrypoint
+    producers = {
+        "cli": cli_producer,
+        "cron": cron_producer,
+        "browser": browser_producer,
+        "script": script_producer,
+        "gateway": gateway_producer,
+    }
     common: Dict[str, Any] = {
         "status": status,
         "duration_s": 1.23,
@@ -317,8 +333,20 @@ def _inject_test_sidecar(*, status: str = "succeeded",
         common.update({"script_path": "session-sidecar-injected-test", "args": []})
     if producer == "cron":
         common.update({"job_id": "injected-test", "job_name": "injected test", "schedule": "manual"})
-    common.update(kwargs)
-    return produce_and_write(producer_kwargs=common, producer=producer)
+
+    normalised = dict(kwargs)
+    if "evidence_refs" in normalised and isinstance(normalised["evidence_refs"], str):
+        normalised["evidence_refs"] = [r for r in normalised["evidence_refs"].split(",") if r]
+    if "degraded_flags" in normalised and isinstance(normalised["degraded_flags"], str):
+        normalised["degraded_flags"] = [f for f in normalised["degraded_flags"].split(",") if f]
+
+    common.update(normalised)
+    fn = producers.get(producer)
+    if fn is None:
+        return produce_and_write(producer_kwargs=common, producer=producer)
+    allowed = set(inspect.signature(fn).parameters)
+    filtered = {k: v for k, v in common.items() if k in allowed}
+    return produce_and_write(producer_kwargs=filtered, producer=producer)
 
 
 if __name__ == "__main__":

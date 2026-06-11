@@ -355,3 +355,43 @@ def test_reject_unknown_entrypoint():
     logging.disable(logging.NOTSET)
 
     assert sc.entrypoint == "unknown_mode"  # still set, but warned
+
+
+def test_inject_sidecar_filters_taskpool_metadata_for_script():
+    _ensure_patched()
+    from session_sidecar import read_sidecar
+    from session_sidecar.consumer import _inject_test_sidecar
+
+    run_id = _inject_test_sidecar(
+        status="succeeded",
+        entrypoint="script",
+        task_id="taskpool-task-id-that-script-producer-does-not-accept",
+        evidence_refs="proof:script-chain,artifact:/tmp/script.json",
+    )
+
+    loaded = read_sidecar(run_id)
+    assert loaded is not None
+    assert loaded.entrypoint == "script"
+    assert loaded.evidence_refs == ["proof:script-chain", "artifact:/tmp/script.json"]
+
+
+def test_inject_sidecar_accepts_automation_alias_and_degraded_flags():
+    _ensure_patched()
+    from session_sidecar import read_sidecar
+    from session_sidecar.consumer import _inject_test_sidecar
+
+    run_id = _inject_test_sidecar(
+        status="degraded",
+        entrypoint="automation",
+        task_id="task-123",
+        degraded_flags="browser_tool_unavailable,partial_capture",
+        error_class="BrowserUnavailable",
+    )
+
+    loaded = read_sidecar(run_id)
+    assert loaded is not None
+    assert loaded.entrypoint == "automation"
+    assert loaded.task_id == "task-123"
+    assert loaded.status == "degraded"
+    assert loaded.degraded_flags == ["browser_tool_unavailable", "partial_capture"]
+    assert loaded.error_class == "BrowserUnavailable"
