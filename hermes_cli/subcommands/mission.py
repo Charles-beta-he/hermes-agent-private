@@ -59,6 +59,16 @@ def build_mission_parser(subparsers) -> None:
     doctor.add_argument("--json", action="store_true", help="Emit JSON")
     doctor.set_defaults(func=cmd_mission)
 
+    signals = sub.add_parser("signals", help="List pending event-driven mission flow signals")
+    signals.add_argument("mission_id")
+    signals.add_argument("--json", action="store_true", help="Emit JSON")
+    signals.set_defaults(func=cmd_mission)
+
+    dispatch_events = sub.add_parser("dispatch-events", help="Trigger the installed mission cron job for pending flow signals")
+    dispatch_events.add_argument("mission_id")
+    dispatch_events.add_argument("--json", action="store_true", help="Emit JSON")
+    dispatch_events.set_defaults(func=cmd_mission)
+
     status = sub.add_parser("status", help="Show mission state, open decisions, and recent events")
     status.add_argument("mission_id")
     status.add_argument("--limit", type=int, default=20, help="Recent event limit")

@@ -42,6 +42,16 @@ VALID_EVENT_TYPES = {
     "decision_requested",
     "decision_recorded",
     "budget_exhausted",
+    "flow_signal_enqueued",
+    "flow_signal_dispatched",
+    "maintenance_tick",
+}
+
+ACTIONABLE_FLOW_EVENT_TYPES = {
+    "mission_enabled",
+    "mission_resumed",
+    "decision_recorded",
+    "stage_report",
 }
 
 
@@ -94,6 +104,20 @@ class DecisionRequest:
     answer: str = ""
     created_at: float = 0.0
     answered_at: float | None = None
+
+
+@dataclass
+class MissionFlowSignal:
+    """Pending event-driven trigger for a mission advancement tick."""
+
+    signal_id: str
+    mission_id: str
+    source_event_id: str
+    signal_type: str
+    status: str = "pending"
+    payload: dict[str, Any] = field(default_factory=dict)
+    created_at: float = 0.0
+    consumed_at: float | None = None
 
 
 def _now() -> float:
@@ -266,8 +290,24 @@ class MissionStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mission_flow_signals (
+                    signal_id TEXT PRIMARY KEY,
+                    mission_id TEXT NOT NULL,
+                    source_event_id TEXT NOT NULL UNIQUE,
+                    signal_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    consumed_at REAL,
+                    FOREIGN KEY(mission_id) REFERENCES missions(mission_id)
+                )
+                """
+            )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_mission_events_mission_time ON mission_events(mission_id, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_mission_decisions_open ON mission_decisions(mission_id, status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mission_flow_signals_pending ON mission_flow_signals(mission_id, status, created_at)")
 
     def create_mission(
         self,
@@ -387,7 +427,15 @@ class MissionStore:
         self.append_event(mission_id, event_type, reason or f"status -> {status}", {"status": status})
         return self.get_mission(mission_id)  # type: ignore[return-value]
 
-    def append_event(self, mission_id: str, event_type: str, summary: str = "", payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    def append_event(
+        self,
+        mission_id: str,
+        event_type: str,
+        summary: str = "",
+        payload: dict[str, Any] | None = None,
+        *,
+        enqueue_flow: bool = True,
+    ) -> dict[str, Any]:
         if event_type not in VALID_EVENT_TYPES:
             raise ValueError(f"invalid mission event type: {event_type}")
         if not self.get_mission(mission_id):
@@ -406,7 +454,128 @@ class MissionStore:
                 (event["event_id"], mission_id, event_type, summary, _json_dumps(payload or {}), event["created_at"]),
             )
             conn.execute("UPDATE missions SET updated_at = ? WHERE mission_id = ?", (event["created_at"], mission_id))
+        if enqueue_flow and event_type in ACTIONABLE_FLOW_EVENT_TYPES:
+            self.enqueue_flow_signal(event)
+            self.dispatch_pending_flow_signals(mission_id)
         return event
+
+    def enqueue_flow_signal(self, event: dict[str, Any]) -> MissionFlowSignal:
+        """Append a pending signal for an actionable mission event.
+
+        The signal is the event-driven SSOT edge.  It records that a state change
+        wants an immediate advancement tick; the actual agent work is still
+        gated by the existing mission cron/agent runner.
+        """
+
+        signal = MissionFlowSignal(
+            signal_id=f"sig_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+            mission_id=event["mission_id"],
+            source_event_id=event["event_id"],
+            signal_type=event["event_type"],
+            payload={"summary": event.get("summary", ""), "event_payload": event.get("payload") or {}},
+            created_at=_now(),
+        )
+        inserted = False
+        with self._connect() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO mission_flow_signals (
+                        signal_id, mission_id, source_event_id, signal_type, status, payload_json, created_at, consumed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        signal.signal_id,
+                        signal.mission_id,
+                        signal.source_event_id,
+                        signal.signal_type,
+                        signal.status,
+                        _json_dumps(signal.payload),
+                        signal.created_at,
+                        signal.consumed_at,
+                    ),
+                )
+                inserted = True
+            except sqlite3.IntegrityError:
+                row = conn.execute(
+                    "SELECT * FROM mission_flow_signals WHERE source_event_id = ?",
+                    (signal.source_event_id,),
+                ).fetchone()
+                if row:
+                    return self._row_to_flow_signal(row)
+                raise
+        if inserted:
+            self.append_event(
+                signal.mission_id,
+                "flow_signal_enqueued",
+                f"event-driven signal enqueued for {signal.signal_type}",
+                {"signal_id": signal.signal_id, "source_event_id": signal.source_event_id, "signal_type": signal.signal_type},
+                enqueue_flow=False,
+            )
+        return signal
+
+    def pending_flow_signals(self, mission_id: str, *, limit: int = 20) -> list[MissionFlowSignal]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM mission_flow_signals
+                WHERE mission_id = ? AND status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (mission_id, int(limit)),
+            ).fetchall()
+        return [self._row_to_flow_signal(row) for row in rows]
+
+    def consume_flow_signal(self, signal_id: str) -> MissionFlowSignal:
+        now = _now()
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM mission_flow_signals WHERE signal_id = ?", (signal_id,)).fetchone()
+            if not row:
+                raise KeyError(signal_id)
+            if row["status"] == "pending":
+                conn.execute(
+                    "UPDATE mission_flow_signals SET status = 'consumed', consumed_at = ? WHERE signal_id = ?",
+                    (now, signal_id),
+                )
+                row = conn.execute("SELECT * FROM mission_flow_signals WHERE signal_id = ?", (signal_id,)).fetchone()
+        return self._row_to_flow_signal(row)
+
+    def dispatch_pending_flow_signals(self, mission_id: str) -> dict[str, Any]:
+        """Ask existing mission cron jobs to run soon when pending signals exist.
+
+        This does not execute the agent inline.  It only moves already-installed
+        mission cron jobs to ``next_run_at=now`` so cron remains the governed
+        runner while state changes provide the primary trigger.
+        """
+
+        pending = self.pending_flow_signals(mission_id, limit=1)
+        if not pending:
+            return {"status": "noop", "reason": "no_pending_signals", "triggered_jobs": []}
+        jobs = self._find_cron_jobs_for_mission(mission_id)
+        triggered: list[str] = []
+        try:
+            from cron.jobs import trigger_job
+        except Exception:
+            trigger_job = None  # type: ignore[assignment]
+        if trigger_job is not None:
+            for job in jobs:
+                job_id = str(job.get("id") or "").strip()
+                if not job_id:
+                    continue
+                result = trigger_job(job_id)
+                if result:
+                    triggered.append(job_id)
+        if triggered:
+            self.append_event(
+                mission_id,
+                "flow_signal_dispatched",
+                f"event-driven signal scheduled {len(triggered)} cron job(s)",
+                {"signal_id": pending[0].signal_id, "triggered_jobs": triggered},
+                enqueue_flow=False,
+            )
+            return {"status": "dispatched", "signal_id": pending[0].signal_id, "triggered_jobs": triggered}
+        return {"status": "pending_no_cron", "signal_id": pending[0].signal_id, "triggered_jobs": []}
 
     def list_events(self, mission_id: str, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -590,6 +759,7 @@ class MissionStore:
             raise KeyError(mission_id)
         open_decisions = self.open_decisions(mission_id)
         used_ticks = self.count_events(mission_id, {"tick_prompt_created"})
+        pending_signals = self.pending_flow_signals(mission_id, limit=20)
         script_path = _hermes_home() / "scripts" / mission_tick_script_name(mission_id)
         cron_jobs = self._find_cron_jobs_for_mission(mission_id)
         checks = []
@@ -602,12 +772,14 @@ class MissionStore:
         if mission.budget.max_ticks is not None and used_ticks >= mission.budget.max_ticks:
             budget_status = "warn"
         add("tick budget", budget_status, f"{used_ticks}/{mission.budget.max_ticks}")
+        add("pending flow signals", "warn" if pending_signals and not cron_jobs else "ok", str(len(pending_signals)))
         add("tick script", "ok" if script_path.exists() else "warn", str(script_path))
         add("cron job", "ok" if cron_jobs else "warn", f"{len(cron_jobs)} matching job(s)")
         return {
             "mission": mission_to_dict(mission),
             "checks": checks,
             "open_decisions": [decision_to_dict(d) for d in open_decisions],
+            "pending_flow_signals": [flow_signal_to_dict(s) for s in pending_signals],
             "cron_jobs": cron_jobs,
             "script_path": str(script_path),
             "next_step": self._doctor_next_step(mission, open_decisions, bool(cron_jobs), used_ticks),
@@ -702,10 +874,38 @@ class MissionStore:
             self.set_status(mission_id, "paused", reason="max tick budget exhausted")
             self.append_event(mission_id, "budget_exhausted", "max tick budget exhausted", {"max_ticks": mission.budget.max_ticks})
             return {"status": "budget_exhausted", "mission": mission_to_dict(self.get_mission(mission_id)), "prompt": ""}
-        prompt = build_tick_prompt(mission, self.list_events(mission_id, limit=12), self.answered_decisions(mission_id, limit=5))
+        pending_signals = self.pending_flow_signals(mission_id, limit=1)
+        signal = pending_signals[0] if pending_signals else None
+        prompt = build_tick_prompt(
+            mission,
+            self.list_events(mission_id, limit=12),
+            self.answered_decisions(mission_id, limit=5),
+            trigger_signal=signal,
+        )
         event_type = "tick_dry_run" if dry_run else "tick_prompt_created"
-        self.append_event(mission_id, event_type, "mission tick prompt generated", {"dry_run": dry_run, "used_ticks_before": used_ticks})
-        return {"status": "dry_run" if dry_run else "prompt_created", "mission": mission_to_dict(mission), "prompt": prompt}
+        mode = "event" if signal else "maintenance"
+        payload: dict[str, Any] = {"dry_run": dry_run, "used_ticks_before": used_ticks, "mode": mode}
+        if signal:
+            payload["signal"] = flow_signal_to_dict(signal)
+        self.append_event(mission_id, event_type, "mission tick prompt generated", payload, enqueue_flow=False)
+        if not dry_run:
+            if signal:
+                self.consume_flow_signal(signal.signal_id)
+            else:
+                self.append_event(
+                    mission_id,
+                    "maintenance_tick",
+                    "periodic maintenance tick generated without pending event signal",
+                    {"used_ticks_before": used_ticks},
+                    enqueue_flow=False,
+                )
+        return {
+            "status": "dry_run" if dry_run else "prompt_created",
+            "mission": mission_to_dict(mission),
+            "prompt": prompt,
+            "mode": mode,
+            "signal": flow_signal_to_dict(signal) if signal else None,
+        }
 
     def count_events(self, mission_id: str, event_types: set[str]) -> int:
         placeholders = ",".join("?" for _ in event_types)
@@ -774,8 +974,10 @@ class MissionStore:
             "mission_cron_installed",
             f"cron job installed: {job.get('id')}",
             {"job_id": job.get("id"), "script": script_name, "schedule": schedule or mission.cadence, "deliver": deliver or mission.deliver},
+            enqueue_flow=False,
         )
-        return {"job": job, "script": str(script_path)}
+        dispatch = self.dispatch_pending_flow_signals(mission_id)
+        return {"job": job, "script": str(script_path), "event_dispatch": dispatch}
 
     def report(self, mission_id: str, limit: int = 20) -> str:
         mission = self.get_mission(mission_id)
@@ -857,6 +1059,18 @@ class MissionStore:
             answered_at=row["answered_at"],
         )
 
+    def _row_to_flow_signal(self, row: sqlite3.Row) -> MissionFlowSignal:
+        return MissionFlowSignal(
+            signal_id=row["signal_id"],
+            mission_id=row["mission_id"],
+            source_event_id=row["source_event_id"],
+            signal_type=row["signal_type"],
+            status=row["status"],
+            payload=_json_loads(row["payload_json"], {}),
+            created_at=row["created_at"],
+            consumed_at=row["consumed_at"],
+        )
+
 
 def default_blocked_actions() -> list[str]:
     return [
@@ -881,6 +1095,10 @@ def mission_to_dict(mission: Mission | None) -> dict[str, Any] | None:
 
 def decision_to_dict(decision: DecisionRequest) -> dict[str, Any]:
     return asdict(decision)
+
+
+def flow_signal_to_dict(signal: MissionFlowSignal | None) -> dict[str, Any] | None:
+    return asdict(signal) if signal is not None else None
 
 
 def _quote_decision_answer(text: str) -> str:
@@ -938,7 +1156,13 @@ def _truncate(text: str, limit: int) -> str:
     return clean[: max(0, limit - 1)] + "…"
 
 
-def build_tick_prompt(mission: Mission, recent_events: list[dict[str, Any]], answered_decisions: list[DecisionRequest]) -> str:
+def build_tick_prompt(
+    mission: Mission,
+    recent_events: list[dict[str, Any]],
+    answered_decisions: list[DecisionRequest],
+    *,
+    trigger_signal: MissionFlowSignal | None = None,
+) -> str:
     """Build the bounded user-role prompt for one mission advancement tick."""
 
     criteria = "\n".join(f"- {x}" for x in mission.success_criteria) or "- produce evidence-backed stage progress"
@@ -947,6 +1171,13 @@ def build_tick_prompt(mission: Mission, recent_events: list[dict[str, Any]], ans
     blocked = "\n".join(f"- {x}" for x in mission.blocked_actions)
     decisions = "\n".join(f"- {d.question} => {d.answer}" for d in answered_decisions) or "- none"
     events = "\n".join(f"- {e['event_type']}: {e['summary']}" for e in recent_events) or "- none"
+    if trigger_signal:
+        trigger = (
+            f"event-driven ({trigger_signal.signal_type}) from {trigger_signal.source_event_id}: "
+            f"{trigger_signal.payload.get('summary', '')}"
+        )
+    else:
+        trigger = "periodic maintenance watchdog: no pending event signal; inspect health, drift, and next safe bounded step"
     max_turns = mission.budget.max_turns_per_tick or 8
     total_budget = mission.budget.max_total_usd if mission.budget.max_total_usd is not None else "not-set"
     return f"""[Hermes Mission Tick]
@@ -972,6 +1203,9 @@ Recent human decisions:
 
 Recent mission evidence/events:
 {events}
+
+Trigger mode:
+{trigger}
 
 Budget boundary:
 - enforceable remaining tick budget is tracked by the mission ledger
@@ -1111,12 +1345,34 @@ def cmd_mission(args: argparse.Namespace) -> int:
             else:
                 _print_doctor(result)
             return 0
+        if command == "signals":
+            signals = [flow_signal_to_dict(s) for s in store.pending_flow_signals(args.mission_id)]
+            if args.json:
+                _print_json(signals)
+            else:
+                if not signals:
+                    print("No pending mission flow signals.")
+                else:
+                    print("Pending Mission Flow Signals")
+                    for signal in signals:
+                        if not signal:
+                            continue
+                        print(f"- {signal['signal_id']} {signal['signal_type']} from {signal['source_event_id']} status={signal['status']}")
+            return 0
+        if command == "dispatch-events":
+            result = store.dispatch_pending_flow_signals(args.mission_id)
+            if args.json:
+                _print_json(result)
+            else:
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
         if command == "status":
             mission = store.get_mission(args.mission_id)
             if not mission:
                 raise KeyError(args.mission_id)
             payload = mission_to_dict(mission) or {}
             payload["open_decisions"] = [decision_to_dict(d) for d in store.open_decisions(args.mission_id)]
+            payload["pending_flow_signals"] = [flow_signal_to_dict(s) for s in store.pending_flow_signals(args.mission_id)]
             payload["recent_events"] = store.list_events(args.mission_id, limit=args.limit)
             if args.json:
                 _print_json(payload)

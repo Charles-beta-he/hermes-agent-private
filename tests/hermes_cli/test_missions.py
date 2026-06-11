@@ -149,6 +149,31 @@ def test_tick_prompt_contains_human_gate_and_evidence_rules(tmp_path):
     assert "Human Intervention Packet" in prompt
     assert "Do not claim completion without real evidence" in prompt
     assert "不要静默外部副作用" in prompt
+    assert "periodic maintenance watchdog" in prompt
+
+
+def test_event_driven_flow_signal_consumed_before_maintenance_tick(tmp_path):
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="事件驱动推进 Hermes 架构",
+        cadence="every 6h",
+        budget=MissionBudget(max_ticks=3),
+        enable=True,
+    )
+
+    signals = store.pending_flow_signals(mission.mission_id)
+    assert len(signals) == 1
+    assert signals[0].signal_type == "mission_enabled"
+
+    event_tick = store.tick(mission.mission_id, dry_run=False)
+    assert event_tick["mode"] == "event"
+    assert "event-driven (mission_enabled)" in event_tick["prompt"]
+    assert store.pending_flow_signals(mission.mission_id) == []
+
+    maintenance_tick = store.tick(mission.mission_id, dry_run=False)
+    assert maintenance_tick["mode"] == "maintenance"
+    assert "periodic maintenance watchdog" in maintenance_tick["prompt"]
+    assert store.count_events(mission.mission_id, {"maintenance_tick"}) == 1
 
 
 def test_cli_json_shape_roundtrip(tmp_path, capsys):

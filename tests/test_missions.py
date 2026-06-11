@@ -89,6 +89,7 @@ def test_install_cron_creates_agent_job_with_dynamic_tick_script(tmp_path: Path,
     assert job["no_agent"] is False
     assert job["schedule_display"] == "every 180m"
     assert job["enabled_toolsets"] == ["terminal", "file"]
+    assert result["event_dispatch"]["status"] == "dispatched"
     jobs = json.loads((tmp_path / "cron" / "jobs.json").read_text())
     assert jobs["jobs"][0]["id"] == job["id"]
     assert store.count_events(mission.mission_id, {"mission_cron_installed"}) == 1
