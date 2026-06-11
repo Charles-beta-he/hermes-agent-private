@@ -118,6 +118,7 @@ def test_control_tower_snapshot_is_read_only_and_labels_adapters(tmp_path, monke
         "recommended_next_action": "refresh_or_wait_for_events",
         "critical_alerts": [],
         "blocker_summary": [],
+        "next_safe_actions": [],
         "evidence_debt": {
             "total_evidence": 0,
             "stale_or_conflicting": 0,
@@ -317,6 +318,14 @@ def test_operator_overview_highlights_no_dispatch_when_all_tasks_are_blocked(tmp
     ]
     assert overview["blocker_summary"] == [
         {"reason": "kanban_status_blocked", "count": 1}
+    ]
+    assert overview["next_safe_actions"] == [
+        {
+            "action": "triage_blockers",
+            "mode": "read_only",
+            "reason": "no_dispatchable_work",
+            "command": "Refresh snapshot, inspect blocker summary, then run the taskpool read-only diagnosis path.",
+        }
     ]
 
 

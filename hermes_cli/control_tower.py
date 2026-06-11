@@ -5798,6 +5798,34 @@ def _operator_overview_snapshot(
         headline = "No active workflow pressure observed."
         recommended_next_action = "refresh_or_wait_for_events"
         progressable = False
+    next_safe_actions: list[dict[str, str]] = []
+    if active and next_dispatchable is None:
+        next_safe_actions.append(
+            {
+                "action": "triage_blockers",
+                "mode": "read_only",
+                "reason": "no_dispatchable_work",
+                "command": "Refresh snapshot, inspect blocker summary, then run the taskpool read-only diagnosis path.",
+            }
+        )
+    if stale_signals:
+        next_safe_actions.append(
+            {
+                "action": "run_read_only_mission_flow_diagnosis",
+                "mode": "read_only",
+                "reason": "stale_mission_signals",
+                "command": "Inspect Mission event flow, then dispatch-events only after the event boundary is confirmed.",
+            }
+        )
+    if source_drift.get("dirty") or source_drift.get("ahead") or source_drift.get("behind"):
+        next_safe_actions.append(
+            {
+                "action": "inspect_source_drift",
+                "mode": "read_only",
+                "reason": "source_drift",
+                "command": "Review git status and verification evidence before mixing additional Control Tower changes.",
+            }
+        )
     return {
         "status": status,
         "progressable": progressable,
@@ -5805,6 +5833,7 @@ def _operator_overview_snapshot(
         "recommended_next_action": recommended_next_action,
         "critical_alerts": critical_alerts,
         "blocker_summary": blocker_summary,
+        "next_safe_actions": next_safe_actions,
         "evidence_debt": evidence_debt,
         "human_gate": human_gate,
         "source_drift": source_drift,

@@ -121,6 +121,17 @@
   color: #b54708;
 }
 
+.control-tower-next-actions {
+  display: grid;
+  gap: 10px;
+  padding-left: 18px;
+}
+
+.control-tower-next-actions li p {
+  margin: 4px 0 0;
+  opacity: 0.78;
+}
+
 .control-tower-missions-table {
   width: 100%;
   border-collapse: collapse;

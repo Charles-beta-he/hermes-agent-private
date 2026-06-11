@@ -253,6 +253,14 @@
     const blockers = (overview.blocker_summary || []).map((item) => `
       <li><code>${item.reason}</code> × ${item.count}</li>
     `).join('');
+    const nextActions = (overview.next_safe_actions || []).map((item) => `
+      <li>
+        <strong>${item.action || 'action'}</strong>
+        <code>${item.mode || 'unknown'}</code>
+        <span>${item.reason || ''}</span>
+        <p>${item.command || ''}</p>
+      </li>
+    `).join('');
     const evidence = overview.evidence_debt || {};
     const human = overview.human_gate || {};
     const sourceDrift = overview.source_drift || {};
@@ -271,6 +279,8 @@
       </div>
       <h3>Critical alerts</h3>
       ${alerts ? `<ul>${alerts}</ul>` : '<p>No critical alerts.</p>'}
+      <h3>Next safe actions</h3>
+      ${nextActions ? `<ul class="control-tower-next-actions">${nextActions}</ul>` : '<p>No safe actions required.</p>'}
       <h3>Blocker summary</h3>
       ${blockers ? `<ul>${blockers}</ul>` : '<p>No blockers observed.</p>'}
     `;
