@@ -193,11 +193,11 @@ def test_mission_doctor_surfaces_stale_flow_signal_watchdog_action(tmp_path: Pat
         budget=MissionBudget(max_ticks=5),
         enable=True,
     )
-    event = store.append_stage_report(
+    event = store.append_event(
         mission.mission_id,
-        summary="enqueue flow signal",
-        evidence=["unit fixture"],
-        next_step="dispatch stale signal",
+        "taskpool_status_changed",
+        "enqueue flow signal",
+        {"source": "unit", "task_id": "task-stale", "to_status": "review"},
     )
     with store._connect() as conn:
         conn.execute(
@@ -261,3 +261,51 @@ def test_taskpool_status_event_is_actionable_flow_signal(tmp_path: Path) -> None
     assert pending[0].source_event_id == event["event_id"]
     assert pending[0].signal_type == "taskpool_status_changed"
     assert pending[0].payload["event_payload"]["task_id"] == "task-1"
+
+
+def test_dispatch_events_run_due_invokes_governed_cron_runner(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    import cron.jobs as cron_jobs
+    import cron.scheduler as cron_scheduler
+
+    monkeypatch.setattr(cron_jobs, "HERMES_DIR", tmp_path)
+    monkeypatch.setattr(cron_jobs, "CRON_DIR", tmp_path / "cron")
+    monkeypatch.setattr(cron_jobs, "JOBS_FILE", tmp_path / "cron" / "jobs.json")
+    monkeypatch.setattr(cron_jobs, "OUTPUT_DIR", tmp_path / "cron" / "output")
+
+    ran: list[dict[str, object]] = []
+
+    def fake_tick(*, verbose: bool = True, sync: bool = True, **_kwargs) -> int:
+        ran.append({"verbose": verbose, "sync": sync})
+        return 1
+
+    monkeypatch.setattr(cron_scheduler, "tick", fake_tick)
+
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="Event-driven mission closes through real runner",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=5),
+        enable=True,
+    )
+    installed = store.install_cron(mission.mission_id, schedule="every 1h", deliver="local")
+    event = store.append_event(
+        mission.mission_id,
+        "taskpool_status_changed",
+        "real runner smoke",
+        {"evidence": "unit fixture", "task_id": "task-run-due", "to_status": "review"},
+    )
+
+    result = store.dispatch_pending_flow_signals(mission.mission_id, run_due=True)
+
+    assert result["status"] == "dispatched"
+    assert installed["job"]["id"] in result["triggered_jobs"]
+    assert result["runner"] == {"status": "ran", "executed_jobs": 1}
+    assert ran == [{"verbose": False, "sync": True}]
+    events = store.list_events(mission.mission_id, limit=5)
+    dispatched = [item for item in events if item["event_type"] == "flow_signal_dispatched"]
+    assert dispatched
+    assert dispatched[0]["payload"]["run_due"] is True
+    assert dispatched[0]["payload"]["runner"] == {"status": "ran", "executed_jobs": 1}
+    assert any(signal.source_event_id == event["event_id"] for signal in store.pending_flow_signals(mission.mission_id))

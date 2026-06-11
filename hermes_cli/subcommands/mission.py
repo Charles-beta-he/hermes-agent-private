@@ -66,6 +66,11 @@ def build_mission_parser(subparsers) -> None:
 
     dispatch_events = sub.add_parser("dispatch-events", help="Trigger the installed mission cron job for pending flow signals")
     dispatch_events.add_argument("mission_id")
+    dispatch_events.add_argument(
+        "--run-due",
+        action="store_true",
+        help="After triggering due mission cron jobs, synchronously run the governed cron scheduler once",
+    )
     dispatch_events.add_argument("--json", action="store_true", help="Emit JSON")
     dispatch_events.set_defaults(func=cmd_mission)
 

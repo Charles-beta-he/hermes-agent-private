@@ -29,6 +29,8 @@ Files:
 - `hermes_cli/subcommands/mission.py`
 - `tests/test_missions.py`
 - `tests/hermes_cli/test_missions.py`
+- `hermes_cli/control_tower.py`
+- `tests/hermes_cli/test_control_tower_snapshot.py`
 
 New ledger layer:
 
@@ -41,7 +43,6 @@ Actionable source events:
 - `mission_enabled`
 - `mission_resumed`
 - `decision_recorded`
-- `stage_report`
 - `taskpool_status_changed`
 
 New mission event types:
@@ -53,17 +54,20 @@ New mission event types:
 Runtime behavior:
 
 - `append_event(..., event_type in actionable)` enqueues one idempotent pending flow signal bound to the source event id.
+- `stage_report` is deliberately not actionable: a cron agent must write a stage report before ending, and treating that report as a fresh wake signal creates an infinite self-trigger loop. Stage reports remain durable evidence/read-back only.
 - If a mission cron job is installed, `dispatch_pending_flow_signals()` calls `cron.jobs.trigger_job(job_id)` to set `next_run_at=now`; this schedules the existing cron runner rather than executing work inline.
+- The explicit recovery/manual close-the-loop path is `hermes mission dispatch-events <mission_id> --run-due`: after scheduling existing mission cron jobs it invokes `cron.scheduler.tick(verbose=False, sync=True)` once, so the governed cron runner actually executes due work instead of only projecting a due timestamp. The default taskpool event hook still does not run agents inline.
 - `MissionStore.tick(... dry_run=False)` first consumes the oldest pending flow signal and marks the prompt mode as `event`.
 - If there is no pending signal, the same tick is classified as `maintenance`, and a `maintenance_tick` event is appended.
 - `brain_task_orchestrator.py` now bridges relevant Hermes self-architecture taskpool events (`task_added`, `task_transitioned`, `task_dispatch_authorized`) into `taskpool_status_changed` mission events. The bridge is scoped to Hermes/local-brain/evolution architecture tasks, is fail-soft, can be disabled with `HERMES_TASKPOOL_MISSION_BRIDGE_DISABLED=1`, and only mutates the local mission ledger / schedules the already-installed mission cron.
+- Control Tower now exposes two read-only Mission projections: `mission_flow_signals` with pending/stale age, dispatch, maintenance, consumed count, and consumed-latency metrics; and `mission_taskpool_bridge` with recent bridged taskpool events plus pending bridge signal ids. These projections read the Mission ledger only and are not lifecycle/executor owners.
 - Open human decisions still block tick prompt generation.
 - Budget exhaustion still pauses the mission before any prompt is produced.
 
 CLI surface:
 
 - `hermes mission signals <mission_id> [--json]`
-- `hermes mission dispatch-events <mission_id> [--json]`
+- `hermes mission dispatch-events <mission_id> [--run-due] [--json]`
 - `hermes mission status --json` and `doctor --json` expose pending flow signals.
 
 ## Consequence model
@@ -85,14 +89,12 @@ Reason: creates a competing control plane and new lifecycle owner before Mission
 
 ## Verification commands
 
-- `./venv/bin/python -m py_compile hermes_cli/missions.py hermes_cli/subcommands/mission.py`
-- `./venv/bin/python -m pytest -q -o addopts='' tests/test_missions.py tests/hermes_cli/test_missions.py`
+- `./venv/bin/python -m py_compile hermes_cli/missions.py hermes_cli/subcommands/mission.py hermes_cli/control_tower.py tests/hermes_cli/test_control_tower_snapshot.py`
+- `./venv/bin/python -m pytest -q -o addopts='' tests/test_missions.py tests/hermes_cli/test_missions.py tests/hermes_cli/test_control_tower_snapshot.py tests/plugins/test_control_tower_dashboard_plugin.py`
 
 ## Next safe extensions
 
-1. Add dashboard projection for pending mission flow signals in Control Tower.
-2. Add a bounded no-agent maintenance watchdog that reports stale pending signals without running agent work.
-3. Add event-driven dispatch metrics: pending age, dispatched job ids, consumed latency, maintenance tick count.
-4. Promote taskpool bridge coverage from event-hook return payloads into a compact Control Tower read-only panel once operator UI is ready.
+1. Add operator-facing CLI/dashboard rendering assertions for the new `mission_flow_signals` and `mission_taskpool_bridge` projection fields.
+2. Add a bounded no-agent watchdog report that only reports scheduler/runner failures, not ordinary zero-pending healthy states.
 
 These should be separate slices with tests and explicit side-effect boundaries.

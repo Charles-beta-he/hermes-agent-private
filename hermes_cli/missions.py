@@ -52,7 +52,6 @@ ACTIONABLE_FLOW_EVENT_TYPES = {
     "mission_enabled",
     "mission_resumed",
     "decision_recorded",
-    "stage_report",
     "taskpool_status_changed",
 }
 
@@ -559,17 +558,20 @@ class MissionStore:
                 row = conn.execute("SELECT * FROM mission_flow_signals WHERE signal_id = ?", (signal_id,)).fetchone()
         return self._row_to_flow_signal(row)
 
-    def dispatch_pending_flow_signals(self, mission_id: str) -> dict[str, Any]:
+    def dispatch_pending_flow_signals(self, mission_id: str, *, run_due: bool = False) -> dict[str, Any]:
         """Ask existing mission cron jobs to run soon when pending signals exist.
 
-        This does not execute the agent inline.  It only moves already-installed
-        mission cron jobs to ``next_run_at=now`` so cron remains the governed
-        runner while state changes provide the primary trigger.
+        By default this only moves already-installed mission cron jobs to
+        ``next_run_at=now`` so cron remains the governed runner while state
+        changes provide the primary trigger.  With ``run_due=True`` the existing
+        scheduler is invoked synchronously after the trigger; that is the
+        explicit "close the loop now" path for tests/manual recovery, not the
+        default taskpool event hook behavior.
         """
 
         pending = self.pending_flow_signals(mission_id, limit=1)
         if not pending:
-            return {"status": "noop", "reason": "no_pending_signals", "triggered_jobs": []}
+            return {"status": "noop", "reason": "no_pending_signals", "triggered_jobs": [], "runner": {"status": "not_requested"}}
         jobs = self._find_cron_jobs_for_mission(mission_id)
         triggered: list[str] = []
         try:
@@ -584,16 +586,28 @@ class MissionStore:
                 result = trigger_job(job_id)
                 if result:
                     triggered.append(job_id)
+        runner: dict[str, Any] = {"status": "not_requested"}
+        if run_due:
+            if not triggered:
+                runner = {"status": "skipped", "reason": "no_triggered_jobs"}
+            else:
+                try:
+                    from cron.scheduler import tick as cron_tick
+
+                    executed = cron_tick(verbose=False, sync=True)
+                    runner = {"status": "ran", "executed_jobs": int(executed)}
+                except Exception as exc:  # pragma: no cover - defensive runtime guard
+                    runner = {"status": "error", "error": str(exc)}
         if triggered:
             self.append_event(
                 mission_id,
                 "flow_signal_dispatched",
                 f"event-driven signal scheduled {len(triggered)} cron job(s)",
-                {"signal_id": pending[0].signal_id, "triggered_jobs": triggered},
+                {"signal_id": pending[0].signal_id, "triggered_jobs": triggered, "run_due": bool(run_due), "runner": runner},
                 enqueue_flow=False,
             )
-            return {"status": "dispatched", "signal_id": pending[0].signal_id, "triggered_jobs": triggered}
-        return {"status": "pending_no_cron", "signal_id": pending[0].signal_id, "triggered_jobs": []}
+            return {"status": "dispatched", "signal_id": pending[0].signal_id, "triggered_jobs": triggered, "runner": runner}
+        return {"status": "pending_no_cron", "signal_id": pending[0].signal_id, "triggered_jobs": [], "runner": runner}
 
     def list_events(self, mission_id: str, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -1390,7 +1404,7 @@ def cmd_mission(args: argparse.Namespace) -> int:
                         print(f"- {signal['signal_id']} {signal['signal_type']} from {signal['source_event_id']} status={signal['status']}")
             return 0
         if command == "dispatch-events":
-            result = store.dispatch_pending_flow_signals(args.mission_id)
+            result = store.dispatch_pending_flow_signals(args.mission_id, run_due=bool(args.run_due))
             if args.json:
                 _print_json(result)
             else:

@@ -1,3 +1,4 @@
+import argparse
 import json
 
 import pytest
@@ -176,9 +177,58 @@ def test_event_driven_flow_signal_consumed_before_maintenance_tick(tmp_path):
     assert store.count_events(mission.mission_id, {"maintenance_tick"}) == 1
 
 
+def test_cli_handoff_decide_resumes_and_enqueues_flow_signal(tmp_path, capsys):
+    from hermes_cli.missions import cmd_mission
+
+    db = str(tmp_path / "missions.db")
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="验证控制台短时能力会话处理真实 mission decision",
+        cadence="every 1h",
+        budget=MissionBudget(max_ticks=3),
+        enable=True,
+    )
+    store.tick(mission.mission_id, dry_run=False)
+
+    handoff_args = argparse.Namespace(
+        db=db,
+        mission_command="handoff",
+        mission_id=mission.mission_id,
+        question="是否继续端到端短时能力会话？",
+        option=["继续", "暂停"],
+        recommend="继续",
+        json=True,
+    )
+    assert cmd_mission(handoff_args) == 0
+    decision_payload = json.loads(capsys.readouterr().out)
+    assert decision_payload["status"] == "open"
+    assert store.tick(mission.mission_id, dry_run=False)["status"] == "blocked_on_human"
+
+    decide_args = argparse.Namespace(
+        db=db,
+        mission_command="decide",
+        decision_id=decision_payload["decision_id"],
+        answer=["继续推进短时能力会话端到端测试"],
+        json=True,
+    )
+    assert cmd_mission(decide_args) == 0
+    answered_payload = json.loads(capsys.readouterr().out)
+    assert answered_payload["status"] == "answered"
+    resumed = store.get_mission(mission.mission_id)
+    assert resumed is not None
+    assert resumed.status == "active"
+
+    signals = store.pending_flow_signals(mission.mission_id)
+    assert [signal.signal_type for signal in signals] == ["decision_recorded"]
+    resumed_tick = store.tick(mission.mission_id, dry_run=False)
+    assert resumed_tick["mode"] == "event"
+    assert "event-driven (decision_recorded)" in resumed_tick["prompt"]
+    assert "继续推进短时能力会话端到端测试" in resumed_tick["prompt"]
+    assert store.pending_flow_signals(mission.mission_id) == []
+
+
 def test_cli_json_shape_roundtrip(tmp_path, capsys):
     from hermes_cli.missions import cmd_mission
-    import argparse
 
     db = str(tmp_path / "missions.db")
     args = argparse.Namespace(

@@ -84,6 +84,16 @@ def test_control_tower_snapshot_is_read_only_and_labels_adapters(tmp_path, monke
     assert "kanban" in snapshot["adapters"]
     assert snapshot["adapters"]["kanban"]["role"] == "projection_adapter"
     assert snapshot["adapters"]["mission_flow"] == {"role": "projection_adapter", "canonical": False}
+    assert snapshot["adapters"]["mission_taskpool_bridge"] == {"role": "projection_adapter", "canonical": False}
+    assert snapshot["mission_taskpool_bridge"] == {
+        "role": "read_only_projection",
+        "canonical": False,
+        "source": "Mission ledger taskpool_status_changed events",
+        "status": "ok",
+        "bridged_event_count": 0,
+        "pending_bridge_signal_count": 0,
+        "missions": [],
+    }
     assert snapshot["mission_flow_signals"] == {
         "role": "read_only_projection",
         "canonical": False,
@@ -92,6 +102,12 @@ def test_control_tower_snapshot_is_read_only_and_labels_adapters(tmp_path, monke
         "stale_after_seconds": 900,
         "pending_count": 0,
         "stale_count": 0,
+        "oldest_pending_age_seconds": 0,
+        "max_pending_age_seconds": 0,
+        "dispatched_count": 0,
+        "maintenance_tick_count": 0,
+        "consumed_count": 0,
+        "avg_consumed_latency_seconds": None,
         "missions": [],
     }
 
@@ -109,9 +125,9 @@ def test_snapshot_projects_pending_and_stale_mission_flow_signals(tmp_path, monk
     )
     event = store.append_event(
         mission.mission_id,
-        "stage_report",
+        "taskpool_status_changed",
         "local projection smoke",
-        {"evidence": "unit-test"},
+        {"evidence": "unit-test", "task_id": "snapshot-pending", "to_status": "review"},
         enqueue_flow=True,
     )
     with sqlite3.connect(home / "missions.db") as conn:
@@ -119,6 +135,36 @@ def test_snapshot_projects_pending_and_stale_mission_flow_signals(tmp_path, monk
             "UPDATE mission_flow_signals SET created_at = created_at - 901 WHERE source_event_id = ?",
             (event["event_id"],),
         )
+    consumed_event = store.append_event(
+        mission.mission_id,
+        "taskpool_status_changed",
+        "local consumed latency smoke",
+        {"evidence": "unit-test-consumed", "task_id": "snapshot-consumed", "to_status": "review"},
+        enqueue_flow=True,
+    )
+    with sqlite3.connect(home / "missions.db") as conn:
+        conn.execute(
+            "UPDATE mission_flow_signals SET created_at = created_at - 12 WHERE source_event_id = ?",
+            (consumed_event["event_id"],),
+        )
+    consumed_signal = next(
+        signal for signal in store.pending_flow_signals(mission.mission_id) if signal.source_event_id == consumed_event["event_id"]
+    )
+    store.consume_flow_signal(consumed_signal.signal_id)
+    store.append_event(
+        mission.mission_id,
+        "flow_signal_dispatched",
+        "event-driven signal scheduled 1 cron job(s)",
+        {"signal_id": event["event_id"], "triggered_jobs": ["cron_test"]},
+        enqueue_flow=False,
+    )
+    store.append_event(
+        mission.mission_id,
+        "maintenance_tick",
+        "periodic maintenance tick generated without pending event signal",
+        {"used_ticks_before": 1},
+        enqueue_flow=False,
+    )
 
     snapshot = control_tower.build_snapshot()
 
@@ -126,13 +172,38 @@ def test_snapshot_projects_pending_and_stale_mission_flow_signals(tmp_path, monk
     assert mission_flow["status"] == "ok"
     assert mission_flow["pending_count"] == 1
     assert mission_flow["stale_count"] == 1
+    assert mission_flow["oldest_pending_age_seconds"] >= 900
+    assert mission_flow["max_pending_age_seconds"] >= 900
+    assert mission_flow["dispatched_count"] == 1
+    assert mission_flow["maintenance_tick_count"] == 1
+    assert mission_flow["consumed_count"] == 1
+    assert mission_flow["avg_consumed_latency_seconds"] >= 12
     assert mission_flow["missions"][0]["mission_id"] == "msn_test_flow"
+    assert mission_flow["missions"][0]["metrics"]["pending_count"] == 1
+    assert mission_flow["missions"][0]["metrics"]["stale_count"] == 1
+    assert mission_flow["missions"][0]["metrics"]["oldest_pending_age_seconds"] >= 900
+    assert mission_flow["missions"][0]["metrics"]["dispatched_count"] == 1
+    assert mission_flow["missions"][0]["metrics"]["maintenance_tick_count"] == 1
+    assert mission_flow["missions"][0]["metrics"]["consumed_count"] == 1
+    assert mission_flow["missions"][0]["metrics"]["avg_consumed_latency_seconds"] >= 12
     signal = mission_flow["missions"][0]["pending_signals"][0]
     assert signal["source_event_id"] == event["event_id"]
-    assert signal["signal_type"] == "stage_report"
+    assert signal["signal_type"] == "taskpool_status_changed"
     assert signal["status"] == "pending"
     assert signal["stale"] is True
     assert signal["age_seconds"] >= 900
+
+    bridge = snapshot["mission_taskpool_bridge"]
+    assert bridge["status"] == "ok"
+    assert bridge["bridged_event_count"] == 2
+    assert bridge["pending_bridge_signal_count"] == 1
+    assert bridge["missions"][0]["mission_id"] == "msn_test_flow"
+    assert bridge["missions"][0]["bridged_event_count"] == 2
+    assert bridge["missions"][0]["pending_bridge_signal_count"] == 1
+    recent_by_task = {item["task_id"]: item for item in bridge["missions"][0]["recent_events"]}
+    assert recent_by_task["snapshot-pending"]["pending_signal_id"] == signal["signal_id"]
+    assert recent_by_task["snapshot-pending"]["to_status"] == "review"
+    assert recent_by_task["snapshot-consumed"]["pending_signal_id"] is None
 
 
 def test_record_adapter_observation_dedupes_by_hash(tmp_path, monkeypatch):

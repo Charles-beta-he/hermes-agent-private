@@ -5435,6 +5435,12 @@ def _mission_flow_signal_snapshot(*, stale_after_seconds: int = 900, limit_per_m
             "reason": str(exc),
             "pending_count": 0,
             "stale_count": 0,
+            "oldest_pending_age_seconds": 0,
+            "max_pending_age_seconds": 0,
+            "dispatched_count": 0,
+            "maintenance_tick_count": 0,
+            "consumed_count": 0,
+            "avg_consumed_latency_seconds": None,
             "missions": [],
         }
 
@@ -5445,44 +5451,87 @@ def _mission_flow_signal_snapshot(*, stale_after_seconds: int = 900, limit_per_m
         rows: list[dict[str, Any]] = []
         pending_count = 0
         stale_count = 0
-        for mission in missions:
-            pending = store.pending_flow_signals(mission.mission_id, limit=limit_per_mission)
-            stale_ids = {
-                signal.signal_id
-                for signal in store.stale_flow_signals(
-                    mission.mission_id,
-                    older_than_seconds=stale_after_seconds,
-                    limit=limit_per_mission,
-                )
-            }
-            signal_rows = []
-            for signal in pending:
-                age_seconds = max(0, int(now_ts - signal.created_at)) if signal.created_at else 0
-                is_stale = signal.signal_id in stale_ids
-                pending_count += 1
-                if is_stale:
-                    stale_count += 1
-                signal_rows.append(
-                    {
-                        "signal_id": signal.signal_id,
-                        "source_event_id": signal.source_event_id,
-                        "signal_type": signal.signal_type,
-                        "status": signal.status,
-                        "age_seconds": age_seconds,
-                        "stale": is_stale,
-                        "payload": signal.payload,
-                    }
-                )
-            if signal_rows:
-                rows.append(
-                    {
-                        "mission_id": mission.mission_id,
-                        "stage": mission.stage,
-                        "status": mission.status,
-                        "cadence": mission.cadence,
-                        "pending_signals": signal_rows,
-                    }
-                )
+        pending_ages: list[int] = []
+        dispatched_count = 0
+        maintenance_tick_count = 0
+        consumed_count = 0
+        consumed_latency_total = 0
+        consumed_latency_count = 0
+        with sqlite3.connect(store.path) as mission_conn:
+            mission_conn.row_factory = sqlite3.Row
+            for mission in missions:
+                pending = store.pending_flow_signals(mission.mission_id, limit=limit_per_mission)
+                stale_ids = {
+                    signal.signal_id
+                    for signal in store.stale_flow_signals(
+                        mission.mission_id,
+                        older_than_seconds=stale_after_seconds,
+                        limit=limit_per_mission,
+                    )
+                }
+                mission_dispatched_count = store.count_events(mission.mission_id, {"flow_signal_dispatched"})
+                mission_maintenance_tick_count = store.count_events(mission.mission_id, {"maintenance_tick"})
+                consumed_row = mission_conn.execute(
+                    """
+                    SELECT COUNT(*) AS consumed_count,
+                           AVG(consumed_at - created_at) AS avg_latency_seconds
+                    FROM mission_flow_signals
+                    WHERE mission_id = ? AND status = 'consumed' AND consumed_at IS NOT NULL
+                    """,
+                    (mission.mission_id,),
+                ).fetchone()
+                mission_consumed_count = int(consumed_row["consumed_count"] if consumed_row else 0)
+                mission_avg_consumed_latency = None
+                if consumed_row and consumed_row["avg_latency_seconds"] is not None:
+                    mission_avg_consumed_latency = max(0, int(consumed_row["avg_latency_seconds"]))
+                    consumed_latency_total += mission_avg_consumed_latency * mission_consumed_count
+                    consumed_latency_count += mission_consumed_count
+                dispatched_count += mission_dispatched_count
+                maintenance_tick_count += mission_maintenance_tick_count
+                consumed_count += mission_consumed_count
+                signal_rows = []
+                mission_pending_ages: list[int] = []
+                for signal in pending:
+                    age_seconds = max(0, int(now_ts - signal.created_at)) if signal.created_at else 0
+                    is_stale = signal.signal_id in stale_ids
+                    pending_count += 1
+                    pending_ages.append(age_seconds)
+                    mission_pending_ages.append(age_seconds)
+                    if is_stale:
+                        stale_count += 1
+                    signal_rows.append(
+                        {
+                            "signal_id": signal.signal_id,
+                            "source_event_id": signal.source_event_id,
+                            "signal_type": signal.signal_type,
+                            "status": signal.status,
+                            "age_seconds": age_seconds,
+                            "stale": is_stale,
+                            "payload": signal.payload,
+                        }
+                    )
+                if signal_rows:
+                    rows.append(
+                        {
+                            "mission_id": mission.mission_id,
+                            "stage": mission.stage,
+                            "status": mission.status,
+                            "cadence": mission.cadence,
+                            "metrics": {
+                                "oldest_pending_age_seconds": max(mission_pending_ages) if mission_pending_ages else 0,
+                                "pending_count": len(signal_rows),
+                                "stale_count": sum(1 for signal in signal_rows if signal["stale"]),
+                                "dispatched_count": mission_dispatched_count,
+                                "maintenance_tick_count": mission_maintenance_tick_count,
+                                "consumed_count": mission_consumed_count,
+                                "avg_consumed_latency_seconds": mission_avg_consumed_latency,
+                            },
+                            "pending_signals": signal_rows,
+                        }
+                    )
+        avg_consumed_latency = None
+        if consumed_latency_count:
+            avg_consumed_latency = max(0, int(consumed_latency_total / consumed_latency_count))
         return {
             "role": "read_only_projection",
             "canonical": False,
@@ -5491,6 +5540,12 @@ def _mission_flow_signal_snapshot(*, stale_after_seconds: int = 900, limit_per_m
             "stale_after_seconds": int(stale_after_seconds),
             "pending_count": pending_count,
             "stale_count": stale_count,
+            "oldest_pending_age_seconds": max(pending_ages) if pending_ages else 0,
+            "max_pending_age_seconds": max(pending_ages) if pending_ages else 0,
+            "dispatched_count": dispatched_count,
+            "maintenance_tick_count": maintenance_tick_count,
+            "consumed_count": consumed_count,
+            "avg_consumed_latency_seconds": avg_consumed_latency,
             "missions": rows,
         }
     except Exception as exc:
@@ -5502,6 +5557,103 @@ def _mission_flow_signal_snapshot(*, stale_after_seconds: int = 900, limit_per_m
             "reason": str(exc),
             "pending_count": 0,
             "stale_count": 0,
+            "oldest_pending_age_seconds": 0,
+            "max_pending_age_seconds": 0,
+            "dispatched_count": 0,
+            "maintenance_tick_count": 0,
+            "consumed_count": 0,
+            "avg_consumed_latency_seconds": None,
+            "missions": [],
+        }
+
+
+def _mission_taskpool_bridge_snapshot(*, limit_per_mission: int = 5) -> dict[str, Any]:
+    """Return a compact read-only panel for taskpool->mission bridge events.
+
+    MissionStore remains the canonical ledger for bridged taskpool events. This
+    projection intentionally reads only mission events and pending signals so the
+    dashboard can show which taskpool changes are waking the governed mission
+    cron without becoming a second taskpool or executor.
+    """
+
+    try:
+        from hermes_cli.missions import MissionStore
+    except Exception as exc:
+        return {
+            "role": "read_only_projection",
+            "canonical": False,
+            "available": False,
+            "status": "unavailable",
+            "reason": str(exc),
+            "bridged_event_count": 0,
+            "pending_bridge_signal_count": 0,
+            "missions": [],
+        }
+
+    try:
+        store = MissionStore()
+        missions = store.list_missions(include_done=False)
+        rows: list[dict[str, Any]] = []
+        total_events = 0
+        total_pending = 0
+        for mission in missions:
+            events = store.list_events_by_type(mission.mission_id, "taskpool_status_changed", limit=limit_per_mission)
+            if not events:
+                continue
+            pending_by_source = {
+                signal.source_event_id: signal
+                for signal in store.pending_flow_signals(mission.mission_id, limit=limit_per_mission * 2)
+                if signal.signal_type == "taskpool_status_changed"
+            }
+            recent_events: list[dict[str, Any]] = []
+            mission_pending = 0
+            for event in events:
+                payload = event.get("payload") or {}
+                pending_signal = pending_by_source.get(event["event_id"])
+                if pending_signal:
+                    mission_pending += 1
+                recent_events.append(
+                    {
+                        "event_id": event["event_id"],
+                        "created_at": event["created_at"],
+                        "summary": event.get("summary", ""),
+                        "task_id": payload.get("task_id") or payload.get("external_ref"),
+                        "from_status": payload.get("from_status"),
+                        "to_status": payload.get("to_status") or payload.get("status"),
+                        "source": payload.get("source"),
+                        "pending_signal_id": pending_signal.signal_id if pending_signal else None,
+                    }
+                )
+            total_events += len(events)
+            total_pending += mission_pending
+            rows.append(
+                {
+                    "mission_id": mission.mission_id,
+                    "stage": mission.stage,
+                    "status": mission.status,
+                    "bridged_event_count": len(events),
+                    "pending_bridge_signal_count": mission_pending,
+                    "recent_events": recent_events,
+                }
+            )
+        return {
+            "role": "read_only_projection",
+            "canonical": False,
+            "source": "Mission ledger taskpool_status_changed events",
+            "status": "ok",
+            "bridged_event_count": total_events,
+            "pending_bridge_signal_count": total_pending,
+            "missions": rows,
+        }
+    except Exception as exc:
+        return {
+            "role": "read_only_projection",
+            "canonical": False,
+            "available": False,
+            "status": "error",
+            "reason": str(exc),
+            "bridged_event_count": 0,
+            "pending_bridge_signal_count": 0,
             "missions": [],
         }
 
@@ -5511,6 +5663,7 @@ def build_snapshot() -> dict[str, Any]:
     ledger = init_ledger()
     kanban_adapter = observe_kanban_adapter()
     mission_flow_signals = _mission_flow_signal_snapshot()
+    mission_taskpool_bridge = _mission_taskpool_bridge_snapshot()
     with sqlite3.connect(ledger) as conn:
         conn.row_factory = sqlite3.Row
         last_seq = conn.execute("SELECT COALESCE(MAX(sequence), 0) FROM events").fetchone()[0]
@@ -5569,8 +5722,10 @@ def build_snapshot() -> dict[str, Any]:
             "cron": {"role": "watchdog_adapter", "canonical": False},
             "gateway": {"role": "event_ingress_adapter", "canonical": False},
             "mission_flow": {"role": "projection_adapter", "canonical": False},
+            "mission_taskpool_bridge": {"role": "projection_adapter", "canonical": False},
         },
         "mission_flow_signals": mission_flow_signals,
+        "mission_taskpool_bridge": mission_taskpool_bridge,
         "taskpool_health": _taskpool_health_from_tasks(tasks),
         "next_dispatchable": _next_dispatchable_from_tasks(tasks),
         "top_blockers": blockers[:5],
