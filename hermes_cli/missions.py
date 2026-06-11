@@ -820,6 +820,47 @@ class MissionStore:
             "next_step": self._doctor_next_step(mission, open_decisions, bool(cron_jobs), used_ticks, bool(stale_signals)),
         }
 
+    def watchdog(self, mission_id: str, *, older_than_seconds: int = 900) -> dict[str, Any]:
+        """Read-only no-agent watchdog for stalled event-driven mission flow.
+
+        This deliberately does not dispatch jobs, invoke the agent runner, or
+        mutate the mission ledger. It is intended for classic ``no_agent`` cron
+        jobs: healthy state is silent, while stale pending signals become a
+        compact operator report pointing at the governed recovery command.
+        """
+
+        mission = self.get_mission(mission_id)
+        if not mission:
+            raise KeyError(mission_id)
+        stale_signals = self.stale_flow_signals(mission_id, older_than_seconds=older_than_seconds, limit=20)
+        cron_jobs = self._find_cron_jobs_for_mission(mission_id)
+        issues: list[dict[str, Any]] = []
+        if stale_signals and not cron_jobs:
+            issues.append(
+                {
+                    "code": "mission_flow_scheduler_missing",
+                    "message": "stale mission flow signals exist, but no matching mission cron job is installed",
+                    "recommended_command": f"hermes mission install-cron {mission_id}",
+                }
+            )
+        elif stale_signals:
+            issues.append(
+                {
+                    "code": "mission_flow_runner_stalled",
+                    "message": "stale mission flow signals remain pending after the scheduler should have consumed them",
+                    "recommended_command": f"hermes mission dispatch-events {mission_id} --run-due --json",
+                }
+            )
+        return {
+            "status": "alert" if issues else "ok",
+            "mission_id": mission_id,
+            "older_than_seconds": int(older_than_seconds),
+            "issues": issues,
+            "stale_flow_signals": [flow_signal_to_dict(s) for s in stale_signals],
+            "cron_jobs": cron_jobs,
+            "silent": not issues,
+        }
+
     def _doctor_next_step(
         self,
         mission: Mission,
@@ -1389,6 +1430,13 @@ def cmd_mission(args: argparse.Namespace) -> int:
             else:
                 _print_doctor(result)
             return 0
+        if command == "watchdog":
+            result = store.watchdog(args.mission_id, older_than_seconds=args.older_than_seconds)
+            if args.json:
+                _print_json(result)
+            elif not result.get("silent"):
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            return 1 if result.get("issues") else 0
         if command == "signals":
             signals = [flow_signal_to_dict(s) for s in store.pending_flow_signals(args.mission_id)]
             if args.json:

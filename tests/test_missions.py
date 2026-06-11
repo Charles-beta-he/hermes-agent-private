@@ -232,6 +232,61 @@ def test_mission_doctor_surfaces_stale_flow_signal_watchdog_action(tmp_path: Pat
     assert any(check["name"] == "stale flow signals" and check["status"] == "warn" for check in doctor["checks"])
 
 
+def test_mission_watchdog_is_silent_when_healthy_and_alerts_on_stale_runner(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="Event-driven mission watchdog",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=5),
+        enable=True,
+    )
+
+    healthy = store.watchdog(mission.mission_id)
+    assert healthy["status"] == "ok"
+    assert healthy["silent"] is True
+    assert healthy["issues"] == []
+
+    event = store.append_event(
+        mission.mission_id,
+        "taskpool_status_changed",
+        "watchdog stale fixture",
+        {"source": "unit", "task_id": "task-stale", "to_status": "review"},
+    )
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE mission_flow_signals SET created_at = created_at - 3600 WHERE source_event_id = ?",
+            (event["event_id"],),
+        )
+    cron_dir = tmp_path / "cron"
+    cron_dir.mkdir()
+    (cron_dir / "jobs.json").write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "id": "job-watchdog",
+                        "name": f"Mission {mission.mission_id}",
+                        "enabled": True,
+                        "state": "idle",
+                        "next_run_at": None,
+                        "script": mission_tick_script_name(mission.mission_id),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    alert = store.watchdog(mission.mission_id)
+    assert alert["status"] == "alert"
+    assert alert["silent"] is False
+    assert alert["issues"][0]["code"] == "mission_flow_runner_stalled"
+    assert alert["issues"][0]["recommended_command"] == f"hermes mission dispatch-events {mission.mission_id} --run-due --json"
+    assert len(alert["stale_flow_signals"]) == 1
+
+
 def test_taskpool_status_event_is_actionable_flow_signal(tmp_path: Path) -> None:
     store = MissionStore(tmp_path / "missions.db")
     mission = store.create_mission(

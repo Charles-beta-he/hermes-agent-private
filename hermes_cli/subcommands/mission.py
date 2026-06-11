@@ -59,6 +59,20 @@ def build_mission_parser(subparsers) -> None:
     doctor.add_argument("--json", action="store_true", help="Emit JSON")
     doctor.set_defaults(func=cmd_mission)
 
+    watchdog = sub.add_parser(
+        "watchdog",
+        help="Read-only no-agent check for stalled event-driven mission flow",
+    )
+    watchdog.add_argument("mission_id")
+    watchdog.add_argument(
+        "--older-than-seconds",
+        type=int,
+        default=900,
+        help="Pending signal age threshold before reporting a scheduler/runner stall (default: 900)",
+    )
+    watchdog.add_argument("--json", action="store_true", help="Emit JSON, including healthy silent state")
+    watchdog.set_defaults(func=cmd_mission)
+
     signals = sub.add_parser("signals", help="List pending event-driven mission flow signals")
     signals.add_argument("mission_id")
     signals.add_argument("--json", action="store_true", help="Emit JSON")
