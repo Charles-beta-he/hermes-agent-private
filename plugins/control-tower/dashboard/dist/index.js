@@ -15,63 +15,68 @@
         Kanban/taskpool write execution runs, and digest-bound rollback runs.
         Durable workflow facts belong to <code>~/.hermes/control_tower.db</code>.
       </p>
-      <div class="control-tower-actions">
+      <div class="control-tower-actions control-tower-primary-actions">
         <button id="control-tower-refresh" type="button">Refresh snapshot</button>
-        <button id="control-tower-propose-refresh" type="button">
-          Propose RefreshProjection
-        </button>
-        <button id="control-tower-approve-first" type="button">
-          Approve first pending
-        </button>
-        <button id="control-tower-reject-first" type="button">
-          Reject first pending
-        </button>
-        <button id="control-tower-plan-first" type="button">
-          Plan first proposed
-        </button>
-        <button id="control-tower-policy-first" type="button">
-          Review first plan policy
-        </button>
-        <button id="control-tower-execute-read-only" type="button">
-          Execute read-only plan
-        </button>
-        <button id="control-tower-record-evidence" type="button">
-          Record sample evidence
-        </button>
-        <button id="control-tower-evidence-gate" type="button">
-          Evaluate evidence gate
-        </button>
-        <button id="control-tower-request-closeout" type="button">
-          Request closeout auth
-        </button>
-        <button id="control-tower-approve-closeout" type="button">
-          Approve closeout auth
-        </button>
-        <button id="control-tower-execute-closeout" type="button">
-          Execute approved closeout
-        </button>
-        <button id="control-tower-prepare-external-intent" type="button">
-          Prepare external write intent
-        </button>
-        <button id="control-tower-review-external-intent" type="button">
-          Review external intent readiness
-        </button>
-        <button id="control-tower-request-external-auth" type="button">
-          Request external write auth
-        </button>
-        <button id="control-tower-approve-external-auth" type="button">
-          Approve external write auth
-        </button>
-        <button id="control-tower-prepare-external-preflight" type="button">
-          Prepare external write preflight
-        </button>
-        <button id="control-tower-execute-external-write" type="button">
-          Execute approved adapter write
-        </button>
-        <button id="control-tower-rollback-external-write" type="button">
-          Rollback adapter write
-        </button>
       </div>
+      <details class="control-tower-debug-actions">
+        <summary>Operator/debug actions</summary>
+        <div class="control-tower-actions">
+          <button id="control-tower-propose-refresh" type="button">
+            Propose RefreshProjection
+          </button>
+          <button id="control-tower-approve-first" type="button">
+            Approve first pending
+          </button>
+          <button id="control-tower-reject-first" type="button">
+            Reject first pending
+          </button>
+          <button id="control-tower-plan-first" type="button">
+            Plan first proposed
+          </button>
+          <button id="control-tower-policy-first" type="button">
+            Review first plan policy
+          </button>
+          <button id="control-tower-execute-read-only" type="button">
+            Execute read-only plan
+          </button>
+          <button id="control-tower-record-evidence" type="button">
+            Record sample evidence
+          </button>
+          <button id="control-tower-evidence-gate" type="button">
+            Evaluate evidence gate
+          </button>
+          <button id="control-tower-request-closeout" type="button">
+            Request closeout auth
+          </button>
+          <button id="control-tower-approve-closeout" type="button">
+            Approve closeout auth
+          </button>
+          <button id="control-tower-execute-closeout" type="button">
+            Execute approved closeout
+          </button>
+          <button id="control-tower-prepare-external-intent" type="button">
+            Prepare external write intent
+          </button>
+          <button id="control-tower-review-external-intent" type="button">
+            Review external intent readiness
+          </button>
+          <button id="control-tower-request-external-auth" type="button">
+            Request external write auth
+          </button>
+          <button id="control-tower-approve-external-auth" type="button">
+            Approve external write auth
+          </button>
+          <button id="control-tower-prepare-external-preflight" type="button">
+            Prepare external write preflight
+          </button>
+          <button id="control-tower-execute-external-write" type="button">
+            Execute approved adapter write
+          </button>
+          <button id="control-tower-rollback-external-write" type="button">
+            Rollback adapter write
+          </button>
+        </div>
+      </details>
       <div id="control-tower-summary" class="control-tower-summary">Loading…</div>
       <section class="control-tower-card control-tower-operator-overview-card">
         <p class="control-tower-eyebrow">Operator Overview</p>
@@ -91,7 +96,10 @@
         <p>Read-only operator projection for event-driven Mission wakeups, consumed latency, stale signals, and taskpool bridge status.</p>
         <div id="control-tower-mission-flow">Loading mission flow…</div>
       </section>
-      <pre id="control-tower-snapshot">Loading snapshot…</pre>
+      <details class="control-tower-debug-snapshot">
+        <summary>Raw snapshot JSON</summary>
+        <pre id="control-tower-snapshot">Loading snapshot…</pre>
+      </details>
     </section>
   `;
 

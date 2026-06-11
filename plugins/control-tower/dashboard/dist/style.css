@@ -42,6 +42,29 @@
   background: color-mix(in srgb, Canvas 78%, currentColor 22%);
 }
 
+.control-tower-debug-actions,
+.control-tower-debug-snapshot {
+  margin-top: 12px;
+  border: 1px dashed color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, Canvas 94%, currentColor 6%);
+}
+
+.control-tower-debug-actions summary,
+.control-tower-debug-snapshot summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.control-tower-primary-actions {
+  margin-top: 18px;
+}
+
+.control-tower-debug-actions .control-tower-actions {
+  margin-top: 12px;
+}
+
 .control-tower-summary {
   display: flex;
   flex-wrap: wrap;
