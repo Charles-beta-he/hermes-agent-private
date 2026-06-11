@@ -61,6 +61,7 @@ Runtime behavior:
 - If there is no pending signal, the same tick is classified as `maintenance`, and a `maintenance_tick` event is appended.
 - `brain_task_orchestrator.py` now bridges relevant Hermes self-architecture taskpool events (`task_added`, `task_transitioned`, `task_dispatch_authorized`) into `taskpool_status_changed` mission events. The bridge is scoped to Hermes/local-brain/evolution architecture tasks, is fail-soft, can be disabled with `HERMES_TASKPOOL_MISSION_BRIDGE_DISABLED=1`, and only mutates the local mission ledger / schedules the already-installed mission cron.
 - Control Tower now exposes two read-only Mission projections: `mission_flow_signals` with pending/stale age, dispatch, maintenance, consumed count, and consumed-latency metrics; and `mission_taskpool_bridge` with recent bridged taskpool events plus pending bridge signal ids. These projections read the Mission ledger only and are not lifecycle/executor owners.
+- The Control Tower dashboard plugin renders an operator-facing `Mission event flow` panel from those two projections: top-line signal/latency/bridge metrics, pending signal rows, and recent taskpool bridge rows. This is visual/read-only; mutation remains through MissionStore/Control Tower gated APIs only.
 - Open human decisions still block tick prompt generation.
 - Budget exhaustion still pauses the mission before any prompt is produced.
 
@@ -89,12 +90,13 @@ Reason: creates a competing control plane and new lifecycle owner before Mission
 
 ## Verification commands
 
-- `./venv/bin/python -m py_compile hermes_cli/missions.py hermes_cli/subcommands/mission.py hermes_cli/control_tower.py tests/hermes_cli/test_control_tower_snapshot.py`
+- `./venv/bin/python -m py_compile hermes_cli/missions.py hermes_cli/subcommands/mission.py hermes_cli/control_tower.py plugins/control-tower/dashboard/plugin_api.py tests/hermes_cli/test_control_tower_snapshot.py`
+- `node --check plugins/control-tower/dashboard/dist/index.js`
 - `./venv/bin/python -m pytest -q -o addopts='' tests/test_missions.py tests/hermes_cli/test_missions.py tests/hermes_cli/test_control_tower_snapshot.py tests/plugins/test_control_tower_dashboard_plugin.py`
 
 ## Next safe extensions
 
-1. Add operator-facing CLI/dashboard rendering assertions for the new `mission_flow_signals` and `mission_taskpool_bridge` projection fields.
-2. Add a bounded no-agent watchdog report that only reports scheduler/runner failures, not ordinary zero-pending healthy states.
+1. Add a bounded no-agent watchdog report that only reports scheduler/runner failures, not ordinary zero-pending healthy states.
+2. Triage taskpool agent-team `human_escape` / post-ack worker timeout blockers separately from Mission flow; do not mix that executor repair into the Mission projection slice.
 
 These should be separate slices with tests and explicit side-effect boundaries.

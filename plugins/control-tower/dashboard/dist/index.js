@@ -79,6 +79,12 @@
         <p>Tracks active long-running Missions, open human decisions, cron readiness, and the next operator action.</p>
         <div id="control-tower-missions">Loading missions…</div>
       </section>
+      <section class="control-tower-card control-tower-mission-flow-card">
+        <p class="control-tower-eyebrow">Mission event flow</p>
+        <h2>Signals and taskpool bridge</h2>
+        <p>Read-only operator projection for event-driven Mission wakeups, consumed latency, stale signals, and taskpool bridge status.</p>
+        <div id="control-tower-mission-flow">Loading mission flow…</div>
+      </section>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
     </section>
   `;
@@ -89,6 +95,7 @@
   const snapshotEl = document.getElementById('control-tower-snapshot');
   const summaryEl = document.getElementById('control-tower-summary');
   const missionsEl = document.getElementById('control-tower-missions');
+  const missionFlowEl = document.getElementById('control-tower-mission-flow');
   let latestSnapshot = null;
 
   const authFetch = (url, options) => {
@@ -131,6 +138,88 @@
         <tbody>${rows}</tbody>
       </table>
       ${inbox.length ? `<h3>Needs your decision</h3><ul>${decisions}</ul>` : '<p>No open human decisions.</p>'}
+    `;
+  };
+
+
+  const formatSeconds = (seconds) => {
+    const value = Number(seconds || 0);
+    if (value < 60) return `${value}s`;
+    if (value < 3600) return `${Math.floor(value / 60)}m ${value % 60}s`;
+    return `${Math.floor(value / 3600)}h ${Math.floor((value % 3600) / 60)}m`;
+  };
+
+  const renderMissionFlow = (data) => {
+    if (!missionFlowEl) return;
+    const flow = data?.mission_flow_signals;
+    const bridge = data?.mission_taskpool_bridge;
+    if (!flow || flow.status !== 'ok') {
+      missionFlowEl.textContent = `Mission flow unavailable: ${flow?.reason || flow?.status || 'missing snapshot'}`;
+      return;
+    }
+    const flowRows = (flow.missions || []).map((mission) => {
+      const metrics = mission.metrics || {};
+      const pendingRows = (mission.pending_signals || []).map((signal) => `
+        <li>
+          <code>${signal.signal_id}</code> ${signal.signal_type}
+          age=${formatSeconds(signal.age_seconds)} stale=${signal.stale ? 'yes' : 'no'}
+        </li>
+      `).join('');
+      return `
+        <tr>
+          <td><code>${mission.mission_id}</code></td>
+          <td>${metrics.pending_count ?? 0}</td>
+          <td>${metrics.stale_count ?? 0}</td>
+          <td>${formatSeconds(metrics.oldest_pending_age_seconds)}</td>
+          <td>${metrics.dispatched_count ?? 0}</td>
+          <td>${metrics.consumed_count ?? 0}</td>
+          <td>${metrics.avg_consumed_latency_seconds == null ? '—' : formatSeconds(metrics.avg_consumed_latency_seconds)}</td>
+        </tr>
+        ${pendingRows ? `<tr class="control-tower-mission-direction"><td colspan="7"><ul>${pendingRows}</ul></td></tr>` : ''}
+      `;
+    }).join('');
+    const bridgeRows = (bridge?.missions || []).map((mission) => {
+      const events = (mission.recent_events || []).map((event) => `
+        <li>
+          <code>${event.task_id || event.event_id}</code>
+          ${event.from_status || '—'} → ${event.to_status || '—'}
+          ${event.pending_signal_id ? `pending=<code>${event.pending_signal_id}</code>` : 'consumed/no-pending'}
+        </li>
+      `).join('');
+      return `
+        <tr>
+          <td><code>${mission.mission_id}</code></td>
+          <td>${mission.bridged_event_count ?? 0}</td>
+          <td>${mission.pending_bridge_signal_count ?? 0}</td>
+          <td>${events ? `<ul>${events}</ul>` : '—'}</td>
+        </tr>
+      `;
+    }).join('');
+    missionFlowEl.innerHTML = `
+      <div class="control-tower-summary control-tower-mission-flow-summary">
+        <span>Pending signals: <strong>${flow.pending_count ?? 0}</strong></span>
+        <span>Stale signals: <strong>${flow.stale_count ?? 0}</strong></span>
+        <span>Oldest pending: <strong>${formatSeconds(flow.oldest_pending_age_seconds)}</strong></span>
+        <span>Dispatched: <strong>${flow.dispatched_count ?? 0}</strong></span>
+        <span>Maintenance ticks: <strong>${flow.maintenance_tick_count ?? 0}</strong></span>
+        <span>Consumed: <strong>${flow.consumed_count ?? 0}</strong></span>
+        <span>Avg latency: <strong>${flow.avg_consumed_latency_seconds == null ? '—' : formatSeconds(flow.avg_consumed_latency_seconds)}</strong></span>
+        <span>Bridge pending: <strong>${bridge?.pending_bridge_signal_count ?? 0}</strong></span>
+      </div>
+      ${flowRows ? `
+        <h3>Pending flow signals</h3>
+        <table class="control-tower-missions-table control-tower-mission-flow-table">
+          <thead><tr><th>Mission</th><th>Pending</th><th>Stale</th><th>Oldest</th><th>Dispatched</th><th>Consumed</th><th>Avg latency</th></tr></thead>
+          <tbody>${flowRows}</tbody>
+        </table>
+      ` : '<p>No pending Mission flow signals.</p>'}
+      ${bridgeRows ? `
+        <h3>Taskpool bridge</h3>
+        <table class="control-tower-missions-table control-tower-mission-bridge-table">
+          <thead><tr><th>Mission</th><th>Bridge events</th><th>Pending bridge signals</th><th>Recent bridged tasks</th></tr></thead>
+          <tbody>${bridgeRows}</tbody>
+        </table>
+      ` : '<p>No recent taskpool bridge events.</p>'}
     `;
   };
 
@@ -225,6 +314,7 @@
       .then((data) => {
         latestSnapshot = data;
         renderSummary(data);
+        renderMissionFlow(data);
         if (snapshotEl) snapshotEl.textContent = JSON.stringify(data, null, 2);
       })
       .catch((error) => {

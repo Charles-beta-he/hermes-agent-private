@@ -65,7 +65,8 @@
   background: color-mix(in srgb, CanvasText 8%, transparent);
 }
 
-.control-tower-missions-card {
+.control-tower-missions-card,
+.control-tower-mission-flow-card {
   margin-top: 18px;
 }
 
@@ -90,7 +91,8 @@
   padding-top: 2px;
 }
 
-.control-tower-missions-card code {
+.control-tower-missions-card code,
+.control-tower-mission-flow-card code {
   white-space: pre-wrap;
   word-break: break-word;
 }

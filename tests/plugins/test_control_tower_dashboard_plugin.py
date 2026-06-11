@@ -56,6 +56,24 @@ def test_control_tower_plugin_manifest_declares_dashboard_host():
     assert '"path": "/control-tower"' in text
 
 
+def test_control_tower_dashboard_renders_mission_flow_operator_panel():
+    repo_root = Path(__file__).resolve().parents[2]
+    index_js = repo_root / "plugins" / "control-tower" / "dashboard" / "dist" / "index.js"
+    style_css = repo_root / "plugins" / "control-tower" / "dashboard" / "dist" / "style.css"
+
+    script = index_js.read_text(encoding="utf-8")
+    style = style_css.read_text(encoding="utf-8")
+
+    assert "control-tower-mission-flow" in script
+    assert "Mission event flow" in script
+    assert "renderMissionFlow(data)" in script
+    assert "mission_flow_signals" in script
+    assert "mission_taskpool_bridge" in script
+    assert "Pending signals:" in script
+    assert "Taskpool bridge" in script
+    assert "control-tower-mission-flow-card" in style
+
+
 def test_control_tower_dashboard_plugin_proposes_command_without_execution(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))
