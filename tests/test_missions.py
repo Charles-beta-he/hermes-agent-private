@@ -230,3 +230,34 @@ def test_mission_doctor_surfaces_stale_flow_signal_watchdog_action(tmp_path: Pat
     assert len(doctor["stale_flow_signals"]) == 1
     assert doctor["next_step"] == f"hermes mission dispatch-events {mission.mission_id}"
     assert any(check["name"] == "stale flow signals" and check["status"] == "warn" for check in doctor["checks"])
+
+
+def test_taskpool_status_event_is_actionable_flow_signal(tmp_path: Path) -> None:
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="Hermes self-architecture mission",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=5),
+        enable=True,
+    )
+
+    event = store.append_event(
+        mission.mission_id,
+        "taskpool_status_changed",
+        "taskpool task moved to review",
+        {
+            "source": "taskpool",
+            "task_id": "task-1",
+            "from_status": "running",
+            "to_status": "review",
+            "lane": "evolution",
+            "architecture_target": "local-brain",
+        },
+    )
+
+    pending = [signal for signal in store.pending_flow_signals(mission.mission_id) if signal.source_event_id == event["event_id"]]
+    assert len(pending) == 1
+    assert pending[0].source_event_id == event["event_id"]
+    assert pending[0].signal_type == "taskpool_status_changed"
+    assert pending[0].payload["event_payload"]["task_id"] == "task-1"

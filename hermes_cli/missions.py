@@ -45,6 +45,7 @@ VALID_EVENT_TYPES = {
     "flow_signal_enqueued",
     "flow_signal_dispatched",
     "maintenance_tick",
+    "taskpool_status_changed",
 }
 
 ACTIONABLE_FLOW_EVENT_TYPES = {
@@ -52,6 +53,7 @@ ACTIONABLE_FLOW_EVENT_TYPES = {
     "mission_resumed",
     "decision_recorded",
     "stage_report",
+    "taskpool_status_changed",
 }
 
 

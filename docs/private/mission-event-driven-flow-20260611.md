@@ -42,6 +42,7 @@ Actionable source events:
 - `mission_resumed`
 - `decision_recorded`
 - `stage_report`
+- `taskpool_status_changed`
 
 New mission event types:
 
@@ -55,6 +56,7 @@ Runtime behavior:
 - If a mission cron job is installed, `dispatch_pending_flow_signals()` calls `cron.jobs.trigger_job(job_id)` to set `next_run_at=now`; this schedules the existing cron runner rather than executing work inline.
 - `MissionStore.tick(... dry_run=False)` first consumes the oldest pending flow signal and marks the prompt mode as `event`.
 - If there is no pending signal, the same tick is classified as `maintenance`, and a `maintenance_tick` event is appended.
+- `brain_task_orchestrator.py` now bridges relevant Hermes self-architecture taskpool events (`task_added`, `task_transitioned`, `task_dispatch_authorized`) into `taskpool_status_changed` mission events. The bridge is scoped to Hermes/local-brain/evolution architecture tasks, is fail-soft, can be disabled with `HERMES_TASKPOOL_MISSION_BRIDGE_DISABLED=1`, and only mutates the local mission ledger / schedules the already-installed mission cron.
 - Open human decisions still block tick prompt generation.
 - Budget exhaustion still pauses the mission before any prompt is produced.
 
@@ -88,9 +90,9 @@ Reason: creates a competing control plane and new lifecycle owner before Mission
 
 ## Next safe extensions
 
-1. Add taskpool bridge events that enqueue mission flow signals when Hermes self-architecture tasks move to review/done/blocked.
-2. Add dashboard projection for pending mission flow signals in Control Tower.
-3. Add a bounded no-agent maintenance watchdog that reports stale pending signals without running agent work.
-4. Add event-driven dispatch metrics: pending age, dispatched job ids, consumed latency, maintenance tick count.
+1. Add dashboard projection for pending mission flow signals in Control Tower.
+2. Add a bounded no-agent maintenance watchdog that reports stale pending signals without running agent work.
+3. Add event-driven dispatch metrics: pending age, dispatched job ids, consumed latency, maintenance tick count.
+4. Promote taskpool bridge coverage from event-hook return payloads into a compact Control Tower read-only panel once operator UI is ready.
 
 These should be separate slices with tests and explicit side-effect boundaries.
