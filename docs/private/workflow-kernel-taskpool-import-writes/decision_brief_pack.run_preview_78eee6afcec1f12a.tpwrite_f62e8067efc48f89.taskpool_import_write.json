@@ -1,0 +1,178 @@
+{
+  "write_id": "tpwrite_f62e8067efc48f89",
+  "import_id": "tpdry_a5678ba9e856a763",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "workflow_id": "decision_brief_pack",
+  "written_at": "2026-06-12T17:29:08Z",
+  "taskpool_write_enabled": true,
+  "taskpool_claim_enabled": false,
+  "runtime_enabled": false,
+  "model_call_enabled": false,
+  "adapter_write_enabled": false,
+  "external_side_effects_enabled": false,
+  "created_tasks": [
+    {
+      "candidate_id": "candidate_005107060ee9",
+      "task_id": "2026-06-13-workflow-kernel-import-candidateworkflow-contract-valid",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidateworkflow-contract-valid.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_48f87b14c0a0",
+      "task_id": "2026-06-13-workflow-kernel-import-candidateruntime-disabled-in-phase1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidateruntime-disabled-in-phase1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_cdafd3c69bb1",
+      "task_id": "2026-06-13-workflow-kernel-import-candidateall-modules-have-model-policy",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidateall-modules-have-model-policy.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_39c4439266be",
+      "task_id": "2026-06-13-workflow-kernel-import-candidateall-modules-have-evidence-required",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidateall-modules-have-evidence-required.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_f9cb9d798770",
+      "task_id": "2026-06-13-workflow-kernel-import-candidateevidence-prefixes-valid",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidateevidence-prefixes-valid.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_454227a3c46e",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatehuman-gate-packet-fields-present",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatehuman-gate-packet-fields-present.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_53b83ca6599c",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatemodule-contract-goal-calibratorv1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatemodule-contract-goal-calibratorv1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_0ac35cad50a4",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatemodule-contract-source-researchv1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatemodule-contract-source-researchv1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_fbf27a68b092",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatemodule-contract-decision-synthesizerv1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatemodule-contract-decision-synthesizerv1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_ca981dc669d3",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatemodule-contract-acceptance-compilerv1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatemodule-contract-acceptance-compilerv1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_bf294084a000",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatemodule-contract-evidence-verifierv1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatemodule-contract-evidence-verifierv1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_8a9a6d7338de",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatemodel-route-goal-calibratorv1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatemodel-route-goal-calibratorv1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_7da57275094e",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatemodel-route-source-researchv1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatemodel-route-source-researchv1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_ba9b1ec6fc1e",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatemodel-route-decision-synthesizerv1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatemodel-route-decision-synthesizerv1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_ef88f73a3242",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatemodel-route-acceptance-compilerv1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatemodel-route-acceptance-compilerv1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_023795fa04fe",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatemodel-route-evidence-verifierv1",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatemodel-route-evidence-verifierv1.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_5c173d834d17",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatesafety-flag-runtime-enabled",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatesafety-flag-runtime-enabled.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_bafcf67c5304",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatesafety-flag-write-through-enabled",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatesafety-flag-write-through-enabled.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "candidate_id": "candidate_fe32d2071478",
+      "task_id": "2026-06-13-workflow-kernel-import-candidatesafety-flag-external-side-effects-enabled",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidatesafety-flag-external-side-effects-enabled.md",
+      "status": "proposed",
+      "readback_verified": true,
+      "idempotent_replay": false
+    }
+  ],
+  "readback_verified": true,
+  "derived_refresh": {
+    "status": "OK",
+    "reason": "workflow_taskpool_import_write",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "generated_at": "2026-06-13T01:29:08+08:00"
+  },
+  "rollback_plan": "If this import must be rolled back, archive or remove only the listed proposed task notes after a separate rollback authorization; no runtime/claim/model/adapter state exists.",
+  "boundary": "taskpool_import_write_done_no_claim_no_runtime"
+}

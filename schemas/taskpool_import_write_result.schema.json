@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/taskpool_import_write_result.schema.json",
+  "title": "Hermes Workflow Taskpool Import Write Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "write_id",
+    "import_id",
+    "run_id",
+    "workflow_id",
+    "written_at",
+    "taskpool_write_enabled",
+    "taskpool_claim_enabled",
+    "runtime_enabled",
+    "model_call_enabled",
+    "adapter_write_enabled",
+    "external_side_effects_enabled",
+    "created_tasks",
+    "readback_verified",
+    "rollback_plan",
+    "boundary"
+  ],
+  "properties": {
+    "write_id": {"type": "string", "minLength": 1},
+    "import_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "written_at": {"type": "string", "minLength": 1},
+    "taskpool_write_enabled": {"const": true},
+    "taskpool_claim_enabled": {"const": false},
+    "runtime_enabled": {"const": false},
+    "model_call_enabled": {"const": false},
+    "adapter_write_enabled": {"const": false},
+    "external_side_effects_enabled": {"const": false},
+    "created_tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_id", "task_id", "task_path", "status", "readback_verified", "idempotent_replay"],
+        "properties": {
+          "candidate_id": {"type": "string", "minLength": 1},
+          "task_id": {"type": "string", "minLength": 1},
+          "task_path": {"type": "string", "minLength": 1},
+          "status": {"const": "proposed"},
+          "readback_verified": {"const": true},
+          "idempotent_replay": {"type": "boolean"}
+        }
+      }
+    },
+    "readback_verified": {"const": true},
+    "rollback_plan": {"type": "string", "minLength": 1},
+    "boundary": {"const": "taskpool_import_write_done_no_claim_no_runtime"}
+  }
+}

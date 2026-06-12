@@ -24,6 +24,7 @@ DEFAULT_RUN_LOCKFILE_SCHEMA = REPO_ROOT / "schemas" / "run_lockfile.schema.json"
 DEFAULT_ACCEPTANCE_BUNDLE_SCHEMA = REPO_ROOT / "schemas" / "acceptance_bundle.schema.json"
 DEFAULT_EXECUTOR_DRY_RUN_SCHEMA = REPO_ROOT / "schemas" / "executor_dry_run_result.schema.json"
 DEFAULT_TASKPOOL_IMPORT_DRY_RUN_SCHEMA = REPO_ROOT / "schemas" / "taskpool_import_dry_run.schema.json"
+DEFAULT_TASKPOOL_IMPORT_WRITE_RESULT_SCHEMA = REPO_ROOT / "schemas" / "taskpool_import_write_result.schema.json"
 
 ALLOWED_LANES = {"work", "evolution", "advisory"}
 ALLOWED_STAGES = {
@@ -91,6 +92,7 @@ class ValidationResult:
     acceptance_bundle_schema: str = ""
     executor_dry_run_schema: str = ""
     taskpool_import_dry_run_schema: str = ""
+    taskpool_import_write_result_schema: str = ""
     model_registry: str = ""
     validated_workflows: int = 0
     validated_modules: int = 0
@@ -119,6 +121,7 @@ class ValidationResult:
             "acceptance_bundle_schema": self.acceptance_bundle_schema,
             "executor_dry_run_schema": self.executor_dry_run_schema,
             "taskpool_import_dry_run_schema": self.taskpool_import_dry_run_schema,
+            "taskpool_import_write_result_schema": self.taskpool_import_write_result_schema,
             "model_registry": self.model_registry,
             "validated_workflows": self.validated_workflows,
             "validated_modules": self.validated_modules,
@@ -377,6 +380,7 @@ def validate_registry(
     acceptance_bundle_schema_path: Path = DEFAULT_ACCEPTANCE_BUNDLE_SCHEMA,
     executor_dry_run_schema_path: Path = DEFAULT_EXECUTOR_DRY_RUN_SCHEMA,
     taskpool_import_dry_run_schema_path: Path = DEFAULT_TASKPOOL_IMPORT_DRY_RUN_SCHEMA,
+    taskpool_import_write_result_schema_path: Path = DEFAULT_TASKPOOL_IMPORT_WRITE_RESULT_SCHEMA,
 ) -> ValidationResult:
     result = ValidationResult(
         registry=str(registry_path),
@@ -386,6 +390,7 @@ def validate_registry(
         acceptance_bundle_schema=str(acceptance_bundle_schema_path),
         executor_dry_run_schema=str(executor_dry_run_schema_path),
         taskpool_import_dry_run_schema=str(taskpool_import_dry_run_schema_path),
+        taskpool_import_write_result_schema=str(taskpool_import_write_result_schema_path),
         model_registry=str(model_registry_path),
     )
     schema = _load_json(schema_path, result, "schema")
@@ -400,6 +405,9 @@ def validate_registry(
     taskpool_import_dry_run_schema = _load_json(
         taskpool_import_dry_run_schema_path, result, "taskpool_import_dry_run_schema"
     )
+    taskpool_import_write_result_schema = _load_json(
+        taskpool_import_write_result_schema_path, result, "taskpool_import_write_result_schema"
+    )
     registry = _load_json(registry_path, result, "registry")
     model_registry = _load_json(model_registry_path, result, "model_registry")
     if (
@@ -409,6 +417,7 @@ def validate_registry(
         or acceptance_bundle_schema is None
         or executor_dry_run_schema is None
         or taskpool_import_dry_run_schema is None
+        or taskpool_import_write_result_schema is None
         or registry is None
         or model_registry is None
     ):
@@ -426,6 +435,8 @@ def validate_registry(
         result.fail("executor_dry_run_schema title is unexpected")
     if taskpool_import_dry_run_schema.get("title") != "Hermes Workflow Taskpool Import Dry-Run":
         result.fail("taskpool_import_dry_run_schema title is unexpected")
+    if taskpool_import_write_result_schema.get("title") != "Hermes Workflow Taskpool Import Write Result":
+        result.fail("taskpool_import_write_result_schema title is unexpected")
 
     workflows = registry.get("workflows") if isinstance(registry, dict) else None
     if not isinstance(workflows, list) or not workflows:
@@ -468,6 +479,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--acceptance-bundle-schema", type=Path, default=DEFAULT_ACCEPTANCE_BUNDLE_SCHEMA)
     parser.add_argument("--executor-dry-run-schema", type=Path, default=DEFAULT_EXECUTOR_DRY_RUN_SCHEMA)
     parser.add_argument("--taskpool-import-dry-run-schema", type=Path, default=DEFAULT_TASKPOOL_IMPORT_DRY_RUN_SCHEMA)
+    parser.add_argument("--taskpool-import-write-result-schema", type=Path, default=DEFAULT_TASKPOOL_IMPORT_WRITE_RESULT_SCHEMA)
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
 
@@ -480,6 +492,7 @@ def main(argv: list[str] | None = None) -> int:
         args.acceptance_bundle_schema,
         args.executor_dry_run_schema,
         args.taskpool_import_dry_run_schema,
+        args.taskpool_import_write_result_schema,
     )
     if args.as_json:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
