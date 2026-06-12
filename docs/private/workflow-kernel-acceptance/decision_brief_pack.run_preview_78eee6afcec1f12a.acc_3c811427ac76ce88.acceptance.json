@@ -1,0 +1,206 @@
+{
+  "bundle_id": "acc_3c811427ac76ce88",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "workflow_id": "decision_brief_pack",
+  "compiled_at": "2026-06-12T16:39:37Z",
+  "frozen": true,
+  "dry_run_only": true,
+  "runtime_enabled": false,
+  "write_through_enabled": false,
+  "external_side_effects_enabled": false,
+  "criteria": [
+    {
+      "criterion_id": "workflow_contract_valid",
+      "description": "Phase 2 projection requires workflow_contract_valid",
+      "required_evidence": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ],
+      "source": "run_lockfile.acceptance_criteria"
+    },
+    {
+      "criterion_id": "runtime_disabled_in_phase1",
+      "description": "Phase 2 projection requires runtime_disabled_in_phase1",
+      "required_evidence": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ],
+      "source": "run_lockfile.acceptance_criteria"
+    },
+    {
+      "criterion_id": "all_modules_have_model_policy",
+      "description": "Phase 2 projection requires all_modules_have_model_policy",
+      "required_evidence": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ],
+      "source": "run_lockfile.acceptance_criteria"
+    },
+    {
+      "criterion_id": "all_modules_have_evidence_required",
+      "description": "Phase 2 projection requires all_modules_have_evidence_required",
+      "required_evidence": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ],
+      "source": "run_lockfile.acceptance_criteria"
+    },
+    {
+      "criterion_id": "evidence_prefixes_valid",
+      "description": "Phase 2 projection requires evidence_prefixes_valid",
+      "required_evidence": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ],
+      "source": "run_lockfile.acceptance_criteria"
+    },
+    {
+      "criterion_id": "human_gate_packet_fields_present",
+      "description": "Phase 2 projection requires human_gate_packet_fields_present",
+      "required_evidence": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ],
+      "source": "run_lockfile.acceptance_criteria"
+    },
+    {
+      "criterion_id": "module_contract:goal_calibrator.v1",
+      "description": "Module goal_calibrator.v1 must keep declared side-effect and risk boundaries.",
+      "required_evidence": [
+        "artifact:run_lockfile",
+        "proof:module_contract_readback"
+      ],
+      "source": "run_lockfile.modules"
+    },
+    {
+      "criterion_id": "module_contract:source_research.v1",
+      "description": "Module source_research.v1 must keep declared side-effect and risk boundaries.",
+      "required_evidence": [
+        "artifact:run_lockfile",
+        "proof:module_contract_readback"
+      ],
+      "source": "run_lockfile.modules"
+    },
+    {
+      "criterion_id": "module_contract:decision_synthesizer.v1",
+      "description": "Module decision_synthesizer.v1 must keep declared side-effect and risk boundaries.",
+      "required_evidence": [
+        "artifact:run_lockfile",
+        "proof:module_contract_readback"
+      ],
+      "source": "run_lockfile.modules"
+    },
+    {
+      "criterion_id": "module_contract:acceptance_compiler.v1",
+      "description": "Module acceptance_compiler.v1 must keep declared side-effect and risk boundaries.",
+      "required_evidence": [
+        "artifact:run_lockfile",
+        "proof:module_contract_readback"
+      ],
+      "source": "run_lockfile.modules"
+    },
+    {
+      "criterion_id": "module_contract:evidence_verifier.v1",
+      "description": "Module evidence_verifier.v1 must keep declared side-effect and risk boundaries.",
+      "required_evidence": [
+        "artifact:run_lockfile",
+        "proof:module_contract_readback"
+      ],
+      "source": "run_lockfile.modules"
+    },
+    {
+      "criterion_id": "model_route:goal_calibrator.v1",
+      "description": "Module goal_calibrator.v1 must use a registered pinned route with fallback and passing eval gate.",
+      "required_evidence": [
+        "artifact:route_trace",
+        "proof:route_eval_gate_passed"
+      ],
+      "source": "route_trace"
+    },
+    {
+      "criterion_id": "model_route:source_research.v1",
+      "description": "Module source_research.v1 must use a registered pinned route with fallback and passing eval gate.",
+      "required_evidence": [
+        "artifact:route_trace",
+        "proof:route_eval_gate_passed"
+      ],
+      "source": "route_trace"
+    },
+    {
+      "criterion_id": "model_route:decision_synthesizer.v1",
+      "description": "Module decision_synthesizer.v1 must use a registered pinned route with fallback and passing eval gate.",
+      "required_evidence": [
+        "artifact:route_trace",
+        "proof:route_eval_gate_passed"
+      ],
+      "source": "route_trace"
+    },
+    {
+      "criterion_id": "model_route:acceptance_compiler.v1",
+      "description": "Module acceptance_compiler.v1 must use a registered pinned route with fallback and passing eval gate.",
+      "required_evidence": [
+        "artifact:route_trace",
+        "proof:route_eval_gate_passed"
+      ],
+      "source": "route_trace"
+    },
+    {
+      "criterion_id": "model_route:evidence_verifier.v1",
+      "description": "Module evidence_verifier.v1 must use a registered pinned route with fallback and passing eval gate.",
+      "required_evidence": [
+        "artifact:route_trace",
+        "proof:route_eval_gate_passed"
+      ],
+      "source": "route_trace"
+    },
+    {
+      "criterion_id": "safety_flag:runtime_enabled",
+      "description": "runtime_enabled must remain false in dry-run acceptance boundary.",
+      "required_evidence": [
+        "artifact:run_lockfile",
+        "proof:flag_false"
+      ],
+      "source": "run_lockfile.safety_flags"
+    },
+    {
+      "criterion_id": "safety_flag:write_through_enabled",
+      "description": "write_through_enabled must remain false in dry-run acceptance boundary.",
+      "required_evidence": [
+        "artifact:run_lockfile",
+        "proof:flag_false"
+      ],
+      "source": "run_lockfile.safety_flags"
+    },
+    {
+      "criterion_id": "safety_flag:external_side_effects_enabled",
+      "description": "external_side_effects_enabled must remain false in dry-run acceptance boundary.",
+      "required_evidence": [
+        "artifact:run_lockfile",
+        "proof:flag_false"
+      ],
+      "source": "run_lockfile.safety_flags"
+    }
+  ],
+  "human_gate_packet_template": {
+    "decision_needed": "Authorize or reject transition from dry-run acceptance to local reversible execution.",
+    "confirmed_facts": [
+      "Run lockfile exists",
+      "Route traces exist",
+      "No runtime/write-through/external side-effect flag is enabled"
+    ],
+    "unconfirmed_facts": [
+      "Executor implementation has not been authorized",
+      "Adapter write-through remains unopened"
+    ],
+    "options": [
+      "continue_dry_run_only",
+      "authorize_local_reversible_executor_stub",
+      "stop_and_review_architecture"
+    ],
+    "recommended_default": "continue_dry_run_only",
+    "blast_radius": "Local contract/projection artifacts only unless explicitly authorized otherwise.",
+    "rollback_plan": "Revert generated acceptance artifact and keep registries pinned; no runtime state to roll back.",
+    "post_action_verification": "Re-run validator, projection, acceptance compiler, and focused tests before any executor integration."
+  },
+  "boundary": "dry_run_acceptance_only_no_execution"
+}

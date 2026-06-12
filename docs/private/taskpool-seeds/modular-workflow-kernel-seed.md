@@ -52,7 +52,7 @@ Phase 1 is schema/registry/validator only. It must not change live runtime behav
 
 1. [x] Add read-only projection for workflow registry health.
 2. [x] Add route trace schema and model registry seed.
-3. [ ] Add acceptance compiler dry-run for a concrete `decision_brief_pack` run.
+3. [x] Add acceptance compiler dry-run for a concrete `decision_brief_pack` run.
 4. [ ] Add taskpool import command for workflow seed tasks, still dry-run by default.
 5. [x] Add a pinned run lockfile schema before any runtime execution integration.
 6. [ ] Add local reversible executor stub only after acceptance dry-run is validated and a new human gate approves runtime transition.
@@ -67,3 +67,8 @@ Phase 1 is schema/registry/validator only. It must not change live runtime behav
 - `docs/private/workflow-kernel-projections/decision_brief_pack.run_preview_78eee6afcec1f12a.route_traces.json`
 - `docs/private/workflow-kernel-projections/decision_brief_pack.run_preview_78eee6afcec1f12a.summary.json`
 - `command:./scripts/run_tests.sh tests/scripts/test_workflow_contract_validator.py tests/scripts/test_workflow_projection.py => 14 passed`
+- `schemas/acceptance_bundle.schema.json`
+- `scripts/acceptance_compiler.py`
+- `docs/private/modular-workflow-kernel-phase3-acceptance-adr.md`
+- `docs/private/workflow-kernel-acceptance/decision_brief_pack.run_preview_78eee6afcec1f12a.acc_3c811427ac76ce88.acceptance.json`
+- `command:./scripts/run_tests.sh tests/scripts/test_workflow_contract_validator.py tests/scripts/test_workflow_projection.py tests/scripts/test_acceptance_compiler.py => 16 passed`

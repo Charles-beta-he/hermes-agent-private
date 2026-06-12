@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/acceptance_bundle.schema.json",
+  "title": "Hermes Workflow Acceptance Bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bundle_id",
+    "run_id",
+    "workflow_id",
+    "compiled_at",
+    "frozen",
+    "dry_run_only",
+    "runtime_enabled",
+    "write_through_enabled",
+    "external_side_effects_enabled",
+    "criteria",
+    "human_gate_packet_template",
+    "boundary"
+  ],
+  "properties": {
+    "bundle_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "compiled_at": {"type": "string", "minLength": 1},
+    "frozen": {"const": true},
+    "dry_run_only": {"const": true},
+    "runtime_enabled": {"const": false},
+    "write_through_enabled": {"const": false},
+    "external_side_effects_enabled": {"const": false},
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion_id", "description", "required_evidence", "source"],
+        "properties": {
+          "criterion_id": {"type": "string", "minLength": 1},
+          "description": {"type": "string", "minLength": 1},
+          "required_evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "source": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "human_gate_packet_template": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision_needed",
+        "confirmed_facts",
+        "unconfirmed_facts",
+        "options",
+        "recommended_default",
+        "blast_radius",
+        "rollback_plan",
+        "post_action_verification"
+      ],
+      "properties": {
+        "decision_needed": {"type": "string"},
+        "confirmed_facts": {"type": "array", "items": {"type": "string"}},
+        "unconfirmed_facts": {"type": "array", "items": {"type": "string"}},
+        "options": {"type": "array", "items": {"type": "string"}},
+        "recommended_default": {"type": "string"},
+        "blast_radius": {"type": "string"},
+        "rollback_plan": {"type": "string"},
+        "post_action_verification": {"type": "string"}
+      }
+    },
+    "boundary": {"const": "dry_run_acceptance_only_no_execution"}
+  }
+}
