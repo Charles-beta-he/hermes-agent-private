@@ -27,6 +27,7 @@ DEFAULT_TASKPOOL_IMPORT_DRY_RUN_SCHEMA = REPO_ROOT / "schemas" / "taskpool_impor
 DEFAULT_TASKPOOL_IMPORT_WRITE_RESULT_SCHEMA = REPO_ROOT / "schemas" / "taskpool_import_write_result.schema.json"
 DEFAULT_TASKPOOL_CANDIDATE_CONSOLIDATION_SCHEMA = REPO_ROOT / "schemas" / "taskpool_candidate_consolidation_result.schema.json"
 DEFAULT_RUNTIME_INTEGRATION_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_integration_packet.schema.json"
+DEFAULT_RUNTIME_CLAIM_EXECUTION_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_claim_execution_packet.schema.json"
 
 ALLOWED_LANES = {"work", "evolution", "advisory"}
 ALLOWED_STAGES = {
@@ -97,6 +98,7 @@ class ValidationResult:
     taskpool_import_write_result_schema: str = ""
     taskpool_candidate_consolidation_schema: str = ""
     runtime_integration_packet_schema: str = ""
+    runtime_claim_execution_packet_schema: str = ""
     model_registry: str = ""
     validated_workflows: int = 0
     validated_modules: int = 0
@@ -128,6 +130,7 @@ class ValidationResult:
             "taskpool_import_write_result_schema": self.taskpool_import_write_result_schema,
             "taskpool_candidate_consolidation_schema": self.taskpool_candidate_consolidation_schema,
             "runtime_integration_packet_schema": self.runtime_integration_packet_schema,
+            "runtime_claim_execution_packet_schema": self.runtime_claim_execution_packet_schema,
             "model_registry": self.model_registry,
             "validated_workflows": self.validated_workflows,
             "validated_modules": self.validated_modules,
@@ -389,6 +392,7 @@ def validate_registry(
     taskpool_import_write_result_schema_path: Path = DEFAULT_TASKPOOL_IMPORT_WRITE_RESULT_SCHEMA,
     taskpool_candidate_consolidation_schema_path: Path = DEFAULT_TASKPOOL_CANDIDATE_CONSOLIDATION_SCHEMA,
     runtime_integration_packet_schema_path: Path = DEFAULT_RUNTIME_INTEGRATION_PACKET_SCHEMA,
+    runtime_claim_execution_packet_schema_path: Path = DEFAULT_RUNTIME_CLAIM_EXECUTION_PACKET_SCHEMA,
 ) -> ValidationResult:
     result = ValidationResult(
         registry=str(registry_path),
@@ -401,6 +405,7 @@ def validate_registry(
         taskpool_import_write_result_schema=str(taskpool_import_write_result_schema_path),
         taskpool_candidate_consolidation_schema=str(taskpool_candidate_consolidation_schema_path),
         runtime_integration_packet_schema=str(runtime_integration_packet_schema_path),
+        runtime_claim_execution_packet_schema=str(runtime_claim_execution_packet_schema_path),
         model_registry=str(model_registry_path),
     )
     schema = _load_json(schema_path, result, "schema")
@@ -424,6 +429,9 @@ def validate_registry(
     runtime_integration_packet_schema = _load_json(
         runtime_integration_packet_schema_path, result, "runtime_integration_packet_schema"
     )
+    runtime_claim_execution_packet_schema = _load_json(
+        runtime_claim_execution_packet_schema_path, result, "runtime_claim_execution_packet_schema"
+    )
     registry = _load_json(registry_path, result, "registry")
     model_registry = _load_json(model_registry_path, result, "model_registry")
     if (
@@ -436,6 +444,7 @@ def validate_registry(
         or taskpool_import_write_result_schema is None
         or taskpool_candidate_consolidation_schema is None
         or runtime_integration_packet_schema is None
+        or runtime_claim_execution_packet_schema is None
         or registry is None
         or model_registry is None
     ):
@@ -459,6 +468,8 @@ def validate_registry(
         result.fail("taskpool_candidate_consolidation_schema title is unexpected")
     if runtime_integration_packet_schema.get("title") != "Hermes Workflow Runtime Integration Packet":
         result.fail("runtime_integration_packet_schema title is unexpected")
+    if runtime_claim_execution_packet_schema.get("title") != "Hermes Workflow Runtime Claim Execution Packet":
+        result.fail("runtime_claim_execution_packet_schema title is unexpected")
 
     workflows = registry.get("workflows") if isinstance(registry, dict) else None
     if not isinstance(workflows, list) or not workflows:
@@ -504,6 +515,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--taskpool-import-write-result-schema", type=Path, default=DEFAULT_TASKPOOL_IMPORT_WRITE_RESULT_SCHEMA)
     parser.add_argument("--taskpool-candidate-consolidation-schema", type=Path, default=DEFAULT_TASKPOOL_CANDIDATE_CONSOLIDATION_SCHEMA)
     parser.add_argument("--runtime-integration-packet-schema", type=Path, default=DEFAULT_RUNTIME_INTEGRATION_PACKET_SCHEMA)
+    parser.add_argument("--runtime-claim-execution-packet-schema", type=Path, default=DEFAULT_RUNTIME_CLAIM_EXECUTION_PACKET_SCHEMA)
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
 
@@ -519,6 +531,7 @@ def main(argv: list[str] | None = None) -> int:
         args.taskpool_import_write_result_schema,
         args.taskpool_candidate_consolidation_schema,
         args.runtime_integration_packet_schema,
+        args.runtime_claim_execution_packet_schema,
     )
     if args.as_json:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/runtime_claim_execution_packet.schema.json",
+  "title": "Hermes Workflow Runtime Claim Execution Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "claim_execution_id",
+    "runtime_packet_id",
+    "workflow_id",
+    "run_id",
+    "generated_at",
+    "selected_group_id",
+    "selected_task_id",
+    "taskpool_write_enabled",
+    "taskpool_claim_enabled",
+    "runtime_enabled",
+    "runtime_record_only",
+    "model_call_enabled",
+    "adapter_write_enabled",
+    "external_side_effects_enabled",
+    "claim_execution",
+    "readback_verified",
+    "rollback_plan",
+    "boundary"
+  ],
+  "properties": {
+    "claim_execution_id": {"type": "string", "minLength": 1},
+    "runtime_packet_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "minLength": 1},
+    "selected_group_id": {"type": "string", "minLength": 1},
+    "selected_task_id": {"type": "string", "minLength": 1},
+    "taskpool_write_enabled": {"const": true},
+    "taskpool_claim_enabled": {"const": true},
+    "runtime_enabled": {"const": true},
+    "runtime_record_only": {"const": false},
+    "model_call_enabled": {"const": false},
+    "adapter_write_enabled": {"const": false},
+    "external_side_effects_enabled": {"const": false},
+    "claim_execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_id",
+        "task_path",
+        "group_id",
+        "previous_status",
+        "new_status",
+        "claim_packet_status",
+        "claimed_by",
+        "claim_scope",
+        "readback_verified"
+      ],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "task_path": {"type": "string", "minLength": 1},
+        "group_id": {"type": "string", "minLength": 1},
+        "previous_status": {"const": "proposed"},
+        "new_status": {"const": "claimed"},
+        "claim_packet_status": {"const": "consumed_claimed_not_running"},
+        "claimed_by": {"const": "workflow_runtime_claim_executor"},
+        "claim_scope": {"const": "single_task_no_worker_no_model_no_adapter"},
+        "readback_verified": {"const": true}
+      }
+    },
+    "readback_verified": {"const": true},
+    "rollback_plan": {"type": "string", "minLength": 1},
+    "boundary": {"const": "runtime_claim_executor_done_before_running_or_adapter"}
+  }
+}
