@@ -1,0 +1,39 @@
+{
+  "runtime_execution_id": "rtex_8d01cdb6170a549f",
+  "claim_execution_id": "clex_22a18e493dc020c4",
+  "runtime_packet_id": "rti_2c322fc59264ae3d",
+  "workflow_id": "decision_brief_pack",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "generated_at": "2026-06-12T19:07:10Z",
+  "selected_group_id": "contract_acceptance_governance",
+  "selected_task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+  "taskpool_write_enabled": true,
+  "taskpool_claim_enabled": true,
+  "runtime_enabled": true,
+  "runtime_worker_enabled": true,
+  "model_call_enabled": false,
+  "adapter_write_enabled": false,
+  "external_side_effects_enabled": false,
+  "runtime_execution": {
+    "task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+    "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance.md",
+    "group_id": "contract_acceptance_governance",
+    "previous_status": "claimed",
+    "new_status": "running",
+    "worker_actor": "workflow_runtime_execution_worker",
+    "worker_scope": "local_noop_runtime_marker_no_model_no_adapter",
+    "execution_status": "running_noop_started_not_reviewed",
+    "readback_verified": true
+  },
+  "readback_verified": true,
+  "derived_refresh": {
+    "status": "OK",
+    "reason": "workflow_runtime_execution_worker",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "generated_at": "2026-06-13T03:07:10+08:00"
+  },
+  "rollback_plan": "Transition the selected task from running back to claimed and remove workflow_runtime_execution_id / workflow_runtime_execution_status / workflow_runtime_worker_record / run_id after rollback authorization; no model/adapter/external work was started.",
+  "boundary": "runtime_execution_worker_done_before_review_done_or_adapter"
+}
