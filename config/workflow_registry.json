@@ -1,0 +1,157 @@
+{
+  "registry_version": "2026-06-12.phase1",
+  "phase": "workflow-contract-seed",
+  "defaults": {
+    "runtime_enabled": false,
+    "write_through_enabled": false,
+    "external_side_effects_enabled": false,
+    "production_run_mode": "pinned",
+    "dynamic_routing_enabled": false,
+    "shadow_routing_enabled": true,
+    "auto_promote_enabled": false
+  },
+  "workflows": [
+    {
+      "workflow_id": "decision_brief_pack",
+      "version": "1.0.0",
+      "objective": "Turn an ambiguous decision or research question into an evidence-grounded decision brief with explicit uncertainty, acceptance checks, and ledger-ready proof.",
+      "runtime_enabled": false,
+      "write_through_enabled": false,
+      "external_side_effects_enabled": false,
+      "allowed_lanes": ["advisory", "evolution"],
+      "stages": [
+        "intake",
+        "classify",
+        "evidence",
+        "plan",
+        "execute",
+        "verify",
+        "review",
+        "human_gate",
+        "done"
+      ],
+      "modules": [
+        {
+          "module_id": "goal_calibrator.v1",
+          "capability": "Convert ambiguous natural-language intent into a task contract, assumptions, and acceptance dimensions.",
+          "risk_level": "low",
+          "side_effect_level": "read_only",
+          "input_schema": {"text": "string", "context_refs": "array"},
+          "output_schema": {"task_contract": "object", "ambiguities": "array"},
+          "model_policy": {
+            "route_alias": "best.goal_calibration.structured",
+            "run_mode": "pinned",
+            "fallback_required": true
+          },
+          "evidence_required": ["proof:task_contract", "classification:ambiguity_level"],
+          "blocked_actions": ["external_write", "mark_done_without_acceptance"]
+        },
+        {
+          "module_id": "source_research.v1",
+          "capability": "Collect and normalize source evidence for a decision brief without mutating external systems.",
+          "risk_level": "medium",
+          "side_effect_level": "read_only",
+          "input_schema": {"query": "string", "source_policy": "object"},
+          "output_schema": {"sources": "array", "coverage_gaps": "array"},
+          "model_policy": {
+            "route_alias": "best.research.evidence_extraction",
+            "run_mode": "pinned",
+            "fallback_required": true
+          },
+          "evidence_required": ["artifact:source_matrix", "proof:source_coverage"],
+          "blocked_actions": ["copy_unlicensed_code", "external_write"]
+        },
+        {
+          "module_id": "decision_synthesizer.v1",
+          "capability": "Synthesize a decision brief from evidence with alternatives, uncertainty, risks, and recommendation.",
+          "risk_level": "medium",
+          "side_effect_level": "read_only",
+          "input_schema": {"task_contract": "object", "sources": "array"},
+          "output_schema": {"brief_markdown": "string", "uncertainties": "array", "recommendation": "string"},
+          "model_policy": {
+            "route_alias": "best.synthesis.decision_brief",
+            "run_mode": "pinned",
+            "fallback_required": true
+          },
+          "evidence_required": ["artifact:decision_brief", "proof:claims_have_sources"],
+          "blocked_actions": ["present_unsourced_claim_as_fact", "external_write"]
+        },
+        {
+          "module_id": "acceptance_compiler.v1",
+          "capability": "Compile project/context/layer-specific acceptance checks and freeze them before execution.",
+          "risk_level": "medium",
+          "side_effect_level": "read_only",
+          "input_schema": {"workflow_context": "object", "abstraction_layer": "string"},
+          "output_schema": {"acceptance_checks": "array", "evidence_required": "array"},
+          "model_policy": {
+            "route_alias": "best.acceptance.compiler",
+            "run_mode": "pinned",
+            "fallback_required": true
+          },
+          "evidence_required": ["proof:acceptance_frozen_before_execution"],
+          "blocked_actions": ["rewrite_acceptance_after_failure", "mark_done_without_evidence"]
+        },
+        {
+          "module_id": "evidence_verifier.v1",
+          "capability": "Verify generated artifacts against frozen acceptance checks and evidence prefixes.",
+          "risk_level": "medium",
+          "side_effect_level": "read_only",
+          "input_schema": {"acceptance_checks": "array", "evidence_bundle": "array"},
+          "output_schema": {"verdict": "string", "failures": "array", "ledger_refs": "array"},
+          "model_policy": {
+            "route_alias": "best.verification.evidence",
+            "run_mode": "pinned",
+            "fallback_required": true
+          },
+          "evidence_required": ["proof:verification_verdict", "artifact:evidence_bundle"],
+          "blocked_actions": ["ignore_failed_check", "mark_done_on_advisory_only"]
+        }
+      ],
+      "acceptance_policy": {
+        "compile_before_execution": true,
+        "freeze_before_execution": true,
+        "required_checks": [
+          "workflow_contract_valid",
+          "runtime_disabled_in_phase1",
+          "all_modules_have_model_policy",
+          "all_modules_have_evidence_required",
+          "evidence_prefixes_valid",
+          "human_gate_packet_fields_present"
+        ]
+      },
+      "human_gate": {
+        "boundary_classes": [
+          "permission",
+          "evidence",
+          "external_side_effect",
+          "destructive",
+          "credential",
+          "value_judgement",
+          "safety_legal"
+        ],
+        "packet_required_fields": [
+          "decision_needed",
+          "confirmed_facts",
+          "unconfirmed_facts",
+          "options",
+          "recommended_default",
+          "blast_radius",
+          "rollback_plan",
+          "post_action_verification"
+        ]
+      },
+      "evidence_policy": {
+        "accepted_prefixes": [
+          "command:",
+          "artifact:",
+          "proof:",
+          "classification:",
+          "file:",
+          "not_applicable:"
+        ],
+        "ledger_required": true,
+        "raw_payload_policy": "hash_or_pointer_only"
+      }
+    }
+  ]
+}

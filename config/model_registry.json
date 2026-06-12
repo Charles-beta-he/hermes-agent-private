@@ -1,0 +1,154 @@
+{
+  "registry_version": "2026-06-12.phase1",
+  "phase": "model-routing-seed",
+  "production_controls": {
+    "default_run_mode": "pinned",
+    "dynamic_routing_enabled": false,
+    "shadow_routing_enabled": true,
+    "auto_promote_enabled": false,
+    "default_model_change_requires_human_approval": true
+  },
+  "models": [
+    {
+      "model_id": "abstract:strong-reasoner",
+      "provider": "abstract",
+      "status": "stable",
+      "route_classes": ["stable", "strong"],
+      "capabilities": {
+        "reasoning": "high",
+        "structured_output": true,
+        "long_context": "medium",
+        "tool_use": false,
+        "multilingual": true
+      },
+      "risk_profile": {
+        "data_boundary": "configured_provider",
+        "allowed_sensitivity": ["public", "internal"],
+        "known_failure_modes": ["requires_evidence_verification"]
+      },
+      "eval_results": [
+        {
+          "suite_id": "eval.phase1.contract-smoke",
+          "passed": true,
+          "score": 0.8,
+          "evaluated_at": "2026-06-12T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "model_id": "abstract:cheap-structured",
+      "provider": "abstract",
+      "status": "stable",
+      "route_classes": ["stable", "low_cost"],
+      "capabilities": {
+        "reasoning": "medium",
+        "structured_output": true,
+        "long_context": "low",
+        "tool_use": false,
+        "multilingual": true
+      },
+      "risk_profile": {
+        "data_boundary": "configured_provider",
+        "allowed_sensitivity": ["public", "internal"],
+        "known_failure_modes": ["lower_reasoning_depth"]
+      },
+      "eval_results": [
+        {
+          "suite_id": "eval.phase1.contract-smoke",
+          "passed": true,
+          "score": 0.72,
+          "evaluated_at": "2026-06-12T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "model_id": "abstract:verifier",
+      "provider": "abstract",
+      "status": "stable",
+      "route_classes": ["stable", "verification"],
+      "capabilities": {
+        "reasoning": "medium",
+        "structured_output": true,
+        "long_context": "medium",
+        "tool_use": false,
+        "multilingual": true
+      },
+      "risk_profile": {
+        "data_boundary": "configured_provider",
+        "allowed_sensitivity": ["public", "internal"],
+        "known_failure_modes": ["must_not_override_deterministic_checks"]
+      },
+      "eval_results": [
+        {
+          "suite_id": "eval.phase1.contract-smoke",
+          "passed": true,
+          "score": 0.78,
+          "evaluated_at": "2026-06-12T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "model_id": "abstract:shadow-candidate",
+      "provider": "abstract",
+      "status": "candidate_shadow",
+      "route_classes": ["candidate_shadow"],
+      "capabilities": {
+        "reasoning": "high",
+        "structured_output": true,
+        "long_context": "high",
+        "tool_use": false,
+        "multilingual": true
+      },
+      "risk_profile": {
+        "data_boundary": "configured_provider",
+        "allowed_sensitivity": ["public"],
+        "known_failure_modes": ["not_allowed_for_production_default"]
+      },
+      "eval_results": [
+        {
+          "suite_id": "eval.phase1.contract-smoke",
+          "passed": true,
+          "score": 0.81,
+          "evaluated_at": "2026-06-12T00:00:00Z"
+        }
+      ]
+    }
+  ],
+  "route_aliases": {
+    "best.goal_calibration.structured": {
+      "primary_model_id": "abstract:cheap-structured",
+      "fallback_model_ids": ["abstract:strong-reasoner"],
+      "required_status": ["stable"],
+      "eval_suite_id": "eval.phase1.contract-smoke",
+      "run_mode": "pinned"
+    },
+    "best.research.evidence_extraction": {
+      "primary_model_id": "abstract:strong-reasoner",
+      "fallback_model_ids": ["abstract:cheap-structured"],
+      "required_status": ["stable"],
+      "eval_suite_id": "eval.phase1.contract-smoke",
+      "run_mode": "pinned"
+    },
+    "best.synthesis.decision_brief": {
+      "primary_model_id": "abstract:strong-reasoner",
+      "fallback_model_ids": ["abstract:verifier"],
+      "required_status": ["stable"],
+      "eval_suite_id": "eval.phase1.contract-smoke",
+      "run_mode": "pinned"
+    },
+    "best.acceptance.compiler": {
+      "primary_model_id": "abstract:strong-reasoner",
+      "fallback_model_ids": ["abstract:verifier"],
+      "required_status": ["stable"],
+      "eval_suite_id": "eval.phase1.contract-smoke",
+      "run_mode": "pinned"
+    },
+    "best.verification.evidence": {
+      "primary_model_id": "abstract:verifier",
+      "fallback_model_ids": ["abstract:strong-reasoner"],
+      "required_status": ["stable"],
+      "eval_suite_id": "eval.phase1.contract-smoke",
+      "run_mode": "pinned"
+    }
+  }
+}

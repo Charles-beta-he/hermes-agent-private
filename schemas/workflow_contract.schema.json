@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/workflow_contract.schema.json",
+  "title": "Hermes Self-Advancing Workflow Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workflow_id",
+    "version",
+    "objective",
+    "runtime_enabled",
+    "write_through_enabled",
+    "external_side_effects_enabled",
+    "allowed_lanes",
+    "stages",
+    "modules",
+    "acceptance_policy",
+    "human_gate",
+    "evidence_policy"
+  ],
+  "properties": {
+    "workflow_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{2,80}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 12
+    },
+    "runtime_enabled": {
+      "type": "boolean",
+      "description": "Phase 1 must keep this false. Runtime integration is a later gate."
+    },
+    "write_through_enabled": {
+      "type": "boolean",
+      "description": "Phase 1 must keep this false. No adapter mutation authority."
+    },
+    "external_side_effects_enabled": {
+      "type": "boolean",
+      "description": "Phase 1 must keep this false. No send/deploy/push/production write authority."
+    },
+    "allowed_lanes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "enum": ["work", "evolution", "advisory"]
+      },
+      "uniqueItems": true
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "enum": [
+          "intake",
+          "classify",
+          "evidence",
+          "plan",
+          "dispatch",
+          "execute",
+          "verify",
+          "review",
+          "writeback",
+          "human_gate",
+          "done"
+        ]
+      }
+    },
+    "modules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "module_id",
+          "capability",
+          "risk_level",
+          "side_effect_level",
+          "input_schema",
+          "output_schema",
+          "model_policy",
+          "evidence_required",
+          "blocked_actions"
+        ],
+        "properties": {
+          "module_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_.-]{2,80}$"
+          },
+          "capability": {
+            "type": "string",
+            "minLength": 6
+          },
+          "risk_level": {
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "side_effect_level": {
+            "enum": ["read_only", "local_reversible", "external_write", "destructive"]
+          },
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "model_policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["route_alias", "run_mode", "fallback_required"],
+            "properties": {
+              "route_alias": {
+                "type": "string",
+                "pattern": "^best\\.[a-z0-9_.-]+$"
+              },
+              "run_mode": {
+                "enum": ["pinned", "dynamic_safe_boundary", "shadow_only"]
+              },
+              "fallback_required": {
+                "type": "boolean"
+              }
+            }
+          },
+          "evidence_required": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "blocked_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "acceptance_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compile_before_execution", "freeze_before_execution", "required_checks"],
+      "properties": {
+        "compile_before_execution": {"type": "boolean"},
+        "freeze_before_execution": {"type": "boolean"},
+        "required_checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "human_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["boundary_classes", "packet_required_fields"],
+      "properties": {
+        "boundary_classes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "permission",
+              "evidence",
+              "external_side_effect",
+              "destructive",
+              "credential",
+              "value_judgement",
+              "safety_legal"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "packet_required_fields": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "evidence_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted_prefixes", "ledger_required", "raw_payload_policy"],
+      "properties": {
+        "accepted_prefixes": {
+          "type": "array",
+          "items": {
+            "enum": ["command:", "artifact:", "proof:", "classification:", "file:", "not_applicable:"]
+          },
+          "uniqueItems": true
+        },
+        "ledger_required": {"type": "boolean"},
+        "raw_payload_policy": {
+          "enum": ["hash_or_pointer_only", "inline_allowed"]
+        }
+      }
+    }
+  }
+}
