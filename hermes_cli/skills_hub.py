@@ -111,28 +111,72 @@ def _format_extra_metadata_lines(extra: Dict[str, Any]) -> list[str]:
 
 def _resolve_source_meta_and_bundle(identifier: str, sources):
     """Resolve metadata and bundle for a specific identifier."""
+    from tools.skills_hub import observe_skill_connector_health
+
     meta = None
     bundle = None
     matched_source = None
 
     for src in sources:
+        source_id = getattr(src, "source_id", lambda: "unknown")()
         if meta is None:
             try:
                 meta = src.inspect(identifier)
                 if meta:
                     matched_source = src
-            except Exception:
+                    observe_skill_connector_health(
+                        source_id=source_id,
+                        operation="inspect",
+                        success=True,
+                        identifier=identifier,
+                    )
+            except Exception as exc:
+                observe_skill_connector_health(
+                    source_id=source_id,
+                    operation="inspect",
+                    success=False,
+                    identifier=identifier,
+                    error=exc,
+                )
                 meta = None
         try:
             bundle = src.fetch(identifier)
-        except Exception:
+        except Exception as exc:
+            observe_skill_connector_health(
+                source_id=source_id,
+                operation="fetch",
+                success=False,
+                identifier=identifier,
+                error=exc,
+            )
             bundle = None
         if bundle:
             matched_source = src
+            observe_skill_connector_health(
+                source_id=source_id,
+                operation="fetch",
+                success=True,
+                identifier=identifier,
+                result_count=len(getattr(bundle, "files", {}) or {}),
+            )
             if meta is None:
                 try:
                     meta = src.inspect(identifier)
-                except Exception:
+                    if meta:
+                        observe_skill_connector_health(
+                            source_id=source_id,
+                            operation="inspect",
+                            success=True,
+                            identifier=identifier,
+                        )
+                except Exception as exc:
+                    observe_skill_connector_health(
+                        source_id=source_id,
+                        operation="inspect",
+                        success=False,
+                        identifier=identifier,
+                        error=exc,
+                    )
                     meta = None
             break
 
@@ -477,6 +521,7 @@ def do_install(identifier: str, category: str = "", force: bool = False,
         quarantine_bundle, install_from_quarantine, HubLockFile,
     )
     from tools.skills_guard import scan_skill, should_allow_install, format_scan_report
+    from tools.skills_intake_audit import evaluate_bundle
 
     c = console or _console
     ensure_hub_dirs()
@@ -574,6 +619,37 @@ def do_install(identifier: str, category: str = "", force: bool = False,
         id_parts = bundle.identifier.split("/")
         if len(id_parts) >= 3:
             category = "/".join(id_parts[1:-1])
+
+    if bundle.source != "official":
+        intake_report = evaluate_bundle(
+            bundle,
+            meta=meta,
+            source_label=getattr(bundle, "identifier", "") or identifier,
+            github_auth=auth,
+            github_source=next(
+                (src for src in sources if getattr(src, "source_id", lambda: "")() == "github"),
+                None,
+            ),
+        )
+        _render_install_intake_summary(intake_report, c)
+        if not _should_continue_install_after_intake(
+            intake_report,
+            identifier=identifier,
+            force=force,
+            skip_confirm=skip_confirm,
+            console=c,
+        ):
+            from tools.skills_hub import append_audit_log
+
+            append_audit_log(
+                "BLOCKED",
+                bundle.name,
+                bundle.source,
+                bundle.trust_level,
+                intake_report.get("evaluation_status") or "unknown",
+                ",".join(intake_report.get("reason_codes") or []),
+            )
+            return
 
     # Check if already installed
     lock = HubLockFile()
@@ -806,6 +882,67 @@ def _render_intake_report(report: dict[str, Any], console: Console) -> None:
         else:
             console.print("[dim]No resolvable skills were audited for this candidate.[/]")
         console.print()
+
+
+def _render_install_intake_summary(report: dict[str, Any], console: Console) -> None:
+    compatibility = report.get("hermes_compatibility") or {}
+    score = report.get("compatibility_score") or {}
+    reasons = report.get("reason_codes") or []
+    missing_refs = compatibility.get("missing_source_evidence") or []
+    runtime_constraints = compatibility.get("runtime_constraints") or []
+    status = report.get("evaluation_status") or "unknown"
+    border_style = {
+        "compatible": "green",
+        "review_needed": "yellow",
+        "incompatible": "red",
+    }.get(status, "blue")
+
+    lines = [
+        f"[bold]Status:[/] {status}",
+        f"[bold]Compatibility score:[/] {score.get('score', 'unknown')} ({score.get('grade', '?')})",
+        f"[bold]Install guidance:[/] {compatibility.get('install_guidance', 'unknown')}",
+        f"[bold]Summary:[/] {compatibility.get('summary', 'No summary available.')}",
+        f"[bold]Reason codes:[/] {', '.join(reasons) if reasons else 'none'}",
+    ]
+    if runtime_constraints:
+        lines.append(f"[bold]Runtime constraints:[/] {', '.join(runtime_constraints)}")
+    if missing_refs:
+        lines.append(f"[bold]Missing source evidence:[/] {', '.join(missing_refs)}")
+
+    console.print(Panel("\n".join(lines), title="Governed Intake Compatibility", border_style=border_style))
+
+
+def _should_continue_install_after_intake(
+    report: dict[str, Any],
+    *,
+    identifier: str,
+    force: bool,
+    skip_confirm: bool,
+    console: Console,
+) -> bool:
+    status = report.get("evaluation_status")
+    compatibility = report.get("hermes_compatibility") or {}
+
+    if status == "incompatible":
+        console.print(
+            "[bold red]Installation blocked:[/] Governed intake marked this candidate "
+            f"incompatible ({compatibility.get('install_guidance', 'do_not_install')})."
+        )
+        console.print("[dim]Remediate the blocker and re-run `hermes skills intake` before attempting install again.[/]\n")
+        return False
+
+    if status == "review_needed" and skip_confirm and not force:
+        console.print(
+            "[bold yellow]Installation paused:[/] This candidate requires manual review before install, "
+            "but the current invocation is non-interactive."
+        )
+        console.print(
+            f"[dim]Review the intake evidence with `hermes skills intake {identifier}` and re-run interactively, "
+            "or pass --force after human review if you intentionally want to proceed.[/]\n"
+        )
+        return False
+
+    return True
 
 
 def do_intake(

@@ -101,9 +101,10 @@ hermes skills install https://sharethis.chat/SKILL.md
 ```
 
 What happens:
-1. The skill directory is copied to `~/.hermes/skills/`
-2. It appears in your `skills_list` output
-3. It becomes available as a slash command
+1. Official skills install directly into `~/.hermes/skills/` after the normal scan/confirmation flow.
+2. Non-official skills first go through the governed compatibility audit at install time, so Hermes surfaces a compatibility summary before quarantine/install.
+3. `review_needed` candidates pause on non-interactive surfaces until a human reviews the intake evidence (or explicitly passes `--force` after review), and `incompatible` candidates are blocked outright.
+4. Installed skills appear in your `skills_list` output and become available as slash commands.
 
 :::tip
 Installed skills take effect in new sessions. If you want it available in the current session, use `/reset` to start fresh, or add `--now` to invalidate the prompt cache immediately (costs more tokens on the next turn).

@@ -1021,6 +1021,7 @@ Notes:
 - `--force` can override non-dangerous policy blocks for third-party/community skills.
 - `--force` does not override a `dangerous` scan verdict.
 - `hermes skills intake ...` is a read-only preflight for external repositories, identifiers, and direct URLs. It surfaces discovery counts, compatibility scores/grades, compatibility signals, prerequisites, and policy reasons before you install anything.
+- `hermes skills install ...` now re-runs the governed compatibility audit for non-official skills before quarantine/install. Compatible candidates continue normally, `review_needed` candidates pause on non-interactive surfaces unless you intentionally pass `--force`, and `incompatible` candidates are blocked until the intake issue is remediated and re-audited.
 - `--source skills-sh` searches the public `skills.sh` directory.
 - `--source well-known` lets you point Hermes at a site exposing `/.well-known/skills/index.json`.
 - `--source browse-sh` searches [browse.sh](https://browse.sh)'s catalog of 200+ site-specific browser-automation skills. Identifiers look like `browse-sh/airbnb.com/search-listings-ddgioa`.

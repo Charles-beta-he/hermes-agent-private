@@ -100,6 +100,9 @@ def test_cron_delivery_failure_creates_p1_finding(tmp_path, monkeypatch):
         delivery_error="gateway unavailable",
         output_file="/tmp/out.md",
         final_response="hello",
+        sidecar_run_id="cron-sidecar-1",
+        sidecar_path="/tmp/cron-sidecar-1.json",
+        extra_evidence_refs=["proof:session-sidecar:run:cron-sidecar-1"],
     )
 
     assert decision.findings
@@ -107,8 +110,10 @@ def test_cron_delivery_failure_creates_p1_finding(tmp_path, monkeypatch):
     assert finding.component == "cron"
     assert finding.severity == "P1"
     assert "scheduled_delivery" in finding.blocks_what
+    assert "proof:session-sidecar:run:cron-sidecar-1" in finding.evidence_refs
     recent = read_recent_findings(limit=5)
     assert recent[-1]["component"] == "cron"
+    assert "proof:session-sidecar:run:cron-sidecar-1" in recent[-1]["evidence_refs"]
 
 
 def test_projections_are_rebuilt_after_findings(tmp_path, monkeypatch):

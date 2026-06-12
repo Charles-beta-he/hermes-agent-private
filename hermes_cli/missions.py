@@ -17,7 +17,9 @@ Design invariants:
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
+import os
 import sqlite3
 import time
 import uuid
@@ -44,6 +46,7 @@ VALID_EVENT_TYPES = {
     "budget_exhausted",
     "flow_signal_enqueued",
     "flow_signal_dispatched",
+    "flow_signal_recovered",
     "maintenance_tick",
     "taskpool_status_changed",
 }
@@ -150,6 +153,9 @@ def _mission_db_path(path: str | Path | None = None) -> Path:
 
 
 def _hermes_home() -> Path:
+    env_home = os.environ.get("HERMES_HOME")
+    if env_home:
+        return Path(env_home).expanduser()
     try:
         from hermes_constants import get_hermes_home
 
@@ -609,6 +615,90 @@ class MissionStore:
             return {"status": "dispatched", "signal_id": pending[0].signal_id, "triggered_jobs": triggered, "runner": runner}
         return {"status": "pending_no_cron", "signal_id": pending[0].signal_id, "triggered_jobs": [], "runner": runner}
 
+    def recover_flow_signal_backlog(
+        self,
+        mission_id: str,
+        *,
+        older_than_seconds: int = 900,
+        max_signals: int = 200,
+        apply: bool = False,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """Governed, non-recursive recovery for stale flow-signal backlogs."""
+
+        mission = self.get_mission(mission_id)
+        if not mission:
+            raise KeyError(mission_id)
+        older_than_seconds = max(0, int(older_than_seconds))
+        max_signals = max(1, int(max_signals))
+        cutoff = _now() - older_than_seconds
+        with self._connect() as conn:
+            total_row = conn.execute(
+                "SELECT COUNT(*) AS n FROM mission_flow_signals WHERE mission_id = ? AND status = 'pending'",
+                (mission_id,),
+            ).fetchone()
+            stale_row = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM mission_flow_signals
+                WHERE mission_id = ? AND status = 'pending' AND created_at <= ?
+                """,
+                (mission_id, cutoff),
+            ).fetchone()
+            rows = conn.execute(
+                """
+                SELECT * FROM mission_flow_signals
+                WHERE mission_id = ? AND status = 'pending' AND created_at <= ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (mission_id, cutoff, max_signals),
+            ).fetchall()
+        selected = [self._row_to_flow_signal(row) for row in rows]
+        before_pending = int(total_row["n"] if total_row else 0)
+        stale_pending = int(stale_row["n"] if stale_row else 0)
+        type_counts: dict[str, int] = {}
+        for signal in selected:
+            type_counts[signal.signal_type] = type_counts.get(signal.signal_type, 0) + 1
+        payload: dict[str, Any] = {
+            "apply": bool(apply),
+            "older_than_seconds": older_than_seconds,
+            "max_signals": max_signals,
+            "before_pending": before_pending,
+            "stale_pending": stale_pending,
+            "selected_count": len(selected),
+            "signal_type_counts": type_counts,
+            "sample_signal_ids": [signal.signal_id for signal in selected[:20]],
+            "reason": reason.strip(),
+            "runner": {"status": "not_requested", "why": "recovery is local-ledger only and non-recursive"},
+        }
+        if not selected:
+            payload["after_pending"] = before_pending
+            return {"status": "noop", **payload}
+        if not apply:
+            payload["after_pending"] = before_pending
+            return {"status": "dry_run", **payload}
+        now = _now()
+        ids = [signal.signal_id for signal in selected]
+        placeholders = ",".join("?" for _ in ids)
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE mission_flow_signals SET status = 'recovered', consumed_at = ? WHERE mission_id = ? AND status = 'pending' AND signal_id IN ({placeholders})",
+                (now, mission_id, *ids),
+            )
+            after_row = conn.execute(
+                "SELECT COUNT(*) AS n FROM mission_flow_signals WHERE mission_id = ? AND status = 'pending'",
+                (mission_id,),
+            ).fetchone()
+        payload["after_pending"] = int(after_row["n"] if after_row else 0)
+        event = self.append_event(
+            mission_id,
+            "flow_signal_recovered",
+            f"governed recovery marked {len(selected)} stale flow signal(s) recovered",
+            payload,
+            enqueue_flow=False,
+        )
+        return {"status": "recovered", "event_id": event["event_id"], **payload}
+
     def list_events(self, mission_id: str, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -884,7 +974,16 @@ class MissionStore:
         return f"hermes mission report {mission.mission_id}"
 
     def _find_cron_jobs_for_mission(self, mission_id: str) -> list[dict[str, Any]]:
-        jobs_file = _hermes_home() / "cron" / "jobs.json"
+        env_home = os.environ.get("HERMES_HOME")
+        env_jobs_file = Path(env_home).expanduser() / "cron" / "jobs.json" if env_home else None
+        if env_jobs_file is not None and env_jobs_file.exists():
+            jobs_file = env_jobs_file
+        else:
+            try:
+                cron_jobs = importlib.import_module("cron.jobs")
+                jobs_file = Path(getattr(cron_jobs, "JOBS_FILE"))
+            except Exception:
+                jobs_file = _hermes_home() / "cron" / "jobs.json"
         if not jobs_file.exists():
             return []
         try:
@@ -1458,6 +1557,19 @@ def cmd_mission(args: argparse.Namespace) -> int:
             return 0
         if command == "dispatch-events":
             result = store.dispatch_pending_flow_signals(args.mission_id, run_due=bool(args.run_due))
+            if args.json:
+                _print_json(result)
+            else:
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        if command == "recover-signals":
+            result = store.recover_flow_signal_backlog(
+                args.mission_id,
+                older_than_seconds=args.older_than_seconds,
+                max_signals=args.max_signals,
+                apply=bool(args.apply),
+                reason=args.reason or "",
+            )
             if args.json:
                 _print_json(result)
             else:

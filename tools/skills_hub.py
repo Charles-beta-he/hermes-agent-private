@@ -42,6 +42,45 @@ from tools.website_policy import check_website_access
 logger = logging.getLogger(__name__)
 
 
+def observe_skill_connector_health(
+    *,
+    source_id: str,
+    operation: str,
+    success: bool,
+    identifier: str | None = None,
+    query: str | None = None,
+    result_count: int | None = None,
+    error: Any = None,
+    extra_details: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Best-effort health projection for Skills Hub connector operations."""
+    try:
+        from agent.health_records import record_health_observation
+
+        details: Dict[str, Any] = {
+            "operation": str(operation or "unknown"),
+        }
+        if identifier:
+            details["identifier"] = str(identifier)
+        if query:
+            details["query"] = str(query)
+        if result_count is not None:
+            details["result_count"] = int(result_count)
+        if extra_details:
+            details.update(dict(extra_details))
+        record_health_observation(
+            chain_type="skill_connector",
+            target_id=str(source_id or "unknown"),
+            target_label=f"Skills Hub {source_id or 'unknown'}",
+            status="success" if success else "degraded",
+            success=bool(success),
+            error_message=(str(error)[:600] if error else None),
+            details=details,
+        )
+    except Exception as exc:
+        logger.debug("skill connector health observation failed for %s: %s", source_id, exc)
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -3716,11 +3755,27 @@ def _search_one_source(
     src: SkillSource, query: str, limit: int
 ) -> Tuple[str, List[SkillMeta]]:
     """Search a single source.  Runs in a thread for parallelism."""
+    source_id = src.source_id()
     try:
-        return src.source_id(), src.search(query, limit=limit)
+        results = src.search(query, limit=limit)
+        observe_skill_connector_health(
+            source_id=source_id,
+            operation="search",
+            success=True,
+            query=query,
+            result_count=len(results),
+        )
+        return source_id, results
     except Exception as e:
-        logger.debug("Search failed for %s: %s", src.source_id(), e)
-        return src.source_id(), []
+        logger.debug("Search failed for %s: %s", source_id, e)
+        observe_skill_connector_health(
+            source_id=source_id,
+            operation="search",
+            success=False,
+            query=query,
+            error=e,
+        )
+        return source_id, []
 
 
 def parallel_search_sources(

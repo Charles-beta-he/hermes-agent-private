@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from contextlib import contextmanager
 
 # fcntl is Unix-only; on Windows use msvcrt for file locking
@@ -31,7 +32,7 @@ except ImportError:
     except ImportError:
         msvcrt = None
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, cast
 
 # Add parent directory to path for imports BEFORE repo-level imports.
 # Without this, standalone invocations (e.g. after `hermes update` reloads
@@ -155,6 +156,81 @@ from cron.jobs import get_due_jobs, mark_job_run, save_job_output, advance_next_
 # response with this marker to suppress delivery.  Output is still saved
 # locally for audit.
 SILENT_MARKER = "[SILENT]"
+
+
+def _emit_cron_session_sidecar(
+    *,
+    job: dict,
+    run_success: bool,
+    final_success: bool,
+    output: str,
+    final_response: str,
+    error: str | None,
+    delivery_error: str | None,
+    output_file: str | Path | None,
+    duration_s: float,
+) -> dict[str, object] | None:
+    """Best-effort sidecar emission for one cron execution."""
+    try:
+        from session_sidecar import write_sidecar
+        from session_sidecar.producers import cron_producer
+
+        degraded_flags: list[str] = []
+        if delivery_error:
+            degraded_flags.append("delivery_failed")
+        if run_success and not str(final_response or "").strip():
+            degraded_flags.append("empty_final_response")
+
+        status = "failed"
+        if run_success:
+            status = "degraded" if degraded_flags else "succeeded"
+
+        evidence_refs = [f"cron_job:{job.get('id')}"]
+        output_file_str = str(output_file) if output_file else ""
+        if output_file_str:
+            evidence_refs.append(f"artifact:{output_file_str}")
+
+        sc = cron_producer(
+            job_id=str(job.get("id") or "unknown"),
+            job_name=str(job.get("name") or job.get("id") or "cron job"),
+            schedule=str(job.get("schedule") or ""),
+            status=status,
+            duration_s=max(0.0, float(duration_s)),
+            model=str(job.get("model") or ""),
+            error_class=(
+                "DeliveryError" if delivery_error else (
+                    "EmptyResponse" if "empty_final_response" in degraded_flags else (
+                        "CronJobError" if error else ""
+                    )
+                )
+            ),
+            error_message=str(delivery_error or error or ""),
+            degraded_flags=degraded_flags,
+            output_text=output or "",
+            output_log_path=output_file_str,
+            evidence_refs=evidence_refs,
+        )
+        sc.extra["mode"] = "no_agent" if job.get("no_agent") else "agent"
+        sc.extra["deliver"] = str(job.get("deliver") or "")
+        if job.get("script"):
+            sc.extra["script_path"] = str(job.get("script"))
+        if delivery_error:
+            sc.extra["delivery_error"] = str(delivery_error)
+        if str(final_response or "").strip().upper() == SILENT_MARKER:
+            sc.extra["silent_run"] = True
+        sc.extra["final_success"] = bool(final_success)
+        sc.evidence_refs.append(f"proof:session-sidecar:run:{sc.run_id}")
+
+        sidecar_path = write_sidecar(sc)
+        return {
+            "run_id": sc.run_id,
+            "path": str(sidecar_path),
+            "status": sc.status,
+            "evidence_refs": list(sc.evidence_refs),
+        }
+    except Exception as exc:
+        logger.debug("cron session sidecar emission failed for job %s: %s", job.get("id"), exc)
+        return None
 
 # ---------------------------------------------------------------------------
 # Persistent thread pool for parallel cron jobs.
@@ -2093,7 +2169,9 @@ def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> i
         def _process_job(job: dict) -> bool:
             """Run one due job end-to-end: execute, save, deliver, mark."""
             try:
+                started_at = time.time()
                 success, output, final_response, error = run_job(job)
+                run_success = bool(success)
 
                 output_file = save_job_output(job["id"], output)
                 if verbose:
@@ -2126,6 +2204,18 @@ def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> i
                     success = False
                     error = "Agent completed but produced empty response (model error, timeout, or misconfiguration)"
 
+                sidecar_meta = _emit_cron_session_sidecar(
+                    job=job,
+                    run_success=run_success,
+                    final_success=bool(success),
+                    output=output,
+                    final_response=final_response,
+                    error=error,
+                    delivery_error=delivery_error,
+                    output_file=output_file,
+                    duration_s=time.time() - started_at,
+                )
+
                 mark_job_run(job["id"], success, error, delivery_error=delivery_error)
                 try:
                     from agent.selfcheck_operator import observe_cron_job_result
@@ -2137,6 +2227,12 @@ def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> i
                         delivery_error=delivery_error,
                         output_file=str(output_file) if output_file else None,
                         final_response=final_response,
+                        sidecar_run_id=str(sidecar_meta.get("run_id")) if sidecar_meta else None,
+                        sidecar_path=str(sidecar_meta.get("path")) if sidecar_meta else None,
+                        extra_evidence_refs=cast(
+                            list[str] | None,
+                            sidecar_meta.get("evidence_refs") if sidecar_meta else None,
+                        ),
                     )
                 except Exception as _selfcheck_err:
                     logger.debug("selfcheck operator cron observer failed for job %s: %s", job["id"], _selfcheck_err)

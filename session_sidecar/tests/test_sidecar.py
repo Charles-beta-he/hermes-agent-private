@@ -231,7 +231,12 @@ def test_aggregate():
 def test_producers():
     _ensure_patched()
     from session_sidecar.producers import (
-        cli_producer, cron_producer, browser_producer, script_producer,
+        acp_producer,
+        browser_producer,
+        cli_producer,
+        cron_producer,
+        kanban_worker_producer,
+        script_producer,
     )
 
     sc_cli = cli_producer(session_id="sess-1", model="m1", duration_s=10.0)
@@ -253,6 +258,23 @@ def test_producers():
     assert sc_script.entrypoint == "script"
     assert "test.py" in sc_script.extra["script_path"]
 
+    sc_kanban = kanban_worker_producer(
+        task_id="t-1",
+        workspace_path="/tmp/kanban-workspace",
+        assignee="brain-mirror",
+        lifecycle_transitions=[{"from": "ready", "to": "running"}],
+    )
+    assert sc_kanban.entrypoint == "kanban_worker"
+    assert sc_kanban.task_id == "t-1"
+    assert sc_kanban.extra["assignee"] == "brain-mirror"
+    assert sc_kanban.extra["workspace_path"].endswith("/tmp/kanban-workspace")
+    assert sc_kanban.lifecycle_transitions == [{"from": "ready", "to": "running"}]
+
+    sc_acp = acp_producer(session_id="acp-1", client_name="zed", command="copilot --acp --stdio")
+    assert sc_acp.entrypoint == "acp_adapter"
+    assert sc_acp.extra["client_name"] == "zed"
+    assert sc_acp.extra["command"] == "copilot --acp --stdio"
+
 
 def test_consumer_selfcheck():
     _ensure_patched()
@@ -267,9 +289,10 @@ def test_consumer_selfcheck():
     assert "status" in probe
     assert "sidecar_dir" in probe
 
-    evidence = sidecar_evidence_for_selfcheck()
+    evidence = sidecar_evidence_for_selfcheck(date_prefix=sc.created_at[:10])
     assert len(evidence) >= 1
     assert all(e["type"] == "proof:session-sidecar" for e in evidence)
+    assert any(ref.startswith(f"proof:session-sidecar:{sc.created_at[:10]}:") for item in evidence for ref in item["evidence"])
 
 
 def test_consumer_daily_report():
@@ -395,3 +418,104 @@ def test_inject_sidecar_accepts_automation_alias_and_degraded_flags():
     assert loaded.status == "degraded"
     assert loaded.degraded_flags == ["browser_tool_unavailable", "partial_capture"]
     assert loaded.error_class == "BrowserUnavailable"
+
+
+def test_inject_sidecar_accepts_kanban_and_acp_aliases():
+    _ensure_patched()
+    from session_sidecar import read_sidecar
+    from session_sidecar.consumer import _inject_test_sidecar
+
+    kanban_run_id = _inject_test_sidecar(
+        status="succeeded",
+        entrypoint="kanban",
+        evidence_refs="proof:kanban-sidecar",
+    )
+    kanban_loaded = read_sidecar(kanban_run_id)
+    assert kanban_loaded is not None
+    assert kanban_loaded.entrypoint == "kanban_worker"
+    assert kanban_loaded.task_id == "task-injected-sidecar"
+    assert kanban_loaded.extra["assignee"] == "test-worker"
+    assert kanban_loaded.lifecycle_transitions == [{"from": "ready", "to": "running"}]
+
+    acp_run_id = _inject_test_sidecar(
+        status="succeeded",
+        entrypoint="acp-adapter",
+        evidence_refs="proof:acp-sidecar",
+    )
+    acp_loaded = read_sidecar(acp_run_id)
+    assert acp_loaded is not None
+    assert acp_loaded.entrypoint == "acp_adapter"
+    assert acp_loaded.extra["client_name"] == "test-client"
+    assert acp_loaded.extra["command"] == "copilot --acp --stdio"
+
+
+def test_taskpool_proof_ingest_returns_redacted_structured_rows():
+    _ensure_patched()
+    import time
+    from session_sidecar import SessionSidecar, ArtifactRef, write_sidecar
+    from session_sidecar.consumer import taskpool_proof_ingest
+
+    run_id = f"proof-ingest-{time.time_ns()}"
+    sc = SessionSidecar(
+        run_id=run_id,
+        entrypoint="kanban_worker",
+        session_id="sess-proof-1",
+        task_id="t-proof-1",
+        status="degraded",
+        duration_s=4.2,
+        error_class="TimeoutError",
+        error_message="token leaked? no, just timeout",
+        degraded_flags=["partial_output"],
+        model="gpt-test",
+        provider="openai",
+    )
+    sc.evidence_refs = [
+        "proof:test-proof-ingest",
+        "artifact:/tmp/proof-ingest.json",
+        "credential:[REDACTED]",
+    ]
+    sc.artifacts.append(ArtifactRef(path="/tmp/proof-ingest.txt", kind="file"))
+    sc.extra["assignee"] = "brain-mirror"
+    write_sidecar(sc)
+
+    rows = taskpool_proof_ingest(date_prefix=sc.created_at[:10], entrypoint="kanban_worker", limit=20)
+    row = next(item for item in rows if item["run_id"] == run_id)
+
+    assert row["type"] == "proof:session-sidecar"
+    assert row["task_id"] == "t-proof-1"
+    assert row["entrypoint"] == "kanban_worker"
+    assert row["status"] == "degraded"
+    assert row["summary"].startswith("sidecar kanban_worker degraded")
+    assert f"proof:session-sidecar:run:{sc.run_id}" in row["evidence"]
+    assert "session:sess-proof-1" in row["evidence"]
+    assert "proof:test-proof-ingest" in row["evidence"]
+    assert "artifact:/tmp/proof-ingest.json" in row["evidence"]
+    assert all("credential:" not in value.lower() for value in row["evidence"])
+    assert row["error_message"] == "**REDACTED**"
+    assert row["extra"]["assignee"] == "brain-mirror"
+
+
+def test_consumer_cli_proof_log_outputs_ingest_rows(capsys):
+    _ensure_patched()
+    import time
+    from session_sidecar import SessionSidecar, write_sidecar
+    from session_sidecar.consumer import main
+
+    run_id = f"proof-cli-{time.time_ns()}"
+    sc = SessionSidecar(run_id=run_id, entrypoint="script", session_id="sess-cli-proof")
+    sc.evidence_refs = ["proof:cli-proof"]
+    write_sidecar(sc)
+
+    rc = main([
+        "proof-log",
+        f"date_prefix={sc.created_at[:10]}",
+        "entrypoint=script",
+        "limit=20",
+    ])
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+
+    assert rc == 0
+    row = next(item for item in payload if item["run_id"] == run_id)
+    assert row["type"] == "proof:session-sidecar"
+    assert "proof:cli-proof" in row["evidence"]

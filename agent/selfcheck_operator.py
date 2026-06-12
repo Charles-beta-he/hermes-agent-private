@@ -1759,6 +1759,9 @@ def observe_cron_job_result(
     delivery_error: str | None = None,
     output_file: str | None = None,
     final_response: str | None = None,
+    sidecar_run_id: str | None = None,
+    sidecar_path: str | None = None,
+    extra_evidence_refs: Sequence[str] | None = None,
 ) -> OperatorDecision:
     """System-level cron trigger used by the scheduler."""
     event_type = "cron.job_completed"
@@ -1788,10 +1791,17 @@ def observe_cron_job_result(
                 "event_type": event_type,
                 "output_file": output_file,
                 "has_final_response": bool(str(final_response or "").strip()),
+                "sidecar_run_id": sidecar_run_id,
+                "sidecar_path": sidecar_path,
             },
         )
     except Exception as exc:
         logger.debug("health record cron observation failed: %s", exc)
+    evidence_refs = [x for x in [f"cron_job:{job.get('id')}", f"file:{output_file}" if output_file else None] if x]
+    for ref in extra_evidence_refs or []:
+        ref_text = str(ref or "").strip()
+        if ref_text and ref_text not in evidence_refs:
+            evidence_refs.append(ref_text)
     event = {
         "event_type": event_type,
         "trigger": "cron_scheduler",
@@ -1802,7 +1812,7 @@ def observe_cron_job_result(
         "summary": summary_text,
         "error": error,
         "delivery_error": delivery_error,
-        "evidence_refs": [x for x in [f"cron_job:{job.get('id')}", f"file:{output_file}" if output_file else None] if x],
+        "evidence_refs": evidence_refs,
     }
     return observe_event(event)
 
@@ -1874,6 +1884,25 @@ def observe_gateway_delivery(
         "error": None if success else text,
         "evidence_refs": [x for x in [f"gateway_platform:{platform}" if platform else None] if x],
     }
+    try:
+        from agent.health_records import record_health_observation
+
+        record_health_observation(
+            chain_type="connector",
+            target_id=str(platform or "unknown"),
+            target_label=str(platform or "connector"),
+            status="success" if success else "degraded",
+            success=bool(success),
+            error_message=None if success else text,
+            details={
+                "chat_id": _sanitize_text(chat_id, 120),
+                "thread_id": _sanitize_text(thread_id, 120),
+                "source": source or "gateway_delivery",
+                "event_type": event_type,
+            },
+        )
+    except Exception as exc:
+        logger.debug("health record gateway observation failed: %s", exc)
     return observe_event(event)
 
 

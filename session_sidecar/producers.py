@@ -294,6 +294,112 @@ def gateway_producer(
 
 
 # ---------------------------------------------------------------------------
+# Kanban worker producer
+# ---------------------------------------------------------------------------
+def kanban_worker_producer(
+    *,
+    task_id: str = "",
+    session_id: str = "",
+    workspace_path: str = "",
+    assignee: str = "",
+    model: str = "",
+    provider: str = "",
+    duration_s: float = 0.0,
+    status: str = "succeeded",
+    error_class: str = "",
+    error_message: str = "",
+    degraded_flags: Optional[List[str]] = None,
+    output_paths: Optional[List[str]] = None,
+    evidence_refs: Optional[List[str]] = None,
+    lifecycle_transitions: Optional[List[Dict[str, str]]] = None,
+) -> SessionSidecar:
+    """Build a sidecar for a kanban worker execution."""
+    run_id = _generate_run_id()
+    sc = SessionSidecar(
+        run_id=run_id,
+        entrypoint=ENTRYPOINT_KANBAN_WORKER,
+        session_id=session_id or (f"kanban:{task_id}" if task_id else "kanban"),
+        task_id=task_id,
+        model=model,
+        provider=provider,
+        platform="kanban",
+        duration_s=duration_s,
+        status=status,
+        error_class=error_class,
+        error_message=error_message,
+        degraded_flags=degraded_flags or [],
+        lifecycle_transitions=lifecycle_transitions or [],
+    )
+    if assignee:
+        sc.extra["assignee"] = assignee
+    if workspace_path:
+        sc.extra["workspace_path"] = os.path.abspath(workspace_path)
+    sc.evidence_refs = evidence_refs or []
+
+    for op in (output_paths or []):
+        op_abs = os.path.abspath(op)
+        try:
+            sz = os.path.getsize(op_abs)
+        except OSError:
+            sz = 0
+        sc.artifacts.append(ArtifactRef(
+            path=op_abs,
+            kind="file",
+            size_bytes=sz,
+            description="kanban worker output",
+        ))
+
+    return sc
+
+
+# ---------------------------------------------------------------------------
+# ACP adapter producer
+# ---------------------------------------------------------------------------
+def acp_producer(
+    *,
+    session_id: str = "",
+    client_name: str = "",
+    command: str = "",
+    model: str = "",
+    provider: str = "",
+    duration_s: float = 0.0,
+    status: str = "succeeded",
+    error_class: str = "",
+    error_message: str = "",
+    degraded_flags: Optional[List[str]] = None,
+    output_log_path: str = "",
+    evidence_refs: Optional[List[str]] = None,
+) -> SessionSidecar:
+    """Build a sidecar for an ACP adapter session."""
+    run_id = _generate_run_id()
+    sc = SessionSidecar(
+        run_id=run_id,
+        entrypoint=ENTRYPOINT_ACP,
+        session_id=session_id or "acp",
+        model=model,
+        provider=provider,
+        platform="acp",
+        duration_s=duration_s,
+        status=status,
+        error_class=error_class,
+        error_message=error_message,
+        degraded_flags=degraded_flags or [],
+    )
+    if client_name:
+        sc.extra["client_name"] = client_name
+    if command:
+        sc.extra["command"] = command
+    sc.evidence_refs = evidence_refs or []
+    if output_log_path:
+        sc.artifacts.append(ArtifactRef(
+            path=os.path.abspath(output_log_path),
+            kind="log",
+            description="ACP adapter session log",
+        ))
+    return sc
+
+
+# ---------------------------------------------------------------------------
 # Convenience: one‑shot write from any producer
 # ---------------------------------------------------------------------------
 def produce_and_write(*, producer_kwargs: Dict[str, Any],
@@ -307,8 +413,15 @@ def produce_and_write(*, producer_kwargs: Dict[str, Any],
         "cli": cli_producer,
         "cron": cron_producer,
         "browser": browser_producer,
+        "automation": browser_producer,
         "script": script_producer,
         "gateway": gateway_producer,
+        "kanban_worker": kanban_worker_producer,
+        "kanban-worker": kanban_worker_producer,
+        "kanban": kanban_worker_producer,
+        "acp": acp_producer,
+        "acp_adapter": acp_producer,
+        "acp-adapter": acp_producer,
     }
     fn = producers.get(producer)
     if fn is None:

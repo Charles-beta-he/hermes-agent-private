@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from tools.skills_hub import SkillBundle
-from tools.skills_intake_audit import audit_candidates, evaluate_bundle
+from typing import Any, cast
+
+from tools.skills_hub import GitHubAuth, SkillBundle
+from tools.skills_intake_audit import _repo_evidence_for_bundle, audit_candidates, evaluate_bundle
 
 
 class FakeGitHubSource:
@@ -322,6 +324,122 @@ Body
     assert "missing_license_evidence" in report["reason_codes"]
     assert report["compatibility_score"]["score"] == 80
     assert report["compatibility_score"]["grade"] == "B"
+
+
+def test_repo_evidence_falls_back_to_skill_local_license_file_when_github_license_api_missing(monkeypatch):
+    bundle = _bundle(
+        "acme/repo/skill-with-license",
+        """---
+name: skill-with-license
+description: license fallback
+platforms: [macos]
+---
+Body
+""",
+        **{
+            "LICENSE.txt": """
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+"""
+        },
+    )
+
+    def fake_github_json(url, auth):
+        if url == "https://api.github.com/repos/acme/repo":
+            return {
+                "default_branch": "main",
+                "updated_at": "2026-06-12T00:00:00Z",
+                "pushed_at": "2026-06-12T00:00:00Z",
+            }
+        if url == "https://api.github.com/repos/acme/repo/commits/main":
+            return {
+                "sha": "abc123",
+                "html_url": "https://github.com/acme/repo/commit/abc123",
+                "url": "https://api.github.com/repos/acme/repo/commits/main",
+                "commit": {"committer": {"date": "2026-06-12T00:00:00Z"}},
+            }
+        if url == "https://api.github.com/repos/acme/repo/license":
+            return None
+        raise AssertionError(f"unexpected github url: {url}")
+
+    monkeypatch.setattr("tools.skills_intake_audit._github_json", fake_github_json)
+
+    evidence = _repo_evidence_for_bundle(
+        bundle,
+        auth=GitHubAuth(),
+        github_source=cast(Any, FakeGitHubSource(
+            [
+                {"type": "blob", "path": "skill-with-license/SKILL.md", "sha": "skillsha", "url": "https://api.github.com/repos/acme/repo/git/blobs/skillsha"},
+                {"type": "blob", "path": "skill-with-license/LICENSE.txt", "sha": "licensesha", "url": "https://api.github.com/repos/acme/repo/git/blobs/licensesha"},
+            ]
+        )),
+        repo_cache={},
+    )
+
+    assert evidence["license"] == {
+        "spdx_id": "Apache-2.0",
+        "name": "Apache License 2.0",
+        "api_url": "https://api.github.com/repos/acme/repo/git/blobs/licensesha",
+        "html_url": "https://github.com/acme/repo/blob/main/skill-with-license/LICENSE.txt",
+        "path": "skill-with-license/LICENSE.txt",
+        "sha": "licensesha",
+        "download_url": "https://raw.githubusercontent.com/acme/repo/main/skill-with-license/LICENSE.txt",
+    }
+
+
+def test_evaluate_bundle_uses_license_fallback_instead_of_missing_license_reason(monkeypatch):
+    bundle = _bundle(
+        "acme/repo/skill-with-license",
+        """---
+name: skill-with-license
+description: license fallback
+platforms: [macos]
+---
+Body
+""",
+        **{
+            "LICENSE.txt": """
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+"""
+        },
+    )
+
+    def fake_github_json(url, auth):
+        if url == "https://api.github.com/repos/acme/repo":
+            return {
+                "default_branch": "main",
+                "updated_at": "2026-06-12T00:00:00Z",
+                "pushed_at": "2026-06-12T00:00:00Z",
+            }
+        if url == "https://api.github.com/repos/acme/repo/commits/main":
+            return {
+                "sha": "abc123",
+                "html_url": "https://github.com/acme/repo/commit/abc123",
+                "url": "https://api.github.com/repos/acme/repo/commits/main",
+                "commit": {"committer": {"date": "2026-06-12T00:00:00Z"}},
+            }
+        if url == "https://api.github.com/repos/acme/repo/license":
+            return None
+        raise AssertionError(f"unexpected github url: {url}")
+
+    monkeypatch.setattr("tools.skills_intake_audit._github_json", fake_github_json)
+
+    report = evaluate_bundle(
+        bundle,
+        github_source=cast(Any, FakeGitHubSource(
+            [
+                {"type": "blob", "path": "skill-with-license/SKILL.md", "sha": "skillsha", "url": "https://api.github.com/repos/acme/repo/git/blobs/skillsha"},
+                {"type": "blob", "path": "skill-with-license/LICENSE.txt", "sha": "licensesha", "url": "https://api.github.com/repos/acme/repo/git/blobs/licensesha"},
+            ]
+        )),
+    )
+
+    assert "missing_license_evidence" not in report["reason_codes"]
+    assert report["source_evidence"]["license"]["spdx_id"] == "Apache-2.0"
+    assert report["hermes_compatibility"]["source_evidence_refs"]["license"] == "Apache-2.0"
 
 
 def test_audit_candidates_no_discovered_repo_skills_is_hard_fail(monkeypatch):

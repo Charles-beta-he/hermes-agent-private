@@ -48,6 +48,26 @@ _STATUS_RANK = {"compatible": 0, "review_needed": 1, "incompatible": 2}
 _NODE_RANGE_RE = re.compile(r"(>=|>|\^|~)?\s*v?(\d+)")
 _GITHUB_HOSTS = {"github.com", "www.github.com"}
 _NODE_RUNTIME_EXTENSIONS = (".js", ".mjs", ".cjs", ".ts", ".tsx")
+_LICENSE_FILENAMES = (
+    "LICENSE",
+    "LICENSE.MD",
+    "LICENSE.TXT",
+    "COPYING",
+    "COPYING.MD",
+    "COPYING.TXT",
+    "UNLICENSE",
+)
+_LICENSE_TEXT_PATTERNS = (
+    (("apache license", "version 2.0"), ("Apache-2.0", "Apache License 2.0")),
+    (("permission is hereby granted, free of charge",), ("MIT", "MIT License")),
+    (("redistribution and use in source and binary forms", "neither the name"), ("BSD-3-Clause", "BSD 3-Clause License")),
+    (("redistribution and use in source and binary forms",), ("BSD-2-Clause", "BSD 2-Clause License")),
+    (("mozilla public license", "version 2.0"), ("MPL-2.0", "Mozilla Public License 2.0")),
+    (("gnu general public license", "version 3"), ("GPL-3.0", "GNU General Public License 3.0")),
+    (("gnu affero general public license", "version 3"), ("AGPL-3.0", "GNU Affero General Public License 3.0")),
+    (("the unlicense",), ("Unlicense", "The Unlicense")),
+    (("isc license",), ("ISC", "ISC License")),
+)
 
 
 @dataclass(frozen=True)
@@ -571,6 +591,47 @@ def _github_license_evidence(repo: str, auth: GitHubAuth) -> dict[str, Any] | No
     }
 
 
+def _normalize_license_text_name(path: str) -> str:
+    return Path(path).name.upper()
+
+
+def _infer_license_from_text(text: str) -> tuple[str | None, str | None]:
+    normalized = " ".join(text.lower().split())
+    for needles, resolved in _LICENSE_TEXT_PATTERNS:
+        if all(needle in normalized for needle in needles):
+            return resolved
+    return None, None
+
+
+def _skill_local_license_evidence(
+    bundle: SkillBundle,
+    *,
+    repo: str,
+    default_branch: str | None,
+    skill_path: str,
+    blob_index: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    for rel_path in bundle.files:
+        normalized_rel_path = str(rel_path).replace("\\", "/")
+        if "/" in normalized_rel_path:
+            continue
+        if _normalize_license_text_name(normalized_rel_path) not in _LICENSE_FILENAMES:
+            continue
+        entry_path = f"{skill_path}/{normalized_rel_path}"
+        blob_meta = blob_index.get(entry_path) or {}
+        spdx_id, name = _infer_license_from_text(_bundle_text(bundle, normalized_rel_path))
+        return {
+            "spdx_id": spdx_id,
+            "name": name,
+            "api_url": blob_meta.get("url"),
+            "html_url": f"https://github.com/{repo}/blob/{default_branch or 'main'}/{entry_path}",
+            "path": entry_path,
+            "sha": blob_meta.get("sha"),
+            "download_url": f"https://raw.githubusercontent.com/{repo}/{default_branch or 'main'}/{entry_path}",
+        }
+    return None
+
+
 def _github_commit_evidence(repo: str, default_branch: str | None, auth: GitHubAuth) -> dict[str, Any] | None:
     if not default_branch:
         return None
@@ -626,6 +687,7 @@ def _repo_evidence_for_bundle(
                 "updated_at": repo_data.get("updated_at"),
                 "pushed_at": repo_data.get("pushed_at"),
             },
+            "blob_index": {},
             "skill_blobs": {},
         }
         if github_source is not None:
@@ -636,16 +698,26 @@ def _repo_evidence_for_bundle(
                     if entry.get("type") != "blob":
                         continue
                     entry_path = entry.get("path")
-                    if not isinstance(entry_path, str) or not entry_path.endswith("/SKILL.md"):
+                    if not isinstance(entry_path, str):
                         continue
-                    cached["skill_blobs"][entry_path] = {
+                    blob_meta = {
                         "path": entry_path,
                         "sha": entry.get("sha"),
                         "url": entry.get("url"),
                     }
+                    cached["blob_index"][entry_path] = blob_meta
+                    if entry_path.endswith("/SKILL.md"):
+                        cached["skill_blobs"][entry_path] = blob_meta
         repo_cache[repo] = cached
 
     skill_md_path = f"{skill_path}/SKILL.md"
+    license_evidence = cached.get("license") or _skill_local_license_evidence(
+        bundle,
+        repo=repo,
+        default_branch=cached.get("default_branch"),
+        skill_path=skill_path,
+        blob_index=cached.get("blob_index") or {},
+    )
     return {
         "repo": repo,
         "path": skill_path,
@@ -653,7 +725,7 @@ def _repo_evidence_for_bundle(
         "skill_url": f"https://github.com/{repo}/tree/{cached.get('default_branch') or 'main'}/{skill_path}",
         "default_branch": cached.get("default_branch"),
         "head_commit": cached.get("head_commit"),
-        "license": cached.get("license"),
+        "license": license_evidence,
         "repo_activity": cached.get("repo_activity"),
         "skill_blob": (cached.get("skill_blobs") or {}).get(skill_md_path),
     }

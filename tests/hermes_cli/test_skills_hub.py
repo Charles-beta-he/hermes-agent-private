@@ -516,7 +516,7 @@ def _install_mocks(monkeypatch, tmp_path, source_factory, category_hint=""):
     import tools.skills_guard as guard
 
     q_path = tmp_path / "skills" / ".hub" / "quarantine" / "pending"
-    q_path.mkdir(parents=True)
+    q_path.mkdir(parents=True, exist_ok=True)
 
     install_calls: list = []
 
@@ -650,6 +650,101 @@ def test_url_install_cancel_name_prompt_aborts(monkeypatch, tmp_path, hub_env):
 
     assert installs == []
     assert "Installation cancelled" in sink.getvalue()
+
+
+def test_do_install_renders_governed_intake_summary_for_external_skills(monkeypatch, tmp_path, hub_env):
+    installs = _install_mocks(monkeypatch, tmp_path, _make_url_bundle_fetcher(name="sharethis-chat", awaiting_name=False))
+
+    sink = StringIO()
+    console = Console(file=sink, force_terminal=False, color_system=None)
+    do_install(
+        "https://example.com/sharethis-chat/SKILL.md",
+        console=console,
+        skip_confirm=True,
+        force=True,
+    )
+
+    output = sink.getvalue()
+    assert installs == [{"name": "sharethis-chat", "category": ""}]
+    assert "Governed Intake Compatibility" in output
+    assert "Compatibility score:" in output
+    assert "Install guidance:" in output
+
+
+def test_do_install_blocks_incompatible_external_skills_before_quarantine(monkeypatch, tmp_path, hub_env):
+    class _WindowsOnlySource:
+        def inspect(self, identifier):
+            return type("Meta", (), {
+                "extra": {"url": "https://example.com/windows-only/SKILL.md", "awaiting_name": False},
+                "identifier": "https://example.com/windows-only/SKILL.md",
+                "name": "windows-only",
+                "path": "windows-only",
+            })()
+
+        def fetch(self, identifier):
+            return type("Bundle", (), {
+                "name": "windows-only",
+                "files": {"SKILL.md": "---\nname: windows-only\ndescription: win only\nplatforms: [windows]\n---\nbody\n"},
+                "source": "url",
+                "identifier": "https://example.com/windows-only/SKILL.md",
+                "trust_level": "community",
+                "metadata": {"url": "https://example.com/windows-only/SKILL.md", "awaiting_name": False},
+            })()
+
+    installs = _install_mocks(monkeypatch, tmp_path, _WindowsOnlySource)
+
+    sink = StringIO()
+    console = Console(file=sink, force_terminal=False, color_system=None)
+    do_install(
+        "https://example.com/windows-only/SKILL.md",
+        console=console,
+        skip_confirm=True,
+        force=True,
+    )
+
+    output = sink.getvalue()
+    assert installs == []
+    assert "Governed Intake Compatibility" in output
+    assert "Installation blocked:" in output
+    assert "incompatible" in output
+
+
+def test_do_install_pauses_review_needed_external_skills_on_non_interactive_surface(monkeypatch, tmp_path, hub_env):
+    class _ReviewNeededSource:
+        def inspect(self, identifier):
+            return type("Meta", (), {
+                "extra": {"url": "https://example.com/review-needed/SKILL.md", "awaiting_name": False},
+                "identifier": "https://example.com/review-needed/SKILL.md",
+                "name": "review-needed",
+                "path": "review-needed",
+            })()
+
+        def fetch(self, identifier):
+            return type("Bundle", (), {
+                "name": "review-needed",
+                "files": {"SKILL.md": "---\nname: review-needed\ndescription: review needed\nprerequisites:\n  env_vars: [__INTAKE_TEST_MISSING__]\n---\nbody\n"},
+                "source": "url",
+                "identifier": "https://example.com/review-needed/SKILL.md",
+                "trust_level": "community",
+                "metadata": {"url": "https://example.com/review-needed/SKILL.md", "awaiting_name": False},
+            })()
+
+    installs = _install_mocks(monkeypatch, tmp_path, _ReviewNeededSource)
+
+    sink = StringIO()
+    console = Console(file=sink, force_terminal=False, color_system=None)
+    do_install(
+        "https://example.com/review-needed/SKILL.md",
+        console=console,
+        skip_confirm=True,
+        force=False,
+    )
+
+    output = sink.getvalue()
+    assert installs == []
+    assert "Governed Intake Compatibility" in output
+    assert "Installation paused:" in output
+    assert "requires manual review" in output
 
 
 # ── _existing_categories ────────────────────────────────────────────────────

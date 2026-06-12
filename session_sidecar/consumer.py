@@ -39,6 +39,84 @@ logger = logging.getLogger(__name__)
 SIDECAR_PROOF_PREFIX = "proof:session-sidecar:"
 
 
+def _stable_unique(items: List[str]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for item in items:
+        value = str(item or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _proof_summary_for_sidecar(sc: SessionSidecar) -> str:
+    bits = [sc.entrypoint, sc.status]
+    if sc.task_id:
+        bits.append(f"task={sc.task_id}")
+    if sc.error_class:
+        bits.append(f"error={sc.error_class}")
+    if sc.degraded_flags:
+        bits.append("degraded=" + ",".join(sc.degraded_flags))
+    if sc.duration_s:
+        bits.append(f"duration={sc.duration_s:.2f}s")
+    return "sidecar " + " ".join(bits)
+
+
+def taskpool_proof_ingest(
+    *,
+    date_prefix: str = "",
+    entrypoint: str = "",
+    status: str = "",
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """Convert sidecars into Proof-Log-friendly structured evidence rows.
+
+    The returned dicts are intentionally flat, deterministic, and already
+    redacted via ``strip_sensitive`` so taskpool / dashboards can ingest them
+    without reopening the raw sidecar JSON.
+    """
+    rows: List[Dict[str, Any]] = []
+    for original in query_sidecars(
+        date_prefix=date_prefix,
+        entrypoint=entrypoint,
+        status=status,
+        limit=limit,
+    ):
+        sc = strip_sensitive(original)
+        evidence = _stable_unique([
+            f"{SIDECAR_PROOF_PREFIX}run:{sc.run_id}",
+            f"session:{sc.session_id}" if sc.session_id else "",
+            *list(sc.evidence_refs or []),
+        ])
+        artifacts = _stable_unique([a.path for a in sc.artifacts])
+        row: Dict[str, Any] = {
+            "type": "proof:session-sidecar",
+            "run_id": sc.run_id,
+            "created_at": sc.created_at,
+            "entrypoint": sc.entrypoint,
+            "status": sc.status,
+            "summary": _proof_summary_for_sidecar(sc),
+            "evidence": evidence,
+            "artifacts": artifacts,
+            "duration_s": sc.duration_s,
+            "degraded_flags": list(sc.degraded_flags),
+            "model": sc.model,
+            "provider": sc.provider,
+        }
+        if sc.task_id:
+            row["task_id"] = sc.task_id
+        if sc.error_class:
+            row["error_class"] = sc.error_class
+        if sc.error_message:
+            row["error_message"] = sc.error_message
+        if sc.extra:
+            row["extra"] = dict(sc.extra)
+        rows.append(row)
+    return rows
+
+
 def sidecar_evidence_for_selfcheck(
     *,
     date_prefix: str = "",
@@ -71,13 +149,13 @@ def sidecar_evidence_for_selfcheck(
             continue
         entries.append({
             "type": "proof:session-sidecar",
-            "evidence": [f"proof:session-sidecar:{ep}:{count}"],
+            "evidence": [f"{prefix}{ep}:{count}"],
             "value": count,
         })
 
     entries.append({
         "type": "proof:session-sidecar",
-        "evidence": [f"proof:session-sidecar:total:{agg.get('total_runs', 0)}"],
+        "evidence": [f"{prefix}total:{agg.get('total_runs', 0)}"],
         "value": agg.get("total_runs", 0),
     })
     return entries
@@ -262,6 +340,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
 
+    if command in {"proof-log", "taskpool-proof", "taskpool-proof-ingest"}:
+        result = taskpool_proof_ingest(
+            date_prefix=kwargs.get("date_prefix", ""),
+            entrypoint=kwargs.get("entrypoint", ""),
+            status=kwargs.get("status", ""),
+            limit=int(kwargs.get("limit", "50")),
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+
     if command == "inject-test-sidecar":
         status = kwargs.pop("status", "succeeded")
         ep = kwargs.pop("entrypoint", "script")
@@ -287,6 +375,7 @@ Commands:
     selfcheck
     daily-report [date_prefix=YYYY-MM-DD]
     ingest-evidence [date_prefix=YYYY-MM-DD] [min_evidence=N]
+    proof-log    [date_prefix=YYYY-MM-DD] [entrypoint=...] [status=...] [limit=N]
     inject-test-sidecar status=succeeded|degraded|failed entrypoint=...
 """)
 
@@ -303,10 +392,12 @@ def _inject_test_sidecar(*, status: str = "succeeded",
     when a specific producer does not accept that field.
     """
     from session_sidecar.producers import (
+        acp_producer,
         browser_producer,
         cli_producer,
         cron_producer,
         gateway_producer,
+        kanban_worker_producer,
         produce_and_write,
         script_producer,
     )
@@ -318,6 +409,12 @@ def _inject_test_sidecar(*, status: str = "succeeded",
         "browser": browser_producer,
         "script": script_producer,
         "gateway": gateway_producer,
+        "kanban_worker": kanban_worker_producer,
+        "kanban-worker": kanban_worker_producer,
+        "kanban": kanban_worker_producer,
+        "acp": acp_producer,
+        "acp_adapter": acp_producer,
+        "acp-adapter": acp_producer,
     }
     common: Dict[str, Any] = {
         "status": status,
@@ -333,6 +430,15 @@ def _inject_test_sidecar(*, status: str = "succeeded",
         common.update({"script_path": "session-sidecar-injected-test", "args": []})
     if producer == "cron":
         common.update({"job_id": "injected-test", "job_name": "injected test", "schedule": "manual"})
+    if producer in {"kanban_worker", "kanban-worker", "kanban"}:
+        common.update({
+            "task_id": "task-injected-sidecar",
+            "workspace_path": "/tmp/session-sidecar-kanban",
+            "assignee": "test-worker",
+            "lifecycle_transitions": [{"from": "ready", "to": "running"}],
+        })
+    if producer in {"acp", "acp_adapter", "acp-adapter"}:
+        common.update({"client_name": "test-client", "command": "copilot --acp --stdio"})
 
     normalised = dict(kwargs)
     if "evidence_refs" in normalised and isinstance(normalised["evidence_refs"], str):

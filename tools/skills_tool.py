@@ -176,6 +176,61 @@ def set_secret_capture_callback(callback) -> None:
     _secret_capture_callback = callback
 
 
+def _observe_skill_health_result(
+    *,
+    requested_name: str,
+    result_json: str,
+    file_path: str | None = None,
+    task_id: str | None = None,
+) -> str:
+    """Best-effort health observation for skill loads.
+
+    Records both successful and degraded skill reads in the unified
+    ``health_records`` table so skill availability/setup drift shows up beside
+    cron/browser/connectors instead of only in ad-hoc logs.
+    """
+    try:
+        payload = json.loads(result_json)
+        if not isinstance(payload, dict):
+            return result_json
+
+        readiness = str(payload.get("readiness_status") or "").strip().lower()
+        setup_needed = bool(payload.get("setup_needed"))
+        success = bool(payload.get("success"))
+        healthy = success and readiness not in {
+            SkillReadinessStatus.SETUP_NEEDED.value,
+            SkillReadinessStatus.UNSUPPORTED.value,
+        } and not setup_needed
+
+        resolved_name = str(payload.get("name") or requested_name or "unknown").strip() or "unknown"
+        details = {
+            "requested_name": str(requested_name or "").strip(),
+            "file_path": str(file_path or "").strip() or None,
+            "task_id": str(task_id or "").strip() or None,
+            "readiness_status": readiness or None,
+            "setup_needed": setup_needed,
+            "setup_skipped": bool(payload.get("setup_skipped")) if "setup_skipped" in payload else None,
+            "missing_required_environment_variables": payload.get("missing_required_environment_variables") or None,
+            "missing_credential_files": payload.get("missing_credential_files") or None,
+        }
+        details = {k: v for k, v in details.items() if v is not None}
+
+        from agent.health_records import record_health_observation
+
+        record_health_observation(
+            chain_type="skill",
+            target_id=resolved_name,
+            target_label=resolved_name,
+            status="success" if healthy else "degraded",
+            success=healthy,
+            error_message=None if healthy else str(payload.get("error") or payload.get("setup_note") or payload.get("setup_help") or "skill unavailable")[:1000],
+            details=details,
+        )
+    except Exception:
+        logger.debug("health record skill observation failed for %s", requested_name, exc_info=True)
+    return result_json
+
+
 def skill_matches_platform(frontmatter: Dict[str, Any]) -> bool:
     """Check if a skill is compatible with the current OS platform.
 
@@ -873,6 +928,14 @@ def skill_view(
     Returns:
         JSON string with skill content or error message
     """
+    def _finish(result_json: str) -> str:
+        return _observe_skill_health_result(
+            requested_name=name,
+            result_json=result_json,
+            file_path=file_path,
+            task_id=task_id,
+        )
+
     try:
         # Validate before the ':' qualified-name dispatch so a Windows drive
         # path (e.g. C:\skills\foo) can't be reinterpreted as a plugin
@@ -880,14 +943,14 @@ def skill_view(
         # search-dir join that builds direct_path below.
         lookup_error = _skill_lookup_path_error(name)
         if lookup_error:
-            return json.dumps(
+            return _finish(json.dumps(
                 {
                     "success": False,
                     "error": lookup_error,
                     "hint": "Use a skill name or relative path within the skills directory.",
                 },
                 ensure_ascii=False,
-            )
+            ))
 
         local_category_name: str | None = None
         # ── Qualified name dispatch (plugin skills) ──────────────────
@@ -899,7 +962,7 @@ def skill_view(
 
             namespace, bare = parse_qualified_name(name)
             if not is_valid_namespace(namespace):
-                return json.dumps(
+                return _finish(json.dumps(
                     {
                         "success": False,
                         "error": (
@@ -908,7 +971,7 @@ def skill_view(
                         ),
                     },
                     ensure_ascii=False,
-                )
+                ))
 
             discover_plugins()  # idempotent
             pm = get_plugin_manager()
@@ -918,7 +981,7 @@ def skill_view(
                 if not plugin_skill_md.exists():
                     # Stale registry entry — file deleted out of band
                     pm.remove_plugin_skill(name)
-                    return json.dumps(
+                    return _finish(json.dumps(
                         {
                             "success": False,
                             "error": (
@@ -929,19 +992,19 @@ def skill_view(
                             ),
                         },
                         ensure_ascii=False,
-                    )
-                return _serve_plugin_skill(
+                    ))
+                return _finish(_serve_plugin_skill(
                     plugin_skill_md,
                     namespace,
                     bare,
                     preprocess=preprocess,
                     session_id=task_id,
-                )
+                ))
 
             # Plugin exists but this specific skill is missing?
             available = pm.list_plugin_skills(namespace)
             if available:
-                return json.dumps(
+                return _finish(json.dumps(
                     {
                         "success": False,
                         "error": f"Skill '{bare}' not found in plugin '{namespace}'.",
@@ -949,7 +1012,7 @@ def skill_view(
                         "hint": f"The '{namespace}' plugin provides {len(available)} skill(s).",
                     },
                     ensure_ascii=False,
-                )
+                ))
             # Plugin itself not found — fall through to flat-tree scan.
             # Categorized local skills also use `category:skill` in config and
             # gateway prompts, so preserve that form and translate it to the
@@ -964,14 +1027,14 @@ def skill_view(
         if local_category_name:
             lookup_error = _skill_lookup_path_error(local_category_name)
             if lookup_error:
-                return json.dumps(
+                return _finish(json.dumps(
                     {
                         "success": False,
                         "error": lookup_error,
                         "hint": "Use a skill name or relative path within the skills directory.",
                     },
                     ensure_ascii=False,
-                )
+                ))
 
         # Build list of all skill directories to search
         all_dirs = []
@@ -980,13 +1043,13 @@ def skill_view(
         all_dirs.extend(get_external_skills_dirs())
 
         if not all_dirs:
-            return json.dumps(
+            return _finish(json.dumps(
                 {
                     "success": False,
                     "error": "Skills directory does not exist yet. It will be created on first install.",
                 },
                 ensure_ascii=False,
-            )
+            ))
 
         skill_dir = None
         skill_md = None
@@ -1048,7 +1111,7 @@ def skill_view(
                 "Skill name collision for '%s': %d candidates — %s",
                 name, len(candidates), "; ".join(paths),
             )
-            return json.dumps(
+            return _finish(json.dumps(
                 {
                     "success": False,
                     "error": (
@@ -1064,14 +1127,14 @@ def skill_view(
                     ),
                 },
                 ensure_ascii=False,
-            )
+            ))
 
         if candidates:
             skill_dir, skill_md = candidates[0]
 
         if not skill_md or not skill_md.exists():
             available = [s["name"] for s in _sort_skills(_find_all_skills())[:20]]
-            return json.dumps(
+            return _finish(json.dumps(
                 {
                     "success": False,
                     "error": f"Skill '{name}' not found.",
@@ -1079,19 +1142,19 @@ def skill_view(
                     "hint": "Use skills_list to see all available skills",
                 },
                 ensure_ascii=False,
-            )
+            ))
 
         # Read the file once — reused for platform check and main content below
         try:
             content = skill_md.read_text(encoding="utf-8")
         except Exception as e:
-            return json.dumps(
+            return _finish(json.dumps(
                 {
                     "success": False,
                     "error": f"Failed to read skill '{name}': {e}",
                 },
                 ensure_ascii=False,
-            )
+            ))
 
         # Security: warn if skill is loaded from outside trusted directories
         # (local skills dir + configured external_dirs are all trusted)
@@ -1129,19 +1192,19 @@ def skill_view(
             parsed_frontmatter = {}
 
         if not skill_matches_platform(parsed_frontmatter):
-            return json.dumps(
+            return _finish(json.dumps(
                 {
                     "success": False,
                     "error": f"Skill '{name}' is not supported on this platform.",
                     "readiness_status": SkillReadinessStatus.UNSUPPORTED.value,
                 },
                 ensure_ascii=False,
-            )
+            ))
 
         # Check if the skill is disabled by the user
         resolved_name = parsed_frontmatter.get("name", skill_md.parent.name)
         if _is_skill_disabled(resolved_name):
-            return json.dumps(
+            return _finish(json.dumps(
                 {
                     "success": False,
                     "error": (
@@ -1150,7 +1213,7 @@ def skill_view(
                     ),
                 },
                 ensure_ascii=False,
-            )
+            ))
 
         # If a specific file path is requested, read that instead
         if file_path and skill_dir:
@@ -1158,28 +1221,28 @@ def skill_view(
 
             # Security: Prevent path traversal attacks
             if has_traversal_component(file_path):
-                return json.dumps(
+                return _finish(json.dumps(
                     {
                         "success": False,
                         "error": "Path traversal ('..') is not allowed.",
                         "hint": "Use a relative path within the skill directory",
                     },
                     ensure_ascii=False,
-                )
+                ))
 
             target_file = skill_dir / file_path
 
             # Security: Verify resolved path is still within skill directory
             traversal_error = validate_within_dir(target_file, skill_dir)
             if traversal_error:
-                return json.dumps(
+                return _finish(json.dumps(
                     {
                         "success": False,
                         "error": traversal_error,
                         "hint": "Use a relative path within the skill directory",
                     },
                     ensure_ascii=False,
-                )
+                ))
             if not target_file.exists():
                 # List available files in the skill directory, organized by type
                 available_files = {
@@ -1216,7 +1279,7 @@ def skill_view(
                 # Remove empty categories
                 available_files = {k: v for k, v in available_files.items() if v}
 
-                return json.dumps(
+                return _finish(json.dumps(
                     {
                         "success": False,
                         "error": f"File '{file_path}' not found in skill '{name}'.",
@@ -1224,14 +1287,14 @@ def skill_view(
                         "hint": "Use one of the available file paths listed above",
                     },
                     ensure_ascii=False,
-                )
+                ))
 
             # Read the file content
             try:
                 content = target_file.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 # Binary file - return info about it instead
-                return json.dumps(
+                return _finish(json.dumps(
                     {
                         "success": True,
                         "name": name,
@@ -1240,9 +1303,9 @@ def skill_view(
                         "is_binary": True,
                     },
                     ensure_ascii=False,
-                )
+                ))
 
-            return json.dumps(
+            return _finish(json.dumps(
                 {
                     "success": True,
                     "name": name,
@@ -1251,7 +1314,7 @@ def skill_view(
                     "file_type": target_file.suffix,
                 },
                 ensure_ascii=False,
-            )
+            ))
 
         # Reuse the parse from the platform check above
         frontmatter = parsed_frontmatter
@@ -1467,10 +1530,10 @@ def skill_view(
         if isinstance(metadata, dict):
             result["metadata"] = metadata
 
-        return json.dumps(result, ensure_ascii=False)
+        return _finish(json.dumps(result, ensure_ascii=False))
 
     except Exception as e:
-        return tool_error(str(e), success=False)
+        return _finish(tool_error(str(e), success=False))
 
 
 

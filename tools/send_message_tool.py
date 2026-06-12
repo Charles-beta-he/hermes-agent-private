@@ -367,6 +367,20 @@ def _handle_send(args):
             except Exception:
                 pass
 
+        if isinstance(result, dict) and result.get("success"):
+            try:
+                from agent.selfcheck_operator import observe_gateway_delivery
+
+                observe_gateway_delivery(
+                    platform=platform_name,
+                    chat_id=str(chat_id or ""),
+                    thread_id=str(thread_id or ""),
+                    success=True,
+                    summary="gateway send completed",
+                    source="send_message_tool",
+                )
+            except Exception:
+                logger.debug("selfcheck operator gateway success observer failed", exc_info=True)
         if isinstance(result, dict) and "error" in result:
             result["error"] = _sanitize_error_text(result["error"])
             _observe_gateway_send_failure(platform_name, chat_id, thread_id, result["error"])
