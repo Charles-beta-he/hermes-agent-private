@@ -22,6 +22,7 @@ DEFAULT_MODEL_REGISTRY = REPO_ROOT / "config" / "model_registry.json"
 DEFAULT_ROUTE_TRACE_SCHEMA = REPO_ROOT / "schemas" / "route_trace.schema.json"
 DEFAULT_RUN_LOCKFILE_SCHEMA = REPO_ROOT / "schemas" / "run_lockfile.schema.json"
 DEFAULT_ACCEPTANCE_BUNDLE_SCHEMA = REPO_ROOT / "schemas" / "acceptance_bundle.schema.json"
+DEFAULT_EXECUTOR_DRY_RUN_SCHEMA = REPO_ROOT / "schemas" / "executor_dry_run_result.schema.json"
 
 ALLOWED_LANES = {"work", "evolution", "advisory"}
 ALLOWED_STAGES = {
@@ -87,6 +88,7 @@ class ValidationResult:
     route_trace_schema: str = ""
     run_lockfile_schema: str = ""
     acceptance_bundle_schema: str = ""
+    executor_dry_run_schema: str = ""
     model_registry: str = ""
     validated_workflows: int = 0
     validated_modules: int = 0
@@ -113,6 +115,7 @@ class ValidationResult:
             "route_trace_schema": self.route_trace_schema,
             "run_lockfile_schema": self.run_lockfile_schema,
             "acceptance_bundle_schema": self.acceptance_bundle_schema,
+            "executor_dry_run_schema": self.executor_dry_run_schema,
             "model_registry": self.model_registry,
             "validated_workflows": self.validated_workflows,
             "validated_modules": self.validated_modules,
@@ -369,6 +372,7 @@ def validate_registry(
     route_trace_schema_path: Path = DEFAULT_ROUTE_TRACE_SCHEMA,
     run_lockfile_schema_path: Path = DEFAULT_RUN_LOCKFILE_SCHEMA,
     acceptance_bundle_schema_path: Path = DEFAULT_ACCEPTANCE_BUNDLE_SCHEMA,
+    executor_dry_run_schema_path: Path = DEFAULT_EXECUTOR_DRY_RUN_SCHEMA,
 ) -> ValidationResult:
     result = ValidationResult(
         registry=str(registry_path),
@@ -376,6 +380,7 @@ def validate_registry(
         route_trace_schema=str(route_trace_schema_path),
         run_lockfile_schema=str(run_lockfile_schema_path),
         acceptance_bundle_schema=str(acceptance_bundle_schema_path),
+        executor_dry_run_schema=str(executor_dry_run_schema_path),
         model_registry=str(model_registry_path),
     )
     schema = _load_json(schema_path, result, "schema")
@@ -384,6 +389,9 @@ def validate_registry(
     acceptance_bundle_schema = _load_json(
         acceptance_bundle_schema_path, result, "acceptance_bundle_schema"
     )
+    executor_dry_run_schema = _load_json(
+        executor_dry_run_schema_path, result, "executor_dry_run_schema"
+    )
     registry = _load_json(registry_path, result, "registry")
     model_registry = _load_json(model_registry_path, result, "model_registry")
     if (
@@ -391,6 +399,7 @@ def validate_registry(
         or route_trace_schema is None
         or run_lockfile_schema is None
         or acceptance_bundle_schema is None
+        or executor_dry_run_schema is None
         or registry is None
         or model_registry is None
     ):
@@ -404,6 +413,8 @@ def validate_registry(
         result.fail("run_lockfile_schema title is unexpected")
     if acceptance_bundle_schema.get("title") != "Hermes Workflow Acceptance Bundle":
         result.fail("acceptance_bundle_schema title is unexpected")
+    if executor_dry_run_schema.get("title") != "Hermes Workflow Executor Dry-Run Result":
+        result.fail("executor_dry_run_schema title is unexpected")
 
     workflows = registry.get("workflows") if isinstance(registry, dict) else None
     if not isinstance(workflows, list) or not workflows:
@@ -444,6 +455,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--route-trace-schema", type=Path, default=DEFAULT_ROUTE_TRACE_SCHEMA)
     parser.add_argument("--run-lockfile-schema", type=Path, default=DEFAULT_RUN_LOCKFILE_SCHEMA)
     parser.add_argument("--acceptance-bundle-schema", type=Path, default=DEFAULT_ACCEPTANCE_BUNDLE_SCHEMA)
+    parser.add_argument("--executor-dry-run-schema", type=Path, default=DEFAULT_EXECUTOR_DRY_RUN_SCHEMA)
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
 
@@ -454,6 +466,7 @@ def main(argv: list[str] | None = None) -> int:
         args.route_trace_schema,
         args.run_lockfile_schema,
         args.acceptance_bundle_schema,
+        args.executor_dry_run_schema,
     )
     if args.as_json:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))

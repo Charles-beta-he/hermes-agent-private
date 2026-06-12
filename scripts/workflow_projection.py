@@ -12,7 +12,7 @@ import argparse
 import hashlib
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -98,7 +98,7 @@ def build_projection(
     workflow_registry: dict[str, Any], model_registry: dict[str, Any], workflow_id: str
 ) -> dict[str, Any]:
     workflow = _select_workflow(workflow_registry, workflow_id)
-    now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     run_seed = {
         "workflow_id": workflow["workflow_id"],
         "workflow_version": workflow["version"],

@@ -13,7 +13,7 @@ import argparse
 import hashlib
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +41,7 @@ def _default_projection_paths(workflow_id: str, run_id: str) -> tuple[Path, Path
 def compile_acceptance_bundle(
     run_lockfile: dict[str, Any], route_traces: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     run_id = run_lockfile["run_id"]
     workflow_id = run_lockfile["workflow_id"]
     criteria: list[dict[str, Any]] = []

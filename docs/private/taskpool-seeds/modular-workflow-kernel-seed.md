@@ -55,7 +55,8 @@ Phase 1 is schema/registry/validator only. It must not change live runtime behav
 3. [x] Add acceptance compiler dry-run for a concrete `decision_brief_pack` run.
 4. [ ] Add taskpool import command for workflow seed tasks, still dry-run by default.
 5. [x] Add a pinned run lockfile schema before any runtime execution integration.
-6. [ ] Add local reversible executor stub only after acceptance dry-run is validated and a new human gate approves runtime transition.
+6. [x] Add local reversible executor stub only after acceptance dry-run is validated and a new human gate approves runtime transition.
+7. [ ] Add taskpool import dry-run candidates; do not write canonical taskpool state without another human gate.
 
 ## Phase 2 evidence
 
@@ -72,3 +73,8 @@ Phase 1 is schema/registry/validator only. It must not change live runtime behav
 - `docs/private/modular-workflow-kernel-phase3-acceptance-adr.md`
 - `docs/private/workflow-kernel-acceptance/decision_brief_pack.run_preview_78eee6afcec1f12a.acc_3c811427ac76ce88.acceptance.json`
 - `command:./scripts/run_tests.sh tests/scripts/test_workflow_contract_validator.py tests/scripts/test_workflow_projection.py tests/scripts/test_acceptance_compiler.py => 16 passed`
+- `schemas/executor_dry_run_result.schema.json`
+- `scripts/workflow_executor_stub.py`
+- `docs/private/modular-workflow-kernel-phase4-executor-stub-adr.md`
+- `docs/private/workflow-kernel-executor-dry-runs/decision_brief_pack.run_preview_78eee6afcec1f12a.execdry_412861ba7acffd38.executor_dry_run.json`
+- `command:./scripts/run_tests.sh tests/scripts/test_workflow_contract_validator.py tests/scripts/test_workflow_projection.py tests/scripts/test_acceptance_compiler.py tests/scripts/test_workflow_executor_stub.py => 19 passed`

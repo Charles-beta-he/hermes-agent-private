@@ -1,0 +1,189 @@
+{
+  "result_id": "execdry_412861ba7acffd38",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "workflow_id": "decision_brief_pack",
+  "acceptance_bundle_id": "acc_3c811427ac76ce88",
+  "executed_at": "2026-06-12T16:51:18Z",
+  "dry_run_only": true,
+  "local_reversible_only": true,
+  "runtime_enabled": false,
+  "taskpool_claim_enabled": false,
+  "model_call_enabled": false,
+  "adapter_write_enabled": false,
+  "external_side_effects_enabled": false,
+  "steps": [
+    {
+      "step_id": "dry_step_001",
+      "status": "would_run",
+      "source_criterion": "workflow_contract_valid",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_002",
+      "status": "would_run",
+      "source_criterion": "runtime_disabled_in_phase1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_003",
+      "status": "would_run",
+      "source_criterion": "all_modules_have_model_policy",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_004",
+      "status": "would_run",
+      "source_criterion": "all_modules_have_evidence_required",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_005",
+      "status": "would_run",
+      "source_criterion": "evidence_prefixes_valid",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_006",
+      "status": "would_run",
+      "source_criterion": "human_gate_packet_fields_present",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_007",
+      "status": "would_run",
+      "source_criterion": "module_contract:goal_calibrator.v1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_008",
+      "status": "would_run",
+      "source_criterion": "module_contract:source_research.v1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_009",
+      "status": "would_run",
+      "source_criterion": "module_contract:decision_synthesizer.v1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_010",
+      "status": "would_run",
+      "source_criterion": "module_contract:acceptance_compiler.v1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_011",
+      "status": "would_run",
+      "source_criterion": "module_contract:evidence_verifier.v1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_012",
+      "status": "would_run",
+      "source_criterion": "model_route:goal_calibrator.v1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_013",
+      "status": "would_run",
+      "source_criterion": "model_route:source_research.v1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_014",
+      "status": "would_run",
+      "source_criterion": "model_route:decision_synthesizer.v1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_015",
+      "status": "would_run",
+      "source_criterion": "model_route:acceptance_compiler.v1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_016",
+      "status": "would_run",
+      "source_criterion": "model_route:evidence_verifier.v1",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_017",
+      "status": "blocked_by_boundary",
+      "source_criterion": "safety_flag:runtime_enabled",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_018",
+      "status": "blocked_by_boundary",
+      "source_criterion": "safety_flag:write_through_enabled",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    },
+    {
+      "step_id": "dry_step_019",
+      "status": "blocked_by_boundary",
+      "source_criterion": "safety_flag:external_side_effects_enabled",
+      "evidence": [
+        "artifact:acceptance_bundle",
+        "proof:executor_stub_no_runtime_side_effect"
+      ]
+    }
+  ],
+  "rollback_plan": "Delete this dry-run result artifact; no taskpool/runtime/model/adapter state was mutated.",
+  "boundary": "local_reversible_executor_stub_only_no_taskpool_no_model_no_adapter"
+}
