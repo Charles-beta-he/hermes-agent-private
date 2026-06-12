@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/taskpool_import_dry_run.schema.json",
+  "title": "Hermes Workflow Taskpool Import Dry-Run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "import_id",
+    "run_id",
+    "workflow_id",
+    "executor_result_id",
+    "generated_at",
+    "dry_run_only",
+    "taskpool_write_enabled",
+    "taskpool_claim_enabled",
+    "runtime_enabled",
+    "model_call_enabled",
+    "adapter_write_enabled",
+    "external_side_effects_enabled",
+    "candidate_tasks",
+    "human_gate_packet",
+    "rollback_plan",
+    "boundary"
+  ],
+  "properties": {
+    "import_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "executor_result_id": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "minLength": 1},
+    "dry_run_only": {"const": true},
+    "taskpool_write_enabled": {"const": false},
+    "taskpool_claim_enabled": {"const": false},
+    "runtime_enabled": {"const": false},
+    "model_call_enabled": {"const": false},
+    "adapter_write_enabled": {"const": false},
+    "external_side_effects_enabled": {"const": false},
+    "candidate_tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_id",
+          "source_step_id",
+          "source_criterion",
+          "title",
+          "lane",
+          "priority",
+          "status_candidate",
+          "frontmatter_preview",
+          "body_preview",
+          "evidence",
+          "write_enabled"
+        ],
+        "properties": {
+          "candidate_id": {"type": "string", "minLength": 1},
+          "source_step_id": {"type": "string", "minLength": 1},
+          "source_criterion": {"type": "string", "minLength": 1},
+          "title": {"type": "string", "minLength": 1},
+          "lane": {"enum": ["evolution", "advisory", "work"]},
+          "priority": {"enum": ["P1", "P2", "P3"]},
+          "status_candidate": {"enum": ["pending", "blocked"]},
+          "frontmatter_preview": {"type": "object"},
+          "body_preview": {"type": "string", "minLength": 1},
+          "evidence": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "write_enabled": {"const": false}
+        }
+      }
+    },
+    "human_gate_packet": {"type": "object"},
+    "rollback_plan": {"type": "string", "minLength": 1},
+    "boundary": {"const": "taskpool_import_dry_run_only_no_canonical_write_no_claim"}
+  }
+}

@@ -1,0 +1,629 @@
+{
+  "import_id": "tpdry_a5678ba9e856a763",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "workflow_id": "decision_brief_pack",
+  "executor_result_id": "execdry_412861ba7acffd38",
+  "generated_at": "2026-06-12T17:16:52Z",
+  "dry_run_only": true,
+  "taskpool_write_enabled": false,
+  "taskpool_claim_enabled": false,
+  "runtime_enabled": false,
+  "model_call_enabled": false,
+  "adapter_write_enabled": false,
+  "external_side_effects_enabled": false,
+  "candidate_tasks": [
+    {
+      "candidate_id": "candidate_005107060ee9",
+      "source_step_id": "dry_step_001",
+      "source_criterion": "workflow_contract_valid",
+      "title": "Workflow dry-run candidate: workflow contract valid",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "workflow_contract_valid",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: workflow contract valid\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_001`\n- Source criterion: `workflow_contract_valid`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_48f87b14c0a0",
+      "source_step_id": "dry_step_002",
+      "source_criterion": "runtime_disabled_in_phase1",
+      "title": "Workflow dry-run candidate: runtime disabled in phase1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "runtime_disabled_in_phase1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: runtime disabled in phase1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_002`\n- Source criterion: `runtime_disabled_in_phase1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_cdafd3c69bb1",
+      "source_step_id": "dry_step_003",
+      "source_criterion": "all_modules_have_model_policy",
+      "title": "Workflow dry-run candidate: all modules have model policy",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "all_modules_have_model_policy",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: all modules have model policy\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_003`\n- Source criterion: `all_modules_have_model_policy`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_39c4439266be",
+      "source_step_id": "dry_step_004",
+      "source_criterion": "all_modules_have_evidence_required",
+      "title": "Workflow dry-run candidate: all modules have evidence required",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "all_modules_have_evidence_required",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: all modules have evidence required\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_004`\n- Source criterion: `all_modules_have_evidence_required`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_f9cb9d798770",
+      "source_step_id": "dry_step_005",
+      "source_criterion": "evidence_prefixes_valid",
+      "title": "Workflow dry-run candidate: evidence prefixes valid",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "evidence_prefixes_valid",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: evidence prefixes valid\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_005`\n- Source criterion: `evidence_prefixes_valid`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_454227a3c46e",
+      "source_step_id": "dry_step_006",
+      "source_criterion": "human_gate_packet_fields_present",
+      "title": "Workflow dry-run candidate: human gate packet fields present",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "human_gate_packet_fields_present",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: human gate packet fields present\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_006`\n- Source criterion: `human_gate_packet_fields_present`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_53b83ca6599c",
+      "source_step_id": "dry_step_007",
+      "source_criterion": "module_contract:goal_calibrator.v1",
+      "title": "Workflow dry-run candidate: module contract / goal calibrator v1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "module_contract:goal_calibrator.v1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: module contract / goal calibrator v1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_007`\n- Source criterion: `module_contract:goal_calibrator.v1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_0ac35cad50a4",
+      "source_step_id": "dry_step_008",
+      "source_criterion": "module_contract:source_research.v1",
+      "title": "Workflow dry-run candidate: module contract / source research v1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "module_contract:source_research.v1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: module contract / source research v1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_008`\n- Source criterion: `module_contract:source_research.v1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_fbf27a68b092",
+      "source_step_id": "dry_step_009",
+      "source_criterion": "module_contract:decision_synthesizer.v1",
+      "title": "Workflow dry-run candidate: module contract / decision synthesizer v1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "module_contract:decision_synthesizer.v1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: module contract / decision synthesizer v1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_009`\n- Source criterion: `module_contract:decision_synthesizer.v1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_ca981dc669d3",
+      "source_step_id": "dry_step_010",
+      "source_criterion": "module_contract:acceptance_compiler.v1",
+      "title": "Workflow dry-run candidate: module contract / acceptance compiler v1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "module_contract:acceptance_compiler.v1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: module contract / acceptance compiler v1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_010`\n- Source criterion: `module_contract:acceptance_compiler.v1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_bf294084a000",
+      "source_step_id": "dry_step_011",
+      "source_criterion": "module_contract:evidence_verifier.v1",
+      "title": "Workflow dry-run candidate: module contract / evidence verifier v1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "module_contract:evidence_verifier.v1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: module contract / evidence verifier v1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_011`\n- Source criterion: `module_contract:evidence_verifier.v1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_8a9a6d7338de",
+      "source_step_id": "dry_step_012",
+      "source_criterion": "model_route:goal_calibrator.v1",
+      "title": "Workflow dry-run candidate: model route / goal calibrator v1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "model_route:goal_calibrator.v1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: model route / goal calibrator v1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_012`\n- Source criterion: `model_route:goal_calibrator.v1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_7da57275094e",
+      "source_step_id": "dry_step_013",
+      "source_criterion": "model_route:source_research.v1",
+      "title": "Workflow dry-run candidate: model route / source research v1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "model_route:source_research.v1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: model route / source research v1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_013`\n- Source criterion: `model_route:source_research.v1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_ba9b1ec6fc1e",
+      "source_step_id": "dry_step_014",
+      "source_criterion": "model_route:decision_synthesizer.v1",
+      "title": "Workflow dry-run candidate: model route / decision synthesizer v1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "model_route:decision_synthesizer.v1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: model route / decision synthesizer v1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_014`\n- Source criterion: `model_route:decision_synthesizer.v1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_ef88f73a3242",
+      "source_step_id": "dry_step_015",
+      "source_criterion": "model_route:acceptance_compiler.v1",
+      "title": "Workflow dry-run candidate: model route / acceptance compiler v1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "model_route:acceptance_compiler.v1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: model route / acceptance compiler v1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_015`\n- Source criterion: `model_route:acceptance_compiler.v1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_023795fa04fe",
+      "source_step_id": "dry_step_016",
+      "source_criterion": "model_route:evidence_verifier.v1",
+      "title": "Workflow dry-run candidate: model route / evidence verifier v1",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "pending",
+      "frontmatter_preview": {
+        "status": "pending",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "model_route:evidence_verifier.v1",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": false
+      },
+      "body_preview": "# Workflow dry-run candidate: model route / evidence verifier v1\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_016`\n- Source criterion: `model_route:evidence_verifier.v1`\n- Boundary status: `candidate_pending`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_5c173d834d17",
+      "source_step_id": "dry_step_017",
+      "source_criterion": "safety_flag:runtime_enabled",
+      "title": "Workflow dry-run candidate: safety flag / runtime enabled",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "blocked",
+      "frontmatter_preview": {
+        "status": "blocked",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "safety_flag:runtime_enabled",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": true
+      },
+      "body_preview": "# Workflow dry-run candidate: safety flag / runtime enabled\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_017`\n- Source criterion: `safety_flag:runtime_enabled`\n- Boundary status: `human_gate_required`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_bafcf67c5304",
+      "source_step_id": "dry_step_018",
+      "source_criterion": "safety_flag:write_through_enabled",
+      "title": "Workflow dry-run candidate: safety flag / write through enabled",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "blocked",
+      "frontmatter_preview": {
+        "status": "blocked",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "safety_flag:write_through_enabled",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": true
+      },
+      "body_preview": "# Workflow dry-run candidate: safety flag / write through enabled\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_018`\n- Source criterion: `safety_flag:write_through_enabled`\n- Boundary status: `human_gate_required`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    },
+    {
+      "candidate_id": "candidate_fe32d2071478",
+      "source_step_id": "dry_step_019",
+      "source_criterion": "safety_flag:external_side_effects_enabled",
+      "title": "Workflow dry-run candidate: safety flag / external side effects enabled",
+      "lane": "evolution",
+      "priority": "P2",
+      "status_candidate": "blocked",
+      "frontmatter_preview": {
+        "status": "blocked",
+        "priority": "P2",
+        "lane": "evolution",
+        "project": "hermes",
+        "architecture_target": "modular-workflow-kernel",
+        "workflow_id": "decision_brief_pack",
+        "workflow_run_id": "run_preview_78eee6afcec1f12a",
+        "workflow_executor_result_id": "execdry_412861ba7acffd38",
+        "workflow_import_dry_run_id": "tpdry_a5678ba9e856a763",
+        "source_criterion": "safety_flag:external_side_effects_enabled",
+        "dry_run_candidate_only": true,
+        "taskpool_write_enabled": false,
+        "requires_human_gate": true
+      },
+      "body_preview": "# Workflow dry-run candidate: safety flag / external side effects enabled\n\nThis is a taskpool import candidate generated from a workflow executor dry-run.\nIt is not a canonical brain task and must not be claimed until a separate taskpool import write gate is authorized.\n\n- Source step: `dry_step_019`\n- Source criterion: `safety_flag:external_side_effects_enabled`\n- Boundary status: `human_gate_required`",
+      "evidence": [
+        "artifact:executor_dry_run:execdry_412861ba7acffd38",
+        "proof:taskpool_import_dry_run_no_canonical_write",
+        "classification:workflow_kernel_import_candidate"
+      ],
+      "write_enabled": false
+    }
+  ],
+  "human_gate_packet": {
+    "decision_needed": "Authorize or reject writing these dry-run candidates into the canonical taskpool.",
+    "confirmed_facts": [
+      "Executor dry-run artifact exists",
+      "All runtime/model/adapter/external side-effect flags remain false",
+      "Candidate task previews were generated without writing brain notes or kanban rows"
+    ],
+    "unconfirmed_facts": [
+      "Canonical taskpool write has not been authorized",
+      "Runtime executor integration has not been authorized",
+      "Adapter write-through remains unopened"
+    ],
+    "options": [
+      "continue_taskpool_import_dry_run_only",
+      "authorize_taskpool_import_write",
+      "stop_and_review_candidates"
+    ],
+    "recommended_default": "continue_taskpool_import_dry_run_only",
+    "blast_radius": "Local JSON artifact only; no canonical taskpool mutation unless a separate write gate is opened.",
+    "rollback_plan": "Delete this import dry-run artifact; no brain/kanban/runtime state was mutated.",
+    "post_action_verification": "If write is later authorized, read back brain task note(s), kanban projection, taskpool list/next, and proof-check/selfcheck."
+  },
+  "rollback_plan": "Delete this dry-run JSON artifact. No canonical taskpool state was written.",
+  "boundary": "taskpool_import_dry_run_only_no_canonical_write_no_claim"
+}
