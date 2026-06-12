@@ -88,6 +88,35 @@ def build_mission_parser(subparsers) -> None:
     dispatch_events.add_argument("--json", action="store_true", help="Emit JSON")
     dispatch_events.set_defaults(func=cmd_mission)
 
+    recover_signals = sub.add_parser(
+        "recover-signals",
+        help="Governed local-ledger recovery for stale mission flow signal backlogs",
+    )
+    recover_signals.add_argument("mission_id")
+    recover_signals.add_argument(
+        "--older-than-seconds",
+        type=int,
+        default=900,
+        help="Only recover pending signals at least this old (default: 900)",
+    )
+    recover_signals.add_argument(
+        "--max-signals",
+        type=int,
+        default=200,
+        help="Maximum stale signals to mark recovered in one bounded batch (default: 200)",
+    )
+    recover_signals.add_argument(
+        "--reason",
+        help="Audit reason recorded on the flow_signal_recovered event when --apply is used",
+    )
+    recover_signals.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the local ledger recovery; without this, emit a dry-run plan only",
+    )
+    recover_signals.add_argument("--json", action="store_true", help="Emit JSON")
+    recover_signals.set_defaults(func=cmd_mission)
+
     status = sub.add_parser("status", help="Show mission state, open decisions, and recent events")
     status.add_argument("mission_id")
     status.add_argument("--limit", type=int, default=20, help="Recent event limit")

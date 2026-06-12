@@ -938,7 +938,7 @@ class MissionStore:
                 {
                     "code": "mission_flow_runner_stalled",
                     "message": "stale mission flow signals remain pending after the scheduler should have consumed them",
-                    "recommended_command": f"hermes mission dispatch-events {mission_id} --run-due --json",
+                    "recommended_command": f"hermes mission recover-signals {mission_id} --older-than-seconds {older_than_seconds} --max-signals 200 --json",
                 }
             )
         return {
@@ -970,7 +970,7 @@ class MissionStore:
         if not has_cron:
             return f"hermes mission install-cron {mission.mission_id}"
         if has_stale_signals:
-            return f"hermes mission dispatch-events {mission.mission_id}"
+            return f"hermes mission recover-signals {mission.mission_id} --json"
         return f"hermes mission report {mission.mission_id}"
 
     def _find_cron_jobs_for_mission(self, mission_id: str) -> list[dict[str, Any]]:

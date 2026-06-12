@@ -228,7 +228,7 @@ def test_mission_doctor_surfaces_stale_flow_signal_watchdog_action(tmp_path: Pat
 
     assert len(doctor["pending_flow_signals"]) == 2
     assert len(doctor["stale_flow_signals"]) == 1
-    assert doctor["next_step"] == f"hermes mission dispatch-events {mission.mission_id}"
+    assert doctor["next_step"] == f"hermes mission recover-signals {mission.mission_id} --json"
     assert any(check["name"] == "stale flow signals" and check["status"] == "warn" for check in doctor["checks"])
 
 
@@ -283,8 +283,60 @@ def test_mission_watchdog_is_silent_when_healthy_and_alerts_on_stale_runner(tmp_
     assert alert["status"] == "alert"
     assert alert["silent"] is False
     assert alert["issues"][0]["code"] == "mission_flow_runner_stalled"
-    assert alert["issues"][0]["recommended_command"] == f"hermes mission dispatch-events {mission.mission_id} --run-due --json"
+    assert alert["issues"][0]["recommended_command"] == f"hermes mission recover-signals {mission.mission_id} --older-than-seconds 900 --max-signals 200 --json"
     assert len(alert["stale_flow_signals"]) == 1
+
+
+def test_recover_flow_signal_backlog_is_dry_run_then_audited_local_apply(tmp_path: Path) -> None:
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="Governed recovery fixture",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=5),
+        enable=True,
+    )
+    fresh = store.append_event(
+        mission.mission_id,
+        "taskpool_status_changed",
+        "fresh signal should stay pending",
+        {"source": "unit", "task_id": "fresh"},
+    )
+    stale = store.append_event(
+        mission.mission_id,
+        "taskpool_status_changed",
+        "stale signal should be recovered",
+        {"source": "unit", "task_id": "stale"},
+    )
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE mission_flow_signals SET created_at = created_at - 3600 WHERE source_event_id = ?",
+            (stale["event_id"],),
+        )
+
+    dry_run = store.recover_flow_signal_backlog(mission.mission_id, older_than_seconds=900, max_signals=5)
+    assert dry_run["status"] == "dry_run"
+    assert dry_run["selected_count"] == 1
+    assert dry_run["after_pending"] == dry_run["before_pending"]
+    assert dry_run["runner"] == {"status": "not_requested", "why": "recovery is local-ledger only and non-recursive"}
+    assert store.count_events(mission.mission_id, {"flow_signal_recovered"}) == 0
+
+    applied = store.recover_flow_signal_backlog(
+        mission.mission_id,
+        older_than_seconds=900,
+        max_signals=5,
+        apply=True,
+        reason="unit bounded recovery",
+    )
+    assert applied["status"] == "recovered"
+    assert applied["selected_count"] == 1
+    assert applied["after_pending"] == applied["before_pending"] - 1
+    remaining_source_ids = {signal.source_event_id for signal in store.pending_flow_signals(mission.mission_id, limit=10)}
+    assert fresh["event_id"] in remaining_source_ids
+    assert stale["event_id"] not in remaining_source_ids
+    recovered_events = store.list_events_by_type(mission.mission_id, "flow_signal_recovered", limit=1)
+    assert recovered_events[0]["payload"]["reason"] == "unit bounded recovery"
+    assert recovered_events[0]["payload"]["runner"]["why"] == "recovery is local-ledger only and non-recursive"
 
 
 def test_taskpool_status_event_is_actionable_flow_signal(tmp_path: Path) -> None:
