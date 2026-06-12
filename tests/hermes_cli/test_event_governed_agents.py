@@ -83,6 +83,106 @@ def test_event_envelope_rejects_untrusted_high_privilege_escalation() -> None:
     assert envelope["dedupe_key"] == "webhook-task-123-done"
 
 
+def test_mission_envelope_schema_gate_accepts_traceable_local_slice_and_rejects_blocked_actions() -> None:
+    accepted = ega.validate_mission_envelope_schema_gate(
+        {
+            "mission_id": "msn_20260610_120149_27c88cfc",
+            "stage": "intake",
+            "direction": "Hermes architecture self-advance",
+            "success_criteria": ["ledger traceability", "evidence-backed next step"],
+            "constraints": ["local reversible work only"],
+            "blocked_actions": ["external_message_send", "production_deploy", "skill_patch"],
+            "trigger": {"mode": "event-driven", "signal_type": "taskpool_status_changed"},
+            "budget_boundary": {"budget_exhausted": False, "remaining_ticks_known": True, "remaining_ticks": 1},
+            "open_decisions": [],
+            "requested_actions": ["local_code_patch", "focused_pytest"],
+        }
+    )
+
+    assert accepted["accepted_as"] == "mission_envelope_projection"
+    assert accepted["may_execute_bounded_slice"] is True
+    assert accepted["external_side_effects_allowed"] is False
+    assert accepted["blocked_reasons"] == []
+    assert accepted["envelope_digest"]
+
+    rejected = ega.validate_mission_envelope_schema_gate(
+        {
+            "mission_id": "msn_bad",
+            "stage": "intake",
+            "direction": "Hermes architecture self-advance",
+            "success_criteria": ["ledger traceability"],
+            "constraints": [],
+            "blocked_actions": ["production_deploy"],
+            "trigger": {"mode": "event-driven"},
+            "budget_boundary": {"budget_exhausted": True},
+            "requested_actions": ["production_deploy"],
+        }
+    )
+
+    assert rejected["accepted_as"] == "rejected_mission_envelope_projection"
+    assert rejected["may_execute_bounded_slice"] is False
+    assert rejected["external_side_effects_allowed"] is False
+    assert "budget_exhausted_must_be_explicit_false" in rejected["blocked_reasons"]
+    assert "requested_blocked_action:production_deploy" in rejected["blocked_reasons"]
+    assert "requested_dangerous_action:production_deploy" in rejected["blocked_reasons"]
+
+
+def test_mission_envelope_schema_gate_rejects_ambiguous_or_dangerous_shapes() -> None:
+    base = {
+        "mission_id": "msn_20260610_120149_27c88cfc",
+        "stage": "intake",
+        "direction": "Hermes architecture self-advance",
+        "success_criteria": ["ledger traceability"],
+        "constraints": ["local only"],
+        "blocked_actions": [],
+        "trigger": {"mode": "event-driven"},
+        "budget_boundary": {"budget_exhausted": False, "remaining_ticks": 1},
+        "open_decisions": [],
+        "requested_actions": ["local_code_patch"],
+    }
+
+    dangerous = ega.validate_mission_envelope_schema_gate({**base, "requested_actions": ["send_external_message"]})
+    assert dangerous["may_execute_bounded_slice"] is False
+    assert "requested_dangerous_action:send_external_message" in dangerous["blocked_reasons"]
+    assert "requested_action_not_allowed:send_external_message" in dangerous["blocked_reasons"]
+
+    ambiguous_budget = ega.validate_mission_envelope_schema_gate({**base, "budget_boundary": {}})
+    assert ambiguous_budget["may_execute_bounded_slice"] is False
+    assert "budget_exhausted_must_be_explicit_false" in ambiguous_budget["blocked_reasons"]
+    assert "budget_remaining_ticks_must_be_positive_integer" in ambiguous_budget["blocked_reasons"]
+
+    known_without_count = ega.validate_mission_envelope_schema_gate(
+        {**base, "budget_boundary": {"budget_exhausted": False, "remaining_ticks_known": True}}
+    )
+    assert known_without_count["may_execute_bounded_slice"] is False
+    assert "budget_remaining_ticks_must_be_positive_integer" in known_without_count["blocked_reasons"]
+
+    bad_tick_values = [0, -1, "1", True]
+    for value in bad_tick_values:
+        result = ega.validate_mission_envelope_schema_gate({**base, "budget_boundary": {"budget_exhausted": False, "remaining_ticks": value}})
+        assert result["may_execute_bounded_slice"] is False
+        assert "budget_remaining_ticks_must_be_positive_integer" in result["blocked_reasons"]
+
+    bare_prefix = ega.validate_mission_envelope_schema_gate({**base, "mission_id": "msn_"})
+    assert bare_prefix["may_execute_bounded_slice"] is False
+    assert "mission_id_must_match_msn_timestamp_digest_format" in bare_prefix["blocked_reasons"]
+
+    malformed_scalar = ega.validate_mission_envelope_schema_gate({**base, "stage": 123})
+    assert malformed_scalar["may_execute_bounded_slice"] is False
+    assert "stage_must_be_nonempty_string" in malformed_scalar["blocked_reasons"]
+
+    missing_open_decisions = dict(base)
+    missing_open_decisions.pop("open_decisions")
+    missing_open = ega.validate_mission_envelope_schema_gate(missing_open_decisions)
+    assert missing_open["may_execute_bounded_slice"] is False
+    assert "missing_required_key:open_decisions" in missing_open["blocked_reasons"]
+    assert "open_decisions_must_be_explicit_list" in missing_open["blocked_reasons"]
+
+    non_serializable = ega.validate_mission_envelope_schema_gate({**base, "constraints": {"set-value"}})
+    assert non_serializable["may_execute_bounded_slice"] is False
+    assert non_serializable["envelope_digest"]
+
+
 def test_worker_result_contract_accepts_evidence_only_and_rejects_smuggled_authority() -> None:
     accepted = ega.validate_worker_result_contract(
         worker_type="claude-code",

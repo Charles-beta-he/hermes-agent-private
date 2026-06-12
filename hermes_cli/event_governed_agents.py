@@ -37,6 +37,7 @@ import argparse
 import hashlib
 import os
 import json
+import re
 import sqlite3
 import subprocess
 import urllib.error
@@ -87,6 +88,56 @@ WORKER_FORBIDDEN_RESULT_KEYS = frozenset(
         "skill_patch",
         "send_message",
         "provider_config_change",
+    }
+)
+MISSION_ENVELOPE_REQUIRED_KEYS = frozenset(
+    {
+        "mission_id",
+        "stage",
+        "direction",
+        "success_criteria",
+        "constraints",
+        "blocked_actions",
+        "trigger",
+        "budget_boundary",
+        "open_decisions",
+    }
+)
+MISSION_ENVELOPE_LOCAL_REQUESTED_ACTIONS = frozenset(
+    {
+        "local_code_patch",
+        "focused_pytest",
+        "py_compile",
+        "git_diff_check",
+        "static_scan",
+        "read_only_verification",
+        "run_read_only_verification",
+        "stage_report",
+        "recover_stale_flow_signals",
+        "dispatch_governed_runner",
+    }
+)
+MISSION_ENVELOPE_DANGEROUS_ACTION_ALIASES = frozenset(
+    {
+        "external_message_send",
+        "send_external_message",
+        "send_message",
+        "production_deploy",
+        "deploy",
+        "push",
+        "delete",
+        "delete_file",
+        "secret_read",
+        "secret_write",
+        "payment",
+        "production_write",
+        "external_write",
+        "skill_patch",
+        "skill_create",
+        "skill_delete",
+        "memory_write",
+        "cron_create",
+        "cron_delete",
     }
 )
 
@@ -3931,6 +3982,110 @@ def normalize_event(
         },
         "requires_human_confirmation": requires_human,
         "created_at": _now(),
+    }
+
+
+def validate_mission_envelope_schema_gate(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Validate a mission tick envelope before any autonomous stage work.
+
+    This is a report-only, fail-closed gate for cron/event-driven mission input.
+    It checks that the hot mission envelope carries the minimum traceability and
+    governance fields needed by a bounded stage slice. It never grants external
+    side-effect authority; even an accepted envelope remains local-only unless a
+    separate human/policy authorization exists.
+    """
+
+    def safe_digest(value: Any) -> str:
+        try:
+            return _digest(value)
+        except (TypeError, ValueError):
+            return _digest({"invalid_json_shape": type(value).__name__})
+
+    if not isinstance(envelope, dict):
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "mode": "report_only",
+            "accepted_as": "rejected_mission_envelope_projection",
+            "may_execute_bounded_slice": False,
+            "external_side_effects_allowed": False,
+            "blocked_reasons": ["envelope_must_be_object"],
+            "envelope_digest": safe_digest({"invalid_type": type(envelope).__name__}),
+        }
+
+    missing = sorted(key for key in MISSION_ENVELOPE_REQUIRED_KEYS if key not in envelope)
+    errors: list[str] = [f"missing_required_key:{key}" for key in missing]
+
+    mission_id_raw = envelope.get("mission_id", "")
+    stage_raw = envelope.get("stage", "")
+    direction_raw = envelope.get("direction", "")
+    mission_id = mission_id_raw.strip() if isinstance(mission_id_raw, str) else ""
+    stage = stage_raw.strip() if isinstance(stage_raw, str) else ""
+    direction = direction_raw.strip() if isinstance(direction_raw, str) else ""
+    success_criteria = envelope.get("success_criteria", [])
+    constraints = envelope.get("constraints", [])
+    blocked_actions = envelope.get("blocked_actions", [])
+    trigger = envelope.get("trigger", {})
+    budget_boundary = envelope.get("budget_boundary", {})
+    open_decisions = envelope.get("open_decisions", None)
+    requested_actions = envelope.get("requested_actions", [])
+
+    if not isinstance(mission_id_raw, str) or not re.fullmatch(r"msn_\d{8}_\d{6}_[0-9a-f]{8}", mission_id):
+        errors.append("mission_id_must_match_msn_timestamp_digest_format")
+    if not isinstance(stage_raw, str) or not stage:
+        errors.append("stage_must_be_nonempty_string")
+    if not isinstance(direction_raw, str) or not direction:
+        errors.append("direction_must_be_nonempty_string")
+    if not isinstance(success_criteria, list) or not success_criteria or not all(isinstance(item, str) and item.strip() for item in success_criteria):
+        errors.append("success_criteria_must_be_nonempty_string_list")
+    if not isinstance(constraints, list) or not all(isinstance(item, str) and item.strip() for item in constraints):
+        errors.append("constraints_must_be_string_list")
+    if not isinstance(blocked_actions, list) or not all(isinstance(item, str) and item.strip() for item in blocked_actions):
+        errors.append("blocked_actions_must_be_string_list")
+    trigger_mode = trigger.get("mode") if isinstance(trigger, dict) else None
+    if not isinstance(trigger, dict) or not isinstance(trigger_mode, str) or not trigger_mode.strip():
+        errors.append("trigger_mode_must_be_nonempty_string")
+    if not isinstance(budget_boundary, dict):
+        errors.append("budget_boundary_must_be_object")
+    else:
+        if budget_boundary.get("budget_exhausted") is not False:
+            errors.append("budget_exhausted_must_be_explicit_false")
+        remaining_ticks = budget_boundary.get("remaining_ticks")
+        if not (isinstance(remaining_ticks, int) and not isinstance(remaining_ticks, bool) and remaining_ticks > 0):
+            errors.append("budget_remaining_ticks_must_be_positive_integer")
+    if isinstance(open_decisions, list) and open_decisions:
+        errors.append("open_human_decisions_present")
+    elif not isinstance(open_decisions, list):
+        errors.append("open_decisions_must_be_explicit_list")
+    if not isinstance(requested_actions, list) or not all(isinstance(item, str) and item.strip() for item in requested_actions):
+        errors.append("requested_actions_must_be_string_list_when_present")
+        requested_actions = []
+
+    normalized_blocked = {action.strip() for action in blocked_actions} if isinstance(blocked_actions, list) and all(isinstance(action, str) for action in blocked_actions) else set()
+    normalized_requested = {action.strip() for action in requested_actions} if isinstance(requested_actions, list) and all(isinstance(action, str) for action in requested_actions) else set()
+    blocked_requested = sorted(action for action in normalized_requested if action and action in normalized_blocked)
+    dangerous_requested = sorted(action for action in normalized_requested if action in DANGEROUS_ACTIONS or action in MISSION_ENVELOPE_DANGEROUS_ACTION_ALIASES)
+    not_allowed_requested = sorted(action for action in normalized_requested if action not in MISSION_ENVELOPE_LOCAL_REQUESTED_ACTIONS)
+    if blocked_requested:
+        errors.extend(f"requested_blocked_action:{action}" for action in blocked_requested)
+    if dangerous_requested:
+        errors.extend(f"requested_dangerous_action:{action}" for action in dangerous_requested)
+    if not_allowed_requested:
+        errors.extend(f"requested_action_not_allowed:{action}" for action in not_allowed_requested)
+
+    accepted = not errors
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "report_only",
+        "accepted_as": "mission_envelope_projection" if accepted else "rejected_mission_envelope_projection",
+        "mission_id": mission_id,
+        "stage": stage,
+        "may_execute_bounded_slice": accepted,
+        "external_side_effects_allowed": False,
+        "blocked_requested_actions": blocked_requested,
+        "dangerous_requested_actions": dangerous_requested,
+        "not_allowed_requested_actions": not_allowed_requested,
+        "blocked_reasons": errors,
+        "envelope_digest": safe_digest(envelope),
     }
 
 
