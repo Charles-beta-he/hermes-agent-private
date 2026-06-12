@@ -4175,6 +4175,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Report Hermes Event-Governed Agent Control Plane contracts")
     parser.add_argument("--json", action="store_true", help="Emit JSON report")
     parser.add_argument("--check-action", action="store_true", help="Evaluate one action instead of full report")
+    parser.add_argument("--validate-mission-envelope", action="store_true", help="Validate a report-only mission tick envelope gate")
     parser.add_argument("--coverage", action="store_true", help="Emit report-only agent architecture coverage matrix")
     parser.add_argument("--start-runtime-run", action="store_true", help="Record a ledger-only bounded runtime run start")
     parser.add_argument("--execute-runtime-run", action="store_true", help="Execute an allowlisted builtin read-only runtime run")
@@ -4224,6 +4225,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--real-sender-execution-authorization-json", default="{}", help="JSON real sender execution authorization payload for --request-real-sender-execution-authorization")
     parser.add_argument("--telegram-real-send-json", default="{}", help="JSON Telegram real sender payload for --execute-telegram-real-sender")
     parser.add_argument("--lark-real-send-json", default="{}", help="JSON Lark real sender payload for --execute-lark-real-sender")
+    parser.add_argument("--mission-envelope-json", default="{}", help="JSON mission envelope payload for --validate-mission-envelope")
     parser.add_argument("--role", default="bounded_worker")
     parser.add_argument("--action", default="submit_evidence_packet")
     parser.add_argument("--source", default="cli")
@@ -4239,6 +4241,11 @@ def main(argv: list[str] | None = None) -> int:
             risk_level=args.risk_level,
             evidence_level=args.evidence_level,
         )
+    elif args.validate_mission_envelope:
+        envelope = json.loads(args.mission_envelope_json)
+        if not isinstance(envelope, dict):
+            parser.error("--mission-envelope-json must decode to an object")
+        result = validate_mission_envelope_schema_gate(envelope)
     elif args.start_runtime_run:
         if not args.runtime_ledger:
             parser.error("--runtime-ledger is required with --start-runtime-run")

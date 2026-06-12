@@ -183,6 +183,45 @@ def test_mission_envelope_schema_gate_rejects_ambiguous_or_dangerous_shapes() ->
     assert non_serializable["envelope_digest"]
 
 
+def test_mission_envelope_schema_gate_has_cli_projection(tmp_path) -> None:
+    envelope = {
+        "mission_id": "msn_20260610_120149_27c88cfc",
+        "stage": "intake",
+        "direction": "Hermes architecture self-advance",
+        "success_criteria": ["ledger traceability"],
+        "constraints": ["local only"],
+        "blocked_actions": ["external_message_send", "production_deploy"],
+        "trigger": {"mode": "event-driven", "signal_type": "taskpool_status_changed"},
+        "budget_boundary": {"budget_exhausted": False, "remaining_ticks": 1},
+        "open_decisions": [],
+        "requested_actions": ["read_only_verification", "stage_report"],
+    }
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.event_governed_agents",
+            "--validate-mission-envelope",
+            "--mission-envelope-json",
+            json.dumps(envelope),
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([os.getcwd(), os.environ.get("PYTHONPATH", "")])},
+    )
+    cli_projection = json.loads(proc.stdout)
+
+    assert cli_projection["accepted_as"] == "mission_envelope_projection"
+    assert cli_projection["may_execute_bounded_slice"] is True
+    assert cli_projection["external_side_effects_allowed"] is False
+    assert cli_projection["blocked_reasons"] == []
+
+
 def test_worker_result_contract_accepts_evidence_only_and_rejects_smuggled_authority() -> None:
     accepted = ega.validate_worker_result_contract(
         worker_type="claude-code",
