@@ -37,10 +37,15 @@ def test_control_tower_dashboard_plugin_exposes_read_only_snapshot(tmp_path, mon
 
     assert response.status_code == 200
     data = response.json()
-    assert data["ledger"]["canonical_fact_source"] == "Control Tower Ledger"
+    assert data["ledger"]["canonical_fact_source"] == "brain_taskpool_markdown"
+    assert data["ledger"]["control_tower_role"] == "read_only_governance_projection"
+    assert data["ssot_boundary"]["canonical"] == "brain_taskpool_markdown"
+    assert data["ssot_boundary"]["rule"] == "dashboard_console_must_not_advance_task_lifecycle"
     assert data["ui_host"] == {
         "selected": "dashboard_plugin",
         "plugin_name": "control-tower",
+        "canonical": False,
+        "role": "operator_projection_surface",
         "reason": "Drop-in dashboard plugin integrates with existing /api/plugins host without making the dashboard a fact source.",
     }
 
@@ -92,6 +97,10 @@ def test_control_tower_dashboard_renders_operator_overview_as_first_screen():
     assert "next_safe_actions" in script
     assert "Runtime taskpool" in script
     assert "taskpool_runtime" in script
+    assert "Projection governance" in script
+    assert "projection_governance" in script
+    assert "Brain taskpool markdown is the task-lifecycle SSOT" in script
+    assert "reports projection drift instead of advancing lifecycle state" in script
     assert "escapeHtml(taskpoolRuntime.next_task_id)" in script
     assert "control-tower-next-actions" in style
     assert "control-tower-operator-overview-card" in style

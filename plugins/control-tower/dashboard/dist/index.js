@@ -12,6 +12,9 @@
       <p class="control-tower-eyebrow">Hermes Control Tower</p>
       <h1>Event-driven workflow control plane</h1>
       <p>
+        Brain taskpool markdown is the task-lifecycle SSOT; Kanban is an
+        execution projection, and Dashboard/Console are operator projections.
+        This screen reports projection drift instead of advancing lifecycle state.
         Phase 15 enables explicitly approved, command-digest Kanban/taskpool
         closeout write-through plus digest-bound rollback/reopen while keeping
         conflicting evidence override disabled.
@@ -271,6 +274,7 @@
     const human = overview.human_gate || {};
     const sourceDrift = overview.source_drift || {};
     const taskpoolRuntime = overview.taskpool_runtime || {};
+    const projectionGovernance = overview.projection_governance || data?.projection_governance || {};
     operatorOverviewEl.innerHTML = `
       <div class="control-tower-operator-headline control-tower-operator-${overview.status}">
         <strong>${overview.status || 'unknown'}</strong>
@@ -283,6 +287,8 @@
         <span>Stale/conflicting evidence: <strong>${evidence.stale_or_conflicting ?? 0}</strong></span>
         <span>Source drift: <strong>${sourceDrift.status || 'unknown'}</strong></span>
         <span>Runtime taskpool: <strong>${escapeHtml(taskpoolRuntime.status || 'unknown')}</strong>${taskpoolRuntime.next_task_id ? ` (${escapeHtml(taskpoolRuntime.next_task_id)})` : ''}</span>
+        <span>Projection governance: <strong>${escapeHtml(projectionGovernance.status || 'unknown')}</strong>${projectionGovernance.score == null ? '' : ` score=${escapeHtml(projectionGovernance.score)}`}</span>
+        <span>SSOT: <strong>${escapeHtml(projectionGovernance.ssot || 'brain_taskpool_markdown')}</strong></span>
       </div>
       <h3>Critical alerts</h3>
       ${alerts ? `<ul>${alerts}</ul>` : '<p>No critical alerts.</p>'}

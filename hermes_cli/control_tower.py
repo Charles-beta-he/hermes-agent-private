@@ -1,9 +1,11 @@
 """Hermes Control Tower read-only ledger and snapshot helpers.
 
-The Control Tower Ledger is the single canonical workflow fact source for the
-Control Tower architecture. Existing Kanban/taskpool/brain surfaces remain
-adapters/projections during migration; this module deliberately starts with a
-read-only snapshot and adapter-observation contract rather than lifecycle writes.
+The current Hermes task lifecycle source of truth is the Brain taskpool:
+``brain_task_orchestrator.py`` plus the markdown task notes. Kanban is an
+execution projection, and Control Tower / Dashboard / Console are operator
+projection surfaces. This module deliberately keeps dashboard snapshots
+read-only and reports projection drift instead of promoting any projection into
+a second task-lifecycle fact source.
 """
 
 from __future__ import annotations
@@ -4683,21 +4685,16 @@ def _kanban_task_payload(task: Any) -> dict[str, Any]:
     }
 
 
-def observe_kanban_adapter() -> dict[str, Any]:
-    """Observe existing Kanban state as adapter input to the ledger.
-
-    This does not mutate Kanban/task lifecycle state. It only records canonical
-    ledger observations for replay/projection and gracefully reports unavailable
-    Kanban installs instead of creating a second truth source.
-    """
+def _read_kanban_projection() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Read current Kanban rows without writing Control Tower ledger events."""
     try:
         from hermes_cli import kanban_db
     except Exception as exc:  # pragma: no cover - defensive optional adapter
-        return {"available": False, "error": f"import failed: {exc}", "observed_tasks": 0}
+        return {"available": False, "error": f"import failed: {exc}", "observed_tasks": 0}, []
 
     db_path = kanban_db.kanban_db_path()
     if not db_path.exists():
-        return {"available": False, "path": str(db_path), "observed_tasks": 0}
+        return {"available": False, "path": str(db_path), "observed_tasks": 0}, []
 
     try:
         conn = kanban_db.connect()
@@ -4706,24 +4703,40 @@ def observe_kanban_adapter() -> dict[str, Any]:
         finally:
             conn.close()
     except Exception as exc:
-        return {"available": False, "path": str(db_path), "error": str(exc), "observed_tasks": 0}
+        return {"available": False, "path": str(db_path), "error": str(exc), "observed_tasks": 0}, []
+
+    payloads = [_kanban_task_payload(task) for task in tasks]
+    return {
+        "available": True,
+        "path": str(db_path),
+        "observed_tasks": len(payloads),
+        "new_observations": 0,
+        "observation_mode": "read_only_no_ledger_write",
+    }, payloads
+
+
+def observe_kanban_adapter() -> dict[str, Any]:
+    """Record existing Kanban state as adapter input to the ledger.
+
+    This is an explicit observation-ingest helper, not the Dashboard snapshot
+    path. Dashboard/Console refreshes must remain read-only projections and use
+    ``_read_kanban_projection`` instead.
+    """
+    adapter, tasks = _read_kanban_projection()
+    if not adapter.get("available"):
+        return adapter
 
     created = 0
     for task in tasks:
         result = record_adapter_observation(
             adapter_name="kanban",
-            external_ref=f"task:{task.id}",
+            external_ref=f"task:{task.get('id')}",
             observed_type="task",
-            payload=_kanban_task_payload(task),
+            payload=task,
         )
         if result.get("created"):
             created += 1
-    return {
-        "available": True,
-        "path": str(db_path),
-        "observed_tasks": len(tasks),
-        "new_observations": created,
-    }
+    return {**adapter, "new_observations": created, "observation_mode": "explicit_ledger_observation"}
 
 
 def _taskpool_health_from_tasks(tasks: list[dict[str, Any]]) -> dict[str, int]:
@@ -5765,6 +5778,55 @@ def _taskpool_runtime_probe(*, isolated_fixture: bool | None = None) -> dict[str
     }
 
 
+def _kanban_coverage_probe(*, isolated_fixture: bool | None = None) -> dict[str, Any]:
+    """Read the Kanban/agent coverage diagnostic as a report-only projection."""
+
+    if isolated_fixture is None:
+        isolated_fixture = get_hermes_home() != Path.home() / ".hermes"
+    if isolated_fixture:
+        return {"status": "not_checked", "reason": "not part of isolated snapshot fixture"}
+    script = Path.home() / ".hermes" / "scripts" / "kanban_coverage.py"
+    if not script.exists():
+        return {"status": "unavailable", "reason": f"missing script: {script}"}
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "timeout", "reason": "kanban_coverage.py --json timed out"}
+    except Exception as exc:
+        return {"status": "error", "reason": str(exc)}
+    if proc.returncode != 0:
+        return {
+            "status": "error",
+            "returncode": proc.returncode,
+            "reason": (proc.stderr or proc.stdout).strip()[:500],
+        }
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except Exception as exc:
+        return {"status": "error", "reason": f"invalid json: {exc}"}
+    if not isinstance(payload, dict):
+        return {"status": "error", "reason": f"unexpected json payload type: {type(payload).__name__}"}
+    v2 = payload.get("agent_coverage_v2") if isinstance(payload.get("agent_coverage_v2"), dict) else {}
+    return {
+        "status": "ok",
+        "source": "kanban_coverage.py",
+        "report_only": True,
+        "ssot": "brain_taskpool_markdown",
+        "kanban_role": "execution_projection",
+        "dashboard_console_role": "operator_projection",
+        "score": payload.get("score"),
+        "bottleneck": payload.get("bottleneck"),
+        "counts": payload.get("counts") or {},
+        "agent_coverage_v2": v2,
+    }
+
+
 def _operator_overview_snapshot(
     *,
     taskpool_health: dict[str, Any],
@@ -5775,6 +5837,7 @@ def _operator_overview_snapshot(
     human_inbox: dict[str, Any],
     source_drift: dict[str, Any] | None = None,
     taskpool_runtime: dict[str, Any] | None = None,
+    projection_governance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return the first-screen operator projection.
 
@@ -5794,6 +5857,19 @@ def _operator_overview_snapshot(
     stale_or_conflicting = int(evidence_summary.get("stale_or_conflicting") or 0)
     source_drift = source_drift or {"status": "not_checked", "reason": "not part of isolated snapshot fixture"}
     taskpool_runtime = taskpool_runtime or {"status": "not_checked", "reason": "not part of isolated snapshot fixture"}
+    projection_governance_data: dict[str, Any] = projection_governance or {
+        "status": "not_checked",
+        "reason": "not part of isolated snapshot fixture",
+    }
+    raw_coverage_v2 = projection_governance_data.get("agent_coverage_v2")
+    coverage_v2: dict[str, Any] = raw_coverage_v2 if isinstance(raw_coverage_v2, dict) else {}
+    raw_coverage_counts = coverage_v2.get("counts")
+    coverage_counts: dict[str, Any] = raw_coverage_counts if isinstance(raw_coverage_counts, dict) else {}
+    raw_coverage_caps = coverage_v2.get("caps")
+    coverage_caps: list[Any] = raw_coverage_caps if isinstance(raw_coverage_caps, list) else []
+    projection_drift_count = int(coverage_counts.get("projection_drift_tasks") or 0)
+    stale_projection_count = int(coverage_counts.get("stale_projection_tasks") or 0)
+    coverage_state = str(coverage_v2.get("state") or projection_governance_data.get("status") or "unknown")
     runtime_dispatchable = bool(taskpool_runtime.get("dispatchable"))
     projection_drift = runtime_dispatchable and next_dispatchable is None
     critical_alerts: list[dict[str, Any]] = []
@@ -5811,6 +5887,18 @@ def _operator_overview_snapshot(
                 "kind": "no_dispatchable_work",
                 "severity": "critical",
                 "message": f"{active} active task(s) but no dispatchable next task.",
+            }
+        )
+    if projection_drift_count or stale_projection_count or coverage_caps:
+        critical_alerts.append(
+            {
+                "kind": "projection_governance_degraded",
+                "severity": "warning",
+                "message": (
+                    f"Kanban/taskpool projection governance is degraded: "
+                    f"state={coverage_state}, projection_drift={projection_drift_count}, "
+                    f"stale_projection={stale_projection_count}, caps={len(coverage_caps)}."
+                ),
             }
         )
     if stale_signals:
@@ -5905,6 +5993,15 @@ def _operator_overview_snapshot(
                 "command": "Inspect Mission event flow, then dispatch-events only after the event boundary is confirmed.",
             }
         )
+    if projection_drift_count or stale_projection_count or coverage_caps:
+        next_safe_actions.append(
+            {
+                "action": "inspect_projection_governance",
+                "mode": "read_only",
+                "reason": "kanban_taskpool_projection_governance_degraded",
+                "command": "Run kanban_coverage.py --json, compare Brain task notes with Kanban projection, then reconcile only through the governed Brain→Kanban path.",
+            }
+        )
     if source_drift.get("dirty") or source_drift.get("ahead") or source_drift.get("behind"):
         next_safe_actions.append(
             {
@@ -5926,13 +6023,14 @@ def _operator_overview_snapshot(
         "human_gate": human_gate,
         "source_drift": source_drift,
         "taskpool_runtime": taskpool_runtime,
+        "projection_governance": projection_governance_data,
     }
 
 
 def build_snapshot() -> dict[str, Any]:
     """Build the Control Tower snapshot."""
     ledger = init_ledger()
-    kanban_adapter = observe_kanban_adapter()
+    kanban_adapter, live_kanban_tasks = _read_kanban_projection()
     mission_flow_signals = _mission_flow_signal_snapshot()
     mission_taskpool_bridge = _mission_taskpool_bridge_snapshot()
     with sqlite3.connect(ledger) as conn:
@@ -5944,7 +6042,8 @@ def build_snapshot() -> dict[str, Any]:
         }
         stale_or_conflicting = _count(conn, "evidence", "stale_status IN ('stale', 'conflicting')")
         conflict_count = _count(conn, "adapter_observations", "conflict_event_id IS NOT NULL")
-        tasks = _observed_tasks(conn)
+        historical_tasks = _observed_tasks(conn)
+        tasks = live_kanban_tasks or historical_tasks
         command_registry = _command_registry_snapshot(conn)
         human_inbox = _human_inbox_snapshot(conn)
         workflow_map = _workflow_map_snapshot(conn)
@@ -5979,6 +6078,7 @@ def build_snapshot() -> dict[str, Any]:
     }
     source_drift = _source_drift_snapshot()
     taskpool_runtime = _taskpool_runtime_probe()
+    projection_governance = _kanban_coverage_probe()
     operator_overview = _operator_overview_snapshot(
         taskpool_health=taskpool_health,
         next_dispatchable=next_dispatchable,
@@ -5988,26 +6088,42 @@ def build_snapshot() -> dict[str, Any]:
         human_inbox=human_inbox,
         source_drift=source_drift,
         taskpool_runtime=taskpool_runtime,
+        projection_governance=projection_governance,
     )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now(),
         "ledger": {
             "path": str(ledger),
-            "canonical_fact_source": "Control Tower Ledger",
+            "canonical_fact_source": "brain_taskpool_markdown",
+            "control_tower_role": "read_only_governance_projection",
             "mode": "read_only_projection",
             "last_sequence": int(last_seq),
             "projection_status": "ok",
         },
+        "ssot_boundary": {
+            "canonical": "brain_taskpool_markdown",
+            "canonical_paths": [
+                "~/.hermes/scripts/brain_task_orchestrator.py",
+                "~/Documents/brain/05-实践与项目/tasks/*.md",
+            ],
+            "execution_projection": "~/.hermes/kanban.db",
+            "observation_projection": str(ledger),
+            "ui_surfaces": ["dashboard_plugin", "console"],
+            "rule": "dashboard_console_must_not_advance_task_lifecycle",
+        },
         "ui_host": {
             "selected": "dashboard_plugin",
             "plugin_name": "control-tower",
+            "canonical": False,
+            "role": "operator_projection_surface",
             "reason": "Drop-in dashboard plugin integrates with existing /api/plugins host without making the dashboard a fact source.",
         },
         "adapters": {
-            "kanban": {"role": "projection_adapter", "canonical": False, **kanban_adapter},
-            "taskpool": {"role": "projection_adapter", "canonical": False},
-            "brain": {"role": "projection_adapter", "canonical": False},
+            "kanban": {"role": "execution_projection", "canonical": False, **kanban_adapter},
+            "taskpool": {"role": "canonical_task_lifecycle", "canonical": True},
+            "brain": {"role": "canonical_task_lifecycle", "canonical": True},
+            "control_tower_ledger": {"role": "governance_projection", "canonical": False},
             "cron": {"role": "watchdog_adapter", "canonical": False},
             "gateway": {"role": "event_ingress_adapter", "canonical": False},
             "mission_flow": {"role": "projection_adapter", "canonical": False},
@@ -6015,6 +6131,7 @@ def build_snapshot() -> dict[str, Any]:
         },
         "mission_flow_signals": mission_flow_signals,
         "mission_taskpool_bridge": mission_taskpool_bridge,
+        "projection_governance": projection_governance,
         "operator_overview": operator_overview,
         "taskpool_health": taskpool_health,
         "next_dispatchable": next_dispatchable,

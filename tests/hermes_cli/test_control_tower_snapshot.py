@@ -66,7 +66,8 @@ def test_control_tower_snapshot_is_read_only_and_labels_adapters(tmp_path, monke
 
     assert snapshot["schema_version"] == 1
     assert snapshot["ledger"]["path"] == str(home / "control_tower.db")
-    assert snapshot["ledger"]["canonical_fact_source"] == "Control Tower Ledger"
+    assert snapshot["ledger"]["canonical_fact_source"] == "brain_taskpool_markdown"
+    assert snapshot["ledger"]["control_tower_role"] == "read_only_governance_projection"
     assert snapshot["ledger"]["mode"] == "read_only_projection"
     assert snapshot["taskpool_health"] == {
         "active": 0,
@@ -82,8 +83,15 @@ def test_control_tower_snapshot_is_read_only_and_labels_adapters(tmp_path, monke
     assert snapshot["adapter_conflicts"] == []
     assert snapshot["ui_host"]["selected"] == "dashboard_plugin"
     assert snapshot["ui_host"]["plugin_name"] == "control-tower"
+    assert snapshot["ui_host"]["canonical"] is False
+    assert snapshot["ssot_boundary"]["canonical"] == "brain_taskpool_markdown"
+    assert snapshot["ssot_boundary"]["execution_projection"] == "~/.hermes/kanban.db"
+    assert snapshot["ssot_boundary"]["rule"] == "dashboard_console_must_not_advance_task_lifecycle"
     assert "kanban" in snapshot["adapters"]
-    assert snapshot["adapters"]["kanban"]["role"] == "projection_adapter"
+    assert snapshot["adapters"]["kanban"]["role"] == "execution_projection"
+    assert snapshot["adapters"]["taskpool"] == {"role": "canonical_task_lifecycle", "canonical": True}
+    assert snapshot["adapters"]["brain"] == {"role": "canonical_task_lifecycle", "canonical": True}
+    assert snapshot["adapters"]["control_tower_ledger"] == {"role": "governance_projection", "canonical": False}
     assert snapshot["adapters"]["mission_flow"] == {"role": "projection_adapter", "canonical": False}
     assert snapshot["adapters"]["mission_taskpool_bridge"] == {"role": "projection_adapter", "canonical": False}
     assert snapshot["mission_taskpool_bridge"] == {
@@ -127,6 +135,7 @@ def test_control_tower_snapshot_is_read_only_and_labels_adapters(tmp_path, monke
         "human_gate": {"pending_count": 0, "status": "clear"},
         "source_drift": {"status": "not_checked", "reason": "not part of isolated snapshot fixture"},
         "taskpool_runtime": {"status": "not_checked", "reason": "not part of isolated snapshot fixture"},
+        "projection_governance": {"status": "not_checked", "reason": "not part of isolated snapshot fixture"},
     }
 
 
@@ -283,9 +292,10 @@ def test_snapshot_observes_kanban_as_projection_adapter(tmp_path, monkeypatch):
         "assignee": "default",
         "gate": "read_only_observed_ready",
     }
+    assert snapshot["adapters"]["kanban"]["observation_mode"] == "read_only_no_ledger_write"
     with sqlite3.connect(home / "control_tower.db") as ledger:
         event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events")]
-    assert event_types == ["TaskObservedFromAdapter"]
+    assert event_types == []
 
 
 def test_operator_overview_highlights_no_dispatch_when_all_tasks_are_blocked(tmp_path, monkeypatch):
