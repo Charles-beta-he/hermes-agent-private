@@ -171,11 +171,24 @@ def _observe_tool_health(
     *,
     function_name: str,
     result: Any,
+    function_args: dict[str, Any] | None = None,
     is_error: bool,
     effective_task_id: str,
     tool_call_id: str,
 ) -> None:
     """Best-effort unified health record for browser automation tool calls."""
+    try:
+        from session_sidecar.runtime import observe_tool_call
+
+        observe_tool_call(
+            agent,
+            function_name=function_name,
+            function_args=function_args or {},
+            result=result,
+        )
+    except Exception as exc:
+        logger.debug("session sidecar tool observer failed for %s: %s", function_name, exc)
+
     if not str(function_name or "").startswith("browser_"):
         return
     try:
@@ -850,6 +863,7 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
             _observe_tool_health(
                 agent,
                 function_name=function_name,
+                function_args=function_args,
                 result=function_result,
                 is_error=is_error,
                 effective_task_id=effective_task_id,
@@ -1506,6 +1520,7 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
         _observe_tool_health(
             agent,
             function_name=function_name,
+            function_args=function_args,
             result=function_result,
             is_error=_is_error_result,
             effective_task_id=effective_task_id,

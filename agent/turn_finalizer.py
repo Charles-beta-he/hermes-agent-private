@@ -466,6 +466,21 @@ def finalize_turn(
     # Fired at the very end of every run_conversation call.
     # Plugins can use this for cleanup, flushing buffers, etc.
     try:
+        from session_sidecar.runtime import emit_turn_sidecar
+
+        emit_turn_sidecar(
+            agent,
+            task_id=effective_task_id,
+            turn_id=turn_id,
+            completed=completed,
+            interrupted=interrupted,
+            model=agent.model,
+            platform=getattr(agent, "platform", None) or "",
+        )
+    except Exception as exc:
+        logger.warning("session sidecar emission failed: %s", exc)
+
+    try:
         from hermes_cli.plugins import invoke_hook as _invoke_hook
         _invoke_hook(
             "on_session_end",

@@ -42,11 +42,8 @@ _GATEWAY_PLATFORMS = {
 }
 
 
-def _runtime_state(agent) -> dict[str, Any]:
-    state = getattr(agent, "_session_sidecar_runtime", None)
-    if isinstance(state, dict):
-        return state
-    state = {
+def _fresh_turn_state(*, emitted_turns: set[str] | None = None) -> dict[str, Any]:
+    return {
         "started_at": time.time(),
         "tool_calls": 0,
         "browser": {
@@ -56,10 +53,21 @@ def _runtime_state(agent) -> dict[str, Any]:
             "click_count": 0,
             "screenshot_paths": [],
         },
-        "emitted_turns": set(),
+        "emitted_turns": emitted_turns or set(),
     }
+
+
+def _runtime_state(agent) -> dict[str, Any]:
+    state = getattr(agent, "_session_sidecar_runtime", None)
+    if isinstance(state, dict):
+        return state
+    state = _fresh_turn_state()
     setattr(agent, "_session_sidecar_runtime", state)
     return state
+
+
+def _reset_runtime_state_after_emit(agent, emitted_turns: set[str]) -> None:
+    setattr(agent, "_session_sidecar_runtime", _fresh_turn_state(emitted_turns=emitted_turns))
 
 
 def _coerce_jsonish(value: Any) -> Any:
@@ -120,7 +128,7 @@ def emit_turn_sidecar(
     turn_id: str = "",
     completed: bool = False,
     interrupted: bool = False,
-    model: str = "",
+    model: Any = "",
     platform: str = "",
     reason: str = "",
 ) -> str | None:
@@ -226,4 +234,5 @@ def emit_turn_sidecar(
 
     write_sidecar(sc)
     emitted_turns.add(emit_key)
+    _reset_runtime_state_after_emit(agent, emitted_turns)
     return sc.run_id
