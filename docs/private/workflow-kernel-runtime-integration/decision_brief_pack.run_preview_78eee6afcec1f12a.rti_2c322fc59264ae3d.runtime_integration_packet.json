@@ -1,0 +1,59 @@
+{
+  "runtime_packet_id": "rti_2c322fc59264ae3d",
+  "consolidation_id": "tpcon_4421e19ba058d222",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "workflow_id": "decision_brief_pack",
+  "generated_at": "2026-06-12T18:35:31Z",
+  "taskpool_write_enabled": true,
+  "taskpool_claim_enabled": false,
+  "runtime_enabled": true,
+  "runtime_record_only": true,
+  "model_call_enabled": false,
+  "adapter_write_enabled": false,
+  "external_side_effects_enabled": false,
+  "runtime_targets": [
+    {
+      "task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance.md",
+      "group_id": "contract_acceptance_governance",
+      "runtime_state": "recorded_waiting_for_claim_authorization",
+      "claim_packet_status": "prepared_not_claimed",
+      "readback_verified": true
+    },
+    {
+      "task_id": "2026-06-13-workflow-kernel-consolidated-candidatemodel-routes",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatemodel-routes.md",
+      "group_id": "model_routes",
+      "runtime_state": "recorded_waiting_for_claim_authorization",
+      "claim_packet_status": "prepared_not_claimed",
+      "readback_verified": true
+    },
+    {
+      "task_id": "2026-06-13-workflow-kernel-consolidated-candidatemodule-contracts",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatemodule-contracts.md",
+      "group_id": "module_contracts",
+      "runtime_state": "recorded_waiting_for_claim_authorization",
+      "claim_packet_status": "prepared_not_claimed",
+      "readback_verified": true
+    },
+    {
+      "task_id": "2026-06-13-workflow-kernel-consolidated-candidatesafety-flags",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatesafety-flags.md",
+      "group_id": "safety_flags",
+      "runtime_state": "recorded_waiting_for_claim_authorization",
+      "claim_packet_status": "prepared_not_claimed",
+      "readback_verified": true
+    }
+  ],
+  "readback_verified": true,
+  "derived_refresh": {
+    "status": "OK",
+    "reason": "workflow_runtime_integration_record_only",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "generated_at": "2026-06-13T02:35:31+08:00"
+  },
+  "rollback_plan": "Remove workflow_runtime_packet_id / workflow_runtime_state / claim packet annotations from the listed proposed tasks after separate rollback authorization; no claim/runtime/model/adapter/external state was executed.",
+  "boundary": "runtime_integration_record_only_done_before_claim_or_adapter"
+}

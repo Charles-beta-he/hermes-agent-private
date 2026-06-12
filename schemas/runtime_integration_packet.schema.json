@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/runtime_integration_packet.schema.json",
+  "title": "Hermes Workflow Runtime Integration Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "runtime_packet_id",
+    "consolidation_id",
+    "run_id",
+    "workflow_id",
+    "generated_at",
+    "taskpool_write_enabled",
+    "taskpool_claim_enabled",
+    "runtime_enabled",
+    "runtime_record_only",
+    "model_call_enabled",
+    "adapter_write_enabled",
+    "external_side_effects_enabled",
+    "runtime_targets",
+    "readback_verified",
+    "rollback_plan",
+    "boundary"
+  ],
+  "properties": {
+    "runtime_packet_id": {"type": "string", "minLength": 1},
+    "consolidation_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "minLength": 1},
+    "taskpool_write_enabled": {"const": true},
+    "taskpool_claim_enabled": {"const": false},
+    "runtime_enabled": {"const": true},
+    "runtime_record_only": {"const": true},
+    "model_call_enabled": {"const": false},
+    "adapter_write_enabled": {"const": false},
+    "external_side_effects_enabled": {"const": false},
+    "runtime_targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_id", "task_path", "group_id", "runtime_state", "claim_packet_status", "readback_verified"],
+        "properties": {
+          "task_id": {"type": "string", "minLength": 1},
+          "task_path": {"type": "string", "minLength": 1},
+          "group_id": {"type": "string", "minLength": 1},
+          "runtime_state": {"const": "recorded_waiting_for_claim_authorization"},
+          "claim_packet_status": {"const": "prepared_not_claimed"},
+          "readback_verified": {"const": true}
+        }
+      }
+    },
+    "readback_verified": {"const": true},
+    "rollback_plan": {"type": "string", "minLength": 1},
+    "boundary": {"const": "runtime_integration_record_only_done_before_claim_or_adapter"}
+  }
+}
