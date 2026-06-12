@@ -1,4 +1,10 @@
 (() => {
+  const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
   const root = document.createElement('div');
   root.className = 'control-tower-plugin';
   root.innerHTML = `
@@ -264,18 +270,19 @@
     const evidence = overview.evidence_debt || {};
     const human = overview.human_gate || {};
     const sourceDrift = overview.source_drift || {};
+    const taskpoolRuntime = overview.taskpool_runtime || {};
     operatorOverviewEl.innerHTML = `
       <div class="control-tower-operator-headline control-tower-operator-${overview.status}">
         <strong>${overview.status || 'unknown'}</strong>
         <span>${overview.headline || 'No headline available.'}</span>
       </div>
-      <div class="control-tower-summary">
-        <span>Progressable: <strong>${overview.progressable ? 'yes' : 'no'}</strong></span>
-        <span>Recommended next action: <strong>${overview.recommended_next_action || '—'}</strong></span>
+      <div class="control-tower-operator-meta">
+        <span>Recommended next action: <strong>${overview.recommended_next_action || 'none'}</strong></span>
         <span>Human gate: <strong>${human.status || 'unknown'} (${human.pending_count ?? 0})</strong></span>
         <span>Evidence: <strong>${evidence.status || 'unknown'}</strong></span>
         <span>Stale/conflicting evidence: <strong>${evidence.stale_or_conflicting ?? 0}</strong></span>
         <span>Source drift: <strong>${sourceDrift.status || 'unknown'}</strong></span>
+        <span>Runtime taskpool: <strong>${escapeHtml(taskpoolRuntime.status || 'unknown')}</strong>${taskpoolRuntime.next_task_id ? ` (${escapeHtml(taskpoolRuntime.next_task_id)})` : ''}</span>
       </div>
       <h3>Critical alerts</h3>
       ${alerts ? `<ul>${alerts}</ul>` : '<p>No critical alerts.</p>'}

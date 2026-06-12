@@ -90,6 +90,9 @@ def test_control_tower_dashboard_renders_operator_overview_as_first_screen():
     assert "Critical alerts" in script
     assert "Next safe actions" in script
     assert "next_safe_actions" in script
+    assert "Runtime taskpool" in script
+    assert "taskpool_runtime" in script
+    assert "escapeHtml(taskpoolRuntime.next_task_id)" in script
     assert "control-tower-next-actions" in style
     assert "control-tower-operator-overview-card" in style
 

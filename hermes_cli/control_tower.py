@@ -12,6 +12,7 @@ import hashlib
 import json
 import sqlite3
 import subprocess
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -5704,6 +5705,66 @@ def _source_drift_snapshot(
     }
 
 
+def _taskpool_runtime_probe(*, isolated_fixture: bool | None = None) -> dict[str, Any]:
+    """Read the governed taskpool runtime selector without mutating state.
+
+    Control Tower's ledger projection can lag the canonical brain/taskpool
+    selector. This probe is fail-soft and read-only: it lets the operator screen
+    distinguish true no-work from projection drift without claiming or executing
+    anything.
+    """
+
+    if isolated_fixture is None:
+        isolated_fixture = get_hermes_home() != Path.home() / ".hermes"
+    if isolated_fixture:
+        return {"status": "not_checked", "reason": "not part of isolated snapshot fixture"}
+    script = Path.home() / ".hermes" / "scripts" / "brain_task_orchestrator.py"
+    if not script.exists():
+        return {"status": "unavailable", "reason": f"missing script: {script}"}
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), "next", "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "timeout", "reason": "brain_task_orchestrator next --json timed out"}
+    except Exception as exc:
+        return {"status": "error", "reason": str(exc)}
+    if proc.returncode != 0:
+        return {
+            "status": "error",
+            "returncode": proc.returncode,
+            "reason": (proc.stderr or proc.stdout).strip()[:500],
+        }
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except Exception as exc:
+        return {"status": "error", "reason": f"invalid json: {exc}"}
+    if not isinstance(payload, dict):
+        return {"status": "error", "reason": f"unexpected json payload type: {type(payload).__name__}"}
+    next_task = payload.get("next")
+    if next_task:
+        if not isinstance(next_task, dict):
+            return {"status": "error", "reason": f"unexpected next task type: {type(next_task).__name__}"}
+        return {
+            "status": "dispatchable",
+            "dispatchable": True,
+            "next_task_id": next_task.get("id"),
+            "next_title": next_task.get("title"),
+            "next_status": next_task.get("status"),
+            "next_priority": next_task.get("priority"),
+            "claim_command_available": bool(payload.get("claim_command")),
+        }
+    return {
+        "status": "idle",
+        "dispatchable": False,
+        "reason": payload.get("reason") or payload.get("status") or "no next task",
+    }
+
+
 def _operator_overview_snapshot(
     *,
     taskpool_health: dict[str, Any],
@@ -5713,6 +5774,7 @@ def _operator_overview_snapshot(
     evidence_summary: dict[str, Any],
     human_inbox: dict[str, Any],
     source_drift: dict[str, Any] | None = None,
+    taskpool_runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return the first-screen operator projection.
 
@@ -5731,7 +5793,18 @@ def _operator_overview_snapshot(
     )
     stale_or_conflicting = int(evidence_summary.get("stale_or_conflicting") or 0)
     source_drift = source_drift or {"status": "not_checked", "reason": "not part of isolated snapshot fixture"}
+    taskpool_runtime = taskpool_runtime or {"status": "not_checked", "reason": "not part of isolated snapshot fixture"}
+    runtime_dispatchable = bool(taskpool_runtime.get("dispatchable"))
+    projection_drift = runtime_dispatchable and next_dispatchable is None
     critical_alerts: list[dict[str, Any]] = []
+    if projection_drift:
+        critical_alerts.append(
+            {
+                "kind": "taskpool_projection_drift",
+                "severity": "critical",
+                "message": "Canonical taskpool runtime reports dispatchable work, but the Control Tower ledger projection has no next task.",
+            }
+        )
     if active and next_dispatchable is None:
         critical_alerts.append(
             {
@@ -5778,6 +5851,11 @@ def _operator_overview_snapshot(
         headline = "Next dispatchable workflow is available."
         recommended_next_action = "dispatch_next_ready_task"
         progressable = True
+    elif projection_drift:
+        status = "projection_drift"
+        headline = "Taskpool runtime is dispatchable, but the Control Tower projection is stale."
+        recommended_next_action = "inspect_taskpool_projection_drift"
+        progressable = True
     elif active:
         status = "blocked"
         headline = "Active workflow pressure exists, but no task is dispatchable."
@@ -5808,6 +5886,16 @@ def _operator_overview_snapshot(
                 "command": "Refresh snapshot, inspect blocker summary, then run the taskpool read-only diagnosis path.",
             }
         )
+    if projection_drift:
+        next_safe_actions.insert(
+            0,
+            {
+                "action": "inspect_taskpool_projection_drift",
+                "mode": "read_only",
+                "reason": "taskpool_projection_drift",
+                "command": "Compare Control Tower ledger projection with brain_task_orchestrator next --json before claiming or resolving blockers.",
+            },
+        )
     if stale_signals:
         next_safe_actions.append(
             {
@@ -5837,6 +5925,7 @@ def _operator_overview_snapshot(
         "evidence_debt": evidence_debt,
         "human_gate": human_gate,
         "source_drift": source_drift,
+        "taskpool_runtime": taskpool_runtime,
     }
 
 
@@ -5889,6 +5978,7 @@ def build_snapshot() -> dict[str, Any]:
         "stale_or_conflicting": stale_or_conflicting,
     }
     source_drift = _source_drift_snapshot()
+    taskpool_runtime = _taskpool_runtime_probe()
     operator_overview = _operator_overview_snapshot(
         taskpool_health=taskpool_health,
         next_dispatchable=next_dispatchable,
@@ -5897,6 +5987,7 @@ def build_snapshot() -> dict[str, Any]:
         evidence_summary=evidence_summary,
         human_inbox=human_inbox,
         source_drift=source_drift,
+        taskpool_runtime=taskpool_runtime,
     )
     return {
         "schema_version": SCHEMA_VERSION,

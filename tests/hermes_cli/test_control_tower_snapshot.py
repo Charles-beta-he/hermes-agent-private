@@ -126,6 +126,7 @@ def test_control_tower_snapshot_is_read_only_and_labels_adapters(tmp_path, monke
         },
         "human_gate": {"pending_count": 0, "status": "clear"},
         "source_drift": {"status": "not_checked", "reason": "not part of isolated snapshot fixture"},
+        "taskpool_runtime": {"status": "not_checked", "reason": "not part of isolated snapshot fixture"},
     }
 
 
@@ -327,6 +328,84 @@ def test_operator_overview_highlights_no_dispatch_when_all_tasks_are_blocked(tmp
             "command": "Refresh snapshot, inspect blocker summary, then run the taskpool read-only diagnosis path.",
         }
     ]
+
+
+def test_taskpool_runtime_probe_fails_soft_on_malformed_json_shapes(tmp_path, monkeypatch):
+    home = tmp_path
+    script = home / ".hermes" / "scripts" / "brain_task_orchestrator.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# stub\n")
+    monkeypatch.setattr(control_tower.Path, "home", lambda: home)
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(control_tower.subprocess, "run", fake_run)
+    assert control_tower._taskpool_runtime_probe(isolated_fixture=False) == {
+        "status": "error",
+        "reason": "unexpected json payload type: list",
+    }
+
+    def fake_bad_next(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, stdout=json.dumps({"next": "bad"}), stderr="")
+
+    monkeypatch.setattr(control_tower.subprocess, "run", fake_bad_next)
+    assert control_tower._taskpool_runtime_probe(isolated_fixture=False) == {
+        "status": "error",
+        "reason": "unexpected next task type: str",
+    }
+
+
+def test_operator_overview_detects_taskpool_projection_drift():
+    overview = control_tower._operator_overview_snapshot(
+        taskpool_health={
+            "active": 29,
+            "ready": 0,
+            "blocked": 29,
+            "claimed": 0,
+            "running": 0,
+            "review": 0,
+            "stale_leases": 0,
+        },
+        next_dispatchable=None,
+        blockers=[{"reason": "kanban_status_blocked"}],
+        mission_flow_signals={"stale_count": 0},
+        evidence_summary={
+            "advisory": 0,
+            "observed": 0,
+            "verified": 0,
+            "certified": 0,
+            "release_confirmed": 0,
+            "stale_or_conflicting": 0,
+        },
+        human_inbox={"pending_count": 0},
+        source_drift={"status": "clean", "dirty": False, "ahead": False, "behind": False},
+        taskpool_runtime={
+            "status": "dispatchable",
+            "dispatchable": True,
+            "next_task_id": "task-123",
+            "next_title": "Runtime-selected task",
+            "next_status": "pending",
+            "next_priority": "P2",
+            "claim_command_available": True,
+        },
+    )
+
+    assert overview["status"] == "projection_drift"
+    assert overview["progressable"] is True
+    assert overview["recommended_next_action"] == "inspect_taskpool_projection_drift"
+    assert overview["taskpool_runtime"]["next_task_id"] == "task-123"
+    assert overview["critical_alerts"][0] == {
+        "kind": "taskpool_projection_drift",
+        "severity": "critical",
+        "message": "Canonical taskpool runtime reports dispatchable work, but the Control Tower ledger projection has no next task.",
+    }
+    assert overview["next_safe_actions"][0] == {
+        "action": "inspect_taskpool_projection_drift",
+        "mode": "read_only",
+        "reason": "taskpool_projection_drift",
+        "command": "Compare Control Tower ledger projection with brain_task_orchestrator next --json before claiming or resolving blockers.",
+    }
 
 
 def test_source_drift_snapshot_reports_git_branch_dirty_and_ahead(tmp_path):
