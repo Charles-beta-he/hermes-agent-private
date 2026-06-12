@@ -959,13 +959,14 @@ class MissionStore:
             self.set_status(mission_id, "paused", reason="max tick budget exhausted")
             self.append_event(mission_id, "budget_exhausted", "max tick budget exhausted", {"max_ticks": mission.budget.max_ticks})
             return {"status": "budget_exhausted", "mission": mission_to_dict(self.get_mission(mission_id)), "prompt": ""}
-        pending_signals = self.pending_flow_signals(mission_id, limit=1)
+        pending_signals = self.pending_flow_signals(mission_id, limit=50)
         signal = pending_signals[0] if pending_signals else None
         prompt = build_tick_prompt(
             mission,
             self.list_events(mission_id, limit=12),
             self.answered_decisions(mission_id, limit=5),
             trigger_signal=signal,
+            coalesced_signal_count=len(pending_signals),
         )
         event_type = "tick_dry_run" if dry_run else "tick_prompt_created"
         mode = "event" if signal else "maintenance"
@@ -975,7 +976,8 @@ class MissionStore:
         self.append_event(mission_id, event_type, "mission tick prompt generated", payload, enqueue_flow=False)
         if not dry_run:
             if signal:
-                self.consume_flow_signal(signal.signal_id)
+                for pending_signal in pending_signals:
+                    self.consume_flow_signal(pending_signal.signal_id)
             else:
                 self.append_event(
                     mission_id,
@@ -1247,6 +1249,7 @@ def build_tick_prompt(
     answered_decisions: list[DecisionRequest],
     *,
     trigger_signal: MissionFlowSignal | None = None,
+    coalesced_signal_count: int = 1,
 ) -> str:
     """Build the bounded user-role prompt for one mission advancement tick."""
 
@@ -1261,6 +1264,8 @@ def build_tick_prompt(
             f"event-driven ({trigger_signal.signal_type}) from {trigger_signal.source_event_id}: "
             f"{trigger_signal.payload.get('summary', '')}"
         )
+        if coalesced_signal_count > 1:
+            trigger += f"; coalesced {coalesced_signal_count} pending flow signals into this single bounded tick"
     else:
         trigger = "periodic maintenance watchdog: no pending event signal; inspect health, drift, and next safe bounded step"
     max_turns = mission.budget.max_turns_per_tick or 8

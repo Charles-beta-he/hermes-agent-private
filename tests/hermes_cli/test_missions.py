@@ -177,6 +177,31 @@ def test_event_driven_flow_signal_consumed_before_maintenance_tick(tmp_path):
     assert store.count_events(mission.mission_id, {"maintenance_tick"}) == 1
 
 
+def test_event_tick_coalesces_pending_flow_signal_backlog(tmp_path):
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="事件驱动推进 Hermes 架构",
+        cadence="every 6h",
+        budget=MissionBudget(max_ticks=3),
+        enable=True,
+    )
+    store.append_event(mission.mission_id, "taskpool_status_changed", "task one", {"source": "taskpool"})
+    store.append_event(mission.mission_id, "taskpool_status_changed", "task two", {"source": "taskpool"})
+
+    signals = store.pending_flow_signals(mission.mission_id)
+    assert [signal.signal_type for signal in signals] == [
+        "mission_enabled",
+        "taskpool_status_changed",
+        "taskpool_status_changed",
+    ]
+
+    event_tick = store.tick(mission.mission_id, dry_run=False)
+
+    assert event_tick["mode"] == "event"
+    assert "coalesced 3 pending flow signals" in event_tick["prompt"]
+    assert store.pending_flow_signals(mission.mission_id) == []
+
+
 def test_cli_handoff_decide_resumes_and_enqueues_flow_signal(tmp_path, capsys):
     from hermes_cli.missions import cmd_mission
 
