@@ -1,0 +1,182 @@
+[
+  {
+    "trace_id": "rt_run_preview_78eee6afcec1f12a_goal_calibrator.v1",
+    "workflow_id": "decision_brief_pack",
+    "run_id": "run_preview_78eee6afcec1f12a",
+    "module_id": "goal_calibrator.v1",
+    "route_alias": "best.goal_calibration.structured",
+    "selected_model_id": "abstract:cheap-structured",
+    "model_registry_version": "2026-06-12.phase1",
+    "routing_policy_version": "model-routing-seed",
+    "run_mode": "pinned",
+    "fallback_chain": [
+      "abstract:strong-reasoner"
+    ],
+    "decision_reasons": [
+      "route_alias=best.goal_calibration.structured",
+      "required_status=stable",
+      "phase2_projection_only_no_model_call",
+      "fallback_required_and_available"
+    ],
+    "constraints_checked": {
+      "provider_status": true,
+      "privacy_policy": true,
+      "structured_output": true,
+      "cost_budget": true,
+      "latency_slo": true,
+      "fallback_available": true,
+      "eval_passed": true
+    },
+    "eval_gate": {
+      "suite_id": "eval.phase1.contract-smoke",
+      "passed": true,
+      "minimum_score": 0.7,
+      "observed_score": 0.72
+    },
+    "created_at": "2026-06-12T16:34:20Z"
+  },
+  {
+    "trace_id": "rt_run_preview_78eee6afcec1f12a_source_research.v1",
+    "workflow_id": "decision_brief_pack",
+    "run_id": "run_preview_78eee6afcec1f12a",
+    "module_id": "source_research.v1",
+    "route_alias": "best.research.evidence_extraction",
+    "selected_model_id": "abstract:strong-reasoner",
+    "model_registry_version": "2026-06-12.phase1",
+    "routing_policy_version": "model-routing-seed",
+    "run_mode": "pinned",
+    "fallback_chain": [
+      "abstract:cheap-structured"
+    ],
+    "decision_reasons": [
+      "route_alias=best.research.evidence_extraction",
+      "required_status=stable",
+      "phase2_projection_only_no_model_call",
+      "fallback_required_and_available"
+    ],
+    "constraints_checked": {
+      "provider_status": true,
+      "privacy_policy": true,
+      "structured_output": true,
+      "cost_budget": true,
+      "latency_slo": true,
+      "fallback_available": true,
+      "eval_passed": true
+    },
+    "eval_gate": {
+      "suite_id": "eval.phase1.contract-smoke",
+      "passed": true,
+      "minimum_score": 0.7,
+      "observed_score": 0.8
+    },
+    "created_at": "2026-06-12T16:34:20Z"
+  },
+  {
+    "trace_id": "rt_run_preview_78eee6afcec1f12a_decision_synthesizer.v1",
+    "workflow_id": "decision_brief_pack",
+    "run_id": "run_preview_78eee6afcec1f12a",
+    "module_id": "decision_synthesizer.v1",
+    "route_alias": "best.synthesis.decision_brief",
+    "selected_model_id": "abstract:strong-reasoner",
+    "model_registry_version": "2026-06-12.phase1",
+    "routing_policy_version": "model-routing-seed",
+    "run_mode": "pinned",
+    "fallback_chain": [
+      "abstract:verifier"
+    ],
+    "decision_reasons": [
+      "route_alias=best.synthesis.decision_brief",
+      "required_status=stable",
+      "phase2_projection_only_no_model_call",
+      "fallback_required_and_available"
+    ],
+    "constraints_checked": {
+      "provider_status": true,
+      "privacy_policy": true,
+      "structured_output": true,
+      "cost_budget": true,
+      "latency_slo": true,
+      "fallback_available": true,
+      "eval_passed": true
+    },
+    "eval_gate": {
+      "suite_id": "eval.phase1.contract-smoke",
+      "passed": true,
+      "minimum_score": 0.7,
+      "observed_score": 0.8
+    },
+    "created_at": "2026-06-12T16:34:20Z"
+  },
+  {
+    "trace_id": "rt_run_preview_78eee6afcec1f12a_acceptance_compiler.v1",
+    "workflow_id": "decision_brief_pack",
+    "run_id": "run_preview_78eee6afcec1f12a",
+    "module_id": "acceptance_compiler.v1",
+    "route_alias": "best.acceptance.compiler",
+    "selected_model_id": "abstract:strong-reasoner",
+    "model_registry_version": "2026-06-12.phase1",
+    "routing_policy_version": "model-routing-seed",
+    "run_mode": "pinned",
+    "fallback_chain": [
+      "abstract:verifier"
+    ],
+    "decision_reasons": [
+      "route_alias=best.acceptance.compiler",
+      "required_status=stable",
+      "phase2_projection_only_no_model_call",
+      "fallback_required_and_available"
+    ],
+    "constraints_checked": {
+      "provider_status": true,
+      "privacy_policy": true,
+      "structured_output": true,
+      "cost_budget": true,
+      "latency_slo": true,
+      "fallback_available": true,
+      "eval_passed": true
+    },
+    "eval_gate": {
+      "suite_id": "eval.phase1.contract-smoke",
+      "passed": true,
+      "minimum_score": 0.7,
+      "observed_score": 0.8
+    },
+    "created_at": "2026-06-12T16:34:20Z"
+  },
+  {
+    "trace_id": "rt_run_preview_78eee6afcec1f12a_evidence_verifier.v1",
+    "workflow_id": "decision_brief_pack",
+    "run_id": "run_preview_78eee6afcec1f12a",
+    "module_id": "evidence_verifier.v1",
+    "route_alias": "best.verification.evidence",
+    "selected_model_id": "abstract:verifier",
+    "model_registry_version": "2026-06-12.phase1",
+    "routing_policy_version": "model-routing-seed",
+    "run_mode": "pinned",
+    "fallback_chain": [
+      "abstract:strong-reasoner"
+    ],
+    "decision_reasons": [
+      "route_alias=best.verification.evidence",
+      "required_status=stable",
+      "phase2_projection_only_no_model_call",
+      "fallback_required_and_available"
+    ],
+    "constraints_checked": {
+      "provider_status": true,
+      "privacy_policy": true,
+      "structured_output": true,
+      "cost_budget": true,
+      "latency_slo": true,
+      "fallback_available": true,
+      "eval_passed": true
+    },
+    "eval_gate": {
+      "suite_id": "eval.phase1.contract-smoke",
+      "passed": true,
+      "minimum_score": 0.7,
+      "observed_score": 0.78
+    },
+    "created_at": "2026-06-12T16:34:20Z"
+  }
+]

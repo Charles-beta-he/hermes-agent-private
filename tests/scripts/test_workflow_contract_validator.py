@@ -169,3 +169,36 @@ def test_model_registry_fails_when_route_alias_uses_unregistered_model(tmp_path)
 
     assert result.status == "FAIL"
     assert any("primary_model_id" in err and "not registered" in err for err in result.errors)
+
+
+def test_validator_fails_when_route_trace_schema_is_missing(tmp_path):
+    validator = _load_validator_module()
+    missing = tmp_path / "missing_route_trace_schema.json"
+
+    result = validator.validate_registry(
+        _repo_root() / "config" / "workflow_registry.json",
+        _repo_root() / "schemas" / "workflow_contract.schema.json",
+        _repo_root() / "config" / "model_registry.json",
+        missing,
+        _repo_root() / "schemas" / "run_lockfile.schema.json",
+    )
+
+    assert result.status == "FAIL"
+    assert any("route_trace_schema missing" in err for err in result.errors)
+
+
+def test_validator_fails_when_run_lockfile_schema_title_is_wrong(tmp_path):
+    validator = _load_validator_module()
+    bad_schema = tmp_path / "run_lockfile.schema.json"
+    bad_schema.write_text('{"title": "wrong"}', encoding="utf-8")
+
+    result = validator.validate_registry(
+        _repo_root() / "config" / "workflow_registry.json",
+        _repo_root() / "schemas" / "workflow_contract.schema.json",
+        _repo_root() / "config" / "model_registry.json",
+        _repo_root() / "schemas" / "route_trace.schema.json",
+        bad_schema,
+    )
+
+    assert result.status == "FAIL"
+    assert any("run_lockfile_schema title is unexpected" in err for err in result.errors)

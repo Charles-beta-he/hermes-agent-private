@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/run_lockfile.schema.json",
+  "title": "Hermes Workflow Run Lockfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "workflow_id",
+    "workflow_version",
+    "registry_version",
+    "model_registry_version",
+    "acceptance_policy_version",
+    "run_mode",
+    "started_at",
+    "runtime_enabled",
+    "write_through_enabled",
+    "external_side_effects_enabled",
+    "modules",
+    "route_traces",
+    "acceptance_criteria",
+    "evidence_policy",
+    "context_digest"
+  ],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "workflow_version": {"type": "string", "minLength": 1},
+    "registry_version": {"type": "string", "minLength": 1},
+    "model_registry_version": {"type": "string", "minLength": 1},
+    "acceptance_policy_version": {"type": "string", "minLength": 1},
+    "run_mode": {"enum": ["pinned", "dynamic_safe_boundary", "shadow_only"]},
+    "started_at": {"type": "string", "minLength": 1},
+    "runtime_enabled": {"const": false},
+    "write_through_enabled": {"const": false},
+    "external_side_effects_enabled": {"const": false},
+    "modules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["module_id", "module_version", "route_alias", "risk_level", "side_effect_level"],
+        "properties": {
+          "module_id": {"type": "string", "minLength": 1},
+          "module_version": {"type": "string", "minLength": 1},
+          "route_alias": {"type": "string", "pattern": "^best\\."},
+          "risk_level": {"enum": ["low", "medium", "high", "critical"]},
+          "side_effect_level": {"enum": ["read_only", "local_reversible", "external_write", "destructive"]}
+        }
+      }
+    },
+    "route_traces": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion_id", "description", "evidence_required"],
+        "properties": {
+          "criterion_id": {"type": "string", "minLength": 1},
+          "description": {"type": "string", "minLength": 1},
+          "evidence_required": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "evidence_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ledger_required", "accepted_prefixes", "raw_payload_policy"],
+      "properties": {
+        "ledger_required": {"type": "boolean"},
+        "accepted_prefixes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "raw_payload_policy": {"const": "hash_or_pointer_only"}
+      }
+    },
+    "context_digest": {"type": "string", "minLength": 1},
+    "notes": {"type": "string"}
+  }
+}

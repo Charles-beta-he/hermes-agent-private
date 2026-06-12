@@ -1,0 +1,121 @@
+{
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "workflow_id": "decision_brief_pack",
+  "workflow_version": "1.0.0",
+  "registry_version": "2026-06-12.phase1",
+  "model_registry_version": "2026-06-12.phase1",
+  "acceptance_policy_version": "acceptance@1.0.0",
+  "run_mode": "pinned",
+  "started_at": "2026-06-12T16:34:20Z",
+  "runtime_enabled": false,
+  "write_through_enabled": false,
+  "external_side_effects_enabled": false,
+  "modules": [
+    {
+      "module_id": "goal_calibrator.v1",
+      "module_version": "v1",
+      "route_alias": "best.goal_calibration.structured",
+      "risk_level": "low",
+      "side_effect_level": "read_only"
+    },
+    {
+      "module_id": "source_research.v1",
+      "module_version": "v1",
+      "route_alias": "best.research.evidence_extraction",
+      "risk_level": "medium",
+      "side_effect_level": "read_only"
+    },
+    {
+      "module_id": "decision_synthesizer.v1",
+      "module_version": "v1",
+      "route_alias": "best.synthesis.decision_brief",
+      "risk_level": "medium",
+      "side_effect_level": "read_only"
+    },
+    {
+      "module_id": "acceptance_compiler.v1",
+      "module_version": "v1",
+      "route_alias": "best.acceptance.compiler",
+      "risk_level": "medium",
+      "side_effect_level": "read_only"
+    },
+    {
+      "module_id": "evidence_verifier.v1",
+      "module_version": "v1",
+      "route_alias": "best.verification.evidence",
+      "risk_level": "medium",
+      "side_effect_level": "read_only"
+    }
+  ],
+  "route_traces": [
+    "rt_run_preview_78eee6afcec1f12a_goal_calibrator.v1",
+    "rt_run_preview_78eee6afcec1f12a_source_research.v1",
+    "rt_run_preview_78eee6afcec1f12a_decision_synthesizer.v1",
+    "rt_run_preview_78eee6afcec1f12a_acceptance_compiler.v1",
+    "rt_run_preview_78eee6afcec1f12a_evidence_verifier.v1"
+  ],
+  "acceptance_criteria": [
+    {
+      "criterion_id": "workflow_contract_valid",
+      "description": "Phase 2 projection requires workflow_contract_valid",
+      "evidence_required": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ]
+    },
+    {
+      "criterion_id": "runtime_disabled_in_phase1",
+      "description": "Phase 2 projection requires runtime_disabled_in_phase1",
+      "evidence_required": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ]
+    },
+    {
+      "criterion_id": "all_modules_have_model_policy",
+      "description": "Phase 2 projection requires all_modules_have_model_policy",
+      "evidence_required": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ]
+    },
+    {
+      "criterion_id": "all_modules_have_evidence_required",
+      "description": "Phase 2 projection requires all_modules_have_evidence_required",
+      "evidence_required": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ]
+    },
+    {
+      "criterion_id": "evidence_prefixes_valid",
+      "description": "Phase 2 projection requires evidence_prefixes_valid",
+      "evidence_required": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ]
+    },
+    {
+      "criterion_id": "human_gate_packet_fields_present",
+      "description": "Phase 2 projection requires human_gate_packet_fields_present",
+      "evidence_required": [
+        "artifact:projection",
+        "proof:read_only_projection"
+      ]
+    }
+  ],
+  "evidence_policy": {
+    "accepted_prefixes": [
+      "command:",
+      "artifact:",
+      "proof:",
+      "classification:",
+      "file:",
+      "not_applicable:"
+    ],
+    "ledger_required": true,
+    "raw_payload_policy": "hash_or_pointer_only"
+  },
+  "context_digest": "sha256:0b5d8ae785da3c508c1807faad2a485aa9c5ea404b6ce4ebcb2f323e71d1ac04",
+  "notes": "Read-only preview lockfile. It is not a runtime claim or execution authorization."
+}

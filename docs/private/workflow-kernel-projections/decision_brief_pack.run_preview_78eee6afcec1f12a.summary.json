@@ -1,0 +1,9 @@
+{
+  "workflow_id": "decision_brief_pack",
+  "modules": 5,
+  "route_traces": 5,
+  "runtime_enabled": false,
+  "write_through_enabled": false,
+  "external_side_effects_enabled": false,
+  "boundary": "read_only_projection_no_task_claim_no_model_call_no_adapter_write"
+}

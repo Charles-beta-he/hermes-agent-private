@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/route_trace.schema.json",
+  "title": "Hermes Workflow Model Route Trace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "trace_id",
+    "workflow_id",
+    "module_id",
+    "route_alias",
+    "selected_model_id",
+    "model_registry_version",
+    "routing_policy_version",
+    "run_mode",
+    "fallback_chain",
+    "decision_reasons",
+    "constraints_checked",
+    "eval_gate",
+    "created_at"
+  ],
+  "properties": {
+    "trace_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "module_id": {"type": "string", "minLength": 1},
+    "route_alias": {"type": "string", "pattern": "^best\\."},
+    "selected_model_id": {"type": "string", "minLength": 1},
+    "model_registry_version": {"type": "string", "minLength": 1},
+    "routing_policy_version": {"type": "string", "minLength": 1},
+    "run_mode": {"enum": ["pinned", "dynamic_safe_boundary", "shadow_only"]},
+    "fallback_chain": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "decision_reasons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "constraints_checked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_status",
+        "privacy_policy",
+        "structured_output",
+        "cost_budget",
+        "latency_slo",
+        "fallback_available",
+        "eval_passed"
+      ],
+      "properties": {
+        "provider_status": {"type": "boolean"},
+        "privacy_policy": {"type": "boolean"},
+        "structured_output": {"type": "boolean"},
+        "cost_budget": {"type": "boolean"},
+        "latency_slo": {"type": "boolean"},
+        "fallback_available": {"type": "boolean"},
+        "eval_passed": {"type": "boolean"}
+      }
+    },
+    "eval_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suite_id", "passed", "minimum_score", "observed_score"],
+      "properties": {
+        "suite_id": {"type": "string", "minLength": 1},
+        "passed": {"type": "boolean"},
+        "minimum_score": {"type": "number", "minimum": 0, "maximum": 1},
+        "observed_score": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "created_at": {"type": "string", "minLength": 1}
+  }
+}
