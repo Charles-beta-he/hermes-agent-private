@@ -222,6 +222,51 @@ def _emit_cron_session_sidecar(
         sc.evidence_refs.append(f"proof:session-sidecar:run:{sc.run_id}")
 
         sidecar_path = write_sidecar(sc)
+        try:
+            from proof_log import proof_log_enabled, write_proof_log
+
+            if proof_log_enabled():
+                write_proof_log({
+                    "agent_id": os.environ.get("HERMES_AGENT_ID") or "hermes-agent",
+                    "profile": os.environ.get("HERMES_PROFILE") or "default",
+                    "session_id": f"cron:{job.get('id') or 'unknown'}",
+                    "run_id": sc.run_id,
+                    "link_type": "cron",
+                    "link_ref": str(job.get("id") or ""),
+                    "status": "succeeded" if status == "succeeded" else ("failed" if status == "failed" else "partial"),
+                    "duration_ms": int(max(0.0, float(duration_s)) * 1000),
+                    "input_summary": f"cron job {job.get('id') or 'unknown'}",
+                    "output_summary": str(delivery_error or error or final_response or output or status)[:500],
+                    "tool_calls": [{
+                        "name": "cron_job",
+                        "status": "failed" if error or delivery_error else "succeeded",
+                        "input_summary": str(job.get("schedule") or ""),
+                        "output_summary": str(output or final_response or "")[:500],
+                        "error_code": "cron_error" if error or delivery_error else None,
+                    }],
+                    "errors": ([{
+                        "code": "DeliveryError" if delivery_error else "CronJobError",
+                        "message": str(delivery_error or error),
+                        "recoverable": True,
+                        "where": "cron",
+                    }] if (delivery_error or error) else []),
+                    "payload": {
+                        "kind": "cron_job",
+                        "redaction": {"state": "raw", "policy": "none", "fields": [], "payload_hash": None},
+                        "data": {
+                            "job_id": str(job.get("id") or ""),
+                            "schedule": str(job.get("schedule") or ""),
+                            "scheduled_for": None,
+                            "fired_at": None,
+                            "exit_code": None,
+                            "no_agent": bool(job.get("no_agent")),
+                            "delivery_target": str(job.get("deliver") or ""),
+                        },
+                    },
+                    "metadata": {"source": "cron.scheduler", "mode": "no_agent" if job.get("no_agent") else "agent"},
+                })
+        except Exception as proof_exc:
+            logger.debug("cron proof log emission failed for job %s: %s", job.get("id"), proof_exc)
         return {
             "run_id": sc.run_id,
             "path": str(sidecar_path),

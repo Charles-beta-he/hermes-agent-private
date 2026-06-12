@@ -201,6 +201,13 @@ def build_top_level_parser():
     )
     _inherited_flag(
         parser,
+        "--proof-log",
+        action="store_true",
+        default=False,
+        help="Enable best-effort Proof Log sidecar emission for this run (also settable via HERMES_PROOF_LOG=1)",
+    )
+    _inherited_flag(
+        parser,
         "--ignore-user-config",
         action="store_true",
         default=False,
@@ -351,6 +358,13 @@ def build_top_level_parser():
         action="store_true",
         default=argparse.SUPPRESS,
         help="Include the session ID in the agent's system prompt",
+    )
+    _inherited_flag(
+        chat_parser,
+        "--proof-log",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Enable best-effort Proof Log sidecar emission for this run (also settable via HERMES_PROOF_LOG=1)",
     )
     _inherited_flag(
         chat_parser,
