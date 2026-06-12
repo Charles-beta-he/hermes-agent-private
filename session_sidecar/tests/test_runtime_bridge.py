@@ -72,8 +72,7 @@ def test_emit_turn_sidecar_for_browser_run(monkeypatch):
     assert sc.extra["url_count"] == 1
     assert sc.extra["click_count"] == 1
     assert sc.extra["screenshot_count"] >= 1
-    assert sc.extra["screenshot_count"] >= 1
-    assert str(screenshot) in sc.extra["screenshot_paths"]
+    assert sc.artifacts == []
     assert f"proof:session-sidecar:run:{run_id}" in sc.evidence_refs
 
     rc = main(["proof-log", f"date_prefix={sc.created_at[:10]}", "entrypoint=automation", "limit=20"])

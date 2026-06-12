@@ -57,9 +57,10 @@ def test_session_finalize_on_cleanup(mock_invoke_hook):
     )
 
 
+@patch("session_sidecar.runtime.emit_turn_sidecar")
 @patch("hermes_cli.plugins.invoke_hook")
-def test_interrupted_session_end_helper_emits_observer_shape(mock_invoke_hook):
-    """Verify quiet single-query interruption emits a correlated session end."""
+def test_interrupted_session_end_helper_emits_observer_shape(mock_invoke_hook, mock_emit_turn_sidecar):
+    """Verify quiet single-query interruption emits sidecar + correlated session end."""
     import cli as cli_mod
 
     mock_agent = MagicMock()
@@ -75,6 +76,16 @@ def test_interrupted_session_end_helper_emits_observer_shape(mock_invoke_hook):
 
     mock_agent.interrupt.assert_called_once_with("keyboard interrupt")
     assert cli.session_id == "agent-session-id"
+    mock_emit_turn_sidecar.assert_called_once_with(
+        mock_agent,
+        task_id="task-1",
+        turn_id="turn-1",
+        completed=False,
+        interrupted=True,
+        model="test-model",
+        platform="cli",
+        reason="keyboard_interrupt",
+    )
     mock_invoke_hook.assert_called_once()
     call = mock_invoke_hook.call_args
     assert call.args == ("on_session_end",)

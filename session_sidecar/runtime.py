@@ -51,7 +51,6 @@ def _fresh_turn_state(*, emitted_turns: set[str] | None = None) -> dict[str, Any
             "url_count": 0,
             "screenshot_count": 0,
             "click_count": 0,
-            "screenshot_paths": [],
         },
         "emitted_turns": emitted_turns or set(),
     }
@@ -118,7 +117,6 @@ def observe_tool_call(agent, *, function_name: str, function_args: dict[str, Any
         screenshot_path = parsed.get("screenshot_path")
         if isinstance(screenshot_path, str) and screenshot_path.strip():
             browser["screenshot_count"] += 1
-            _append_unique(browser["screenshot_paths"], os.path.abspath(screenshot_path))
 
 
 def emit_turn_sidecar(
@@ -199,7 +197,7 @@ def emit_turn_sidecar(
             "error_message": error_message,
             "model": str(model or getattr(agent, "model", "") or ""),
             "provider": str(getattr(agent, "provider", "") or ""),
-            "screenshot_paths": list(browser.get("screenshot_paths") or []),
+            "screenshot_paths": [],
             "evidence_refs": list(evidence_refs),
         }
     elif platform_key in _GATEWAY_PLATFORMS:
