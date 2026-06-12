@@ -1,0 +1,224 @@
+{
+  "consolidation_id": "tpcon_4421e19ba058d222",
+  "source_write_id": "tpwrite_f62e8067efc48f89",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "workflow_id": "decision_brief_pack",
+  "consolidated_at": "2026-06-12T18:21:51Z",
+  "taskpool_write_enabled": true,
+  "taskpool_claim_enabled": false,
+  "runtime_enabled": false,
+  "model_call_enabled": false,
+  "adapter_write_enabled": false,
+  "external_side_effects_enabled": false,
+  "source_candidate_count": 19,
+  "groups": [
+    {
+      "group_id": "contract_acceptance_governance",
+      "title": "Workflow kernel consolidated candidate｜contract acceptance governance",
+      "objective": "Consolidate workflow contract, acceptance-policy, evidence-prefix, and human-gate governance candidates into one reviewable runtime-readiness task.",
+      "capability_delta": "contract and acceptance governance candidates are grouped for runtime-readiness review",
+      "source_candidate_ids": [
+        "candidate_39c4439266be",
+        "candidate_cdafd3c69bb1",
+        "candidate_f9cb9d798770",
+        "candidate_454227a3c46e",
+        "candidate_48f87b14c0a0",
+        "candidate_005107060ee9"
+      ],
+      "source_task_ids": [
+        "2026-06-13-workflow-kernel-import-candidateall-modules-have-evidence-required",
+        "2026-06-13-workflow-kernel-import-candidateall-modules-have-model-policy",
+        "2026-06-13-workflow-kernel-import-candidateevidence-prefixes-valid",
+        "2026-06-13-workflow-kernel-import-candidatehuman-gate-packet-fields-present",
+        "2026-06-13-workflow-kernel-import-candidateruntime-disabled-in-phase1",
+        "2026-06-13-workflow-kernel-import-candidateworkflow-contract-valid"
+      ],
+      "source_criteria": [
+        "all_modules_have_evidence_required",
+        "all_modules_have_model_policy",
+        "evidence_prefixes_valid",
+        "human_gate_packet_fields_present",
+        "runtime_disabled_in_phase1",
+        "workflow_contract_valid"
+      ],
+      "requires_human_gate": false
+    },
+    {
+      "group_id": "module_contracts",
+      "title": "Workflow kernel consolidated candidate｜module contracts",
+      "objective": "Consolidate module contract candidates for goal calibration, source research, synthesis, acceptance compilation, and evidence verification.",
+      "capability_delta": "module contract candidates are grouped for runtime integration planning",
+      "source_candidate_ids": [
+        "candidate_ca981dc669d3",
+        "candidate_fbf27a68b092",
+        "candidate_bf294084a000",
+        "candidate_53b83ca6599c",
+        "candidate_0ac35cad50a4"
+      ],
+      "source_task_ids": [
+        "2026-06-13-workflow-kernel-import-candidatemodule-contract-acceptance-compilerv1",
+        "2026-06-13-workflow-kernel-import-candidatemodule-contract-decision-synthesizerv1",
+        "2026-06-13-workflow-kernel-import-candidatemodule-contract-evidence-verifierv1",
+        "2026-06-13-workflow-kernel-import-candidatemodule-contract-goal-calibratorv1",
+        "2026-06-13-workflow-kernel-import-candidatemodule-contract-source-researchv1"
+      ],
+      "source_criteria": [
+        "module_contract:acceptance_compiler.v1",
+        "module_contract:decision_synthesizer.v1",
+        "module_contract:evidence_verifier.v1",
+        "module_contract:goal_calibrator.v1",
+        "module_contract:source_research.v1"
+      ],
+      "requires_human_gate": false
+    },
+    {
+      "group_id": "model_routes",
+      "title": "Workflow kernel consolidated candidate｜model routes",
+      "objective": "Consolidate model route candidates so runtime integration can later bind modules to pinned route aliases without opening model-call authority now.",
+      "capability_delta": "model route candidates are grouped while model calls remain disabled",
+      "source_candidate_ids": [
+        "candidate_ef88f73a3242",
+        "candidate_ba9b1ec6fc1e",
+        "candidate_023795fa04fe",
+        "candidate_8a9a6d7338de",
+        "candidate_7da57275094e"
+      ],
+      "source_task_ids": [
+        "2026-06-13-workflow-kernel-import-candidatemodel-route-acceptance-compilerv1",
+        "2026-06-13-workflow-kernel-import-candidatemodel-route-decision-synthesizerv1",
+        "2026-06-13-workflow-kernel-import-candidatemodel-route-evidence-verifierv1",
+        "2026-06-13-workflow-kernel-import-candidatemodel-route-goal-calibratorv1",
+        "2026-06-13-workflow-kernel-import-candidatemodel-route-source-researchv1"
+      ],
+      "source_criteria": [
+        "model_route:acceptance_compiler.v1",
+        "model_route:decision_synthesizer.v1",
+        "model_route:evidence_verifier.v1",
+        "model_route:goal_calibrator.v1",
+        "model_route:source_research.v1"
+      ],
+      "requires_human_gate": false
+    },
+    {
+      "group_id": "safety_flags",
+      "title": "Workflow kernel consolidated candidate｜safety flags",
+      "objective": "Consolidate safety-flag candidates that must remain explicit human gates before runtime, write-through, or external side effects are opened.",
+      "capability_delta": "safety flag candidates are grouped as explicit human-gated runtime blockers",
+      "source_candidate_ids": [
+        "candidate_fe32d2071478",
+        "candidate_5c173d834d17",
+        "candidate_bafcf67c5304"
+      ],
+      "source_task_ids": [
+        "2026-06-13-workflow-kernel-import-candidatesafety-flag-external-side-effects-enabled",
+        "2026-06-13-workflow-kernel-import-candidatesafety-flag-runtime-enabled",
+        "2026-06-13-workflow-kernel-import-candidatesafety-flag-write-through-enabled"
+      ],
+      "source_criteria": [
+        "safety_flag:external_side_effects_enabled",
+        "safety_flag:runtime_enabled",
+        "safety_flag:write_through_enabled"
+      ],
+      "requires_human_gate": true
+    }
+  ],
+  "created_tasks": [
+    {
+      "group_id": "contract_acceptance_governance",
+      "task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance.md",
+      "status": "proposed",
+      "source_candidate_ids": [
+        "candidate_39c4439266be",
+        "candidate_cdafd3c69bb1",
+        "candidate_f9cb9d798770",
+        "candidate_454227a3c46e",
+        "candidate_48f87b14c0a0",
+        "candidate_005107060ee9"
+      ],
+      "source_criteria": [
+        "all_modules_have_evidence_required",
+        "all_modules_have_model_policy",
+        "evidence_prefixes_valid",
+        "human_gate_packet_fields_present",
+        "runtime_disabled_in_phase1",
+        "workflow_contract_valid"
+      ],
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "group_id": "module_contracts",
+      "task_id": "2026-06-13-workflow-kernel-consolidated-candidatemodule-contracts",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatemodule-contracts.md",
+      "status": "proposed",
+      "source_candidate_ids": [
+        "candidate_ca981dc669d3",
+        "candidate_fbf27a68b092",
+        "candidate_bf294084a000",
+        "candidate_53b83ca6599c",
+        "candidate_0ac35cad50a4"
+      ],
+      "source_criteria": [
+        "module_contract:acceptance_compiler.v1",
+        "module_contract:decision_synthesizer.v1",
+        "module_contract:evidence_verifier.v1",
+        "module_contract:goal_calibrator.v1",
+        "module_contract:source_research.v1"
+      ],
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "group_id": "model_routes",
+      "task_id": "2026-06-13-workflow-kernel-consolidated-candidatemodel-routes",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatemodel-routes.md",
+      "status": "proposed",
+      "source_candidate_ids": [
+        "candidate_ef88f73a3242",
+        "candidate_ba9b1ec6fc1e",
+        "candidate_023795fa04fe",
+        "candidate_8a9a6d7338de",
+        "candidate_7da57275094e"
+      ],
+      "source_criteria": [
+        "model_route:acceptance_compiler.v1",
+        "model_route:decision_synthesizer.v1",
+        "model_route:evidence_verifier.v1",
+        "model_route:goal_calibrator.v1",
+        "model_route:source_research.v1"
+      ],
+      "readback_verified": true,
+      "idempotent_replay": false
+    },
+    {
+      "group_id": "safety_flags",
+      "task_id": "2026-06-13-workflow-kernel-consolidated-candidatesafety-flags",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatesafety-flags.md",
+      "status": "proposed",
+      "source_candidate_ids": [
+        "candidate_fe32d2071478",
+        "candidate_5c173d834d17",
+        "candidate_bafcf67c5304"
+      ],
+      "source_criteria": [
+        "safety_flag:external_side_effects_enabled",
+        "safety_flag:runtime_enabled",
+        "safety_flag:write_through_enabled"
+      ],
+      "readback_verified": true,
+      "idempotent_replay": false
+    }
+  ],
+  "readback_verified": true,
+  "derived_refresh": {
+    "status": "OK",
+    "reason": "workflow_candidate_consolidation_write",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "generated_at": "2026-06-13T02:21:51+08:00"
+  },
+  "rollback_plan": "If rejected, archive/remove only the consolidated proposed task notes after separate rollback authorization; source candidate notes were not archived/deleted and no runtime/claim/model/adapter state exists.",
+  "boundary": "candidate_consolidation_write_done_no_claim_no_runtime"
+}

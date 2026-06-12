@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/taskpool_candidate_consolidation_result.schema.json",
+  "title": "Hermes Workflow Taskpool Candidate Consolidation Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "consolidation_id",
+    "source_write_id",
+    "run_id",
+    "workflow_id",
+    "consolidated_at",
+    "taskpool_write_enabled",
+    "taskpool_claim_enabled",
+    "runtime_enabled",
+    "model_call_enabled",
+    "adapter_write_enabled",
+    "external_side_effects_enabled",
+    "source_candidate_count",
+    "groups",
+    "created_tasks",
+    "readback_verified",
+    "rollback_plan",
+    "boundary"
+  ],
+  "properties": {
+    "consolidation_id": {"type": "string", "minLength": 1},
+    "source_write_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "consolidated_at": {"type": "string", "minLength": 1},
+    "taskpool_write_enabled": {"const": true},
+    "taskpool_claim_enabled": {"const": false},
+    "runtime_enabled": {"const": false},
+    "model_call_enabled": {"const": false},
+    "adapter_write_enabled": {"const": false},
+    "external_side_effects_enabled": {"const": false},
+    "source_candidate_count": {"type": "integer", "minimum": 1},
+    "groups": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "created_tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["group_id", "task_id", "task_path", "status", "source_candidate_ids", "source_criteria", "readback_verified", "idempotent_replay"],
+        "properties": {
+          "group_id": {"type": "string", "minLength": 1},
+          "task_id": {"type": "string", "minLength": 1},
+          "task_path": {"type": "string", "minLength": 1},
+          "status": {"const": "proposed"},
+          "source_candidate_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "source_criteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "readback_verified": {"const": true},
+          "idempotent_replay": {"type": "boolean"}
+        }
+      }
+    },
+    "readback_verified": {"const": true},
+    "rollback_plan": {"type": "string", "minLength": 1},
+    "boundary": {"const": "candidate_consolidation_write_done_no_claim_no_runtime"}
+  }
+}
