@@ -6,6 +6,26 @@ import run_agent as run_agent_module
 from run_agent import AIAgent
 
 
+def test_background_review_prompts_include_landing_zone_classifier():
+    """Dreaming-style review must classify lessons before durable writes."""
+    import agent.background_review as bg_review
+
+    prompts = [
+        bg_review._MEMORY_REVIEW_PROMPT,
+        bg_review._SKILL_REVIEW_PROMPT,
+        bg_review._COMBINED_REVIEW_PROMPT,
+    ]
+
+    for prompt in prompts:
+        assert "project profile" in prompt
+        assert "task progress" in prompt or "session outcome" in prompt or "task/session progress" in prompt
+        assert "skill" in prompt
+
+    assert "experience-ratchet proposal" in bg_review._COMBINED_REVIEW_PROMPT
+    assert "taskpool candidate" in bg_review._COMBINED_REVIEW_PROMPT
+    assert "raw MEMORY/USER dumps" in bg_review._COMBINED_REVIEW_PROMPT
+
+
 def _bare_agent() -> AIAgent:
     agent = object.__new__(AIAgent)
     agent.model = "fake-model"
