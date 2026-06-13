@@ -55,7 +55,7 @@ def test_correlates_post_projection_every4h_run(tmp_path):
     write_jsonl(log_dir / "multi-model-smoke-every4h-wrapper.jsonl", [{"timestamp": "2026-06-13T16:17:36Z", "status": "ok", "ok": True, "returncode": 0, "script_args": ["--skip-claude", "--timeout", "45"], "summary": {"status": "pass"}}])
     write_jsonl(log_dir / "multi-model-smoke-daily-full-wrapper.jsonl", [{"timestamp": "2026-06-13T00:35:19Z", "status": "partial_fail_recorded", "ok": False}])
 
-    report = mod.build_report(jobs_path=jobs, projection_path=projection, log_dir=log_dir)
+    report = mod.build_report(jobs_path=jobs, projection_path=projection, log_dir=log_dir, receipt_ledger=tmp_path / "receipts.jsonl")
 
     assert report["status"] == "REAL_RUN_CORRELATION_PARTIAL_READY"
     assert report["correlation_counts"] == {"ONLY_PRE_PROJECTION_RUN_OBSERVED": 1, "REAL_RUN_AFTER_PROJECTION_CORRELATED": 1}
@@ -73,7 +73,7 @@ def test_awaiting_when_all_logs_pre_projection(tmp_path):
     write_jsonl(log_dir / "multi-model-smoke-every4h-wrapper.jsonl", [{"timestamp": "2026-06-13T10:17:36Z", "status": "ok", "ok": True}])
     write_jsonl(log_dir / "multi-model-smoke-daily-full-wrapper.jsonl", [{"timestamp": "2026-06-13T00:35:19Z", "status": "partial_fail_recorded", "ok": False}])
 
-    report = mod.build_report(jobs_path=jobs, projection_path=projection, log_dir=log_dir)
+    report = mod.build_report(jobs_path=jobs, projection_path=projection, log_dir=log_dir, receipt_ledger=tmp_path / "receipts.jsonl")
 
     assert report["status"] == "AWAITING_POST_PROJECTION_SCHEDULED_RUN"
     assert report["correlation_counts"] == {"ONLY_PRE_PROJECTION_RUN_OBSERVED": 2}
@@ -86,7 +86,7 @@ def test_missing_wrapper_log_degrades(tmp_path):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
 
-    report = mod.build_report(jobs_path=jobs, projection_path=projection, log_dir=log_dir)
+    report = mod.build_report(jobs_path=jobs, projection_path=projection, log_dir=log_dir, receipt_ledger=tmp_path / "receipts.jsonl")
 
     assert report["status"] == "RUN_CORRELATION_DEGRADED"
     assert report["correlation_counts"] == {"NO_WRAPPER_LOG_FOUND": 2}
@@ -99,3 +99,23 @@ def test_latest_row_uses_timestamp_order_not_file_order():
         {"timestamp": "2026-06-13T10:17:36Z", "status": "old"},
     ])
     assert row["status"] == "new"
+
+
+def test_receipt_after_projection_takes_precedence(tmp_path):
+    mod = load()
+    jobs = write_json(tmp_path / "jobs.json", jobs_payload())
+    projection = write_json(tmp_path / "projection.json", projection_payload())
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    write_jsonl(log_dir / "multi-model-smoke-every4h-wrapper.jsonl", [{"timestamp": "2026-06-13T10:17:36Z", "status": "ok", "ok": True}])
+    write_jsonl(log_dir / "multi-model-smoke-daily-full-wrapper.jsonl", [{"timestamp": "2026-06-13T00:35:19Z", "status": "partial_fail_recorded", "ok": False}])
+    receipts = write_jsonl(tmp_path / "receipts.jsonl", [
+        {"created_at": "2026-06-13T16:17:40Z", "job_id": "2c14ca2a9bd2", "kernel_shim": True, "runtime_mode": "provider_exclusion_or_original_run", "payload_status": "ok"}
+    ])
+
+    report = mod.build_report(jobs_path=jobs, projection_path=projection, log_dir=log_dir, receipt_ledger=receipts)
+
+    assert report["status"] == "RECEIPT_CORRELATION_PARTIAL_READY"
+    assert report["correlation_counts"] == {"ONLY_PRE_PROJECTION_RUN_OBSERVED": 1, "RECEIPT_AFTER_PROJECTION_CORRELATED": 1}
+    by_id = {o["job_id"]: o for o in report["outcomes"]}
+    assert by_id["2c14ca2a9bd2"]["latest_receipt"]["kernel_shim"] is True

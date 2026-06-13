@@ -27,6 +27,7 @@ from workflow_kernel.io import read_json_artifact, write_json_artifact
 DEFAULT_JOBS = Path.home() / ".hermes" / "cron" / "jobs.json"
 DEFAULT_PROJECTION_GLOB = ROOT / "docs" / "private" / "workflow-kernel-cron-runtime-projection" / "workflow_kernel_cron_runtime_projection_*.json"
 DEFAULT_LOG_DIR = Path.home() / ".hermes" / "logs"
+DEFAULT_RECEIPT_LEDGER = Path.home() / ".hermes" / "state" / "cron-provider-health-gate" / "wrapper_run_receipts.jsonl"
 DEFAULT_OUT = ROOT / "docs" / "private" / "workflow-kernel-cron-run-correlation"
 
 WRAPPER_LOGS = {
@@ -98,11 +99,27 @@ def projection_by_job(projection: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {str(p.get("job_id")): p for p in projection.get("wrapper_projections", []) if isinstance(p, dict) and p.get("job_id")}
 
 
-def outcome_status(*, projection: dict[str, Any] | None, job: dict[str, Any] | None, row: dict[str, Any] | None, projection_created_at: datetime | None) -> str:
+def latest_receipts_by_job(path: Path) -> dict[str, dict[str, Any]]:
+    rows = read_jsonl(path)
+    latest: dict[str, tuple[datetime, dict[str, Any]]] = {}
+    for row in rows:
+        job_id = str(row.get("job_id") or "")
+        created = parse_time(str(row.get("created_at") or ""))
+        if not job_id or not created:
+            continue
+        if job_id not in latest or created > latest[job_id][0]:
+            latest[job_id] = (created, row)
+    return {job_id: row for job_id, (_created, row) in latest.items()}
+
+
+def outcome_status(*, projection: dict[str, Any] | None, job: dict[str, Any] | None, row: dict[str, Any] | None, receipt: dict[str, Any] | None, projection_created_at: datetime | None) -> str:
     if projection is None:
         return "NO_PROJECTION_FOR_JOB"
     if job is None:
         return "CRON_JOB_MISSING"
+    receipt_ts = parse_time(str((receipt or {}).get("created_at") or ""))
+    if receipt and projection_created_at and receipt_ts and receipt_ts >= projection_created_at:
+        return "RECEIPT_AFTER_PROJECTION_CORRELATED"
     if row is None:
         return "NO_WRAPPER_LOG_FOUND"
     row_ts = parse_time(str(row.get("timestamp") or ""))
@@ -128,13 +145,31 @@ def summarize_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
-def correlate_job(job_id: str, *, jobs: dict[str, dict[str, Any]], projection: dict[str, dict[str, Any]], projection_created_at: datetime | None, log_dir: Path) -> dict[str, Any]:
+def summarize_receipt(receipt: dict[str, Any] | None) -> dict[str, Any] | None:
+    if receipt is None:
+        return None
+    return {
+        "created_at": receipt.get("created_at"),
+        "job_id": receipt.get("job_id"),
+        "runtime_mode": receipt.get("runtime_mode"),
+        "kernel_shim": receipt.get("kernel_shim"),
+        "gate_report_id": receipt.get("gate_report_id"),
+        "gate_decision": receipt.get("gate_decision"),
+        "payload_status": receipt.get("payload_status"),
+        "payload_ok": receipt.get("payload_ok"),
+        "model_generation_attempted": receipt.get("model_generation_attempted"),
+        "cron_state_mutated": receipt.get("cron_state_mutated"),
+    }
+
+
+def correlate_job(job_id: str, *, jobs: dict[str, dict[str, Any]], projection: dict[str, dict[str, Any]], receipts: dict[str, dict[str, Any]], projection_created_at: datetime | None, log_dir: Path) -> dict[str, Any]:
     job = jobs.get(job_id)
     proj = projection.get(job_id)
+    receipt = receipts.get(job_id)
     log_path = log_dir / WRAPPER_LOGS[job_id]
     row = latest_row(read_jsonl(log_path))
     row_ts = parse_time(str(row.get("timestamp") or "")) if row else None
-    status = outcome_status(projection=proj, job=job, row=row, projection_created_at=projection_created_at)
+    status = outcome_status(projection=proj, job=job, row=row, receipt=receipt, projection_created_at=projection_created_at)
     return {
         "job_id": job_id,
         "job_name": (proj or {}).get("job_name") or (job or {}).get("name"),
@@ -146,6 +181,7 @@ def correlate_job(job_id: str, *, jobs: dict[str, dict[str, Any]], projection: d
         "cron_next_run_at": (job or {}).get("next_run_at"),
         "log_path": str(log_path),
         "latest_log": summarize_row(row),
+        "latest_receipt": summarize_receipt(receipt),
         "latest_log_after_projection": bool(projection_created_at and row_ts and row_ts >= projection_created_at),
         "correlation_status": status,
         "interpretation": interpretation(status, row),
@@ -153,6 +189,8 @@ def correlate_job(job_id: str, *, jobs: dict[str, dict[str, Any]], projection: d
 
 
 def interpretation(status: str, row: dict[str, Any] | None) -> str:
+    if status == "RECEIPT_AFTER_PROJECTION_CORRELATED":
+        return "direct wrapper-run receipt after projection confirms kernel/gate metadata capture"
     if status == "REAL_RUN_AFTER_PROJECTION_CORRELATED":
         if row and row.get("ok") is True:
             return "scheduler ran wrapper after projection and wrapper outcome was ok"
@@ -164,19 +202,22 @@ def interpretation(status: str, row: dict[str, Any] | None) -> str:
     return status.lower()
 
 
-def build_report(*, jobs_path: Path, projection_path: Path | None, log_dir: Path) -> dict[str, Any]:
+def build_report(*, jobs_path: Path, projection_path: Path | None, log_dir: Path, receipt_ledger: Path) -> dict[str, Any]:
     projection_report = load_json(projection_path) if projection_path else None
     projection_created_at = parse_time(str((projection_report or {}).get("created_at") or ""))
     jobs = load_jobs(jobs_path)
     projections = projection_by_job(projection_report or {})
+    receipts = latest_receipts_by_job(receipt_ledger)
     outcomes = [
-        correlate_job(cron_wrappers.DAILY_FULL_JOB_ID, jobs=jobs, projection=projections, projection_created_at=projection_created_at, log_dir=log_dir),
-        correlate_job(cron_wrappers.EVERY4H_JOB_ID, jobs=jobs, projection=projections, projection_created_at=projection_created_at, log_dir=log_dir),
+        correlate_job(cron_wrappers.DAILY_FULL_JOB_ID, jobs=jobs, projection=projections, receipts=receipts, projection_created_at=projection_created_at, log_dir=log_dir),
+        correlate_job(cron_wrappers.EVERY4H_JOB_ID, jobs=jobs, projection=projections, receipts=receipts, projection_created_at=projection_created_at, log_dir=log_dir),
     ]
     counts: dict[str, int] = {}
     for o in outcomes:
         counts[o["correlation_status"]] = counts.get(o["correlation_status"], 0) + 1
-    if counts.get("REAL_RUN_AFTER_PROJECTION_CORRELATED", 0) >= 1:
+    if counts.get("RECEIPT_AFTER_PROJECTION_CORRELATED", 0) >= 1:
+        status = "RECEIPT_CORRELATION_PARTIAL_READY"
+    elif counts.get("REAL_RUN_AFTER_PROJECTION_CORRELATED", 0) >= 1:
         status = "REAL_RUN_CORRELATION_PARTIAL_READY"
     elif all(o["correlation_status"] == "ONLY_PRE_PROJECTION_RUN_OBSERVED" for o in outcomes):
         status = "AWAITING_POST_PROJECTION_SCHEDULED_RUN"
@@ -189,6 +230,7 @@ def build_report(*, jobs_path: Path, projection_path: Path | None, log_dir: Path
         "scope": "read-only correlation between scheduler state, kernel-shim projection, and wrapper JSONL outcomes",
         "jobs_path": str(jobs_path),
         "projection_path": str(projection_path) if projection_path else None,
+        "receipt_ledger": str(receipt_ledger),
         "projection_created_at": (projection_report or {}).get("created_at"),
         "log_dir": str(log_dir),
         "correlation_counts": counts,
@@ -240,12 +282,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jobs", default=str(DEFAULT_JOBS))
     ap.add_argument("--projection", default=None, help="Projection report path. Defaults to newest workflow_kernel_cron_runtime_projection_*.json")
     ap.add_argument("--log-dir", default=str(DEFAULT_LOG_DIR))
+    ap.add_argument("--receipt-ledger", default=str(DEFAULT_RECEIPT_LEDGER))
     ap.add_argument("--write-report", action="store_true")
     ap.add_argument("--out-dir", default=str(DEFAULT_OUT))
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     projection_path = Path(args.projection) if args.projection else newest_path(DEFAULT_PROJECTION_GLOB)
-    report = build_report(jobs_path=Path(args.jobs), projection_path=projection_path, log_dir=Path(args.log_dir))
+    report = build_report(jobs_path=Path(args.jobs), projection_path=projection_path, log_dir=Path(args.log_dir), receipt_ledger=Path(args.receipt_ledger))
     if args.write_report:
         report["artifacts"] = write_report(report, Path(args.out_dir))
     if args.json:
