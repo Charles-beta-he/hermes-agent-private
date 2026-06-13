@@ -1,0 +1,185 @@
+{
+  "class_counts": {
+    "provider_generation": 7,
+    "script_network_failure": 1,
+    "telegram_delivery": 1
+  },
+  "created_at": "2026-06-13T09:11:05Z",
+  "failed_count": 9,
+  "failed_jobs": [
+    {
+      "classes": [
+        "provider_generation",
+        "network_or_proxy"
+      ],
+      "deliver": "local",
+      "job_id": "789ca7d5e718",
+      "last_delivery_error": null,
+      "last_error_excerpt": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T12:06:23.782476+08:00",
+      "model": null,
+      "name": "自进化健康监控告警",
+      "primary_class": "provider_generation",
+      "provider": null,
+      "recommendation": "retry only after provider/network probe; avoid burning model calls in tight loops",
+      "script": null
+    },
+    {
+      "classes": [
+        "provider_generation",
+        "network_or_proxy"
+      ],
+      "deliver": "local",
+      "job_id": "2c14ca2a9bd2",
+      "last_delivery_error": null,
+      "last_error_excerpt": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T12:19:07.976264+08:00",
+      "model": null,
+      "name": "multi-model-smoke-every-4h",
+      "primary_class": "provider_generation",
+      "provider": null,
+      "recommendation": "retry only after provider/network probe; avoid burning model calls in tight loops",
+      "script": "multi-model-smoke-every4h-wrapper.py"
+    },
+    {
+      "classes": [
+        "provider_generation",
+        "network_or_proxy"
+      ],
+      "deliver": "local",
+      "job_id": "42baeebb646c",
+      "last_delivery_error": null,
+      "last_error_excerpt": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T08:37:48.296336+08:00",
+      "model": "mimo-v2.5-pro",
+      "name": "multi-model-smoke-daily-full",
+      "primary_class": "provider_generation",
+      "provider": "xiaomi",
+      "recommendation": "retry only after provider/network probe; avoid burning model calls in tight loops",
+      "script": "multi-model-smoke-daily-full-wrapper.py"
+    },
+    {
+      "classes": [
+        "provider_generation",
+        "network_or_proxy"
+      ],
+      "deliver": "local",
+      "job_id": "30842cd6b22b",
+      "last_delivery_error": null,
+      "last_error_excerpt": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T12:13:34.032764+08:00",
+      "model": null,
+      "name": "cron-health-quarantine-report-6h",
+      "primary_class": "provider_generation",
+      "provider": null,
+      "recommendation": "retry only after provider/network probe; avoid burning model calls in tight loops",
+      "script": "cron-health-quarantine.py"
+    },
+    {
+      "classes": [
+        "provider_generation",
+        "network_or_proxy"
+      ],
+      "deliver": "local",
+      "job_id": "b289e9307230",
+      "last_delivery_error": null,
+      "last_error_excerpt": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T12:01:25.882843+08:00",
+      "model": "mimo-v2.5-pro",
+      "name": "orchestrator-selfcheck-6h",
+      "primary_class": "provider_generation",
+      "provider": "xiaomi",
+      "recommendation": "retry only after provider/network probe; avoid burning model calls in tight loops",
+      "script": "brain_task_orchestrator_selfcheck.py"
+    },
+    {
+      "classes": [
+        "provider_generation",
+        "network_or_proxy"
+      ],
+      "deliver": "local",
+      "job_id": "8c40491124b1",
+      "last_delivery_error": null,
+      "last_error_excerpt": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T12:16:34.538188+08:00",
+      "model": "mimo-v2.5-pro",
+      "name": "memory-selfcheck-6h",
+      "primary_class": "provider_generation",
+      "provider": "xiaomi",
+      "recommendation": "retry only after provider/network probe; avoid burning model calls in tight loops",
+      "script": "agent_memory_architecture_selfcheck.py"
+    },
+    {
+      "classes": [
+        "provider_generation",
+        "network_or_proxy",
+        "telegram_delivery"
+      ],
+      "deliver": "telegram:he cheng (dm)",
+      "job_id": "c01e3574e31c",
+      "last_delivery_error": "delivery error: Telegram send failed: httpx.ProxyError: 503 Service Unavailable",
+      "last_error_excerpt": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T09:01:06.932313+08:00",
+      "model": "gpt-5.4",
+      "name": "aihot-daily-report",
+      "primary_class": "telegram_delivery",
+      "provider": "openai-codex",
+      "recommendation": "keep message in ledger and retry through governed notification policy after proxy recovers",
+      "script": null
+    },
+    {
+      "classes": [
+        "provider_generation",
+        "network_or_proxy",
+        "script_failure"
+      ],
+      "deliver": "local",
+      "job_id": "8aa11d544e8c",
+      "last_delivery_error": null,
+      "last_error_excerpt": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/Users/charles/.hermes/scripts/upstream-ratchet-review.py\", line 402, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/Users/charles/.hermes/scripts/upstream-ratchet-review.py\", line 391, in main\n    report, should_print = run_review(args)\n                           ^^^^^^^^^^^^^^^^\n  File \"/Users/charles/.hermes/scripts/upstream-ratchet-review.py\", line 287, in run_review\n    watch = collect_watch_report(repo, no_fetch=args.no_fetch, watch_state=watch_state_path)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/charles/.hermes/scripts/upstream-ratchet-review.py\", line 84, in collect_watch_report\n    report, _ = watcher.collect(repo, watch_state, repo / \"docs/private/overlay-registry.md\", no_fetch=no_fetch)\n                ^^",
+      "last_run_at": "2026-06-13T12:01:18.660417+08:00",
+      "model": null,
+      "name": "hermes-upstream-ratchet-review",
+      "primary_class": "script_network_failure",
+      "provider": null,
+      "recommendation": "add no-fetch/offline fallback and classify as network-bound script failure",
+      "script": "upstream_ratchet_review_noagent.py"
+    },
+    {
+      "classes": [
+        "provider_generation",
+        "network_or_proxy"
+      ],
+      "deliver": "local",
+      "job_id": "56cba2b9feff",
+      "last_delivery_error": null,
+      "last_error_excerpt": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T11:59:27.082245+08:00",
+      "model": null,
+      "name": "Hermes self-architecture mission",
+      "primary_class": "provider_generation",
+      "provider": null,
+      "recommendation": "retry only after provider/network probe; avoid burning model calls in tight loops",
+      "script": "mission_tick_msn_20260610_120149_27c88cfc.py"
+    }
+  ],
+  "jobs_path": "/Users/charles/.hermes/cron/jobs.json",
+  "next_actions": [
+    "run provider/network probe once and persist result",
+    "add no-fetch fallback for upstream ratchet review",
+    "route Telegram retry through governed notification policy ledger",
+    "quarantine repeated provider_generation jobs only after a second classified failure window"
+  ],
+  "p1_count": 9,
+  "report_id": "cron_provider_triage_20260613_phase22",
+  "safe_boundaries": [
+    "no cron schedule mutation",
+    "no job pause/resume/remove",
+    "no model-call retry loop",
+    "no external message send",
+    "no config migration"
+  ],
+  "scope": "Hermes cron/provider degradation triage; read-only classification",
+  "status": "DEGRADED_NOT_BLOCKED",
+  "total_jobs": 57
+}
