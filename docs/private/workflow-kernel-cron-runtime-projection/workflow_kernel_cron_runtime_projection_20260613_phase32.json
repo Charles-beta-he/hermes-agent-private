@@ -1,0 +1,92 @@
+{
+  "created_at": "2026-06-13T14:27:16Z",
+  "endpoint_statuses": {
+    "deepseek": "reachable",
+    "github": "reachable",
+    "google_gemini": "reachable",
+    "openai": "reachable",
+    "telegram": "reachable",
+    "xiaomi": "reachable"
+  },
+  "gate_artifact": {
+    "age_seconds": 43.0,
+    "created_at": "2026-06-13T14:26:33Z",
+    "exists": true,
+    "stale": false,
+    "stale_threshold_hours": 24.0
+  },
+  "gate_path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-provider-health-gate/cron_provider_health_gate_20260613_phase24.json",
+  "jobs_path": "/Users/charles/.hermes/cron/jobs.json",
+  "next_actions": [
+    "observe next real scheduled wrapper run before scheduler-native execution changes",
+    "if artifacts become stale, refresh provider probe and health gate before trusting wrapper decisions",
+    "keep global runtime switch disabled until a separate explicit enable gate"
+  ],
+  "probe_artifact": {
+    "age_seconds": 43.0,
+    "created_at": "2026-06-13T14:26:33Z",
+    "exists": true,
+    "stale": false,
+    "stale_threshold_hours": 24.0
+  },
+  "probe_path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-provider-network-probe/provider_network_probe_20260613_phase23.json",
+  "projection_counts": {
+    "KERNEL_SHIM_NO_GATE_DECISION_NEEDED": 1,
+    "KERNEL_SHIM_SCHEDULER_READBACK_READY": 1
+  },
+  "report_id": "workflow_kernel_cron_runtime_projection_20260613_phase32",
+  "runtime_switch_enabled_by_default": false,
+  "safe_boundaries": [
+    "no cron/jobs.json mutation",
+    "no cron job execution",
+    "no model generation call",
+    "no external message send",
+    "no credential read/write",
+    "read-only projection only"
+  ],
+  "scope": "read-only scheduler-level projection for opt-in kernel-shim cron wrappers",
+  "status": "SCHEDULER_READBACK_PROJECTION_READY",
+  "wrapper_count": 2,
+  "wrapper_projections": [
+    {
+      "cron_enabled": true,
+      "cron_job_present": true,
+      "cron_state": "scheduled",
+      "degraded_endpoints": null,
+      "expected_runtime_mode": "typed_skip_or_original_run",
+      "gate_decision": "retry_allowed_by_provider_health",
+      "gate_endpoint_classification": "reachable",
+      "gate_target_endpoint": "xiaomi",
+      "job_id": "42baeebb646c",
+      "job_name": "multi-model-smoke-daily-full",
+      "kernel_shim_declared": "workflow_kernel.cron_wrappers",
+      "kernel_shim_detected": true,
+      "last_status": "error",
+      "next_run_at": "2026-06-14T08:35:00+08:00",
+      "projection_status": "KERNEL_SHIM_SCHEDULER_READBACK_READY",
+      "script": "multi-model-smoke-daily-full-wrapper.py",
+      "script_exists": true,
+      "script_path": "/Users/charles/.hermes/scripts/multi-model-smoke-daily-full-wrapper.py"
+    },
+    {
+      "cron_enabled": true,
+      "cron_job_present": true,
+      "cron_state": "scheduled",
+      "degraded_endpoints": null,
+      "expected_runtime_mode": "provider_exclusion_plan_or_original_run",
+      "gate_decision": null,
+      "gate_endpoint_classification": null,
+      "gate_target_endpoint": null,
+      "job_id": "2c14ca2a9bd2",
+      "job_name": "multi-model-smoke-every-4h",
+      "kernel_shim_declared": "workflow_kernel.cron_wrappers",
+      "kernel_shim_detected": true,
+      "last_status": "ok",
+      "next_run_at": "2026-06-14T00:17:00+08:00",
+      "projection_status": "KERNEL_SHIM_NO_GATE_DECISION_NEEDED",
+      "script": "multi-model-smoke-every4h-wrapper.py",
+      "script_exists": true,
+      "script_path": "/Users/charles/.hermes/scripts/multi-model-smoke-every4h-wrapper.py"
+    }
+  ]
+}
