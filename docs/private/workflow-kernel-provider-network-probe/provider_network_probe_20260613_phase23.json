@@ -1,0 +1,87 @@
+{
+  "classification_counts": {
+    "reachable": 5,
+    "tls_error": 1
+  },
+  "created_at": "2026-06-13T09:30:17Z",
+  "next_actions": [
+    "if github is unreachable, use upstream ratchet no-fetch fallback",
+    "if provider hosts are unreachable, keep provider_generation jobs quarantined until next probe",
+    "if telegram is unreachable, keep failed notifications in governed ledger for manual retry"
+  ],
+  "probe_count": 6,
+  "proxy_env_present": {},
+  "report_id": "provider_network_probe_20260613_phase23",
+  "results": [
+    {
+      "classification": "reachable",
+      "duration_ms": 1355,
+      "error": null,
+      "final_host": "github.com",
+      "id": "github",
+      "purpose": "upstream_fetch_visibility",
+      "status_code": 200,
+      "url_host": "github.com"
+    },
+    {
+      "classification": "reachable",
+      "duration_ms": 4341,
+      "error": null,
+      "final_host": "api.openai.com",
+      "id": "openai",
+      "purpose": "default_provider_edge_reachability",
+      "status_code": 421,
+      "url_host": "api.openai.com"
+    },
+    {
+      "classification": "reachable",
+      "duration_ms": 137,
+      "error": null,
+      "final_host": "api.deepseek.com",
+      "id": "deepseek",
+      "purpose": "configured_provider_edge_reachability",
+      "status_code": 401,
+      "url_host": "api.deepseek.com"
+    },
+    {
+      "classification": "tls_error",
+      "duration_ms": 4550,
+      "error": "URLError: <urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1016)>",
+      "final_host": "api.mimogpt.com",
+      "id": "xiaomi",
+      "purpose": "configured_provider_edge_reachability",
+      "status_code": null,
+      "url_host": "api.mimogpt.com"
+    },
+    {
+      "classification": "reachable",
+      "duration_ms": 837,
+      "error": null,
+      "final_host": "generativelanguage.googleapis.com",
+      "id": "google_gemini",
+      "purpose": "oauth_provider_edge_reachability",
+      "status_code": 404,
+      "url_host": "generativelanguage.googleapis.com"
+    },
+    {
+      "classification": "reachable",
+      "duration_ms": 3232,
+      "error": null,
+      "final_host": "core.telegram.org",
+      "id": "telegram",
+      "purpose": "telegram_delivery_edge_reachability",
+      "status_code": 200,
+      "url_host": "api.telegram.org"
+    }
+  ],
+  "safe_boundaries": [
+    "no LLM generation call",
+    "no credential read/write",
+    "no cron job mutation",
+    "no external message send",
+    "no provider retry loop"
+  ],
+  "scope": "bounded unauthenticated provider/network probes for cron degradation triage",
+  "status": "DEGRADED_PARTIAL",
+  "timeout_seconds": 6.0
+}
