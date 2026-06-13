@@ -1,0 +1,235 @@
+{
+  "components": [
+    {
+      "component": "interactive runtime / tools",
+      "evidence": "hermes doctor core env/packages/tools mostly OK; send_message TG smoke test worked; required toolsets available except optional web/browser-cdp APIs.",
+      "score": 8
+    },
+    {
+      "component": "taskpool control plane",
+      "evidence": "selfcheck=PASS, proof-check=PASS, task_count=351; warnings remain for edge node.",
+      "score": 7
+    },
+    {
+      "component": "mission control plane",
+      "evidence": "mission doctor checks all ok, open_decisions=0, tick budget=60 max / board ticks_used=49; cron job itself last_status=error.",
+      "score": 7
+    },
+    {
+      "component": "cron/scheduled automation",
+      "evidence": "diagnostics cron-job-health failed: 9 failed jobs; class provider_generation dominates; one delivery proxy failure.",
+      "score": 5
+    },
+    {
+      "component": "external dispatch governance",
+      "evidence": "Phase19 real TG send receipt exists; Phase20 policy dry-run/allowlist/idempotency/rate-limit ledger exists; unattended sends disabled.",
+      "score": 7
+    },
+    {
+      "component": "self-diagnostics",
+      "evidence": "diagnostics runner score=86.7 with degradation warning; modular runner detected cron health issue and taskpool schema PASS.",
+      "score": 7
+    },
+    {
+      "component": "repository hygiene",
+      "evidence": "## private/main...origin/private/main [ahead 47]; scoped phase changes clean after commits, but unrelated dirty files remain.",
+      "score": 6
+    }
+  ],
+  "created_at": "2026-06-13T16:40:33+08:00",
+  "failed_cron_jobs": [
+    {
+      "deliver": "local",
+      "id": "789ca7d5e718",
+      "last_delivery_error": null,
+      "last_error": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T12:06:23.782476+08:00",
+      "last_status": "error",
+      "model": null,
+      "name": "自进化健康监控告警",
+      "provider": null,
+      "script": null
+    },
+    {
+      "deliver": "local",
+      "id": "2c14ca2a9bd2",
+      "last_delivery_error": null,
+      "last_error": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T12:19:07.976264+08:00",
+      "last_status": "error",
+      "model": null,
+      "name": "multi-model-smoke-every-4h",
+      "provider": null,
+      "script": "multi-model-smoke-every4h-wrapper.py"
+    },
+    {
+      "deliver": "local",
+      "id": "42baeebb646c",
+      "last_delivery_error": null,
+      "last_error": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T08:37:48.296336+08:00",
+      "last_status": "error",
+      "model": "mimo-v2.5-pro",
+      "name": "multi-model-smoke-daily-full",
+      "provider": "xiaomi",
+      "script": "multi-model-smoke-daily-full-wrapper.py"
+    },
+    {
+      "deliver": "local",
+      "id": "30842cd6b22b",
+      "last_delivery_error": null,
+      "last_error": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T12:13:34.032764+08:00",
+      "last_status": "error",
+      "model": null,
+      "name": "cron-health-quarantine-report-6h",
+      "provider": null,
+      "script": "cron-health-quarantine.py"
+    },
+    {
+      "deliver": "local",
+      "id": "b289e9307230",
+      "last_delivery_error": null,
+      "last_error": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T12:01:25.882843+08:00",
+      "last_status": "error",
+      "model": "mimo-v2.5-pro",
+      "name": "orchestrator-selfcheck-6h",
+      "provider": "xiaomi",
+      "script": "brain_task_orchestrator_selfcheck.py"
+    },
+    {
+      "deliver": "local",
+      "id": "8c40491124b1",
+      "last_delivery_error": null,
+      "last_error": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T12:16:34.538188+08:00",
+      "last_status": "error",
+      "model": "mimo-v2.5-pro",
+      "name": "memory-selfcheck-6h",
+      "provider": "xiaomi",
+      "script": "agent_memory_architecture_selfcheck.py"
+    },
+    {
+      "deliver": "telegram:he cheng (dm)",
+      "id": "c01e3574e31c",
+      "last_delivery_error": "delivery error: Telegram send failed: httpx.ProxyError: 503 Service Unavailable",
+      "last_error": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T09:01:06.932313+08:00",
+      "last_status": "error",
+      "model": "gpt-5.4",
+      "name": "aihot-daily-report",
+      "provider": "openai-codex",
+      "script": null
+    },
+    {
+      "deliver": "local",
+      "id": "8aa11d544e8c",
+      "last_delivery_error": null,
+      "last_error": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/Users/charles/.hermes/scripts/upstream-ratchet-review.py\", line 402, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/Users/charles/.hermes/scripts/upstream-ratchet-review.py\", line 391, in main\n    report, should_print = run_review(args)\n                           ^^^^^^^^^^^^^^^^\n  File \"/Users/charles/.hermes/scripts/upstream-ratchet-review.py\", line 287, in run_review\n    watch = collect_watch_report(repo, no_fetch=args.no_fetch, watch_state=watch_state_path)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/charles/.hermes/scripts/upstream-ratchet-review.py\", line 84, in collect_watch_report\n    report, _ = watcher.collect(repo, watch_state, repo / \"docs/private/overlay-registry.md\", no_fetch=no_fetch)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/charles/.hermes/scripts/upstream-ratchet-watch.py\", line 176, in collect\n    run_git(repo, [\"fetch\", \"upstream\", \"main\", \"--quiet\"], timeout=180)\n  File \"/Users/charles/.hermes/scripts/upstream-ratchet-watch.py\", line 55, in run_git\n    raise WatchError(f\"git {' '.join(args)} failed ({proc.returncode}): {err or out}\")\nupstream_ratchet_watch.WatchError: git fetch upstream main --quiet failed (128): fatal: unable to access 'https://github.com/NousResearch/hermes-agent.git/': LibreSSL SSL_connect: SSL_ERROR_SYSCALL in connection to github.com:443",
+      "last_run_at": "2026-06-13T12:01:18.660417+08:00",
+      "last_status": "error",
+      "model": null,
+      "name": "hermes-upstream-ratchet-review",
+      "provider": null,
+      "script": "upstream_ratchet_review_noagent.py"
+    },
+    {
+      "deliver": "local",
+      "id": "56cba2b9feff",
+      "last_delivery_error": null,
+      "last_error": "RuntimeError: Connection error.",
+      "last_run_at": "2026-06-13T11:59:27.082245+08:00",
+      "last_status": "error",
+      "model": null,
+      "name": "Hermes self-architecture mission",
+      "provider": null,
+      "script": "mission_tick_msn_20260610_120149_27c88cfc.py"
+    }
+  ],
+  "findings": [
+    {
+      "class": "availability/degraded automation",
+      "evidence": "diagnostics cron-job-health failed: 9 cron jobs last_status=error; diagnostic score=86.7, degradation={'degraded': True, 'level': 'WARNING', 'drop': 12.0}",
+      "id": "P1-cron-provider-generation-errors",
+      "impact": "mission/health/report jobs may skip or emit stale local-only results; not blocking interactive core.",
+      "recommendation": "next slice: classify provider_generation vs script/network, add cron quarantine/auto-resume packet; do not blanket restart.",
+      "severity": "P1"
+    },
+    {
+      "class": "supply-chain/update visibility",
+      "evidence": "hermes-upstream-ratchet-review failed on git fetch upstream main: LibreSSL SSL_connect SSL_ERROR_SYSCALL github.com:443",
+      "id": "P1-upstream-ratchet-network-fetch",
+      "impact": "upstream drift review blind spot; local commits still scoped, but upstream delta monitoring degraded.",
+      "recommendation": "add no-fetch fallback report and network/proxy diagnostic rather than treating as code failure.",
+      "severity": "P1"
+    },
+    {
+      "class": "configuration drift",
+      "evidence": "hermes doctor: Config version outdated (v23 → v28)",
+      "id": "P2-config-schema-outdated",
+      "impact": "new settings unavailable; current runtime still works.",
+      "recommendation": "run hermes doctor --fix only after reviewing config diff/backup.",
+      "severity": "P2"
+    },
+    {
+      "class": "dependency hygiene",
+      "evidence": "hermes doctor: ui-tui workspace deps has 2 high npm vulnerabilities",
+      "id": "P2-ui-tui-npm-audit",
+      "impact": "UI/TUI package risk; not active control-plane blocker.",
+      "recommendation": "run npm audit fix --workspace ui-tui in scoped branch and test ui-tui.",
+      "severity": "P2"
+    },
+    {
+      "class": "edge execution governance",
+      "evidence": "taskpool selfcheck PASS with warnings: edge node warning: charlesdeMacBook-Pro: heartbeat stale: 1091735s; edge node warning: charlesdeMacBook-Pro: brain_url missing; node is standalone; edge node warning: charlesdeMacBook-Pro: dangerous capabilities present: run_command; require explicit lease policy",
+      "id": "P2-edge-node-lease-policy",
+      "impact": "edge node heartbeat/capability policy is stale; core taskpool schema still PASS.",
+      "recommendation": "refresh/register edge node heartbeat and require explicit lease policy for run_command capability.",
+      "severity": "P2"
+    },
+    {
+      "class": "execution throughput",
+      "evidence": "eligibility-check PASS but eligible=false: reasons=['autorun_disabled', 'no_dispatchable_task'], kill_switch=True",
+      "id": "P2-autorun-kill-switch",
+      "impact": "safe default blocks autonomous task execution; intended unless mission wants worker throughput.",
+      "recommendation": "only open per-task allowlist/lease, not global autorun.",
+      "severity": "P2"
+    }
+  ],
+  "next_phase_recommendation": {
+    "phase": "Phase 22",
+    "safe_actions": [
+      "no external sends",
+      "no global autorun enable",
+      "no config migration without backup/diff",
+      "no npm audit fix without scoped tests"
+    ],
+    "title": "Cron/provider degradation triage and quarantine gate",
+    "why": "Only P1 operational degradation is scheduled automation failures; root cause split is provider/network vs script vs delivery."
+  },
+  "objective": "Evidence-grounded architecture health audit; no destructive fixes or external sends.",
+  "overall_score": 6.8,
+  "positive_evidence": [
+    "No nested .hermes source leak found.",
+    "Hermes doctor core runtime OK",
+    "taskpool selfcheck PASS",
+    "taskpool proof-check PASS",
+    "mission doctor OK",
+    "TG dispatch governance policy landed with unattended sends disabled"
+  ],
+  "raw_artifacts": {
+    "diagnostics.json": "/tmp/hermes_arch_selfcheck_phase21/diagnostics.json",
+    "git_status.txt": "/tmp/hermes_arch_selfcheck_phase21/git_status.txt",
+    "hermes_doctor.txt": "/tmp/hermes_arch_selfcheck_phase21/hermes_doctor.txt",
+    "mission_board.json": "/tmp/hermes_arch_selfcheck_phase21/mission_board.json",
+    "mission_doctor.json": "/tmp/hermes_arch_selfcheck_phase21/mission_doctor.json",
+    "source_leaks.json": "/tmp/hermes_arch_selfcheck_phase21/source_leaks.json",
+    "taskpool_eligibility.json": "/tmp/hermes_arch_selfcheck_phase21/taskpool_eligibility.json",
+    "taskpool_proofcheck.json": "/tmp/hermes_arch_selfcheck_phase21/taskpool_proofcheck.json",
+    "taskpool_selfcheck.json": "/tmp/hermes_arch_selfcheck_phase21/taskpool_selfcheck.json"
+  },
+  "report_id": "arch_selfcheck_20260613_phase21",
+  "scope": "Hermes system architecture self-check after Phase20 Telegram policy",
+  "status": "DEGRADED_NOT_BLOCKED"
+}
