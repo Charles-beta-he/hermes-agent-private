@@ -1,0 +1,16 @@
+{
+  "adapter": "local_outbox_simulator",
+  "external_side_effects_executed": false,
+  "idempotency_key": "phase48:P47A_LOCAL_OUTBOX_ONLY:local_outbox_simulator:5659752eb38d0dda",
+  "payload_digest": "5659752eb38d0dda3b8cd1170bab48e57b6cfa60c8878f287a0fd6182b429f5a",
+  "post_apply_readback": {
+    "external_mutation_found": false,
+    "kind": "local_outbox",
+    "verified": true
+  },
+  "receipt_id": "xdispatch_f939258a1ea1b6a1",
+  "rollback": "not_needed_no_external_mutation",
+  "status": "LOCAL_OUTBOX_POLICY_GATE_RECORDED",
+  "track": "P47A_LOCAL_OUTBOX_ONLY",
+  "unattended_external_dispatch_enabled": false
+}

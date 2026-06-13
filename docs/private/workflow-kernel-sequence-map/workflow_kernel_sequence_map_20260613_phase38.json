@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-13T18:40:38Z",
-  "current_boundary": "Phase47 has produced an external dispatch expansion candidate packet after auto-enable observation; no external adapter will execute without exact adapter/target/payload/mode selection and rollback evidence.",
+  "created_at": "2026-06-13T19:00:26Z",
+  "current_boundary": "Phase48 has recorded a local outbox policy gate after external dispatch candidate selection; no external adapter will execute without exact adapter/target/payload/mode selection and rollback evidence.",
   "next_ladder": [
-    {
-      "authority_needed": "exact adapter/target/payload/mode selection",
-      "name": "External Dispatch Policy Gate or Local Outbox Expansion",
-      "phase": 48,
-      "track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
-      "why_next": "turn the candidate packet into one selected dry-run/local-outbox track before any external side effect"
-    },
     {
       "authority_needed": "none for schema/projection; scoped gate for runtime adoption",
       "name": "Workflow Pack / Agent Pack Schema",
       "phase": 49,
       "track": "PACK_PRODUCTIZATION",
-      "why_next": "extract the proven kernel chain into reusable module/pack manifests"
+      "why_next": "extract the proven kernel/external-dispatch policy chain into reusable module/pack manifests"
+    },
+    {
+      "authority_needed": "exact adapter/target/payload/mode/idempotency/rollback",
+      "name": "Guarded Single External Send",
+      "phase": 50,
+      "track": "GUARDED_EXTERNAL_SEND",
+      "why_next": "only after local outbox policy proof, perform at most one named external side effect with receipt"
     }
   ],
-  "objective": "梳理 Phase17-47 的顺序、依赖、门禁和后续扩展路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启，Phase46 观察已记录，Phase47 外部扩展候选包已就绪。",
-  "phase_count": 31,
+  "objective": "梳理 Phase17-48 的顺序、依赖、门禁和后续扩展路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启，Phase46 观察已记录，Phase47 外部扩展候选包已就绪，Phase48 本地 outbox policy gate 已记录。",
+  "phase_count": 32,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -459,9 +459,23 @@
       ],
       "phase": 47,
       "status": "candidate_ready"
+    },
+    {
+      "authority": "local outbox only",
+      "depends_on": [
+        47
+      ],
+      "gate": "external adapters still require exact target/payload/mode",
+      "layer": "external dispatch policy gate",
+      "name": "External Dispatch Policy Gate Local Outbox",
+      "next_unlocked": [
+        49
+      ],
+      "phase": 48,
+      "status": "local_outbox_recorded"
     }
   ],
-  "recommended_next": "Phase48 External dispatch policy gate or local outbox expansion",
+  "recommended_next": "Phase49 Workflow Pack / Agent Pack schema",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

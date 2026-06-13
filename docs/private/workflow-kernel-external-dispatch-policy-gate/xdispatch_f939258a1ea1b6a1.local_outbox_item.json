@@ -1,0 +1,19 @@
+{
+  "adapter": "local_outbox_simulator",
+  "created_at": "2026-06-13T18:58:58Z",
+  "delivery_status": "local_outbox_recorded_not_dispatched",
+  "external_side_effects_enabled": false,
+  "idempotency_key": "phase48:P47A_LOCAL_OUTBOX_ONLY:local_outbox_simulator:5659752eb38d0dda",
+  "outbox_item_id": "xdispatch_f939258a1ea1b6a1",
+  "payload_digest": "5659752eb38d0dda3b8cd1170bab48e57b6cfa60c8878f287a0fd6182b429f5a",
+  "payload_preview": {
+    "external_side_effects_enabled": false,
+    "message_preview": "No external dispatch. Local outbox governance probe only.",
+    "purpose": "post_auto_enable_external_dispatch_governance_probe",
+    "target_adapter": "local_outbox_simulator",
+    "track": "P47A_LOCAL_OUTBOX_ONLY"
+  },
+  "purpose": "post_auto_enable_external_dispatch_governance_probe",
+  "track": "P47A_LOCAL_OUTBOX_ONLY",
+  "unattended_external_dispatch_enabled": false
+}
