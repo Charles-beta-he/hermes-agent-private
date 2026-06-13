@@ -72,7 +72,7 @@ def probe_payload(created_at: str) -> dict:
 
 def write_kernel_wrappers(script_dir: Path):
     script_dir.mkdir()
-    for name in ["multi-model-smoke-daily-full-wrapper.py", "multi-model-smoke-every4h-wrapper.py", "workflow-kernel-multi-model-smoke-every4h-runner.py"]:
+    for name in ["multi-model-smoke-daily-full-wrapper.py", "workflow-kernel-multi-model-smoke-daily-full-runner.py", "multi-model-smoke-every4h-wrapper.py", "workflow-kernel-multi-model-smoke-every4h-runner.py"]:
         (script_dir / name).write_text("from workflow_kernel import cron_wrappers as kernel_cron\n")
 
 
@@ -147,6 +147,26 @@ def test_projection_ready_for_scheduler_native_every4h_script(tmp_path):
     assert every4h["script"] == "workflow-kernel-multi-model-smoke-every4h-runner.py"
     assert every4h["script_allowed"] is True
     assert every4h["projection_status"] == "KERNEL_SHIM_SCHEDULER_READBACK_READY"
+
+
+def test_projection_ready_for_scheduler_native_daily_script(tmp_path):
+    mod = load()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    payload = jobs_payload()
+    payload["jobs"][0]["script"] = "workflow-kernel-multi-model-smoke-daily-full-runner.py"
+    jobs = write_json(tmp_path / "jobs.json", payload)
+    gate = write_json(tmp_path / "gate.json", gate_payload(now.isoformat().replace("+00:00", "Z")))
+    probe = write_json(tmp_path / "probe.json", probe_payload(now.isoformat().replace("+00:00", "Z")))
+    script_dir = tmp_path / "scripts"
+    write_kernel_wrappers(script_dir)
+
+    report = mod.build_report(jobs_path=jobs, gate_path=gate, probe_path=probe, script_dir=script_dir, stale_hours=24)
+
+    assert report["status"] == "SCHEDULER_READBACK_PROJECTION_READY"
+    daily = {p["job_id"]: p for p in report["wrapper_projections"]}["42baeebb646c"]
+    assert daily["script"] == "workflow-kernel-multi-model-smoke-daily-full-runner.py"
+    assert daily["script_allowed"] is True
+    assert daily["projection_status"] == "KERNEL_SHIM_SCHEDULER_READBACK_READY"
 
 
 def test_newest_path_selects_latest_mtime(tmp_path):

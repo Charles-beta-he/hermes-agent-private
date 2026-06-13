@@ -1,7 +1,7 @@
 # Workflow Kernel Sequence Map — Phase 38
 
 Status: **WORKFLOW_SEQUENCE_MAP_READY**
-Safe default track: `POST_C_ROLLOUT_OBSERVATION`
+Safe default track: `AUTO_ENABLED_OBSERVATION`
 
 ## Phase order
 - Phase 17: External Apply Requirements — layer=`contract`, gate=`real_apply_enabled=false`
@@ -30,10 +30,13 @@ Safe default track: `POST_C_ROLLOUT_OBSERVATION`
 - Phase 40: Receipt/Projection Drift Watcher — layer=`drift monitoring`, gate=`do not trigger cron solely for receipts`
 - Phase 41: Single-wrapper Runtime-enable Shadow Dry-run — layer=`runtime-adjacent dry-run`, gate=`no cron mutation, no credentialed generation`
 - Phase 42: Single-wrapper Scheduler-native Rollout — layer=`scheduler-native single job`, gate=`one job script field only; rollback backup required`
+- Phase 43: Daily-wrapper Receipt Closure — layer=`receipt closure`, gate=`plan-only receipt; no credentialed generation required for proof`
+- Phase 44: Daily-wrapper Scheduler-native Rollout — layer=`scheduler-native second opted-in job`, gate=`daily job script field only; rollback backup required`
+- Phase 45: Runtime Switch Auto-enabled — layer=`runtime switch`, gate=`future external dispatch/broad scheduler rewrites still scoped`
 
 ## Next ladder
-- Phase 43: Daily-wrapper Receipt Closure or Natural Scheduled Wait — track=`POST_C_ROLLOUT_OBSERVATION`, authority=`none for readback; explicit authorization if manually dry-running daily`
-- Phase 44: Second-wrapper Scheduler-native Candidate Packet — track=`FUTURE_EXPLICIT_C2`, authority=`explicit follow-up authorization`
+- Phase 46: Post-auto-enable Scheduled Observation — track=`AUTO_ENABLED_OBSERVATION`, authority=`none for readback`
+- Phase 47: External Dispatch Expansion Candidate Packet — track=`FUTURE_EXTERNAL_EXPANSION`, authority=`explicit scoped authorization`
 
 ## Closed boundaries
 - enable workflow_kernel.RUNTIME_SWITCH_ENABLED

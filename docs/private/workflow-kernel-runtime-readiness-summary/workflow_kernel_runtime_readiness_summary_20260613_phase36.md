@@ -1,16 +1,16 @@
 # Workflow Kernel Runtime Readiness Summary — Phase 36
 
-Status: **RUNTIME_READINESS_SUMMARY_READY_PENDING_EXPLICIT_ENABLE**
-Runtime switch enabled by default: `False`
-Explicit enable required: `True`
+Status: **RUNTIME_READINESS_SUMMARY_AUTO_ENABLED**
+Runtime switch enabled by default: `True`
+Explicit enable required: `False`
 
 ## Checks
 - `gate_artifact_fresh`: `True`
-- `no_global_runtime_switch`: `True`
+- `global_runtime_switch_auto_enabled`: `True`
 - `probe_artifact_fresh`: `True`
 - `receipt_aware_correlation_ready`: `True`
 - `run_correlation_partial_or_better`: `True`
-- `runtime_switch_ready_pending_explicit_enable`: `True`
+- `runtime_switch_ready_or_enabled`: `True`
 - `scheduler_projection_ready`: `True`
 - `wrapper_receipt_ledger_ready`: `True`
 
@@ -31,7 +31,7 @@ Explicit enable required: `True`
 - no model generation
 - no credential read/write
 - no external message send
-- global runtime switch remains disabled
+- runtime switch is auto-enabled
 
 ## Next boundary
-explicit runtime switch enablement remains closed; continue only with read-only summaries or a separately authorized single-slice rollout
+runtime switch auto-enabled; future external dispatch expansion, credentialed generation changes, or broad scheduler rewrites still require scoped gates

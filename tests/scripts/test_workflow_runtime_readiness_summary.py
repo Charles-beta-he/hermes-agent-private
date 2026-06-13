@@ -41,14 +41,14 @@ def test_build_report_is_read_only_summary_shape():
     mod = load()
     report = mod.build_report(stale_hours=24)
     assert report["report_id"] == "workflow_kernel_runtime_readiness_summary_20260613_phase36"
-    assert report["runtime_switch_enabled_by_default"] is False
-    assert "no cron/jobs.json mutation" in report["safe_boundaries"]
+    assert report["runtime_switch_enabled_by_default"] is True
+    assert "runtime switch is auto-enabled" in report["safe_boundaries"]
     assert "projection" in report["artifact_states"]
     assert "correlation" in report["artifact_states"]
     assert "probe" in report["artifact_states"]
     assert set(report["checks"]).issuperset({
-        "runtime_switch_ready_pending_explicit_enable",
+        "runtime_switch_ready_or_enabled",
         "scheduler_projection_ready",
         "receipt_aware_correlation_ready",
-        "no_global_runtime_switch",
+        "global_runtime_switch_auto_enabled",
     })

@@ -2,7 +2,7 @@
   "artifact_states": {
     "correlation": {
       "age_seconds": 0.0,
-      "created_at": "2026-06-13T17:48:26Z",
+      "created_at": "2026-06-13T18:03:33Z",
       "exists": true,
       "name": "correlation",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json",
@@ -10,8 +10,8 @@
       "status": "RECEIPT_CORRELATION_PARTIAL_READY"
     },
     "projection": {
-      "age_seconds": 188.0,
-      "created_at": "2026-06-13T17:45:18Z",
+      "age_seconds": 0.0,
+      "created_at": "2026-06-13T18:03:33Z",
       "exists": true,
       "name": "projection",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json",
@@ -19,7 +19,7 @@
       "status": "SCHEDULER_READBACK_PROJECTION_READY"
     },
     "summary": {
-      "age_seconds": 0.0,
+      "age_seconds": 907.0,
       "created_at": "2026-06-13T17:48:26Z",
       "exists": true,
       "name": "summary",
@@ -28,10 +28,8 @@
       "status": "RUNTIME_READINESS_SUMMARY_READY_PENDING_EXPLICIT_ENABLE"
     }
   },
-  "created_at": "2026-06-13T17:48:26Z",
-  "drift_signals": [
-    "production_receipts_not_complete"
-  ],
+  "created_at": "2026-06-13T18:03:33Z",
+  "drift_signals": [],
   "job_receipts": {
     "2c14ca2a9bd2": {
       "job_name": "multi-model-smoke-every4h",
@@ -42,15 +40,13 @@
     },
     "42baeebb646c": {
       "job_name": "multi-model-smoke-daily-full",
-      "kernel_shim": null,
-      "latest_receipt_created_at": null,
-      "receipt_present": false,
-      "runtime_mode": null
+      "kernel_shim": true,
+      "latest_receipt_created_at": "2026-06-13T18:03:33Z",
+      "receipt_present": true,
+      "runtime_mode": "scheduler_native_plan_only"
     }
   },
-  "missing_receipt_jobs": [
-    "42baeebb646c"
-  ],
+  "missing_receipt_jobs": [],
   "next_boundary": "If only missing production receipts remain, wait for natural scheduled runs or explicitly authorize B/C.",
   "receipt_ledger": "/Users/charles/.hermes/state/cron-provider-health-gate/wrapper_run_receipts.jsonl",
   "report_id": "workflow_kernel_drift_watch_20260613_phase40",
@@ -61,5 +57,5 @@
     "no credential read/write",
     "no external delivery"
   ],
-  "status": "DRIFT_WATCH_DEGRADED_NOT_BLOCKED"
+  "status": "DRIFT_WATCH_CLEAR_READ_ONLY"
 }

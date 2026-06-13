@@ -49,11 +49,14 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 40, "name": "Receipt/Projection Drift Watcher", "layer": "drift monitoring", "status": "complete", "depends_on": [39], "authority": "read-only drift detection", "gate": "do not trigger cron solely for receipts", "next_unlocked": [41]},
     {"phase": 41, "name": "Single-wrapper Runtime-enable Shadow Dry-run", "layer": "runtime-adjacent dry-run", "status": "complete", "depends_on": [40], "authority": "explicit B authorization", "gate": "no cron mutation, no credentialed generation", "next_unlocked": [42]},
     {"phase": 42, "name": "Single-wrapper Scheduler-native Rollout", "layer": "scheduler-native single job", "status": "complete", "depends_on": [41], "authority": "explicit C authorization", "gate": "one job script field only; rollback backup required", "next_unlocked": [43]},
+    {"phase": 43, "name": "Daily-wrapper Receipt Closure", "layer": "receipt closure", "status": "complete", "depends_on": [42], "authority": "explicit all authorization", "gate": "plan-only receipt; no credentialed generation required for proof", "next_unlocked": [44]},
+    {"phase": 44, "name": "Daily-wrapper Scheduler-native Rollout", "layer": "scheduler-native second opted-in job", "status": "complete", "depends_on": [43], "authority": "explicit all authorization", "gate": "daily job script field only; rollback backup required", "next_unlocked": [45]},
+    {"phase": 45, "name": "Runtime Switch Auto-enabled", "layer": "runtime switch", "status": "complete", "depends_on": [44], "authority": "explicit all authorization until auto-enable", "gate": "future external dispatch/broad scheduler rewrites still scoped", "next_unlocked": [46]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 43, "name": "Daily-wrapper Receipt Closure or Natural Scheduled Wait", "track": "POST_C_ROLLOUT_OBSERVATION", "authority_needed": "none for readback; explicit authorization if manually dry-running daily", "why_next": "close remaining production receipt drift for daily-full without broadening scheduler-native rollout"},
-    {"phase": 44, "name": "Second-wrapper Scheduler-native Candidate Packet", "track": "FUTURE_EXPLICIT_C2", "authority_needed": "explicit follow-up authorization", "why_next": "only after Phase42 single-job rollout remains healthy"},
+    {"phase": 46, "name": "Post-auto-enable Scheduled Observation", "track": "AUTO_ENABLED_OBSERVATION", "authority_needed": "none for readback", "why_next": "observe natural scheduled runs under both scheduler-native jobs and auto-enabled runtime switch"},
+    {"phase": 47, "name": "External Dispatch Expansion Candidate Packet", "track": "FUTURE_EXTERNAL_EXPANSION", "authority_needed": "explicit scoped authorization", "why_next": "auto-enable does not imply unattended external delivery expansion"},
 ]
 
 
@@ -95,15 +98,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-42 的顺序、依赖、门禁和后续推进路径；B/C 已授权并完成单 wrapper rollout，后续不得自动扩展到第二个 scheduler-native job。",
+        "objective": "梳理 Phase17-45 的顺序、依赖、门禁和后续观察路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase42 has applied one authorized scheduler-native job rollout; do not expand to a second job without a fresh explicit authorization.",
-        "safe_default_track": "POST_C_ROLLOUT_OBSERVATION",
+        "current_boundary": "Phase45 has auto-enabled the workflow kernel runtime switch with both opted-in cron jobs on scheduler-native runners; future external dispatch or broad scheduler expansion remains scoped.",
+        "safe_default_track": "AUTO_ENABLED_OBSERVATION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Phase43 Daily-wrapper receipt closure or natural scheduled wait",
+        "recommended_next": "Phase46 Post-auto-enable scheduled observation",
     }
 
 

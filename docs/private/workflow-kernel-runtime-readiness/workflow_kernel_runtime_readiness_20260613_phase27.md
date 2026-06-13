@@ -1,9 +1,9 @@
 # Workflow Kernel Runtime Readiness — Phase 27
 
-Status: **RUNTIME_SWITCH_READY_PENDING_EXPLICIT_ENABLE**
+Status: **RUNTIME_SWITCH_AUTO_ENABLED**
 Switch mode: `compatibility_shim`
-Runtime switch enabled by default: `False`
-Explicit enable required: `True`
+Runtime switch enabled by default: `True`
+Explicit enable required: `False`
 
 ## Compatibility CLIs
 - `scripts/workflow_architecture_migration_evaluation.py`
@@ -23,4 +23,4 @@ Explicit enable required: `True`
 - config_migration
 
 ## Next Closed Boundary
-explicit runtime switch enablement and one-slice wrapper rollout
+runtime switch is auto-enabled; future expansion still requires scoped rollout gates for new external dispatch or broad scheduler changes

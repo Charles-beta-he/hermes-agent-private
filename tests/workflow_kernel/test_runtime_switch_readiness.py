@@ -33,8 +33,8 @@ def test_ledger_appends_idempotent_event_and_reads_back(tmp_path):
 def test_runtime_readiness_requires_compat_cli_and_safety_flags():
     runtime = importlib.import_module("workflow_kernel.runtime")
     report = runtime.compile_runtime_readiness()
-    assert report["status"] == "RUNTIME_SWITCH_READY_PENDING_EXPLICIT_ENABLE"
-    assert report["runtime_switch_enabled_by_default"] is False
+    assert report["status"] == "RUNTIME_SWITCH_AUTO_ENABLED"
+    assert report["runtime_switch_enabled_by_default"] is True
     assert report["switch_mode"] == "compatibility_shim"
     assert report["blocked_capabilities"] == ["cron_mutation", "external_dispatch_expansion", "autorun_enablement", "config_migration"]
     assert "scripts/workflow_architecture_migration_evaluation.py" in report["compatibility_clis"]
@@ -48,6 +48,6 @@ def test_runtime_readiness_cli_writes_artifact(tmp_path):
     out_dir = tmp_path / "readiness"
     proc = subprocess.run([sys.executable, str(runtime_cli), "--write-report", "--out-dir", str(out_dir), "--json"], text=True, capture_output=True, check=True)
     result = json.loads(proc.stdout)
-    assert result["status"] == "RUNTIME_SWITCH_READY_PENDING_EXPLICIT_ENABLE"
+    assert result["status"] == "RUNTIME_SWITCH_AUTO_ENABLED"
     assert Path(result["artifacts"]["json"]).exists()
     assert len(result["artifacts"]["sha256"]) == 64

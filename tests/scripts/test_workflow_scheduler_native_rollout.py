@@ -17,7 +17,11 @@ def load():
 
 def jobs_file(tmp_path: Path) -> Path:
     p = tmp_path / "jobs.json"
-    p.write_text(json.dumps({"jobs": [{"id": "2c14ca2a9bd2", "script": "multi-model-smoke-every4h-wrapper.py"}, {"id": "other", "script": "x.py"}]}, indent=2))
+    p.write_text(json.dumps({"jobs": [
+        {"id": "2c14ca2a9bd2", "script": "multi-model-smoke-every4h-wrapper.py"},
+        {"id": "42baeebb646c", "script": "multi-model-smoke-daily-full-wrapper.py"},
+        {"id": "other", "script": "x.py"},
+    ]}, indent=2))
     return p
 
 
@@ -49,6 +53,18 @@ def test_rollback_restores_old_script(tmp_path):
     rb = mod.rollback(jobs_path=p, backup=Path(report["backup_path"]))
     assert rb["status"] == "SCHEDULER_NATIVE_ROLLOUT_ROLLED_BACK"
     assert rb["restored_script"] == mod.OLD_SCRIPT
+
+
+def test_daily_target_mutates_daily_script_only(tmp_path):
+    mod = load()
+    p = jobs_file(tmp_path)
+    report = mod.apply_rollout(jobs_path=p, target="daily-full", dry_run=False)
+    data = json.loads(p.read_text())
+    by_id = {j["id"]: j for j in data["jobs"]}
+    assert report["status"] == "SCHEDULER_NATIVE_ROLLOUT_APPLIED"
+    assert report["phase"] == "44"
+    assert by_id["42baeebb646c"]["script"] == "workflow-kernel-multi-model-smoke-daily-full-runner.py"
+    assert by_id["2c14ca2a9bd2"]["script"] == "multi-model-smoke-every4h-wrapper.py"
 
 
 def test_already_applied_is_idempotent(tmp_path):

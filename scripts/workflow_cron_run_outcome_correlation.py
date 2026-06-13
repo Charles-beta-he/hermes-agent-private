@@ -31,7 +31,7 @@ DEFAULT_RECEIPT_LEDGER = Path.home() / ".hermes" / "state" / "cron-provider-heal
 DEFAULT_OUT = ROOT / "docs" / "private" / "workflow-kernel-cron-run-correlation"
 
 WRAPPER_LOGS = {
-    cron_wrappers.DAILY_FULL_JOB_ID: ["multi-model-smoke-daily-full-wrapper.jsonl"],
+    cron_wrappers.DAILY_FULL_JOB_ID: ["workflow-kernel-multi-model-smoke-daily-full-runner.jsonl", "multi-model-smoke-daily-full-wrapper.jsonl"],
     cron_wrappers.EVERY4H_JOB_ID: ["workflow-kernel-multi-model-smoke-every4h-runner.jsonl", "multi-model-smoke-every4h-wrapper.jsonl"],
 }
 

@@ -1,8 +1,8 @@
 {
   "artifact_states": {
     "correlation": {
-      "age_seconds": 0.0,
-      "created_at": "2026-06-13T17:48:26Z",
+      "age_seconds": 193.0,
+      "created_at": "2026-06-13T18:03:33Z",
       "exists": true,
       "name": "correlation",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json",
@@ -12,7 +12,7 @@
       "status": "RECEIPT_CORRELATION_PARTIAL_READY"
     },
     "gate": {
-      "age_seconds": 12113.0,
+      "age_seconds": 13213.0,
       "created_at": "2026-06-13T14:26:33Z",
       "exists": true,
       "name": "gate",
@@ -23,7 +23,7 @@
       "status": "GATE_COMPILED_NO_MUTATION"
     },
     "probe": {
-      "age_seconds": 12113.0,
+      "age_seconds": 13213.0,
       "created_at": "2026-06-13T14:26:33Z",
       "exists": true,
       "name": "probe",
@@ -34,8 +34,8 @@
       "status": "PASS"
     },
     "projection": {
-      "age_seconds": 188.0,
-      "created_at": "2026-06-13T17:45:18Z",
+      "age_seconds": 193.0,
+      "created_at": "2026-06-13T18:03:33Z",
       "exists": true,
       "name": "projection",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json",
@@ -45,7 +45,7 @@
       "status": "SCHEDULER_READBACK_PROJECTION_READY"
     },
     "receipt_aware_correlation": {
-      "age_seconds": 2918.0,
+      "age_seconds": 4018.0,
       "created_at": "2026-06-13T16:59:48Z",
       "exists": true,
       "name": "receipt_aware_correlation",
@@ -56,7 +56,7 @@
       "status": "RECEIPT_AWARE_CORRELATION_READY"
     },
     "wrapper_run_receipts": {
-      "age_seconds": 3306.0,
+      "age_seconds": 4406.0,
       "created_at": "2026-06-13T16:53:20Z",
       "exists": true,
       "name": "wrapper_run_receipts",
@@ -70,11 +70,11 @@
   "blocking_checks": [],
   "checks": {
     "gate_artifact_fresh": true,
-    "no_global_runtime_switch": true,
+    "global_runtime_switch_auto_enabled": true,
     "probe_artifact_fresh": true,
     "receipt_aware_correlation_ready": true,
     "run_correlation_partial_or_better": true,
-    "runtime_switch_ready_pending_explicit_enable": true,
+    "runtime_switch_ready_or_enabled": true,
     "scheduler_projection_ready": true,
     "wrapper_receipt_ledger_ready": true
   },
@@ -82,7 +82,7 @@
     "ONLY_PRE_PROJECTION_RUN_OBSERVED": 1,
     "RECEIPT_AFTER_PROJECTION_CORRELATED": 1
   },
-  "created_at": "2026-06-13T17:48:26Z",
+  "created_at": "2026-06-13T18:06:46Z",
   "endpoint_statuses": {
     "deepseek": "reachable",
     "github": "reachable",
@@ -91,23 +91,23 @@
     "telegram": "reachable",
     "xiaomi": "reachable"
   },
-  "explicit_enable_required": true,
-  "next_boundary": "explicit runtime switch enablement remains closed; continue only with read-only summaries or a separately authorized single-slice rollout",
+  "explicit_enable_required": false,
+  "next_boundary": "runtime switch auto-enabled; future external dispatch expansion, credentialed generation changes, or broad scheduler rewrites still require scoped gates",
   "projection_counts": {
     "KERNEL_SHIM_NO_GATE_DECISION_NEEDED": 1,
     "KERNEL_SHIM_SCHEDULER_READBACK_READY": 1
   },
   "receipt_aware_correlation_status": "REAL_RUN_CORRELATION_PARTIAL_READY",
   "report_id": "workflow_kernel_runtime_readiness_summary_20260613_phase36",
-  "runtime_switch_enabled_by_default": false,
+  "runtime_switch_enabled_by_default": true,
   "safe_boundaries": [
     "no cron/jobs.json mutation",
     "no cron trigger",
     "no model generation",
     "no credential read/write",
     "no external message send",
-    "global runtime switch remains disabled"
+    "runtime switch is auto-enabled"
   ],
   "scope": "read-only operator summary for workflow kernel runtime switch, cron projection, run correlation, receipts, gate, and probe",
-  "status": "RUNTIME_READINESS_SUMMARY_READY_PENDING_EXPLICIT_ENABLE"
+  "status": "RUNTIME_READINESS_SUMMARY_AUTO_ENABLED"
 }

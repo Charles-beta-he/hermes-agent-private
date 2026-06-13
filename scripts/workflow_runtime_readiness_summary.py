@@ -32,7 +32,8 @@ DEFAULT_PROBE_GLOB = ROOT / "docs" / "private" / "workflow-kernel-provider-netwo
 DEFAULT_OUT = ROOT / "docs" / "private" / "workflow-kernel-runtime-readiness-summary"
 DEFAULT_STALE_HOURS = 24.0
 
-READY_RUNTIME = "RUNTIME_SWITCH_READY_PENDING_EXPLICIT_ENABLE"
+READY_RUNTIME_PENDING = "RUNTIME_SWITCH_READY_PENDING_EXPLICIT_ENABLE"
+READY_RUNTIME_ENABLED = "RUNTIME_SWITCH_AUTO_ENABLED"
 READY_PROJECTION = "SCHEDULER_READBACK_PROJECTION_READY"
 READY_RECEIPT_AWARE = "RECEIPT_AWARE_CORRELATION_READY"
 READY_RECEIPT_LEDGER = "WRAPPER_RUN_RECEIPT_LEDGER_READY"
@@ -121,21 +122,21 @@ def build_report(*, stale_hours: float = DEFAULT_STALE_HOURS) -> dict[str, Any]:
     }
 
     checks = {
-        "runtime_switch_ready_pending_explicit_enable": runtime.get("status") == READY_RUNTIME and runtime.get("runtime_switch_enabled_by_default") is False,
+        "runtime_switch_ready_or_enabled": runtime.get("status") in {READY_RUNTIME_PENDING, READY_RUNTIME_ENABLED},
         "scheduler_projection_ready": (projection or {}).get("status") == READY_PROJECTION,
         "run_correlation_partial_or_better": (correlation or {}).get("status") in ACCEPTABLE_CORRELATION,
         "receipt_aware_correlation_ready": (receipt_aware or {}).get("status") == READY_RECEIPT_AWARE,
         "wrapper_receipt_ledger_ready": (receipt_report or {}).get("status") == READY_RECEIPT_LEDGER,
         "gate_artifact_fresh": artifacts["gate"]["exists"] and artifacts["gate"]["stale"] is False,
         "probe_artifact_fresh": artifacts["probe"]["exists"] and artifacts["probe"]["stale"] is False,
-        "no_global_runtime_switch": runtime.get("runtime_switch_enabled_by_default") is False,
+        "global_runtime_switch_auto_enabled": runtime.get("runtime_switch_enabled_by_default") is True,
     }
     blocking = [name for name, ok in checks.items() if not ok]
 
     if blocking:
         status = "RUNTIME_READINESS_SUMMARY_DEGRADED_NOT_BLOCKED"
     else:
-        status = "RUNTIME_READINESS_SUMMARY_READY_PENDING_EXPLICIT_ENABLE"
+        status = "RUNTIME_READINESS_SUMMARY_AUTO_ENABLED"
 
     return {
         "report_id": "workflow_kernel_runtime_readiness_summary_20260613_phase36",
@@ -143,7 +144,7 @@ def build_report(*, stale_hours: float = DEFAULT_STALE_HOURS) -> dict[str, Any]:
         "status": status,
         "scope": "read-only operator summary for workflow kernel runtime switch, cron projection, run correlation, receipts, gate, and probe",
         "runtime_switch_enabled_by_default": runtime.get("runtime_switch_enabled_by_default"),
-        "explicit_enable_required": True,
+        "explicit_enable_required": runtime.get("explicit_enable_required"),
         "checks": checks,
         "blocking_checks": blocking,
         "artifact_states": artifacts,
@@ -157,9 +158,9 @@ def build_report(*, stale_hours: float = DEFAULT_STALE_HOURS) -> dict[str, Any]:
             "no model generation",
             "no credential read/write",
             "no external message send",
-            "global runtime switch remains disabled",
+            "runtime switch is auto-enabled",
         ],
-        "next_boundary": "explicit runtime switch enablement remains closed; continue only with read-only summaries or a separately authorized single-slice rollout",
+        "next_boundary": "runtime switch auto-enabled; future external dispatch expansion, credentialed generation changes, or broad scheduler rewrites still require scoped gates",
     }
 
 

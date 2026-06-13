@@ -33,8 +33,9 @@ WRAPPER_REGISTRY = [
         "job_id": cron_wrappers.DAILY_FULL_JOB_ID,
         "job_name": cron_wrappers.DAILY_FULL_JOB_NAME,
         "script": "multi-model-smoke-daily-full-wrapper.py",
+        "allowed_scripts": ["multi-model-smoke-daily-full-wrapper.py", "workflow-kernel-multi-model-smoke-daily-full-runner.py"],
         "kernel_module": "workflow_kernel.cron_wrappers",
-        "expected_runtime_mode": "typed_skip_or_original_run",
+        "expected_runtime_mode": "typed_skip_or_original_run_or_scheduler_native",
     },
     {
         "job_id": cron_wrappers.EVERY4H_JOB_ID,

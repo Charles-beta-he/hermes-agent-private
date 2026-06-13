@@ -1,0 +1,15 @@
+{
+  "artifacts": {
+    "json": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-auto-enable/workflow_kernel_runtime_auto_enable_20260613_phase45.json",
+    "md": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-auto-enable/workflow_kernel_runtime_auto_enable_20260613_phase45.md",
+    "sha256": "71e2e7b01bea59a2d1edd9103439c517c51d8e06c3fd3821b48df2a1d97a707c"
+  },
+  "blocking_checks": [],
+  "created_at": "2026-06-13T18:06:46Z",
+  "explicit_enable_required": false,
+  "report_id": "workflow_kernel_runtime_auto_enable_20260613_phase45",
+  "runtime_status": "RUNTIME_SWITCH_AUTO_ENABLED",
+  "runtime_switch_enabled_by_default": true,
+  "status": "RUNTIME_AUTO_ENABLE_COMPLETE",
+  "summary_status": "RUNTIME_READINESS_SUMMARY_AUTO_ENABLED"
+}

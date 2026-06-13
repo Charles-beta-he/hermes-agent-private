@@ -1,0 +1,19 @@
+{
+  "artifacts": {
+    "json": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-daily-receipt-closure/workflow_kernel_daily_receipt_closure_20260613_phase43.json",
+    "md": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-daily-receipt-closure/workflow_kernel_daily_receipt_closure_20260613_phase43.md",
+    "sha256": "f10cfa3938eac47d5b4b6c10715e1f5221b49a8cca67cc90af4852da50e2e717"
+  },
+  "created_at": "2026-06-13T18:03:33Z",
+  "cron_state_mutated": false,
+  "job_id": "42baeebb646c",
+  "job_name": "multi-model-smoke-daily-full",
+  "kernel_shim": true,
+  "model_generation_attempted": false,
+  "payload_status": "scheduler_native_daily_full_plan",
+  "receipt_idempotency_key": "b4029186c0600a9e",
+  "receipt_runtime_mode": "scheduler_native_plan_only",
+  "report_id": "workflow_kernel_daily_receipt_closure_20260613_phase43",
+  "scheduler_native": true,
+  "status": "DAILY_RECEIPT_CLOSURE_READY"
+}
