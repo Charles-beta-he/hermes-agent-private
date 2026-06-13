@@ -1,0 +1,95 @@
+{
+  "closed_boundaries_without_explicit_authorization": [
+    "enable workflow_kernel.RUNTIME_SWITCH_ENABLED",
+    "mutate ~/.hermes/cron/jobs.json",
+    "trigger cron jobs solely to create evidence",
+    "scheduler-native takeover for any job",
+    "model generation smoke using credentials",
+    "external message delivery"
+  ],
+  "created_at": "2026-06-13T17:24:12Z",
+  "dry_run_commands": [
+    {
+      "command": "HERMES_MULTI_MODEL_SMOKE_EVERY4H_PLAN_ONLY=1 HERMES_CRON_WRAPPER_RECEIPT_LEDGER=/tmp/phase39_receipts.jsonl python3 /Users/charles/.hermes/scripts/multi-model-smoke-every4h-wrapper.py",
+      "expected": "kernel_shim=true, runtime_mode=plan_only, cron_state_mutated=false",
+      "id": "wrapper-plan"
+    },
+    {
+      "command": "cd /Users/charles/.hermes/hermes-agent && ./venv/bin/python scripts/workflow_cron_run_outcome_correlation.py --write-report --json",
+      "expected": "REAL_RUN_CORRELATION_PARTIAL_READY or RECEIPT_CORRELATION_PARTIAL_READY",
+      "id": "correlation-readback"
+    },
+    {
+      "command": "cd /Users/charles/.hermes/hermes-agent && ./scripts/run_tests.sh tests/scripts/test_workflow_runtime_enablement_packet.py tests/scripts/test_workflow_runtime_readiness_summary.py tests/scripts/test_workflow_sequence_map.py",
+      "expected": "all tests pass",
+      "id": "focused-tests"
+    }
+  ],
+  "go_no_go_gates": [
+    "GO only if runtime summary remains READY and blocking_checks=[]",
+    "NO-GO if cron/jobs.json has unexpected dirty changes",
+    "NO-GO if provider probe/gate artifacts are stale",
+    "NO-GO if explicit B/C authorization is absent for runtime/scheduler boundary crossing"
+  ],
+  "next_recommended_phase": "Phase40 Receipt/Projection Drift Watcher under A_READ_ONLY_CONTINUE",
+  "packet_path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-enablement-packet/workflow_kernel_runtime_enablement_packet_20260613_phase37.json",
+  "preflight_commands": [
+    {
+      "command": "git -C /Users/charles/.hermes/hermes-agent status --short --branch",
+      "expected": "identify unrelated dirty files before any scoped change",
+      "id": "git-status"
+    },
+    {
+      "command": "cd /Users/charles/.hermes/hermes-agent && ./venv/bin/python scripts/workflow_runtime_readiness_summary.py --write-report --json",
+      "expected": "RUNTIME_READINESS_SUMMARY_READY_PENDING_EXPLICIT_ENABLE and blocking_checks=[]",
+      "id": "runtime-summary"
+    },
+    {
+      "command": "cd /Users/charles/.hermes/hermes-agent && ./venv/bin/python scripts/workflow_runtime_enablement_packet.py --write-report --json",
+      "expected": "RUNTIME_ENABLEMENT_HUMAN_AUTH_PACKET_READY",
+      "id": "enablement-packet"
+    },
+    {
+      "command": "cd /Users/charles/.hermes/hermes-agent && ./venv/bin/python scripts/workflow_sequence_map.py --write-report --json",
+      "expected": "WORKFLOW_SEQUENCE_MAP_READY",
+      "id": "sequence-map"
+    }
+  ],
+  "report_id": "workflow_kernel_enablement_runbook_20260613_phase39",
+  "rollback_drill": [
+    {
+      "command": "git -C /Users/charles/.hermes/hermes-agent status --short --branch && python3 -m json.tool /Users/charles/.hermes/cron/jobs.json >/tmp/phase39_jobs_before.json",
+      "name": "Capture pre-change state",
+      "step": 1,
+      "verify": "jobs file parses; git state known"
+    },
+    {
+      "command": "rm -f /tmp/phase39_receipts.jsonl /tmp/phase39_shadow_runtime*.json",
+      "name": "If B shadow artifact misbehaves",
+      "step": 2,
+      "verify": "only temp shadow artifacts removed"
+    },
+    {
+      "command": "git -C /Users/charles/.hermes/hermes-agent revert --no-edit <scoped_commit>",
+      "name": "If scoped code change misbehaves",
+      "step": 3,
+      "verify": "focused tests pass after revert"
+    },
+    {
+      "command": "cp /tmp/phase39_jobs_before.json /Users/charles/.hermes/cron/jobs.json && python3 -m json.tool /Users/charles/.hermes/cron/jobs.json >/dev/null",
+      "name": "If cron was mutated under explicit C",
+      "step": 4,
+      "verify": "cron jobs json restored and parses"
+    },
+    {
+      "command": "cd /Users/charles/.hermes/hermes-agent && ./venv/bin/python scripts/workflow_runtime_readiness_summary.py --write-report --json",
+      "name": "Post-rollback readback",
+      "step": 5,
+      "verify": "runtime_switch_enabled_by_default=false and no unexpected blocking checks"
+    }
+  ],
+  "safe_default_track": "A_READ_ONLY_CONTINUE",
+  "scope": "operator runbook and rollback drill only; no runtime/scheduler action executed",
+  "sequence_path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-sequence-map/workflow_kernel_sequence_map_20260613_phase38.json",
+  "status": "ENABLEMENT_RUNBOOK_READY"
+}
