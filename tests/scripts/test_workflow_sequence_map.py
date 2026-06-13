@@ -25,7 +25,7 @@ def test_build_map_has_current_boundary_and_safe_default():
     report = mod.build_map()
     assert report["status"] == "WORKFLOW_SEQUENCE_MAP_READY"
     assert report["safe_default_track"] == "EXTERNAL_DISPATCH_GOVERNED_EXPANSION"
-    assert report["recommended_next"].startswith("Phase50")
+    assert report["recommended_next"].startswith("Human choice required")
     assert "external message delivery without exact target/payload/mode" in report["closed_boundaries_without_explicit_authorization"]
 
 
@@ -34,7 +34,7 @@ def test_next_ladder_requires_authority_for_future_expansion():
     by_track = {item["track"]: item for item in mod.NEXT_LADDER}
     assert by_track["GUARDED_EXTERNAL_SEND"]["phase"] == 50
     assert by_track["GUARDED_EXTERNAL_SEND"]["authority_needed"] == "exact adapter/target/payload/mode/idempotency/rollback"
-    assert by_track["PACK_REGISTRY_PROJECTION"]["phase"] == 51
+    assert by_track["CONTROL_TOWER_PRODUCTIZATION"]["phase"] == 52
 
 
 def test_write_report_creates_artifacts(tmp_path):

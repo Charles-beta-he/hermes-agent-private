@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-13T19:10:47Z",
-  "current_boundary": "Phase49 has compiled reusable Workflow Pack / Agent Pack manifests; external adapter execution and runtime adoption remain separate scoped gates.",
+  "created_at": "2026-06-13T19:18:08Z",
+  "current_boundary": "Phase51 has projected Workflow Pack / Agent Pack manifests into a read-only operator registry. The next step is a larger divergence: exact external send (Phase50) versus Control Tower UI/API productization (Phase52).",
   "next_ladder": [
     {
       "authority_needed": "exact adapter/target/payload/mode/idempotency/rollback",
       "name": "Guarded Single External Send",
       "phase": 50,
       "track": "GUARDED_EXTERNAL_SEND",
-      "why_next": "only after local outbox policy proof, perform at most one named external side effect with receipt"
+      "why_next": "perform at most one named external side effect with receipt only if the user supplies concrete target/payload"
     },
     {
-      "authority_needed": "none for read-only registry projection",
-      "name": "Pack Registry / Control Tower Projection",
-      "phase": 51,
-      "track": "PACK_REGISTRY_PROJECTION",
-      "why_next": "surface Workflow Pack / Agent Pack manifests in an operator-readable registry/control-tower view"
+      "authority_needed": "larger product direction choice",
+      "name": "Control Tower UI/API Projection",
+      "phase": 52,
+      "track": "CONTROL_TOWER_PRODUCTIZATION",
+      "why_next": "requires choosing UI/API/dashboard productization path vs external-send execution path"
     }
   ],
-  "objective": "梳理 Phase17-49 的顺序、依赖、门禁和后续扩展路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启，Phase46 观察已记录，Phase47 外部扩展候选包已就绪，Phase48 本地 outbox policy gate 已记录，Phase49 Workflow/Agent Pack manifests 已就绪。",
-  "phase_count": 33,
+  "objective": "梳理 Phase17-51 的顺序、依赖、门禁和后续扩展路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启，Phase46 观察已记录，Phase47 外部扩展候选包已就绪，Phase48 本地 outbox policy gate 已记录，Phase49 Workflow/Agent Pack manifests 已就绪，Phase51 pack registry/control-tower read-only projection 已就绪。",
+  "phase_count": 34,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -483,13 +483,29 @@
       "layer": "pack productization",
       "name": "Workflow Pack / Agent Pack Schema",
       "next_unlocked": [
-        50
+        50,
+        51
       ],
       "phase": 49,
       "status": "pack_manifests_ready"
+    },
+    {
+      "authority": "read-only registry projection",
+      "depends_on": [
+        49
+      ],
+      "gate": "UI/API adoption and external send remain separate gates",
+      "layer": "operator registry",
+      "name": "Pack Registry / Control Tower Projection",
+      "next_unlocked": [
+        50,
+        52
+      ],
+      "phase": 51,
+      "status": "registry_projection_ready"
     }
   ],
-  "recommended_next": "Phase50 Guarded single external send or Phase51 pack registry projection",
+  "recommended_next": "Human choice required: Phase50 guarded external send vs Phase52 Control Tower UI/API projection",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

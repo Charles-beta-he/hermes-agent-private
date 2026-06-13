@@ -1,0 +1,125 @@
+{
+  "agent_pack_id": "agent.workflow_kernel_operator",
+  "agent_pack_version": "2026.06.13-phase49",
+  "classification": {
+    "blockers": [],
+    "credential_access_module_count": 0,
+    "external_dispatch_module_count": 0,
+    "local_write_module_count": 2,
+    "module_count": 4,
+    "status": "PACK_REGISTRY_PROJECTION_READY"
+  },
+  "created_at": "2026-06-13T19:16:23Z",
+  "guarded_single_send_requirements": {
+    "current_status": "not_selected",
+    "required_before_phase50": [
+      "exact_adapter",
+      "exact_target",
+      "exact_payload",
+      "mode",
+      "idempotency_key",
+      "rollback_or_correction_path",
+      "post_send_readback"
+    ]
+  },
+  "module_rows": [
+    {
+      "entrypoint": "workflow_kernel.runtime.check_runtime_switch_readiness",
+      "human_gate": "completed_phase45_full_authorization",
+      "layer": "runtime_switch",
+      "module_id": "workflow_kernel.runtime_auto_enable.v1",
+      "risk_level": "local_write",
+      "side_effects": {
+        "credential_access": false,
+        "cron_mutation": false,
+        "external_dispatch": false,
+        "model_generation": false
+      }
+    },
+    {
+      "entrypoint": "scripts/workflow_post_auto_enable_observation.py",
+      "human_gate": "none_for_readback",
+      "layer": "runtime_observation",
+      "module_id": "workflow_kernel.post_auto_enable_observation.v1",
+      "risk_level": "read_only",
+      "side_effects": {
+        "credential_access": false,
+        "cron_mutation": false,
+        "external_dispatch": false,
+        "model_generation": false
+      }
+    },
+    {
+      "entrypoint": "scripts/workflow_external_dispatch_expansion_packet.py",
+      "human_gate": "exact_adapter_target_payload_required_for_external_effect",
+      "layer": "external_dispatch_governance",
+      "module_id": "workflow_kernel.external_dispatch_candidate.v1",
+      "risk_level": "read_only",
+      "side_effects": {
+        "credential_access": false,
+        "cron_mutation": false,
+        "external_dispatch": false,
+        "model_generation": false
+      }
+    },
+    {
+      "entrypoint": "scripts/workflow_external_dispatch_policy_gate.py",
+      "human_gate": "default_safe_local_outbox_when_no_external_target",
+      "layer": "external_dispatch_policy_gate",
+      "module_id": "workflow_kernel.external_dispatch_local_outbox.v1",
+      "risk_level": "local_write",
+      "side_effects": {
+        "credential_access": false,
+        "cron_mutation": false,
+        "external_dispatch": false,
+        "model_generation": false
+      }
+    }
+  ],
+  "next_boundary": "major divergence: choose Phase50 guarded single external send with exact target/payload, or continue Phase52 control-tower UI/API projection",
+  "operator_panels": [
+    {
+      "fields": [
+        "workflow_pack_id",
+        "agent_pack_id",
+        "status",
+        "module_count"
+      ],
+      "panel_id": "pack_summary",
+      "title": "Pack Summary"
+    },
+    {
+      "fields": [
+        "module_id",
+        "risk_level",
+        "human_gate",
+        "side_effects"
+      ],
+      "panel_id": "module_boundaries",
+      "title": "Module Boundaries"
+    },
+    {
+      "fields": [
+        "guarded_single_send_requirements",
+        "pack_registry_projection"
+      ],
+      "panel_id": "next_boundary",
+      "title": "Next Boundary"
+    }
+  ],
+  "phase49_status": "WORKFLOW_AGENT_PACK_MANIFESTS_READY",
+  "projection_type": "read_only_control_tower_registry",
+  "report_id": "workflow_kernel_pack_registry_20260613_phase51",
+  "safe_boundaries": [
+    "read-only registry projection",
+    "no cron mutation",
+    "no task lifecycle mutation",
+    "no model generation",
+    "no credential read/write",
+    "no external message send",
+    "no unattended dispatch enablement"
+  ],
+  "status": "PACK_REGISTRY_PROJECTION_READY",
+  "workflow_pack_id": "workflow_kernel_external_dispatch_governance",
+  "workflow_pack_version": "2026.06.13-phase49"
+}

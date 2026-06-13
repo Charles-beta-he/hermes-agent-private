@@ -37,10 +37,11 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 47: External Dispatch Expansion Candidate Packet — layer=`external dispatch governance`, gate=`no external send without exact target/payload/mode`
 - Phase 48: External Dispatch Policy Gate Local Outbox — layer=`external dispatch policy gate`, gate=`external adapters still require exact target/payload/mode`
 - Phase 49: Workflow Pack / Agent Pack Schema — layer=`pack productization`, gate=`runtime adoption and external send remain separate gates`
+- Phase 51: Pack Registry / Control Tower Projection — layer=`operator registry`, gate=`UI/API adoption and external send remain separate gates`
 
 ## Next ladder
 - Phase 50: Guarded Single External Send — track=`GUARDED_EXTERNAL_SEND`, authority=`exact adapter/target/payload/mode/idempotency/rollback`
-- Phase 51: Pack Registry / Control Tower Projection — track=`PACK_REGISTRY_PROJECTION`, authority=`none for read-only registry projection`
+- Phase 52: Control Tower UI/API Projection — track=`CONTROL_TOWER_PRODUCTIZATION`, authority=`larger product direction choice`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence
