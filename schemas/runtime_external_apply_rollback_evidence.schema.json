@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/runtime_external_apply_rollback_evidence.schema.json",
+  "title": "Hermes Workflow Runtime External Apply Rollback Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rollback_id", "target_adapter", "source_receipt_id", "rollback_mode", "rollback_receipt", "post_rollback_readback", "verification_status"],
+  "properties": {
+    "rollback_id": {"type":"string"},
+    "target_adapter": {"type":"string"},
+    "source_receipt_id": {"type":"string"},
+    "rollback_mode": {"enum":["not_needed_no_external_mutation", "compensating_action", "restore_previous_state"]},
+    "rollback_receipt": {"type":"object"},
+    "post_rollback_readback": {"type":"object"},
+    "verification_status": {"enum":["PASS", "FAIL", "PENDING"]}
+  }
+}

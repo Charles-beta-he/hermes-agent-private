@@ -1,0 +1,56 @@
+{
+  "version": "2026-06-13.phase17.v1",
+  "default_policy": {
+    "real_apply_default": "disabled",
+    "dry_run_required_before_real_apply": true,
+    "authorization_packet_required": true,
+    "post_apply_readback_required": true,
+    "rollback_evidence_required": true
+  },
+  "adapters": {
+    "taskpool_outbox_simulator": {
+      "kind": "local_simulator",
+      "real_apply_supported": false,
+      "dry_run_supported": true,
+      "blast_radius": "local taskpool evidence/outbox artifacts only",
+      "required_authority": "local_repo_write",
+      "required_inputs": ["authorization_packet", "adapter_write_packet", "target_task_id"],
+      "post_apply_verification": ["read taskpool note", "verify evidence marker", "verify digest-bound receipt"],
+      "rollback_plan": ["remove task frontmatter apply markers", "remove generated local receipt artifacts if desired"],
+      "status": "implemented_dry_run_only"
+    },
+    "lark_task": {
+      "kind": "external_system",
+      "real_apply_supported": false,
+      "dry_run_supported": true,
+      "blast_radius": "could create/update Lark task records visible to users",
+      "required_authority": "explicit_human_authorization_plus_lark_target_scope",
+      "required_inputs": ["tenant/app or user-token boundary", "target project/list", "operation", "rollback target", "post-apply readback query"],
+      "post_apply_verification": ["read back Lark task id/status", "compare requested fields", "record external receipt id"],
+      "rollback_plan": ["delete created task or restore previous fields", "record rollback receipt"],
+      "status": "contract_only_no_real_apply"
+    },
+    "github_issue": {
+      "kind": "external_system",
+      "real_apply_supported": false,
+      "dry_run_supported": true,
+      "blast_radius": "could create/update repository issues visible to collaborators",
+      "required_authority": "explicit_human_authorization_plus_repo_scope",
+      "required_inputs": ["owner/repo", "operation", "title/body/labels", "rollback target", "post-apply gh readback"],
+      "post_apply_verification": ["gh issue view/readback", "verify labels/body", "record issue URL"],
+      "rollback_plan": ["close/delete/update issue to previous state", "record rollback receipt"],
+      "status": "contract_only_no_real_apply"
+    },
+    "telegram_notification": {
+      "kind": "external_delivery",
+      "real_apply_supported": false,
+      "dry_run_supported": true,
+      "blast_radius": "could send user-visible chat notification",
+      "required_authority": "explicit_human_authorization_plus_target_chat",
+      "required_inputs": ["target chat", "message body", "delivery timing", "rollback/clarification note", "post-send receipt"],
+      "post_apply_verification": ["send_message result", "message target confirmation"],
+      "rollback_plan": ["send correction/retraction message where platform supports social rollback only"],
+      "status": "contract_only_no_real_apply"
+    }
+  }
+}

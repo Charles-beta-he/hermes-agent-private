@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/runtime_external_apply_contract_packet.schema.json",
+  "title": "Hermes Workflow Runtime External Apply Contract Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_id", "registry_version", "target_adapters", "selection_status", "required_human_decision", "real_apply_enabled", "external_side_effects_enabled", "contract_status", "receipt_schema", "rollback_schema", "verification", "boundary"],
+  "properties": {
+    "contract_id": {"type": "string", "minLength": 1},
+    "registry_version": {"type": "string", "minLength": 1},
+    "target_adapters": {"type": "object", "minProperties": 1},
+    "selection_status": {"const": "target_adapter_options_fully_enumerated_pending_selection"},
+    "required_human_decision": {"type": "object", "required": ["decision", "options", "safe_default"], "properties": {"decision": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}, "minItems": 1}, "safe_default": {"type": "string"}}, "additionalProperties": false},
+    "real_apply_enabled": {"const": false},
+    "external_side_effects_enabled": {"const": false},
+    "contract_status": {"const": "real_apply_contracts_defined_no_target_selected"},
+    "receipt_schema": {"type": "object", "required": ["path", "sha256"], "properties": {"path": {"type":"string"}, "sha256": {"type":"string", "pattern":"^[a-f0-9]{64}$"}}, "additionalProperties": true},
+    "rollback_schema": {"type": "object", "required": ["path", "sha256"], "properties": {"path": {"type":"string"}, "sha256": {"type":"string", "pattern":"^[a-f0-9]{64}$"}}, "additionalProperties": true},
+    "verification": {"type":"object", "required":["status", "checks"], "properties":{"status":{"const":"PASS"}, "checks":{"type":"array", "items":{"type":"string"}, "minItems":1}}, "additionalProperties": false},
+    "taskpool_write_enabled": {"type": "boolean"},
+    "readback_verified": {"type": "boolean"},
+    "boundary": {"const": "all_external_apply_requirements_defined_real_apply_still_blocked"}
+  }
+}

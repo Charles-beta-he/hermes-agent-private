@@ -35,6 +35,10 @@ DEFAULT_RUNTIME_MODEL_CALL_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_mode
 DEFAULT_RUNTIME_ADAPTER_WRITE_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_adapter_write_packet.schema.json"
 DEFAULT_RUNTIME_EXTERNAL_SIDE_EFFECT_GATE_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_external_side_effect_gate_packet.schema.json"
 DEFAULT_RUNTIME_EXTERNAL_APPLY_SCAFFOLD_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_external_apply_scaffold_packet.schema.json"
+DEFAULT_RUNTIME_EXTERNAL_APPLY_CONTRACT_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_external_apply_contract_packet.schema.json"
+DEFAULT_RUNTIME_EXTERNAL_APPLY_RECEIPT_SCHEMA = REPO_ROOT / "schemas" / "runtime_external_apply_receipt.schema.json"
+DEFAULT_RUNTIME_EXTERNAL_APPLY_ROLLBACK_EVIDENCE_SCHEMA = REPO_ROOT / "schemas" / "runtime_external_apply_rollback_evidence.schema.json"
+DEFAULT_TARGET_ADAPTER_CAPABILITY_REGISTRY = REPO_ROOT / "config" / "target_adapter_capability_registry.json"
 
 ALLOWED_LANES = {"work", "evolution", "advisory"}
 ALLOWED_STAGES = {
@@ -113,6 +117,10 @@ class ValidationResult:
     runtime_adapter_write_packet_schema: str = ""
     runtime_external_side_effect_gate_packet_schema: str = ""
     runtime_external_apply_scaffold_packet_schema: str = ""
+    runtime_external_apply_contract_packet_schema: str = ""
+    runtime_external_apply_receipt_schema: str = ""
+    runtime_external_apply_rollback_evidence_schema: str = ""
+    target_adapter_capability_registry: str = ""
     model_registry: str = ""
     validated_workflows: int = 0
     validated_modules: int = 0
@@ -152,6 +160,10 @@ class ValidationResult:
             "runtime_adapter_write_packet_schema": self.runtime_adapter_write_packet_schema,
             "runtime_external_side_effect_gate_packet_schema": self.runtime_external_side_effect_gate_packet_schema,
             "runtime_external_apply_scaffold_packet_schema": self.runtime_external_apply_scaffold_packet_schema,
+            "runtime_external_apply_contract_packet_schema": self.runtime_external_apply_contract_packet_schema,
+            "runtime_external_apply_receipt_schema": self.runtime_external_apply_receipt_schema,
+            "runtime_external_apply_rollback_evidence_schema": self.runtime_external_apply_rollback_evidence_schema,
+            "target_adapter_capability_registry": self.target_adapter_capability_registry,
             "model_registry": self.model_registry,
             "validated_workflows": self.validated_workflows,
             "validated_modules": self.validated_modules,
@@ -421,6 +433,10 @@ def validate_registry(
     runtime_adapter_write_packet_schema_path: Path = DEFAULT_RUNTIME_ADAPTER_WRITE_PACKET_SCHEMA,
     runtime_external_side_effect_gate_packet_schema_path: Path = DEFAULT_RUNTIME_EXTERNAL_SIDE_EFFECT_GATE_PACKET_SCHEMA,
     runtime_external_apply_scaffold_packet_schema_path: Path = DEFAULT_RUNTIME_EXTERNAL_APPLY_SCAFFOLD_PACKET_SCHEMA,
+    runtime_external_apply_contract_packet_schema_path: Path = DEFAULT_RUNTIME_EXTERNAL_APPLY_CONTRACT_PACKET_SCHEMA,
+    runtime_external_apply_receipt_schema_path: Path = DEFAULT_RUNTIME_EXTERNAL_APPLY_RECEIPT_SCHEMA,
+    runtime_external_apply_rollback_evidence_schema_path: Path = DEFAULT_RUNTIME_EXTERNAL_APPLY_ROLLBACK_EVIDENCE_SCHEMA,
+    target_adapter_capability_registry_path: Path = DEFAULT_TARGET_ADAPTER_CAPABILITY_REGISTRY,
 ) -> ValidationResult:
     result = ValidationResult(
         registry=str(registry_path),
@@ -441,6 +457,10 @@ def validate_registry(
         runtime_adapter_write_packet_schema=str(runtime_adapter_write_packet_schema_path),
         runtime_external_side_effect_gate_packet_schema=str(runtime_external_side_effect_gate_packet_schema_path),
         runtime_external_apply_scaffold_packet_schema=str(runtime_external_apply_scaffold_packet_schema_path),
+        runtime_external_apply_contract_packet_schema=str(runtime_external_apply_contract_packet_schema_path),
+        runtime_external_apply_receipt_schema=str(runtime_external_apply_receipt_schema_path),
+        runtime_external_apply_rollback_evidence_schema=str(runtime_external_apply_rollback_evidence_schema_path),
+        target_adapter_capability_registry=str(target_adapter_capability_registry_path),
         model_registry=str(model_registry_path),
     )
     schema = _load_json(schema_path, result, "schema")
@@ -488,6 +508,18 @@ def validate_registry(
     runtime_external_apply_scaffold_packet_schema = _load_json(
         runtime_external_apply_scaffold_packet_schema_path, result, "runtime_external_apply_scaffold_packet_schema"
     )
+    runtime_external_apply_contract_packet_schema = _load_json(
+        runtime_external_apply_contract_packet_schema_path, result, "runtime_external_apply_contract_packet_schema"
+    )
+    runtime_external_apply_receipt_schema = _load_json(
+        runtime_external_apply_receipt_schema_path, result, "runtime_external_apply_receipt_schema"
+    )
+    runtime_external_apply_rollback_evidence_schema = _load_json(
+        runtime_external_apply_rollback_evidence_schema_path, result, "runtime_external_apply_rollback_evidence_schema"
+    )
+    target_adapter_capability_registry = _load_json(
+        target_adapter_capability_registry_path, result, "target_adapter_capability_registry"
+    )
     registry = _load_json(registry_path, result, "registry")
     model_registry = _load_json(model_registry_path, result, "model_registry")
     if (
@@ -508,6 +540,10 @@ def validate_registry(
         or runtime_adapter_write_packet_schema is None
         or runtime_external_side_effect_gate_packet_schema is None
         or runtime_external_apply_scaffold_packet_schema is None
+        or runtime_external_apply_contract_packet_schema is None
+        or runtime_external_apply_receipt_schema is None
+        or runtime_external_apply_rollback_evidence_schema is None
+        or target_adapter_capability_registry is None
         or registry is None
         or model_registry is None
     ):
@@ -547,6 +583,14 @@ def validate_registry(
         result.fail("runtime_external_side_effect_gate_packet_schema title is unexpected")
     if runtime_external_apply_scaffold_packet_schema.get("title") != "Hermes Workflow Runtime External Apply Scaffold Packet":
         result.fail("runtime_external_apply_scaffold_packet_schema title is unexpected")
+    if runtime_external_apply_contract_packet_schema.get("title") != "Hermes Workflow Runtime External Apply Contract Packet":
+        result.fail("runtime_external_apply_contract_packet_schema title is unexpected")
+    if runtime_external_apply_receipt_schema.get("title") != "Hermes Workflow Runtime External Apply Receipt":
+        result.fail("runtime_external_apply_receipt_schema title is unexpected")
+    if runtime_external_apply_rollback_evidence_schema.get("title") != "Hermes Workflow Runtime External Apply Rollback Evidence":
+        result.fail("runtime_external_apply_rollback_evidence_schema title is unexpected")
+    if not (target_adapter_capability_registry.get("adapters") or {}).get("taskpool_outbox_simulator"):
+        result.fail("target_adapter_capability_registry missing taskpool_outbox_simulator")
 
     workflows = registry.get("workflows") if isinstance(registry, dict) else None
     if not isinstance(workflows, list) or not workflows:
@@ -600,6 +644,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime-adapter-write-packet-schema", type=Path, default=DEFAULT_RUNTIME_ADAPTER_WRITE_PACKET_SCHEMA)
     parser.add_argument("--runtime-external-side-effect-gate-packet-schema", type=Path, default=DEFAULT_RUNTIME_EXTERNAL_SIDE_EFFECT_GATE_PACKET_SCHEMA)
     parser.add_argument("--runtime-external-apply-scaffold-packet-schema", type=Path, default=DEFAULT_RUNTIME_EXTERNAL_APPLY_SCAFFOLD_PACKET_SCHEMA)
+    parser.add_argument("--runtime-external-apply-contract-packet-schema", type=Path, default=DEFAULT_RUNTIME_EXTERNAL_APPLY_CONTRACT_PACKET_SCHEMA)
+    parser.add_argument("--runtime-external-apply-receipt-schema", type=Path, default=DEFAULT_RUNTIME_EXTERNAL_APPLY_RECEIPT_SCHEMA)
+    parser.add_argument("--runtime-external-apply-rollback-evidence-schema", type=Path, default=DEFAULT_RUNTIME_EXTERNAL_APPLY_ROLLBACK_EVIDENCE_SCHEMA)
+    parser.add_argument("--target-adapter-capability-registry", type=Path, default=DEFAULT_TARGET_ADAPTER_CAPABILITY_REGISTRY)
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
 
@@ -623,6 +671,10 @@ def main(argv: list[str] | None = None) -> int:
         args.runtime_adapter_write_packet_schema,
         args.runtime_external_side_effect_gate_packet_schema,
         args.runtime_external_apply_scaffold_packet_schema,
+        args.runtime_external_apply_contract_packet_schema,
+        args.runtime_external_apply_receipt_schema,
+        args.runtime_external_apply_rollback_evidence_schema,
+        args.target_adapter_capability_registry,
     )
     if args.as_json:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))

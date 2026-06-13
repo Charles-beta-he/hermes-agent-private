@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/runtime_external_apply_receipt.schema.json",
+  "title": "Hermes Workflow Runtime External Apply Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["receipt_id", "target_adapter", "operation", "apply_mode", "external_receipt", "post_apply_readback", "verification_status", "rollback_evidence_required"],
+  "properties": {
+    "receipt_id": {"type":"string"},
+    "target_adapter": {"type":"string"},
+    "operation": {"type":"string"},
+    "apply_mode": {"enum":["dry_run", "real_apply"]},
+    "external_receipt": {"type":"object"},
+    "post_apply_readback": {"type":"object"},
+    "verification_status": {"enum":["PASS", "FAIL", "PENDING"]},
+    "rollback_evidence_required": {"type":"boolean"}
+  }
+}

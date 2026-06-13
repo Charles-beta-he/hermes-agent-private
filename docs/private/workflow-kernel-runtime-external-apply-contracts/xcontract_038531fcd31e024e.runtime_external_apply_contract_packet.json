@@ -1,0 +1,150 @@
+{
+  "boundary": "all_external_apply_requirements_defined_real_apply_still_blocked",
+  "contract_id": "xcontract_038531fcd31e024e",
+  "contract_status": "real_apply_contracts_defined_no_target_selected",
+  "created_at": "2026-06-13T07:55:07Z",
+  "derived_refresh": {
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "generated_at": "2026-06-13T15:55:08+08:00",
+    "reason": "workflow_runtime_external_apply_contract",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "status": "OK"
+  },
+  "external_side_effects_enabled": false,
+  "packet_artifact": {
+    "bytes": 5143,
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-apply-contracts/xcontract_038531fcd31e024e.runtime_external_apply_contract_packet.json",
+    "sha256": "3a06501e951e37b332a1932241d9ea502831534799d53fe1c765be554dfc7f48"
+  },
+  "readback_verified": true,
+  "real_apply_enabled": false,
+  "receipt_schema": {
+    "path": "/Users/charles/.hermes/hermes-agent/schemas/runtime_external_apply_receipt.schema.json",
+    "sha256": "0ec573681a75e091f64bfbdc508936436d7470661d66e133ee8a15ce63a6f86f",
+    "title": "Hermes Workflow Runtime External Apply Receipt"
+  },
+  "registry_version": "2026-06-13.phase17.v1",
+  "required_human_decision": {
+    "decision": "Select one target adapter and authorize exact operation scope before any real external apply executor can run.",
+    "options": [
+      "github_issue: contract_only_no_real_apply / explicit_human_authorization_plus_repo_scope",
+      "lark_task: contract_only_no_real_apply / explicit_human_authorization_plus_lark_target_scope",
+      "taskpool_outbox_simulator: implemented_dry_run_only / local_repo_write",
+      "telegram_notification: contract_only_no_real_apply / explicit_human_authorization_plus_target_chat"
+    ],
+    "safe_default": "Keep all external side effects disabled; continue with local dry-run and contract-only work."
+  },
+  "rollback_schema": {
+    "path": "/Users/charles/.hermes/hermes-agent/schemas/runtime_external_apply_rollback_evidence.schema.json",
+    "sha256": "c32aa2c8df27f7d57360193f5fb8d68ac435a473d7381b478a994eee0937f401",
+    "title": "Hermes Workflow Runtime External Apply Rollback Evidence"
+  },
+  "selection_status": "target_adapter_options_fully_enumerated_pending_selection",
+  "target_adapters": {
+    "github_issue": {
+      "blast_radius": "could create/update repository issues visible to collaborators",
+      "dry_run_supported": true,
+      "kind": "external_system",
+      "post_apply_verification": [
+        "gh issue view/readback",
+        "verify labels/body",
+        "record issue URL"
+      ],
+      "real_apply_supported": false,
+      "required_authority": "explicit_human_authorization_plus_repo_scope",
+      "required_inputs": [
+        "owner/repo",
+        "operation",
+        "title/body/labels",
+        "rollback target",
+        "post-apply gh readback"
+      ],
+      "rollback_plan": [
+        "close/delete/update issue to previous state",
+        "record rollback receipt"
+      ],
+      "status": "contract_only_no_real_apply"
+    },
+    "lark_task": {
+      "blast_radius": "could create/update Lark task records visible to users",
+      "dry_run_supported": true,
+      "kind": "external_system",
+      "post_apply_verification": [
+        "read back Lark task id/status",
+        "compare requested fields",
+        "record external receipt id"
+      ],
+      "real_apply_supported": false,
+      "required_authority": "explicit_human_authorization_plus_lark_target_scope",
+      "required_inputs": [
+        "tenant/app or user-token boundary",
+        "target project/list",
+        "operation",
+        "rollback target",
+        "post-apply readback query"
+      ],
+      "rollback_plan": [
+        "delete created task or restore previous fields",
+        "record rollback receipt"
+      ],
+      "status": "contract_only_no_real_apply"
+    },
+    "taskpool_outbox_simulator": {
+      "blast_radius": "local taskpool evidence/outbox artifacts only",
+      "dry_run_supported": true,
+      "kind": "local_simulator",
+      "post_apply_verification": [
+        "read taskpool note",
+        "verify evidence marker",
+        "verify digest-bound receipt"
+      ],
+      "real_apply_supported": false,
+      "required_authority": "local_repo_write",
+      "required_inputs": [
+        "authorization_packet",
+        "adapter_write_packet",
+        "target_task_id"
+      ],
+      "rollback_plan": [
+        "remove task frontmatter apply markers",
+        "remove generated local receipt artifacts if desired"
+      ],
+      "status": "implemented_dry_run_only"
+    },
+    "telegram_notification": {
+      "blast_radius": "could send user-visible chat notification",
+      "dry_run_supported": true,
+      "kind": "external_delivery",
+      "post_apply_verification": [
+        "send_message result",
+        "message target confirmation"
+      ],
+      "real_apply_supported": false,
+      "required_authority": "explicit_human_authorization_plus_target_chat",
+      "required_inputs": [
+        "target chat",
+        "message body",
+        "delivery timing",
+        "rollback/clarification note",
+        "post-send receipt"
+      ],
+      "rollback_plan": [
+        "send correction/retraction message where platform supports social rollback only"
+      ],
+      "status": "contract_only_no_real_apply"
+    }
+  },
+  "taskpool_write_enabled": true,
+  "verification": {
+    "checks": [
+      "adapter_registry_loaded",
+      "all_target_options_enumerated",
+      "receipt_schema_digest_recorded",
+      "rollback_schema_digest_recorded",
+      "real_apply_disabled",
+      "external_side_effects_disabled"
+    ],
+    "status": "PASS"
+  }
+}
