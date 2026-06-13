@@ -10,6 +10,9 @@ CAPABILITIES = (
     "kernel_scaffold_compat_only",
     "canonical_json_io",
     "artifact_sha256",
+    "contract_packets",
+    "append_only_ledger",
+    "runtime_switch_readiness",
 )
 
 __all__ = ["PHASE", "RUNTIME_SWITCH_ENABLED", "CAPABILITIES"]
