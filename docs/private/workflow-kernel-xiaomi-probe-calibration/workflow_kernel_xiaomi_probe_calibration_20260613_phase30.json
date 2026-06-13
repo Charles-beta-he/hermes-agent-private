@@ -1,0 +1,53 @@
+{
+  "created_at": "2026-06-13T14:03:20Z",
+  "every4h_plan_readback": {
+    "cron_state_mutated": false,
+    "model_generation_attempted": false,
+    "script_args": [
+      "--skip-claude",
+      "--timeout",
+      "45"
+    ],
+    "status": "provider_health_exclusion_plan"
+  },
+  "fixes": [
+    "provider_network_probe_ledger resolves Xiaomi probe from XIAOMI_BASE_URL/default base URL and probes /models",
+    "daily/every4h wrappers read the actual cron-provider-health-gate directory instead of stale provider-health-gate directory"
+  ],
+  "health_gate_readback": {
+    "decision_counts": {
+      "retry_allowed_by_provider_health": 1,
+      "retry_allowed_by_provider_health_manual_only": 1
+    },
+    "degraded_endpoints": [],
+    "status": "GATE_COMPILED_NO_MUTATION"
+  },
+  "next_boundary": "Phase31 can observe next scheduled run or add stale-gate detector; do not assume credential/model generation success from unauthenticated reachability alone.",
+  "report_id": "workflow_kernel_xiaomi_probe_calibration_20260613_phase30",
+  "root_cause": "Phase23 provider probe used stale host api.mimogpt.com with HEAD /, while Hermes/Xiaomi runtime uses OpenAI-compatible base_url + /models or /chat/completions on api.xiaomimimo.com or configured token-plan-cn.xiaomimimo.com/v1.",
+  "safe_boundaries": [
+    "no provider credential values printed",
+    "no model generation during verification",
+    "no cron/jobs.json mutation",
+    "no external message send",
+    "no deletion of historical evidence"
+  ],
+  "sha256": "400d4b0364b156b4168a74b35dd6d12ca45f7c996982f9edb9b220ae04e17044",
+  "status": "XIAOMI_PROBE_SHAPE_CALIBRATED_REACHABLE",
+  "user_hypothesis": "Xiaomi/MiMo should be request-shape inconsistent",
+  "verification": [
+    "22 focused tests passed",
+    "Xiaomi probe now reachable with 401 on token-plan-cn.xiaomimimo.com/v1/models",
+    "health gate degraded_endpoints empty",
+    "every4h wrapper plan uses base args because no degraded provider exclusion remains"
+  ],
+  "xiaomi_probe_readback": {
+    "classification": "reachable",
+    "configured_base_url_host": "token-plan-cn.xiaomimimo.com",
+    "error": null,
+    "method": "HEAD",
+    "status_code": 401,
+    "url_host": "token-plan-cn.xiaomimimo.com",
+    "url_path": "/v1/models"
+  }
+}

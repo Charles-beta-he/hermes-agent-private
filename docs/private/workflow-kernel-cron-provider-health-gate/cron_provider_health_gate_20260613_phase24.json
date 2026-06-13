@@ -1,20 +1,20 @@
 {
-  "created_at": "2026-06-13T10:24:13Z",
+  "created_at": "2026-06-13T14:02:57Z",
   "decision_counts": {
-    "retry_allowed_by_provider_health_manual_only": 1,
-    "skip_provider_health_degraded": 1
+    "retry_allowed_by_provider_health": 1,
+    "retry_allowed_by_provider_health_manual_only": 1
   },
   "decisions": [
     {
-      "decision": "skip_provider_health_degraded",
+      "decision": "retry_allowed_by_provider_health",
       "deliver": "local",
-      "endpoint_classification": "tls_error",
+      "endpoint_classification": "reachable",
       "job_id": "42baeebb646c",
       "last_status": "error",
       "model": "mimo-v2.5-pro",
       "name": "multi-model-smoke-daily-full",
       "provider": "xiaomi",
-      "reason": "target endpoint xiaomi classified as tls_error",
+      "reason": "target endpoint xiaomi reachable; provider generation failure is not explained by edge reachability alone",
       "script": "multi-model-smoke-daily-full-wrapper.py",
       "target_endpoint": "xiaomi",
       "triage_class": "provider_generation"
@@ -34,9 +34,7 @@
       "triage_class": "telegram_delivery"
     }
   ],
-  "degraded_endpoints": [
-    "xiaomi"
-  ],
+  "degraded_endpoints": [],
   "failed_job_count": 2,
   "jobs_path": "/Users/charles/.hermes/cron/jobs.json",
   "next_actions": [

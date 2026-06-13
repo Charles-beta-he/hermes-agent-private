@@ -28,14 +28,19 @@ def write_report(path: Path, decision: str = "skip_provider_health_degraded") ->
 
 def test_load_gate_decision_from_override(tmp_path, monkeypatch):
     mod = load()
-    report = write_report(tmp_path / "gate.json")
+    report = write_report(tmp_path / "gate.json", "skip_provider_health_degraded")
     monkeypatch.setenv("HERMES_CRON_HEALTH_GATE_REPORT", str(report))
     d = mod.load_gate_decision()
     assert d["decision"] == "skip_provider_health_degraded"
     assert d["gate_report_id"] == "test_gate"
 
 
-def test_skip_payload_appends_idempotently(tmp_path, monkeypatch):
+def test_default_gate_path_points_to_cron_provider_health_gate():
+    mod = load()
+    assert "workflow-kernel-cron-provider-health-gate" in mod.DEFAULT_GATE_GLOB
+
+
+def test_main_skips_and_does_not_call_original(tmp_path, monkeypatch, capsys):
     mod = load()
     report = write_report(tmp_path / "gate.json")
     ledger = tmp_path / "skips.jsonl"

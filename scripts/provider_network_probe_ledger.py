@@ -26,7 +26,13 @@ DEFAULT_ENDPOINTS = [
     {"id": "github", "url": "https://github.com/", "purpose": "upstream_fetch_visibility"},
     {"id": "openai", "url": "https://api.openai.com/", "purpose": "default_provider_edge_reachability"},
     {"id": "deepseek", "url": "https://api.deepseek.com/", "purpose": "configured_provider_edge_reachability"},
-    {"id": "xiaomi", "url": "https://api.mimogpt.com/", "purpose": "configured_provider_edge_reachability"},
+    {
+        "id": "xiaomi",
+        "url": "https://api.xiaomimimo.com/v1/models",
+        "purpose": "configured_provider_openai_compatible_models_endpoint_reachability",
+        "base_url_env_var": "XIAOMI_BASE_URL",
+        "base_url_default": "https://api.xiaomimimo.com/v1",
+    },
     {"id": "google_gemini", "url": "https://generativelanguage.googleapis.com/", "purpose": "oauth_provider_edge_reachability"},
     {"id": "telegram", "url": "https://api.telegram.org/", "purpose": "telegram_delivery_edge_reachability"},
 ]
@@ -52,6 +58,32 @@ def proxy_snapshot() -> dict[str, str | None]:
     return {k: redact_proxy(os.environ.get(k)) for k in keys if os.environ.get(k)}
 
 
+def _dotenv_value(name: str) -> str | None:
+    """Read a non-secret config value from ~/.hermes/.env without exposing secrets."""
+    env_path = Path.home() / ".hermes" / ".env"
+    if not env_path.exists():
+        return None
+    for line in env_path.read_text(errors="ignore").splitlines():
+        if not line or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == name:
+            return value.strip().strip('\"').strip("'")
+    return None
+
+
+def resolve_endpoint(endpoint: dict[str, str]) -> dict[str, str]:
+    """Normalize provider probes to the same OpenAI-compatible base URL shape used at runtime."""
+    out = dict(endpoint)
+    env_var = endpoint.get("base_url_env_var")
+    if env_var:
+        base = os.environ.get(env_var) or _dotenv_value(env_var) or endpoint.get("base_url_default")
+        if base:
+            out["url"] = base.rstrip("/") + "/models"
+            out["configured_base_url_host"] = urllib.parse.urlparse(base).netloc
+    return out
+
+
 def classify_http_status(status: int | None, error: str | None) -> str:
     if status is not None:
         if 200 <= status < 500:
@@ -74,9 +106,11 @@ def classify_http_status(status: int | None, error: str | None) -> str:
 
 
 def probe_url(endpoint: dict[str, str], timeout: float = 5.0) -> dict[str, Any]:
+    endpoint = resolve_endpoint(endpoint)
     url = endpoint["url"]
+    method = endpoint.get("method", "HEAD")
     started = time.time()
-    req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Hermes-Provider-Probe/phase23"})
+    req = urllib.request.Request(url, method=method, headers={"User-Agent": "Hermes-Provider-Probe/phase30"})
     status = None
     error = None
     final_url = url
@@ -93,7 +127,10 @@ def probe_url(endpoint: dict[str, str], timeout: float = 5.0) -> dict[str, Any]:
     return {
         "id": endpoint["id"],
         "purpose": endpoint.get("purpose"),
+        "method": method,
         "url_host": urllib.parse.urlparse(url).netloc,
+        "url_path": urllib.parse.urlparse(url).path,
+        "configured_base_url_host": endpoint.get("configured_base_url_host"),
         "status_code": status,
         "classification": classify_http_status(status, error),
         "error": error[:500] if error else None,

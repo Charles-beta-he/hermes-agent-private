@@ -1,16 +1,16 @@
 # Hermes Provider / Network Probe Ledger — Phase 23
 
-Status: **DEGRADED_PARTIAL**
+Status: **PASS**
 Probe count: **6**
-Class counts: `{"reachable": 5, "tls_error": 1}`
+Class counts: `{"reachable": 6}`
 
 ## Results
-- **github** `reachable` status=200 host=github.com duration=1355ms
-- **openai** `reachable` status=421 host=api.openai.com duration=4341ms
-- **deepseek** `reachable` status=401 host=api.deepseek.com duration=137ms
-- **xiaomi** `tls_error` status=- host=api.mimogpt.com duration=4550ms
-- **google_gemini** `reachable` status=404 host=generativelanguage.googleapis.com duration=837ms
-- **telegram** `reachable` status=200 host=api.telegram.org duration=3232ms
+- **github** `reachable` status=200 host=github.com duration=1292ms
+- **openai** `reachable` status=421 host=api.openai.com duration=1209ms
+- **deepseek** `reachable` status=401 host=api.deepseek.com duration=258ms
+- **xiaomi** `reachable` status=401 host=token-plan-cn.xiaomimimo.com duration=203ms
+- **google_gemini** `reachable` status=404 host=generativelanguage.googleapis.com duration=833ms
+- **telegram** `reachable` status=200 host=api.telegram.org duration=3535ms
 
 ## Safe Boundaries
 - no LLM generation call

@@ -41,6 +41,29 @@ def test_proxy_redaction(monkeypatch):
     assert snap["HTTPS_PROXY"] == "http://[REDACTED]@example.com:8080"
 
 
+def test_xiaomi_endpoint_uses_runtime_base_url_shape(monkeypatch):
+    mod = load()
+    monkeypatch.setenv("XIAOMI_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1")
+    ep = mod.resolve_endpoint({
+        "id": "xiaomi",
+        "url": "https://api.xiaomimimo.com/v1/models",
+        "base_url_env_var": "XIAOMI_BASE_URL",
+        "base_url_default": "https://api.xiaomimimo.com/v1",
+    })
+    assert ep["url"] == "https://token-plan-cn.xiaomimimo.com/v1/models"
+    assert ep["configured_base_url_host"] == "token-plan-cn.xiaomimimo.com"
+
+
+def test_default_xiaomi_probe_no_longer_uses_retired_mimogpt_host(monkeypatch):
+    mod = load()
+    monkeypatch.delenv("XIAOMI_BASE_URL", raising=False)
+    monkeypatch.setattr(mod, "_dotenv_value", lambda _name: None)
+    xiaomi = next(e for e in mod.DEFAULT_ENDPOINTS if e["id"] == "xiaomi")
+    ep = mod.resolve_endpoint(xiaomi)
+    assert ep["url"] == "https://api.xiaomimimo.com/v1/models"
+    assert "api.mimogpt.com" not in ep["url"]
+
+
 def test_write_report_is_local_evidence_only(tmp_path):
     mod = load()
     report = {

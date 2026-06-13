@@ -51,6 +51,11 @@ def test_load_gate_decision_from_override(tmp_path, monkeypatch):
     assert d["gate_report_id"] == "test_gate"
 
 
+def test_default_gate_path_points_to_cron_provider_health_gate():
+    mod = load()
+    assert "workflow-kernel-cron-provider-health-gate" in mod.DEFAULT_GATE_GLOB
+
+
 def test_main_plan_only_does_not_call_original(tmp_path, monkeypatch, capsys):
     mod = load()
     report = write_report(tmp_path / "gate.json")
