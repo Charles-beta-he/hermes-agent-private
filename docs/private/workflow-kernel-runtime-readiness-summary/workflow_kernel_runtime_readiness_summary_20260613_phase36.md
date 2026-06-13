@@ -1,6 +1,6 @@
 # Workflow Kernel Runtime Readiness Summary — Phase 36
 
-Status: **RUNTIME_READINESS_SUMMARY_AUTO_ENABLED**
+Status: **RUNTIME_READINESS_SUMMARY_DEGRADED_NOT_BLOCKED**
 Runtime switch enabled by default: `True`
 Explicit enable required: `False`
 
@@ -9,16 +9,16 @@ Explicit enable required: `False`
 - `global_runtime_switch_auto_enabled`: `True`
 - `probe_artifact_fresh`: `True`
 - `receipt_aware_correlation_ready`: `True`
-- `run_correlation_partial_or_better`: `True`
+- `run_correlation_partial_or_better`: `False`
 - `runtime_switch_ready_or_enabled`: `True`
 - `scheduler_projection_ready`: `True`
 - `wrapper_receipt_ledger_ready`: `True`
 
 ## Blocking checks
-- none
+- `run_correlation_partial_or_better`
 
 ## Artifacts
-- `correlation`: status=`RECEIPT_CORRELATION_PARTIAL_READY`, stale=`False`, path=`/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json`
+- `correlation`: status=`AWAITING_POST_PROJECTION_SCHEDULED_RUN`, stale=`False`, path=`/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json`
 - `gate`: status=`GATE_COMPILED_NO_MUTATION`, stale=`False`, path=`/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-provider-health-gate/cron_provider_health_gate_20260613_phase24.json`
 - `probe`: status=`PASS`, stale=`False`, path=`/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-provider-network-probe/provider_network_probe_20260613_phase23.json`
 - `projection`: status=`SCHEDULER_READBACK_PROJECTION_READY`, stale=`False`, path=`/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json`

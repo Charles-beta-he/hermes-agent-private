@@ -13,14 +13,14 @@ Probe path: `/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-pr
 ```json
 {
   "gate": {
-    "age_seconds": 11925.0,
+    "age_seconds": 14946.0,
     "created_at": "2026-06-13T14:26:33Z",
     "exists": true,
     "stale": false,
     "stale_threshold_hours": 24.0
   },
   "probe": {
-    "age_seconds": 11925.0,
+    "age_seconds": 14946.0,
     "created_at": "2026-06-13T14:26:33Z",
     "exists": true,
     "stale": false,

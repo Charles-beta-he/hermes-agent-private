@@ -24,16 +24,16 @@ def test_build_map_has_current_boundary_and_safe_default():
     mod = load()
     report = mod.build_map()
     assert report["status"] == "WORKFLOW_SEQUENCE_MAP_READY"
-    assert report["safe_default_track"] == "AUTO_ENABLED_OBSERVATION"
-    assert report["recommended_next"].startswith("Phase46")
-    assert "mutate ~/.hermes/cron/jobs.json" in report["closed_boundaries_without_explicit_authorization"]
+    assert report["safe_default_track"] == "EXTERNAL_DISPATCH_GOVERNED_EXPANSION"
+    assert report["recommended_next"].startswith("Phase48")
+    assert "external message delivery without exact target/payload/mode" in report["closed_boundaries_without_explicit_authorization"]
 
 
 def test_next_ladder_requires_authority_for_future_expansion():
     mod = load()
     by_track = {item["track"]: item for item in mod.NEXT_LADDER}
-    assert by_track["AUTO_ENABLED_OBSERVATION"]["phase"] == 46
-    assert by_track["FUTURE_EXTERNAL_EXPANSION"]["authority_needed"] == "explicit scoped authorization"
+    assert by_track["EXTERNAL_DISPATCH_GOVERNED_EXPANSION"]["phase"] == 48
+    assert by_track["PACK_PRODUCTIZATION"]["authority_needed"] == "none for schema/projection; scoped gate for runtime adoption"
 
 
 def test_write_report_creates_artifacts(tmp_path):

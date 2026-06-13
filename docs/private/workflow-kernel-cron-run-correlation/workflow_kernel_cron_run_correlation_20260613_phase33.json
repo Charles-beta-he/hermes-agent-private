@@ -1,9 +1,8 @@
 {
   "correlation_counts": {
-    "ONLY_PRE_PROJECTION_RUN_OBSERVED": 1,
-    "RECEIPT_AFTER_PROJECTION_CORRELATED": 1
+    "ONLY_PRE_PROJECTION_RUN_OBSERVED": 2
   },
-  "created_at": "2026-06-13T17:48:26Z",
+  "created_at": "2026-06-13T18:35:39Z",
   "jobs_path": "/Users/charles/.hermes/cron/jobs.json",
   "log_dir": "/Users/charles/.hermes/logs",
   "next_actions": [
@@ -46,17 +45,28 @@
         "timestamp": "2026-06-13T00:35:19.517710Z"
       },
       "latest_log_after_projection": false,
-      "latest_receipt": null,
+      "latest_receipt": {
+        "created_at": "2026-06-13T18:03:33Z",
+        "cron_state_mutated": false,
+        "gate_decision": "retry_allowed_by_provider_health",
+        "gate_report_id": "cron_provider_health_gate_20260613_phase24",
+        "job_id": "42baeebb646c",
+        "kernel_shim": true,
+        "model_generation_attempted": false,
+        "payload_ok": null,
+        "payload_status": "scheduler_native_daily_full_plan",
+        "runtime_mode": "scheduler_native_plan_only"
+      },
       "log_path": "/Users/charles/.hermes/logs/multi-model-smoke-daily-full-wrapper.jsonl",
       "projection_status": "KERNEL_SHIM_SCHEDULER_READBACK_READY"
     },
     {
-      "correlation_status": "RECEIPT_AFTER_PROJECTION_CORRELATED",
+      "correlation_status": "ONLY_PRE_PROJECTION_RUN_OBSERVED",
       "cron_last_run_at": "2026-06-14T00:17:57.124057+08:00",
       "cron_last_status": "ok",
       "cron_next_run_at": "2026-06-14T06:17:00+08:00",
       "gate_decision_at_projection": null,
-      "interpretation": "direct wrapper-run receipt after projection confirms kernel/gate metadata capture",
+      "interpretation": "no post-projection scheduled wrapper run has occurred yet",
       "job_id": "2c14ca2a9bd2",
       "job_name": "multi-model-smoke-every-4h",
       "kernel_shim_detected_at_projection": true,
@@ -96,7 +106,7 @@
       "projection_status": "KERNEL_SHIM_NO_GATE_DECISION_NEEDED"
     }
   ],
-  "projection_created_at": "2026-06-13T17:45:18Z",
+  "projection_created_at": "2026-06-13T18:35:39Z",
   "projection_path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json",
   "receipt_ledger": "/Users/charles/.hermes/state/cron-provider-health-gate/wrapper_run_receipts.jsonl",
   "report_id": "workflow_kernel_cron_run_correlation_20260613_phase33",
@@ -109,5 +119,5 @@
     "read-only log/projection correlation only"
   ],
   "scope": "read-only correlation between scheduler state, kernel-shim projection, and wrapper JSONL outcomes",
-  "status": "RECEIPT_CORRELATION_PARTIAL_READY"
+  "status": "AWAITING_POST_PROJECTION_SCHEDULED_RUN"
 }

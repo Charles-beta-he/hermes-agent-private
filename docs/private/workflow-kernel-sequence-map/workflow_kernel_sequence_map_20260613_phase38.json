@@ -1,32 +1,32 @@
 {
   "closed_boundaries_without_explicit_authorization": [
-    "enable workflow_kernel.RUNTIME_SWITCH_ENABLED",
-    "mutate ~/.hermes/cron/jobs.json",
     "trigger cron jobs solely to create evidence",
-    "scheduler-native takeover",
     "credentialed model generation smoke",
-    "external message delivery"
+    "external message delivery without exact target/payload/mode",
+    "unattended external dispatch without policy gate",
+    "broad scheduler rewrite beyond opted-in jobs",
+    "credential or secret read/write"
   ],
-  "created_at": "2026-06-13T18:10:14Z",
-  "current_boundary": "Phase45 has auto-enabled the workflow kernel runtime switch with both opted-in cron jobs on scheduler-native runners; future external dispatch or broad scheduler expansion remains scoped.",
+  "created_at": "2026-06-13T18:40:38Z",
+  "current_boundary": "Phase47 has produced an external dispatch expansion candidate packet after auto-enable observation; no external adapter will execute without exact adapter/target/payload/mode selection and rollback evidence.",
   "next_ladder": [
     {
-      "authority_needed": "none for readback",
-      "name": "Post-auto-enable Scheduled Observation",
-      "phase": 46,
-      "track": "AUTO_ENABLED_OBSERVATION",
-      "why_next": "observe natural scheduled runs under both scheduler-native jobs and auto-enabled runtime switch"
+      "authority_needed": "exact adapter/target/payload/mode selection",
+      "name": "External Dispatch Policy Gate or Local Outbox Expansion",
+      "phase": 48,
+      "track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
+      "why_next": "turn the candidate packet into one selected dry-run/local-outbox track before any external side effect"
     },
     {
-      "authority_needed": "explicit scoped authorization",
-      "name": "External Dispatch Expansion Candidate Packet",
-      "phase": 47,
-      "track": "FUTURE_EXTERNAL_EXPANSION",
-      "why_next": "auto-enable does not imply unattended external delivery expansion"
+      "authority_needed": "none for schema/projection; scoped gate for runtime adoption",
+      "name": "Workflow Pack / Agent Pack Schema",
+      "phase": 49,
+      "track": "PACK_PRODUCTIZATION",
+      "why_next": "extract the proven kernel chain into reusable module/pack manifests"
     }
   ],
-  "objective": "梳理 Phase17-45 的顺序、依赖、门禁和后续观察路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启。",
-  "phase_count": 29,
+  "objective": "梳理 Phase17-47 的顺序、依赖、门禁和后续扩展路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启，Phase46 观察已记录，Phase47 外部扩展候选包已就绪。",
+  "phase_count": 31,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -431,11 +431,39 @@
       ],
       "phase": 45,
       "status": "complete"
+    },
+    {
+      "authority": "read-only observation",
+      "depends_on": [
+        45
+      ],
+      "gate": "do not trigger cron solely to create post-projection evidence",
+      "layer": "runtime observation",
+      "name": "Post-auto-enable Scheduled Observation",
+      "next_unlocked": [
+        47
+      ],
+      "phase": 46,
+      "status": "observation_pending"
+    },
+    {
+      "authority": "candidate packet only",
+      "depends_on": [
+        46
+      ],
+      "gate": "no external send without exact target/payload/mode",
+      "layer": "external dispatch governance",
+      "name": "External Dispatch Expansion Candidate Packet",
+      "next_unlocked": [
+        48
+      ],
+      "phase": 47,
+      "status": "candidate_ready"
     }
   ],
-  "recommended_next": "Phase46 Post-auto-enable scheduled observation",
+  "recommended_next": "Phase48 External dispatch policy gate or local outbox expansion",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
-  "safe_default_track": "AUTO_ENABLED_OBSERVATION",
+  "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",
   "validation_errors": []
 }

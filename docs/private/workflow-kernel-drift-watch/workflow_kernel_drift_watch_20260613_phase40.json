@@ -2,16 +2,16 @@
   "artifact_states": {
     "correlation": {
       "age_seconds": 0.0,
-      "created_at": "2026-06-13T18:03:33Z",
+      "created_at": "2026-06-13T18:35:39Z",
       "exists": true,
       "name": "correlation",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json",
       "stale": false,
-      "status": "RECEIPT_CORRELATION_PARTIAL_READY"
+      "status": "AWAITING_POST_PROJECTION_SCHEDULED_RUN"
     },
     "projection": {
       "age_seconds": 0.0,
-      "created_at": "2026-06-13T18:03:33Z",
+      "created_at": "2026-06-13T18:35:39Z",
       "exists": true,
       "name": "projection",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json",
@@ -19,16 +19,16 @@
       "status": "SCHEDULER_READBACK_PROJECTION_READY"
     },
     "summary": {
-      "age_seconds": 907.0,
-      "created_at": "2026-06-13T17:48:26Z",
+      "age_seconds": 0.0,
+      "created_at": "2026-06-13T18:35:39Z",
       "exists": true,
       "name": "summary",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-readiness-summary/workflow_kernel_runtime_readiness_summary_20260613_phase36.json",
       "stale": false,
-      "status": "RUNTIME_READINESS_SUMMARY_READY_PENDING_EXPLICIT_ENABLE"
+      "status": "RUNTIME_READINESS_SUMMARY_DEGRADED_NOT_BLOCKED"
     }
   },
-  "created_at": "2026-06-13T18:03:33Z",
+  "created_at": "2026-06-13T18:35:39Z",
   "drift_signals": [],
   "job_receipts": {
     "2c14ca2a9bd2": {

@@ -1,7 +1,7 @@
 # Workflow Kernel Sequence Map — Phase 38
 
 Status: **WORKFLOW_SEQUENCE_MAP_READY**
-Safe default track: `AUTO_ENABLED_OBSERVATION`
+Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 
 ## Phase order
 - Phase 17: External Apply Requirements — layer=`contract`, gate=`real_apply_enabled=false`
@@ -33,15 +33,17 @@ Safe default track: `AUTO_ENABLED_OBSERVATION`
 - Phase 43: Daily-wrapper Receipt Closure — layer=`receipt closure`, gate=`plan-only receipt; no credentialed generation required for proof`
 - Phase 44: Daily-wrapper Scheduler-native Rollout — layer=`scheduler-native second opted-in job`, gate=`daily job script field only; rollback backup required`
 - Phase 45: Runtime Switch Auto-enabled — layer=`runtime switch`, gate=`future external dispatch/broad scheduler rewrites still scoped`
+- Phase 46: Post-auto-enable Scheduled Observation — layer=`runtime observation`, gate=`do not trigger cron solely to create post-projection evidence`
+- Phase 47: External Dispatch Expansion Candidate Packet — layer=`external dispatch governance`, gate=`no external send without exact target/payload/mode`
 
 ## Next ladder
-- Phase 46: Post-auto-enable Scheduled Observation — track=`AUTO_ENABLED_OBSERVATION`, authority=`none for readback`
-- Phase 47: External Dispatch Expansion Candidate Packet — track=`FUTURE_EXTERNAL_EXPANSION`, authority=`explicit scoped authorization`
+- Phase 48: External Dispatch Policy Gate or Local Outbox Expansion — track=`EXTERNAL_DISPATCH_GOVERNED_EXPANSION`, authority=`exact adapter/target/payload/mode selection`
+- Phase 49: Workflow Pack / Agent Pack Schema — track=`PACK_PRODUCTIZATION`, authority=`none for schema/projection; scoped gate for runtime adoption`
 
 ## Closed boundaries
-- enable workflow_kernel.RUNTIME_SWITCH_ENABLED
-- mutate ~/.hermes/cron/jobs.json
 - trigger cron jobs solely to create evidence
-- scheduler-native takeover
 - credentialed model generation smoke
-- external message delivery
+- external message delivery without exact target/payload/mode
+- unattended external dispatch without policy gate
+- broad scheduler rewrite beyond opted-in jobs
+- credential or secret read/write

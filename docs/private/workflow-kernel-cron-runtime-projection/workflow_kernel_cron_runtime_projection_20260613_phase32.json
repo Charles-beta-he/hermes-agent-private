@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-06-13T17:45:18Z",
+  "created_at": "2026-06-13T18:35:39Z",
   "endpoint_statuses": {
     "deepseek": "reachable",
     "github": "reachable",
@@ -9,7 +9,7 @@
     "xiaomi": "reachable"
   },
   "gate_artifact": {
-    "age_seconds": 11925.0,
+    "age_seconds": 14946.0,
     "created_at": "2026-06-13T14:26:33Z",
     "exists": true,
     "stale": false,
@@ -23,7 +23,7 @@
     "keep global runtime switch disabled until a separate explicit enable gate"
   ],
   "probe_artifact": {
-    "age_seconds": 11925.0,
+    "age_seconds": 14946.0,
     "created_at": "2026-06-13T14:26:33Z",
     "exists": true,
     "stale": false,
@@ -53,9 +53,10 @@
       "cron_job_present": true,
       "cron_state": "scheduled",
       "degraded_endpoints": null,
-      "expected_runtime_mode": "typed_skip_or_original_run",
+      "expected_runtime_mode": "typed_skip_or_original_run_or_scheduler_native",
       "expected_scripts": [
-        "multi-model-smoke-daily-full-wrapper.py"
+        "multi-model-smoke-daily-full-wrapper.py",
+        "workflow-kernel-multi-model-smoke-daily-full-runner.py"
       ],
       "gate_decision": "retry_allowed_by_provider_health",
       "gate_endpoint_classification": "reachable",
@@ -67,10 +68,10 @@
       "last_status": "error",
       "next_run_at": "2026-06-14T08:35:00+08:00",
       "projection_status": "KERNEL_SHIM_SCHEDULER_READBACK_READY",
-      "script": "multi-model-smoke-daily-full-wrapper.py",
+      "script": "workflow-kernel-multi-model-smoke-daily-full-runner.py",
       "script_allowed": true,
       "script_exists": true,
-      "script_path": "/Users/charles/.hermes/scripts/multi-model-smoke-daily-full-wrapper.py"
+      "script_path": "/Users/charles/.hermes/scripts/workflow-kernel-multi-model-smoke-daily-full-runner.py"
     },
     {
       "cron_enabled": true,
