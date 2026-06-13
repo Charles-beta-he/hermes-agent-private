@@ -1,0 +1,60 @@
+{
+  "adapter_mode": "local_outbox_simulation",
+  "adapter_target": "taskpool_outbox",
+  "adapter_write_enabled": true,
+  "adapter_write_id": "adw_02a3cf0530913fb8",
+  "boundary": "runtime_adapter_write_local_outbox_simulated_before_external_side_effect",
+  "claim_execution_id": "clex_22a18e493dc020c4",
+  "derived_refresh": {
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "generated_at": "2026-06-13T15:20:06+08:00",
+    "reason": "workflow_runtime_adapter_write_gate",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "status": "OK"
+  },
+  "done_execution_id": "done_928841ef9a25840f",
+  "external_side_effects_enabled": false,
+  "generated_at": "2026-06-13T07:20:06Z",
+  "intent_digest": "sha256:cb72444bf02fc6b8fd19531d558be72079ae3be1ef4733be9d1587f9ee0d829b",
+  "model_call_id": "mcall_e01f7305ba2efb07",
+  "module_execution_id": "modex_5bca069e18d6d922",
+  "outbox_artifact": {
+    "bytes": 977,
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-adapter-writes/decision_brief_pack.run_preview_78eee6afcec1f12a.adw_02a3cf0530913fb8.taskpool_outbox.json",
+    "readback_digest_match": true,
+    "sha256": "53d5b61b4ca66610b6940df40a8b058ac16a7416d66cab2b8bbb5cf13e1d0f5a"
+  },
+  "readback_verified": true,
+  "rollback_plan": "Remove workflow_adapter_write_id / workflow_adapter_write_status / workflow_adapter_write_record and evidence markers after rollback authorization; delete local outbox artifact if desired; no external system was mutated.",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "runtime_execution_id": "rtex_8d01cdb6170a549f",
+  "runtime_packet_id": "rti_2c322fc59264ae3d",
+  "selected_group_id": "contract_acceptance_governance",
+  "selected_task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+  "taskpool_write_enabled": true,
+  "verification": {
+    "checks": [
+      "model_call_completed_read_only",
+      "intent_digest_computed",
+      "outbox_artifact_persisted",
+      "outbox_artifact_digest_readback_match",
+      "external_side_effects_disabled"
+    ],
+    "status": "PASS"
+  },
+  "workflow_id": "decision_brief_pack",
+  "write_intent": {
+    "created_by": "workflow_runtime_adapter_write_gate",
+    "external_side_effects_enabled": false,
+    "fields": {
+      "response_artifact_sha256": null,
+      "workflow_adapter_candidate": "model_call_ready_for_adapter_review",
+      "workflow_model_call_status": "model_call_completed_read_only"
+    },
+    "operation": "annotate_model_call_ready_for_adapter_review",
+    "source_model_call_id": "mcall_e01f7305ba2efb07",
+    "target": "taskpool",
+    "task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance"
+  }
+}

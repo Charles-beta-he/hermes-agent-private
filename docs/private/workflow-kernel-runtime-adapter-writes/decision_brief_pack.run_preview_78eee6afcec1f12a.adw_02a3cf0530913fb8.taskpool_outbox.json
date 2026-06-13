@@ -1,0 +1,25 @@
+{
+  "adapter_mode": "local_outbox_simulation",
+  "adapter_target": "taskpool_outbox",
+  "adapter_write_id": "adw_02a3cf0530913fb8",
+  "created_at": "2026-06-13T07:20:06Z",
+  "forbidden_without_next_authorization": [
+    "external_adapter_apply",
+    "external_notification",
+    "third_party_mutation"
+  ],
+  "intent_digest": "sha256:cb72444bf02fc6b8fd19531d558be72079ae3be1ef4733be9d1587f9ee0d829b",
+  "write_intent": {
+    "created_by": "workflow_runtime_adapter_write_gate",
+    "external_side_effects_enabled": false,
+    "fields": {
+      "response_artifact_sha256": null,
+      "workflow_adapter_candidate": "model_call_ready_for_adapter_review",
+      "workflow_model_call_status": "model_call_completed_read_only"
+    },
+    "operation": "annotate_model_call_ready_for_adapter_review",
+    "source_model_call_id": "mcall_e01f7305ba2efb07",
+    "target": "taskpool",
+    "task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance"
+  }
+}

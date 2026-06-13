@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/runtime_adapter_write_packet.schema.json",
+  "title": "Hermes Workflow Runtime Adapter Write Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "adapter_write_id",
+    "model_call_id",
+    "done_execution_id",
+    "module_execution_id",
+    "runtime_execution_id",
+    "claim_execution_id",
+    "runtime_packet_id",
+    "workflow_id",
+    "run_id",
+    "generated_at",
+    "selected_group_id",
+    "selected_task_id",
+    "adapter_target",
+    "adapter_mode",
+    "write_intent",
+    "intent_digest",
+    "outbox_artifact",
+    "verification",
+    "taskpool_write_enabled",
+    "adapter_write_enabled",
+    "external_side_effects_enabled",
+    "readback_verified",
+    "rollback_plan",
+    "boundary"
+  ],
+  "properties": {
+    "adapter_write_id": {"type": "string", "minLength": 1},
+    "model_call_id": {"type": "string", "minLength": 1},
+    "done_execution_id": {"type": "string", "minLength": 1},
+    "module_execution_id": {"type": "string", "minLength": 1},
+    "runtime_execution_id": {"type": "string", "minLength": 1},
+    "claim_execution_id": {"type": "string", "minLength": 1},
+    "runtime_packet_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "minLength": 1},
+    "selected_group_id": {"type": "string", "minLength": 1},
+    "selected_task_id": {"type": "string", "minLength": 1},
+    "adapter_target": {"const": "taskpool_outbox"},
+    "adapter_mode": {"const": "local_outbox_simulation"},
+    "write_intent": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["target", "operation", "task_id", "fields", "source_model_call_id"],
+      "properties": {
+        "target": {"const": "taskpool"},
+        "operation": {"const": "annotate_model_call_ready_for_adapter_review"},
+        "task_id": {"type": "string", "minLength": 1},
+        "fields": {"type": "object"},
+        "source_model_call_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "intent_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "outbox_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "readback_digest_match"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "bytes": {"type": "integer", "minimum": 1},
+        "readback_digest_match": {"const": true}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "checks"],
+      "properties": {
+        "status": {"const": "PASS"},
+        "checks": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+      }
+    },
+    "taskpool_write_enabled": {"const": true},
+    "adapter_write_enabled": {"const": true},
+    "external_side_effects_enabled": {"const": false},
+    "readback_verified": {"const": true},
+    "derived_refresh": {"type": ["object", "null"]},
+    "rollback_plan": {"type": "string", "minLength": 1},
+    "boundary": {"const": "runtime_adapter_write_local_outbox_simulated_before_external_side_effect"}
+  }
+}
