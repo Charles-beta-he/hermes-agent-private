@@ -1,0 +1,48 @@
+{
+  "adapter_write_id": "adw_02a3cf0530913fb8",
+  "apply_mode": "dry_run_only",
+  "apply_status": "external_apply_scaffold_dry_run_ready",
+  "authorization_packet": {
+    "path": "docs/private/workflow-kernel-runtime-external-side-effect-gates/decision_brief_pack.run_preview_78eee6afcec1f12a.xgate_4b4a9625d638fafa.external_side_effect_gate_packet.json",
+    "sha256": "838eac9e78dc3f929659888f7d73bc1955c4304842e48a6b9d402e4f4a72a9e4"
+  },
+  "boundary": "external_apply_executor_scaffold_dry_run_only_no_external_mutation",
+  "derived_refresh": {
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "generated_at": "2026-06-13T15:46:30+08:00",
+    "reason": "workflow_runtime_external_apply_scaffold",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "status": "OK"
+  },
+  "dry_run_receipt": {
+    "bytes": 393,
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-apply-scaffold/xapply_a8db35ea417dec53.taskpool_outbox_simulator.dry_run_receipt.json",
+    "sha256": "f1d0543e2367d5debc556fdef08b42833128edf8e32ed42bad561d5f9f553794",
+    "target_adapter": "taskpool_outbox_simulator",
+    "would_apply": false
+  },
+  "external_apply_id": "xapply_a8db35ea417dec53",
+  "external_gate_id": "xgate_4b4a9625d638fafa",
+  "external_side_effects_enabled": false,
+  "packet_artifact": {
+    "bytes": 1660,
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-apply-scaffold/xapply_a8db35ea417dec53.runtime_external_apply_scaffold_packet.json",
+    "sha256": "48b66c7c00f6d93731526e29f49fd6ad4656214fb2a8e3ad567f7db47697f935"
+  },
+  "readback_verified": true,
+  "rollback_plan": "Remove workflow_external_apply_id/status/record and evidence markers; delete dry-run receipt if desired. No external rollback needed because no mutation occurred.",
+  "target_adapter": "taskpool_outbox_simulator",
+  "taskpool_write_enabled": true,
+  "verification": {
+    "checks": [
+      "target_adapter_required",
+      "authorization_packet_read",
+      "authorization_gate_pending",
+      "task_readback_matches_gate",
+      "dry_run_receipt_written",
+      "external_side_effects_disabled"
+    ],
+    "status": "PASS"
+  }
+}

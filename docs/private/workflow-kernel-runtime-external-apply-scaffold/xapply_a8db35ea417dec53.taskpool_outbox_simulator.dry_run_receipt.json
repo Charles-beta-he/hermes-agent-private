@@ -1,0 +1,10 @@
+{
+  "adapter_write_id": "adw_02a3cf0530913fb8",
+  "apply_mode": "dry_run_only",
+  "authorized_gate_id": "xgate_4b4a9625d638fafa",
+  "created_at": "2026-06-13T07:46:30Z",
+  "external_apply_id": "xapply_a8db35ea417dec53",
+  "reason": "scaffold validates target and authorization only; no external mutation is performed",
+  "target_adapter": "taskpool_outbox_simulator",
+  "would_apply": false
+}

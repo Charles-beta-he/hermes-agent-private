@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/runtime_external_apply_scaffold_packet.schema.json",
+  "title": "Hermes Workflow Runtime External Apply Scaffold Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["external_apply_id", "external_gate_id", "adapter_write_id", "target_adapter", "authorization_packet", "apply_mode", "apply_status", "dry_run_receipt", "verification", "taskpool_write_enabled", "external_side_effects_enabled", "readback_verified", "rollback_plan", "boundary"],
+  "properties": {
+    "external_apply_id": {"type":"string", "minLength":1},
+    "external_gate_id": {"type":"string", "minLength":1},
+    "adapter_write_id": {"type":"string", "minLength":1},
+    "target_adapter": {"type":"string", "minLength":1},
+    "authorization_packet": {"type":"object", "required":["path","sha256"], "properties":{"path":{"type":"string"},"sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"}}, "additionalProperties": true},
+    "apply_mode": {"const":"dry_run_only"},
+    "apply_status": {"const":"external_apply_scaffold_dry_run_ready"},
+    "dry_run_receipt": {"type":"object", "required":["path","sha256","bytes","target_adapter","would_apply"], "properties":{"path":{"type":"string"},"sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"},"bytes":{"type":"integer","minimum":1},"target_adapter":{"type":"string"},"would_apply":{"const": false}}, "additionalProperties": true},
+    "verification": {"type":"object", "required":["status","checks"], "properties":{"status":{"const":"PASS"},"checks":{"type":"array","items":{"type":"string"},"minItems":1}}, "additionalProperties": false},
+    "taskpool_write_enabled": {"const": true},
+    "external_side_effects_enabled": {"const": false},
+    "readback_verified": {"const": true},
+    "derived_refresh": {"type":["object","null"]},
+    "rollback_plan": {"type":"string", "minLength":1},
+    "boundary": {"const":"external_apply_executor_scaffold_dry_run_only_no_external_mutation"}
+  }
+}
