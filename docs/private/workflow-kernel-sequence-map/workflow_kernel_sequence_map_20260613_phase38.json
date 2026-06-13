@@ -1,0 +1,357 @@
+{
+  "closed_boundaries_without_explicit_authorization": [
+    "enable workflow_kernel.RUNTIME_SWITCH_ENABLED",
+    "mutate ~/.hermes/cron/jobs.json",
+    "trigger cron jobs solely to create evidence",
+    "scheduler-native takeover",
+    "credentialed model generation smoke",
+    "external message delivery"
+  ],
+  "created_at": "2026-06-13T17:20:53Z",
+  "current_boundary": "Phase37 has produced a human authorization packet; Phase38 maps sequence and defaults to safe read-only continuation.",
+  "next_ladder": [
+    {
+      "authority_needed": "none",
+      "name": "Enablement Runbook and Rollback Drill",
+      "phase": 39,
+      "track": "A_READ_ONLY_CONTINUE",
+      "why_next": "turn the packet into exact operator commands/checklists without executing them"
+    },
+    {
+      "authority_needed": "none",
+      "name": "Receipt/Projection Drift Watcher",
+      "phase": 40,
+      "track": "A_READ_ONLY_CONTINUE",
+      "why_next": "detect stale summaries and future receipts without triggering cron"
+    },
+    {
+      "authority_needed": "explicit B",
+      "name": "Single-wrapper Runtime-enable Dry-run",
+      "phase": 41,
+      "track": "B_SINGLE_WRAPPER_RUNTIME_ENABLE_DRY_RUN",
+      "why_next": "first runtime-adjacent shadow exercise"
+    },
+    {
+      "authority_needed": "explicit C",
+      "name": "Single-wrapper Scheduler-native Rollout",
+      "phase": 42,
+      "track": "C_SINGLE_WRAPPER_SCHEDULER_NATIVE_ROLLOUT",
+      "why_next": "first real scheduler/runtime boundary crossing"
+    }
+  ],
+  "objective": "梳理 Phase17-37 的顺序、依赖、门禁和下一步推进路径，保持全盘推进但不越过显式授权边界。",
+  "phase_count": 22,
+  "phases": [
+    {
+      "authority": "read-only/local contract",
+      "depends_on": [],
+      "gate": "real_apply_enabled=false",
+      "layer": "contract",
+      "name": "External Apply Requirements",
+      "next_unlocked": [
+        18
+      ],
+      "phase": 17,
+      "status": "complete"
+    },
+    {
+      "authority": "local simulator only",
+      "depends_on": [
+        17
+      ],
+      "gate": "external_side_effects_enabled=false",
+      "layer": "local outbox",
+      "name": "Local External Apply Outbox",
+      "next_unlocked": [
+        19
+      ],
+      "phase": 18,
+      "status": "complete"
+    },
+    {
+      "authority": "single explicit external send only",
+      "depends_on": [
+        18
+      ],
+      "gate": "no unattended sends",
+      "layer": "external apply smoke",
+      "name": "Single Explicit External Dispatch Smoke",
+      "next_unlocked": [
+        20
+      ],
+      "phase": 19,
+      "status": "complete"
+    },
+    {
+      "authority": "dry-run policy compiler",
+      "depends_on": [
+        19
+      ],
+      "gate": "unattended_send_enabled=false",
+      "layer": "policy",
+      "name": "Governed Notification Policy",
+      "next_unlocked": [
+        21
+      ],
+      "phase": 20,
+      "status": "complete"
+    },
+    {
+      "authority": "explicit per-send authorization",
+      "depends_on": [
+        20
+      ],
+      "gate": "no unattended dispatch",
+      "layer": "manual dispatch",
+      "name": "Guarded Manual-send Runner",
+      "next_unlocked": [
+        22
+      ],
+      "phase": 21,
+      "status": "complete"
+    },
+    {
+      "authority": "read-only classification",
+      "depends_on": [
+        21
+      ],
+      "gate": "no cron mutation/rerun",
+      "layer": "diagnostics",
+      "name": "Cron Provider Degradation Triage",
+      "next_unlocked": [
+        23
+      ],
+      "phase": 22,
+      "status": "complete"
+    },
+    {
+      "authority": "unauthenticated reachability only",
+      "depends_on": [
+        22
+      ],
+      "gate": "no LLM prompt/credentials",
+      "layer": "network evidence",
+      "name": "Provider Network Probe Ledger",
+      "next_unlocked": [
+        24
+      ],
+      "phase": 23,
+      "status": "complete"
+    },
+    {
+      "authority": "read-only gate decisions",
+      "depends_on": [
+        23
+      ],
+      "gate": "no scheduler mutation",
+      "layer": "decision compiler",
+      "name": "Cron Provider Health Gate",
+      "next_unlocked": [
+        25
+      ],
+      "phase": 24,
+      "status": "complete"
+    },
+    {
+      "authority": "read-only recommendation",
+      "depends_on": [
+        24
+      ],
+      "gate": "no big-bang rewrite",
+      "layer": "migration strategy",
+      "name": "Architecture Migration Evaluation",
+      "next_unlocked": [
+        26
+      ],
+      "phase": 25,
+      "status": "complete"
+    },
+    {
+      "authority": "package scaffold only",
+      "depends_on": [
+        25
+      ],
+      "gate": "RUNTIME_SWITCH_ENABLED=false",
+      "layer": "runtime scaffold",
+      "name": "Kernel Scaffold",
+      "next_unlocked": [
+        27
+      ],
+      "phase": 26,
+      "status": "complete"
+    },
+    {
+      "authority": "compatibility-shim readiness",
+      "depends_on": [
+        26
+      ],
+      "gate": "explicit enable required",
+      "layer": "switch readiness",
+      "name": "Runtime Switch Readiness",
+      "next_unlocked": [
+        28
+      ],
+      "phase": 27,
+      "status": "complete"
+    },
+    {
+      "authority": "one wrapper typed skip",
+      "depends_on": [
+        27
+      ],
+      "gate": "no cron/jobs.json edit",
+      "layer": "single wrapper opt-in",
+      "name": "Daily-full Wrapper Gate Rollout",
+      "next_unlocked": [
+        29
+      ],
+      "phase": 28,
+      "status": "complete"
+    },
+    {
+      "authority": "plan-only model exclusion verification",
+      "depends_on": [
+        28
+      ],
+      "gate": "no generation during verification",
+      "layer": "second wrapper opt-in",
+      "name": "Every-4h Wrapper Exclusion Hint",
+      "next_unlocked": [
+        30
+      ],
+      "phase": 29,
+      "status": "complete"
+    },
+    {
+      "authority": "unauthenticated /models probe",
+      "depends_on": [
+        29
+      ],
+      "gate": "edge reachability only, not credential validity",
+      "layer": "probe correctness",
+      "name": "Xiaomi Probe Calibration",
+      "next_unlocked": [
+        31
+      ],
+      "phase": 30,
+      "status": "complete"
+    },
+    {
+      "authority": "opt-in wrappers only",
+      "depends_on": [
+        30
+      ],
+      "gate": "global switch remains false",
+      "layer": "kernel shim",
+      "name": "Cron Wrapper Kernel Shim",
+      "next_unlocked": [
+        32
+      ],
+      "phase": 31,
+      "status": "complete"
+    },
+    {
+      "authority": "read-only projection",
+      "depends_on": [
+        31
+      ],
+      "gate": "no cron execution",
+      "layer": "scheduler readback",
+      "name": "Scheduler Runtime Projection",
+      "next_unlocked": [
+        33
+      ],
+      "phase": 32,
+      "status": "complete"
+    },
+    {
+      "authority": "read logs only",
+      "depends_on": [
+        32
+      ],
+      "gate": "partial until both wrappers run",
+      "layer": "runtime evidence",
+      "name": "Scheduled-run Outcome Correlation",
+      "next_unlocked": [
+        34
+      ],
+      "phase": 33,
+      "status": "complete"
+    },
+    {
+      "authority": "append-only local receipts",
+      "depends_on": [
+        33
+      ],
+      "gate": "verification uses override ledger",
+      "layer": "audit receipts",
+      "name": "Wrapper Run Receipt Ledger",
+      "next_unlocked": [
+        35
+      ],
+      "phase": 34,
+      "status": "complete"
+    },
+    {
+      "authority": "read-only receipt/log correlation",
+      "depends_on": [
+        34
+      ],
+      "gate": "do not trigger cron to create receipts",
+      "layer": "correlation upgrade",
+      "name": "Receipt-aware Correlation",
+      "next_unlocked": [
+        36
+      ],
+      "phase": 35,
+      "status": "complete"
+    },
+    {
+      "authority": "read-only aggregation",
+      "depends_on": [
+        35
+      ],
+      "gate": "summary is not enablement authority",
+      "layer": "operator summary",
+      "name": "Runtime Readiness Summary",
+      "next_unlocked": [
+        37
+      ],
+      "phase": 36,
+      "status": "complete"
+    },
+    {
+      "authority": "decision packet only",
+      "depends_on": [
+        36
+      ],
+      "gate": "B/C require explicit authorization",
+      "layer": "human gate",
+      "name": "Runtime Enablement Authorization Packet",
+      "next_unlocked": [
+        38
+      ],
+      "phase": 37,
+      "status": "complete"
+    },
+    {
+      "authority": "read-only ordering",
+      "depends_on": [
+        37
+      ],
+      "gate": "do not cross enablement boundary",
+      "layer": "workflow map",
+      "name": "Sequence Map and Ordering",
+      "next_unlocked": [
+        39
+      ],
+      "phase": 38,
+      "status": "current"
+    }
+  ],
+  "recommended_next": "Phase39 Enablement Runbook and Rollback Drill under A_READ_ONLY_CONTINUE",
+  "report_id": "workflow_kernel_sequence_map_20260613_phase38",
+  "safe_default_track": "A_READ_ONLY_CONTINUE",
+  "status": "WORKFLOW_SEQUENCE_MAP_READY",
+  "validation_errors": []
+}
