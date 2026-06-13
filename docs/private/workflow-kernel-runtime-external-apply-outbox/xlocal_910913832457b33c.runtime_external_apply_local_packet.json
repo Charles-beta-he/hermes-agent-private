@@ -1,0 +1,45 @@
+{
+  "apply_mode": "local_real_apply_no_external_dispatch",
+  "apply_status": "local_outbox_simulator_apply_recorded",
+  "boundary": "local_outbox_recorded_external_dispatch_still_blocked",
+  "contract_id": "xcontract_038531fcd31e024e",
+  "derived_refresh": {
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "generated_at": "2026-06-13T16:02:35+08:00",
+    "reason": "workflow_runtime_external_apply_local",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "status": "OK"
+  },
+  "external_side_effects_enabled": false,
+  "local_apply_id": "xlocal_910913832457b33c",
+  "outbox_item": {
+    "bytes": 778,
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-apply-outbox/xlocal_910913832457b33c.taskpool_outbox_simulator.item.json",
+    "sha256": "bbc6b46a766db1b69509381a02667b671f190947272aea36ec458c3545d65cbb"
+  },
+  "readback_verified": true,
+  "receipt": {
+    "bytes": 859,
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-apply-outbox/xlocal_910913832457b33c.runtime_external_apply_receipt.json",
+    "sha256": "4535cfae126d780433d46ca4db177d1f43b3cb1d9b3ef2ce7c29f043249e8766"
+  },
+  "rollback_evidence": {
+    "bytes": 494,
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-apply-outbox/xlocal_910913832457b33c.rollback_evidence.json",
+    "sha256": "a04eef97f855cb3a3d4e617f4a7cfa3b4432bc57b8bccff71a88bbc6eced5df1"
+  },
+  "target_adapter": "taskpool_outbox_simulator",
+  "taskpool_write_enabled": true,
+  "verification": {
+    "checks": [
+      "task_contract_read",
+      "target_adapter_is_local_simulator",
+      "outbox_item_written",
+      "receipt_written",
+      "rollback_evidence_written",
+      "external_side_effects_disabled"
+    ],
+    "status": "PASS"
+  }
+}

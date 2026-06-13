@@ -10,14 +10,14 @@
   "adapters": {
     "taskpool_outbox_simulator": {
       "kind": "local_simulator",
-      "real_apply_supported": false,
+      "real_apply_supported": true,
       "dry_run_supported": true,
       "blast_radius": "local taskpool evidence/outbox artifacts only",
       "required_authority": "local_repo_write",
       "required_inputs": ["authorization_packet", "adapter_write_packet", "target_task_id"],
       "post_apply_verification": ["read taskpool note", "verify evidence marker", "verify digest-bound receipt"],
-      "rollback_plan": ["remove task frontmatter apply markers", "remove generated local receipt artifacts if desired"],
-      "status": "implemented_dry_run_only"
+      "rollback_plan": ["record rollback evidence: not_needed_no_external_mutation", "retain generated local outbox artifacts for audit"],
+      "status": "implemented_local_real_apply_no_external_dispatch"
     },
     "lark_task": {
       "kind": "external_system",

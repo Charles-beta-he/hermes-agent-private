@@ -1,0 +1,22 @@
+{
+  "apply_mode": "real_apply",
+  "external_receipt": {
+    "dispatched": false,
+    "kind": "local_outbox_simulator",
+    "outbox_item": {
+      "bytes": 778,
+      "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-apply-outbox/xlocal_910913832457b33c.taskpool_outbox_simulator.item.json",
+      "sha256": "bbc6b46a766db1b69509381a02667b671f190947272aea36ec458c3545d65cbb"
+    }
+  },
+  "operation": "record_local_external_apply_intent",
+  "post_apply_readback": {
+    "expected_contract_id": "xcontract_038531fcd31e024e",
+    "source_task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+    "verified": true
+  },
+  "receipt_id": "xlocal_910913832457b33c",
+  "rollback_evidence_required": true,
+  "target_adapter": "taskpool_outbox_simulator",
+  "verification_status": "PASS"
+}

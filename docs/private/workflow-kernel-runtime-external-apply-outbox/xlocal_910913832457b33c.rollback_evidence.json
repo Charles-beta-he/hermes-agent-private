@@ -1,0 +1,14 @@
+{
+  "post_rollback_readback": {
+    "external_mutation_found": false,
+    "local_outbox_item_retained_for_audit": true
+  },
+  "rollback_id": "xrollback_5eb93648b769c9e0",
+  "rollback_mode": "not_needed_no_external_mutation",
+  "rollback_receipt": {
+    "reason": "Local simulator item was recorded as immutable evidence and was not dispatched externally."
+  },
+  "source_receipt_id": "xlocal_910913832457b33c",
+  "target_adapter": "taskpool_outbox_simulator",
+  "verification_status": "PASS"
+}

@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-06-13T08:02:34Z",
+  "delivery_status": "local_outbox_recorded_not_dispatched",
+  "external_side_effects_enabled": false,
+  "operation": "record_local_external_apply_intent",
+  "outbox_item_id": "xlocal_910913832457b33c",
+  "payload": {
+    "allowed_next_targets": [
+      "lark_task",
+      "github_issue",
+      "telegram_notification"
+    ],
+    "intent": "If a future human authorizes an actual external adapter, use this local outbox record as the digest-bound input, not as authority to dispatch.",
+    "safe_default": "do_not_dispatch"
+  },
+  "source_contract_id": "xcontract_038531fcd31e024e",
+  "source_task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+  "target_adapter": "taskpool_outbox_simulator"
+}
