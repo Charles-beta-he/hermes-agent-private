@@ -7,12 +7,13 @@
   ],
   "compatibility_clis": [
     "scripts/workflow_architecture_migration_evaluation.py",
-    "scripts/cron_provider_health_gate.py"
+    "scripts/cron_provider_health_gate.py",
+    "workflow_kernel/cron_wrappers.py"
   ],
   "explicit_enable_required": true,
   "next_closed_boundary": "explicit runtime switch enablement and one-slice wrapper rollout",
   "readiness_packet": {
-    "created_at": "2026-06-13T11:27:04Z",
+    "created_at": "2026-06-13T14:12:24Z",
     "evidence_refs": [
       "phase26:kernel_scaffold",
       "phase27:runtime_readiness"
@@ -35,11 +36,13 @@
       ],
       "cli_status": {
         "scripts/cron_provider_health_gate.py": true,
-        "scripts/workflow_architecture_migration_evaluation.py": true
+        "scripts/workflow_architecture_migration_evaluation.py": true,
+        "workflow_kernel/cron_wrappers.py": true
       },
       "compatibility_clis": [
         "scripts/workflow_architecture_migration_evaluation.py",
-        "scripts/cron_provider_health_gate.py"
+        "scripts/cron_provider_health_gate.py",
+        "workflow_kernel/cron_wrappers.py"
       ],
       "explicit_enable_required": true,
       "required_tests": [
@@ -57,7 +60,7 @@
         "tests/workflow_kernel/test_runtime_switch_readiness.py": true
       }
     },
-    "payload_digest": "6da1d6f9e7cbc8a867141f34ff10fe1ec8c8a01fab6d286c982518804880eaa6"
+    "payload_digest": "fd0414b024f68266256f152ad5e797c02dfe9c7177d71b3353059ebb83ec482f"
   },
   "report_id": "workflow_kernel_runtime_readiness_20260613_phase27",
   "required_tests": [

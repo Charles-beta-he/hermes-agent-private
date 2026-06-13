@@ -14,6 +14,7 @@ from workflow_kernel.contracts import contract_packet
 COMPATIBILITY_CLIS = [
     "scripts/workflow_architecture_migration_evaluation.py",
     "scripts/cron_provider_health_gate.py",
+    "workflow_kernel/cron_wrappers.py",
 ]
 
 REQUIRED_TESTS = [

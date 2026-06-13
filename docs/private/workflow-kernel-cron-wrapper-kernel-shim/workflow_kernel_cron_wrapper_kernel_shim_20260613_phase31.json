@@ -1,0 +1,45 @@
+{
+  "created_at": "2026-06-13T14:11:35Z",
+  "every4h_plan_readback": {
+    "cron_state_mutated": false,
+    "degraded_endpoints_excluded": [],
+    "gate_decision": null,
+    "job_id": "2c14ca2a9bd2",
+    "job_name": "multi-model-smoke-every-4h",
+    "kernel_shim": true,
+    "model_generation_attempted": false,
+    "script_args": [
+      "--skip-claude",
+      "--timeout",
+      "45"
+    ],
+    "selected_models": [],
+    "status": "provider_health_exclusion_plan"
+  },
+  "global_cron_mutation": false,
+  "model_generation_during_verification": false,
+  "next_boundary": "Phase32 may add scheduler-level stale-gate projection or observe real scheduled run; global switch remains off.",
+  "report_id": "workflow_kernel_cron_wrapper_kernel_shim_20260613_phase31",
+  "runtime_switch_enabled_by_default": false,
+  "safe_boundaries": [
+    "no cron/jobs.json mutation",
+    "no global runtime switch enablement",
+    "no scheduler rewrite",
+    "no model generation during verification",
+    "no credential read/write",
+    "no external message send"
+  ],
+  "scope": "Move daily/every4h provider-health gate consumption into workflow_kernel.cron_wrappers while keeping wrappers as opt-in cron entrypoints.",
+  "sha256": "8159510b90d7ecddde94d596eb7a40b136a1f26ed8f5b78de47cf9cb4bfcb4a9",
+  "status": "KERNEL_SHIM_ACTIVE_FOR_OPT_IN_CRON_WRAPPERS",
+  "switched_components": [
+    "workflow_kernel/cron_wrappers.py",
+    "~/.hermes/scripts/multi-model-smoke-daily-full-wrapper.py",
+    "~/.hermes/scripts/multi-model-smoke-every4h-wrapper.py"
+  ],
+  "verification": [
+    "py_compile workflow_kernel/cron_wrappers.py and wrappers PASS",
+    "focused wrapper/kernel tests 19 passed 0 failed",
+    "every4h plan-only readback includes kernel_shim=true"
+  ]
+}
