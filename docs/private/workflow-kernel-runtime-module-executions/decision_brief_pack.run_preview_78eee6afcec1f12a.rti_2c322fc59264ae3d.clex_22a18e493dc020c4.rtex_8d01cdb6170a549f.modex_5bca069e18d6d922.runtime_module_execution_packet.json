@@ -1,0 +1,56 @@
+{
+  "module_execution_id": "modex_5bca069e18d6d922",
+  "runtime_execution_id": "rtex_8d01cdb6170a549f",
+  "claim_execution_id": "clex_22a18e493dc020c4",
+  "runtime_packet_id": "rti_2c322fc59264ae3d",
+  "workflow_id": "decision_brief_pack",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "generated_at": "2026-06-13T04:46:46Z",
+  "selected_group_id": "contract_acceptance_governance",
+  "selected_task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+  "taskpool_write_enabled": true,
+  "taskpool_claim_enabled": true,
+  "runtime_enabled": true,
+  "runtime_worker_enabled": true,
+  "runtime_module_enabled": true,
+  "model_call_enabled": false,
+  "adapter_write_enabled": false,
+  "external_side_effects_enabled": false,
+  "module_execution": {
+    "task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+    "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance.md",
+    "group_id": "contract_acceptance_governance",
+    "previous_status": "running",
+    "new_status": "review",
+    "executor_actor": "workflow_runtime_module_executor",
+    "module_id": "contract_acceptance_governance.local_validator.v1",
+    "module_scope": "local_deterministic_contract_validation_no_model_no_adapter",
+    "execution_status": "module_execution_review_ready",
+    "validator_status": "PASS",
+    "module_output": {
+      "module_id": "contract_acceptance_governance.local_validator.v1",
+      "module_scope": "local_deterministic_contract_validation_no_model_no_adapter",
+      "validator_status": "PASS",
+      "validator_summary": {
+        "validated_workflows": 1,
+        "validated_modules": 5,
+        "validated_route_aliases": 5,
+        "errors": [],
+        "warnings": []
+      },
+      "validator_digest": "sha256:9a9cd3f0367378946aa9af00d2e3d8142382131796810d839b77bbefb8b657a6"
+    },
+    "readback_verified": true
+  },
+  "readback_verified": true,
+  "derived_refresh": {
+    "status": "OK",
+    "reason": "workflow_runtime_module_executor",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "generated_at": "2026-06-13T12:46:46+08:00"
+  },
+  "rollback_plan": "Transition the selected task from review back to running and remove workflow_module_execution_id / workflow_module_execution_status / workflow_module_execution_record after rollback authorization; no model/adapter/external work was started.",
+  "boundary": "runtime_module_execution_done_before_done_model_or_adapter"
+}
