@@ -1,0 +1,77 @@
+{
+  "closed_boundaries_without_explicit_authorization": [
+    "enable workflow_kernel.RUNTIME_SWITCH_ENABLED",
+    "mutate ~/.hermes/cron/jobs.json",
+    "trigger cron jobs solely to create evidence",
+    "scheduler-native takeover for any job",
+    "model generation smoke using credentials",
+    "external message delivery"
+  ],
+  "created_at": "2026-06-13T17:14:37Z",
+  "decision_question": "下一步是否授权跨越 runtime/scheduler enablement 边界，还是继续只读/等待自然 receipt？",
+  "decision_required": true,
+  "minimum_authorization_to_continue_beyond_read_only": "choose option B or C explicitly with scope and rollback acceptance",
+  "options": [
+    {
+      "authority_needed": "none beyond current bounded continuation",
+      "blast_radius": "lowest",
+      "label": "继续只读/可逆架构层",
+      "option_id": "A_READ_ONLY_CONTINUE",
+      "recommended_default": true,
+      "rollback": "git revert scoped commits; no runtime state mutation",
+      "side_effects": "local docs/tests/taskpool evidence only",
+      "verification": [
+        "tests pass",
+        "readiness summary remains ready",
+        "runtime switch remains false"
+      ]
+    },
+    {
+      "authority_needed": "explicit human authorization for runtime-switch-adjacent dry-run",
+      "blast_radius": "low-medium",
+      "label": "授权单 wrapper runtime enable dry-run / shadow projection",
+      "option_id": "B_SINGLE_WRAPPER_RUNTIME_ENABLE_DRY_RUN",
+      "recommended_default": false,
+      "rollback": "delete/ignore shadow artifact; git revert scoped code if needed",
+      "side_effects": "local runtime/config shadow artifact only; no cron mutation",
+      "verification": [
+        "dry-run readback",
+        "wrapper receipt",
+        "cron state unchanged"
+      ]
+    },
+    {
+      "authority_needed": "explicit human authorization to mutate scheduler/runtime boundary",
+      "blast_radius": "medium",
+      "label": "授权单 wrapper scheduler-native 接管",
+      "option_id": "C_SINGLE_WRAPPER_SCHEDULER_NATIVE_ROLLOUT",
+      "recommended_default": false,
+      "rollback": "restore previous scheduler path/flag; verify cron jobs.json and wrapper logs",
+      "side_effects": "may modify scheduler/runtime execution path for exactly one opted-in job",
+      "verification": [
+        "one scheduled/dry-run outcome",
+        "receipt-backed correlation",
+        "mission/taskpool evidence"
+      ]
+    },
+    {
+      "authority_needed": "none",
+      "blast_radius": "lowest but time-dependent",
+      "label": "等待真实 scheduled runs 自然产生 receipt-backed full correlation",
+      "option_id": "D_WAIT_FOR_NATURAL_RECEIPTS",
+      "recommended_default": false,
+      "rollback": "not needed; append-only receipts are audit evidence",
+      "side_effects": "none now; future scheduled wrappers append receipts",
+      "verification": [
+        "receipt-aware correlation reports receipt-backed rows for both wrappers"
+      ]
+    }
+  ],
+  "recommended_safe_default": "A_READ_ONLY_CONTINUE",
+  "report_id": "workflow_kernel_runtime_enablement_packet_20260613_phase37",
+  "runtime_switch_enabled_by_default": false,
+  "status": "RUNTIME_ENABLEMENT_HUMAN_AUTH_PACKET_READY",
+  "summary_blocking_checks": [],
+  "summary_path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-readiness-summary/workflow_kernel_runtime_readiness_summary_20260613_phase36.json",
+  "summary_status": "RUNTIME_READINESS_SUMMARY_READY_PENDING_EXPLICIT_ENABLE"
+}
