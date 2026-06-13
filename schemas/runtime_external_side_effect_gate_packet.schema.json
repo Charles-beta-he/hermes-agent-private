@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/runtime_external_side_effect_gate_packet.schema.json",
+  "title": "Hermes Workflow Runtime External Side Effect Gate Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["external_gate_id", "adapter_write_id", "model_call_id", "workflow_id", "run_id", "generated_at", "selected_group_id", "selected_task_id", "gate_status", "decision_needed", "confirmed_facts", "unconfirmed_facts", "options", "recommended_default", "blast_radius", "rollback_plan", "post_action_verification", "taskpool_write_enabled", "external_side_effects_enabled", "readback_verified", "boundary"],
+  "properties": {
+    "external_gate_id": {"type": "string", "minLength": 1},
+    "adapter_write_id": {"type": "string", "minLength": 1},
+    "model_call_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "minLength": 1},
+    "selected_group_id": {"type": "string", "minLength": 1},
+    "selected_task_id": {"type": "string", "minLength": 1},
+    "gate_status": {"const": "blocked_pending_external_target_authorization"},
+    "decision_needed": {"type": "string", "minLength": 1},
+    "confirmed_facts": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "unconfirmed_facts": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "options": {"type": "array", "items": {"type": "object"}, "minItems": 2},
+    "recommended_default": {"type": "string", "minLength": 1},
+    "blast_radius": {"type": "string", "minLength": 1},
+    "rollback_plan": {"type": "string", "minLength": 1},
+    "post_action_verification": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "taskpool_write_enabled": {"const": true},
+    "external_side_effects_enabled": {"const": false},
+    "readback_verified": {"const": true},
+    "derived_refresh": {"type": ["object", "null"]},
+    "boundary": {"const": "external_side_effect_gate_packet_written_no_external_mutation"}
+  }
+}

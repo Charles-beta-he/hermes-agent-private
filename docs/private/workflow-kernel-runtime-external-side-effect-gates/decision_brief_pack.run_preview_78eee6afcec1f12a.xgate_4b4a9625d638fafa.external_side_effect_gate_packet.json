@@ -1,0 +1,54 @@
+{
+  "adapter_write_id": "adw_02a3cf0530913fb8",
+  "blast_radius": "No current blast radius: this packet does not mutate external systems. Future apply blast radius is limited to the single named adapter and selected task.",
+  "boundary": "external_side_effect_gate_packet_written_no_external_mutation",
+  "confirmed_facts": [
+    "local workflow runtime chain reached done",
+    "read-only model call completed and was verified",
+    "adapter write-through exists only as local taskpool outbox simulation",
+    "external_side_effects_enabled=false"
+  ],
+  "decision_needed": "Choose and explicitly authorize one external adapter target before any third-party mutation or notification is allowed.",
+  "derived_refresh": null,
+  "external_gate_id": "xgate_4b4a9625d638fafa",
+  "external_side_effects_enabled": false,
+  "gate_status": "blocked_pending_external_target_authorization",
+  "generated_at": "2026-06-13T07:31:22Z",
+  "model_call_id": "mcall_e01f7305ba2efb07",
+  "options": [
+    {
+      "effect": "do not apply external mutation; continue building review/apply tooling",
+      "id": "A",
+      "label": "keep local-only"
+    },
+    {
+      "effect": "user names one adapter; executor performs target-specific dry-run/readiness only",
+      "id": "B",
+      "label": "authorize named adapter dry-run"
+    },
+    {
+      "effect": "user names one adapter and approves mutation with rollback and post-apply verification",
+      "id": "C",
+      "label": "authorize named adapter apply"
+    }
+  ],
+  "post_action_verification": [
+    "read back target adapter object",
+    "compare digest/fields with authorized intent",
+    "record apply receipt/status",
+    "confirm external_side_effects_status"
+  ],
+  "readback_verified": true,
+  "recommended_default": "A: keep local-only until a concrete external target adapter is named.",
+  "rollback_plan": "Remove workflow_external_side_effect_gate_id/status/record and matching evidence markers; no external rollback is needed because no external mutation was performed.",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "selected_group_id": "contract_acceptance_governance",
+  "selected_task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+  "taskpool_write_enabled": true,
+  "unconfirmed_facts": [
+    "which external adapter target should receive the write",
+    "whether credentials and permissions for that target are in scope",
+    "whether the external mutation should be sent now or only staged for review"
+  ],
+  "workflow_id": "decision_brief_pack"
+}
