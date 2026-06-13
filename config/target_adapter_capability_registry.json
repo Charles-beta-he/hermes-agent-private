@@ -50,7 +50,7 @@
       "required_inputs": ["target chat", "message body", "delivery timing", "rollback/clarification note", "post-send receipt"],
       "post_apply_verification": ["send_message result", "message target confirmation"],
       "rollback_plan": ["send correction/retraction message where platform supports social rollback only"],
-      "status": "system_tested_via_send_message_tool"
+      "status": "system_tested_governed_policy_ready_unattended_disabled"
     }
   }
 }

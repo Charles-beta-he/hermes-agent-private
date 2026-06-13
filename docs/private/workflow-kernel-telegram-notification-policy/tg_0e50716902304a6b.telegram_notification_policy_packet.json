@@ -1,0 +1,50 @@
+{
+  "allowed": true,
+  "chat_id": "5524172309",
+  "created_at": "2026-06-13T08:33:03Z",
+  "derived_refresh": {
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "generated_at": "2026-06-13T16:33:03+08:00",
+    "reason": "workflow_runtime_telegram_notification_policy",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "status": "OK"
+  },
+  "idempotency": {
+    "duplicate": false,
+    "existing_receipt": null
+  },
+  "ledger_artifact": {
+    "bytes": 471,
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-telegram-notification-policy/telegram_notification_ledger.json",
+    "sha256": "ff56f61708b59d7338ee5fd5d1e2eb98fbd7922747977e34fd705ec3f9a5546f"
+  },
+  "message_digest": "sha256:c6689f39ee373ee9fc2ee99f6b9ca27bf2b52017c287e43e4ceca67c13246362",
+  "mode": "dry_run",
+  "policy_version": "2026-06-13.phase20.v1",
+  "purpose": "mission_stage_report",
+  "rate_limit": {
+    "current_count": 0,
+    "max": 3,
+    "window_seconds": 3600
+  },
+  "request_id": "tg_0e50716902304a6b",
+  "send_instruction": {
+    "message": "【Hermes 预览】Phase 20 governed telegram policy dry-run preview；不发送。",
+    "requires_explicit_tool_action": true,
+    "target": "telegram",
+    "tool": "send_message"
+  },
+  "status": "dry_run_ready",
+  "target": "telegram",
+  "unattended_send_enabled": false,
+  "verification": {
+    "checks": [
+      "policy_loaded",
+      "target_allowlisted",
+      "idempotency_checked",
+      "rate_limit_checked"
+    ],
+    "status": "PASS"
+  }
+}

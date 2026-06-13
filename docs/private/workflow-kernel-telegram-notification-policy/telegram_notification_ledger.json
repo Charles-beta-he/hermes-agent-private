@@ -1,0 +1,16 @@
+{
+  "entries": [
+    {
+      "chat_id": "5524172309",
+      "created_at": "2026-06-13T08:33:03Z",
+      "created_ts": 1781339583.5713332,
+      "idempotency_key": "tg_0e50716902304a6b",
+      "message_digest": "sha256:c6689f39ee373ee9fc2ee99f6b9ca27bf2b52017c287e43e4ceca67c13246362",
+      "preview_only": true,
+      "purpose": "mission_stage_report",
+      "status": "dry_run_ready",
+      "target": "telegram"
+    }
+  ],
+  "version": "2026-06-13.phase20.ledger.v1"
+}

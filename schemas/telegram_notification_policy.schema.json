@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/telegram_notification_policy.schema.json",
+  "title": "Hermes Telegram Notification Governance Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "adapter", "default_mode", "unattended_send_enabled", "allowlist", "rate_limit", "idempotency", "dry_run", "receipt", "rollback"],
+  "properties": {
+    "version": {"type":"string"},
+    "adapter": {"const":"telegram_notification"},
+    "default_mode": {"enum":["dry_run_preview", "real_send"]},
+    "unattended_send_enabled": {"type":"boolean"},
+    "allowlist": {"type":"array", "minItems":1, "items":{"type":"object", "required":["target", "chat_id", "label", "allowed_purposes"], "properties":{"target":{"const":"telegram"}, "chat_id":{"type":"string"}, "label":{"type":"string"}, "allowed_purposes":{"type":"array", "items":{"type":"string"}, "minItems":1}}, "additionalProperties": false}},
+    "rate_limit": {"type":"object", "required":["window_seconds", "max_sends_per_window", "scope"], "properties":{"window_seconds":{"type":"integer", "minimum":1}, "max_sends_per_window":{"type":"integer", "minimum":1}, "scope":{"const":"target_chat"}}, "additionalProperties": false},
+    "idempotency": {"type":"object", "required":["key_fields", "duplicate_policy"], "properties":{"key_fields":{"type":"array", "items":{"type":"string"}, "minItems":1}, "duplicate_policy":{"const":"block_duplicate_send_and_return_existing_receipt"}}, "additionalProperties": false},
+    "dry_run": {"type":"object"},
+    "receipt": {"type":"object"},
+    "rollback": {"type":"object"}
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "version": "2026-06-13.phase20.v1",
+  "adapter": "telegram_notification",
+  "default_mode": "dry_run_preview",
+  "unattended_send_enabled": false,
+  "allowlist": [
+    {
+      "target": "telegram",
+      "chat_id": "5524172309",
+      "label": "telegram_home_channel",
+      "allowed_purposes": ["system_test", "mission_stage_report", "user_requested_notification"]
+    }
+  ],
+  "rate_limit": {
+    "window_seconds": 3600,
+    "max_sends_per_window": 3,
+    "scope": "target_chat"
+  },
+  "idempotency": {
+    "key_fields": ["target", "chat_id", "purpose", "message_digest"],
+    "duplicate_policy": "block_duplicate_send_and_return_existing_receipt"
+  },
+  "dry_run": {
+    "required_before_real_send": true,
+    "preview_artifact_required": true
+  },
+  "receipt": {
+    "ledger_required": true,
+    "send_message_result_required": true,
+    "post_send_message_id_required": true
+  },
+  "rollback": {
+    "mode": "compensating_message_only",
+    "correction_template": "【Hermes 更正】上一条通知为系统测试/误发更正：{reason}",
+    "true_delete_supported": false
+  }
+}
