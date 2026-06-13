@@ -55,11 +55,12 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 46, "name": "Post-auto-enable Scheduled Observation", "layer": "runtime observation", "status": "observation_pending", "depends_on": [45], "authority": "read-only observation", "gate": "do not trigger cron solely to create post-projection evidence", "next_unlocked": [47]},
     {"phase": 47, "name": "External Dispatch Expansion Candidate Packet", "layer": "external dispatch governance", "status": "candidate_ready", "depends_on": [46], "authority": "candidate packet only", "gate": "no external send without exact target/payload/mode", "next_unlocked": [48]},
     {"phase": 48, "name": "External Dispatch Policy Gate Local Outbox", "layer": "external dispatch policy gate", "status": "local_outbox_recorded", "depends_on": [47], "authority": "local outbox only", "gate": "external adapters still require exact target/payload/mode", "next_unlocked": [49]},
+    {"phase": 49, "name": "Workflow Pack / Agent Pack Schema", "layer": "pack productization", "status": "pack_manifests_ready", "depends_on": [48], "authority": "schema/projection only", "gate": "runtime adoption and external send remain separate gates", "next_unlocked": [50]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 49, "name": "Workflow Pack / Agent Pack Schema", "track": "PACK_PRODUCTIZATION", "authority_needed": "none for schema/projection; scoped gate for runtime adoption", "why_next": "extract the proven kernel/external-dispatch policy chain into reusable module/pack manifests"},
     {"phase": 50, "name": "Guarded Single External Send", "track": "GUARDED_EXTERNAL_SEND", "authority_needed": "exact adapter/target/payload/mode/idempotency/rollback", "why_next": "only after local outbox policy proof, perform at most one named external side effect with receipt"},
+    {"phase": 51, "name": "Pack Registry / Control Tower Projection", "track": "PACK_REGISTRY_PROJECTION", "authority_needed": "none for read-only registry projection", "why_next": "surface Workflow Pack / Agent Pack manifests in an operator-readable registry/control-tower view"},
 ]
 
 
@@ -101,15 +102,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-48 的顺序、依赖、门禁和后续扩展路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启，Phase46 观察已记录，Phase47 外部扩展候选包已就绪，Phase48 本地 outbox policy gate 已记录。",
+        "objective": "梳理 Phase17-49 的顺序、依赖、门禁和后续扩展路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启，Phase46 观察已记录，Phase47 外部扩展候选包已就绪，Phase48 本地 outbox policy gate 已记录，Phase49 Workflow/Agent Pack manifests 已就绪。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase48 has recorded a local outbox policy gate after external dispatch candidate selection; no external adapter will execute without exact adapter/target/payload/mode selection and rollback evidence.",
+        "current_boundary": "Phase49 has compiled reusable Workflow Pack / Agent Pack manifests; external adapter execution and runtime adoption remain separate scoped gates.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Phase49 Workflow Pack / Agent Pack schema",
+        "recommended_next": "Phase50 Guarded single external send or Phase51 pack registry projection",
     }
 
 

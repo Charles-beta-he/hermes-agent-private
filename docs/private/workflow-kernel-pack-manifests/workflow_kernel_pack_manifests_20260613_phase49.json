@@ -1,0 +1,194 @@
+{
+  "agent_pack": {
+    "agent_name": "Workflow Kernel Operator",
+    "agent_pack_id": "agent.workflow_kernel_operator",
+    "agent_version": "2026.06.13-phase49",
+    "allowed_tools": [
+      "terminal",
+      "read_file",
+      "write_file",
+      "patch",
+      "skill_manage",
+      "todo"
+    ],
+    "artifacts": {
+      "agent_schema": "/Users/charles/.hermes/hermes-agent/schemas/agent_pack_manifest.schema.json",
+      "recommended_next": "Phase49 Workflow Pack / Agent Pack schema",
+      "sequence_status": "WORKFLOW_SEQUENCE_MAP_READY",
+      "workflow_pack_id": "workflow_kernel_external_dispatch_governance"
+    },
+    "backing_workflow_pack_id": "workflow_kernel_external_dispatch_governance",
+    "decision_policy": {
+      "when_exact_external_target_supplied": "prepare_guarded_single_send_packet_before_send",
+      "when_natural_schedule_missing": "observation_pending_not_failure",
+      "when_no_external_target": "select_local_outbox_only"
+    },
+    "default_mode": "local_outbox_only",
+    "human_gate_policy": {
+      "external_send": "requires exact adapter, target, payload, mode, idempotency key, rollback/correction path",
+      "unattended_dispatch": "requires future policy gate and rate/allowlist/readback evidence"
+    },
+    "role": "Operate workflow-kernel evidence, observation, and external-dispatch governance without inventing external targets.",
+    "schema_version": "1.0.0",
+    "side_effect_policy": {
+      "credential_access_enabled": false,
+      "external_side_effects_enabled": false,
+      "local_outbox_write_enabled": true,
+      "unattended_external_dispatch_enabled": false
+    },
+    "verification_commands": [
+      "python3 -m py_compile scripts/workflow_pack_manifest_compiler.py",
+      "./scripts/run_tests.sh tests/scripts/test_workflow_pack_manifest_compiler.py",
+      "python3 scripts/workflow_pack_manifest_compiler.py --write-report --json"
+    ]
+  },
+  "agent_pack_artifact": {
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-pack-manifests/workflow_kernel_operator.agent_pack.json",
+    "sha256": "c12420ca1b335237951862a65b86d9b91f60644f103138718d9196448ed18863"
+  },
+  "created_at": "2026-06-13T19:09:02Z",
+  "next_boundary": "Phase50 guarded single external send requires exact external adapter/target/payload/mode or continue to pack registry/control tower projection",
+  "report_id": "workflow_kernel_pack_manifests_20260613_phase49",
+  "safe_boundaries": [
+    "schema/projection only",
+    "no cron mutation",
+    "no model generation",
+    "no credential read/write",
+    "no external message send",
+    "no unattended dispatch enablement"
+  ],
+  "status": "WORKFLOW_AGENT_PACK_MANIFESTS_READY",
+  "validation_errors": [],
+  "workflow_pack": {
+    "artifacts": {
+      "phase45": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-auto-enable/workflow_kernel_runtime_auto_enable_20260613_phase45.json",
+      "phase46": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-post-auto-enable-observation/workflow_kernel_post_auto_enable_observation_20260613_phase46.json",
+      "phase47": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-external-dispatch-expansion/workflow_kernel_external_dispatch_expansion_20260613_phase47.json",
+      "phase48": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-external-dispatch-policy-gate/workflow_kernel_external_dispatch_policy_gate_20260613_phase48.json",
+      "sequence": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-sequence-map/workflow_kernel_sequence_map_20260613_phase38.json",
+      "workflow_schema": "/Users/charles/.hermes/hermes-agent/schemas/workflow_pack_manifest.schema.json"
+    },
+    "authority_boundaries": [
+      "external_send_requires_exact_adapter_target_payload_mode",
+      "credential_access_not_in_pack_scope",
+      "broad_scheduler_rewrite_not_in_pack_scope",
+      "unattended_dispatch_requires_future_policy_gate"
+    ],
+    "evidence_policy": {
+      "natural_scheduled_observation_policy": "do_not_trigger_cron_solely_for_evidence",
+      "post_apply_readback_required": true,
+      "receipt_required_for_local_write": true,
+      "required_prefixes": [
+        "artifact:",
+        "command:",
+        "proof:",
+        "classification:"
+      ]
+    },
+    "modules": [
+      {
+        "entrypoint": "workflow_kernel.runtime.check_runtime_switch_readiness",
+        "human_gate": "completed_phase45_full_authorization",
+        "inputs": [
+          "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-auto-enable/workflow_kernel_runtime_auto_enable_20260613_phase45.json"
+        ],
+        "layer": "runtime_switch",
+        "module_id": "workflow_kernel.runtime_auto_enable.v1",
+        "outputs": [
+          "runtime_auto_enabled_readiness"
+        ],
+        "risk_level": "local_write",
+        "side_effects": {
+          "credential_access": false,
+          "cron_mutation": false,
+          "external_dispatch": false,
+          "model_generation": false
+        }
+      },
+      {
+        "entrypoint": "scripts/workflow_post_auto_enable_observation.py",
+        "human_gate": "none_for_readback",
+        "inputs": [
+          "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-post-auto-enable-observation/workflow_kernel_post_auto_enable_observation_20260613_phase46.json"
+        ],
+        "layer": "runtime_observation",
+        "module_id": "workflow_kernel.post_auto_enable_observation.v1",
+        "outputs": [
+          "projection_correlation_readiness_drift_summary"
+        ],
+        "risk_level": "read_only",
+        "side_effects": {
+          "credential_access": false,
+          "cron_mutation": false,
+          "external_dispatch": false,
+          "model_generation": false
+        }
+      },
+      {
+        "entrypoint": "scripts/workflow_external_dispatch_expansion_packet.py",
+        "human_gate": "exact_adapter_target_payload_required_for_external_effect",
+        "inputs": [
+          "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-external-dispatch-expansion/workflow_kernel_external_dispatch_expansion_20260613_phase47.json"
+        ],
+        "layer": "external_dispatch_governance",
+        "module_id": "workflow_kernel.external_dispatch_candidate.v1",
+        "outputs": [
+          "adapter_options",
+          "candidate_tracks",
+          "policy_requirements"
+        ],
+        "risk_level": "read_only",
+        "side_effects": {
+          "credential_access": false,
+          "cron_mutation": false,
+          "external_dispatch": false,
+          "model_generation": false
+        }
+      },
+      {
+        "entrypoint": "scripts/workflow_external_dispatch_policy_gate.py",
+        "human_gate": "default_safe_local_outbox_when_no_external_target",
+        "inputs": [
+          "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-external-dispatch-expansion/workflow_kernel_external_dispatch_expansion_20260613_phase47.json",
+          "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-external-dispatch-policy-gate/workflow_kernel_external_dispatch_policy_gate_20260613_phase48.json"
+        ],
+        "layer": "external_dispatch_policy_gate",
+        "module_id": "workflow_kernel.external_dispatch_local_outbox.v1",
+        "outputs": [
+          "local_outbox_item",
+          "local_outbox_receipt",
+          "policy_gate_report"
+        ],
+        "risk_level": "local_write",
+        "side_effects": {
+          "credential_access": false,
+          "cron_mutation": false,
+          "external_dispatch": false,
+          "model_generation": false
+        }
+      }
+    ],
+    "pack_id": "workflow_kernel_external_dispatch_governance",
+    "pack_name": "Workflow Kernel External Dispatch Governance",
+    "pack_version": "2026.06.13-phase49",
+    "runtime_flags": {
+      "external_side_effects_executed": false,
+      "phase46_status": "POST_AUTO_ENABLE_OBSERVATION_PENDING_SCHEDULED_RUN",
+      "phase47_status": "EXTERNAL_DISPATCH_EXPANSION_CANDIDATE_READY",
+      "phase48_status": "EXTERNAL_DISPATCH_POLICY_GATE_LOCAL_OUTBOX_RECORDED",
+      "runtime_switch_enabled": true,
+      "unattended_external_dispatch_enabled": false
+    },
+    "schema_version": "1.0.0",
+    "source_phase_range": "Phase17-48",
+    "verification_commands": [
+      "python3 -m py_compile scripts/workflow_pack_manifest_compiler.py",
+      "./scripts/run_tests.sh tests/scripts/test_workflow_pack_manifest_compiler.py",
+      "python3 scripts/workflow_pack_manifest_compiler.py --write-report --json"
+    ]
+  },
+  "workflow_pack_artifact": {
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-pack-manifests/workflow_kernel_external_dispatch_governance.workflow_pack.json",
+    "sha256": "2d890fbc73cf1058bd2733c0e53474b0fdcba1bf49e63f14c7cbd77abbea0bab"
+  }
+}

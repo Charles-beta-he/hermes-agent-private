@@ -1,0 +1,43 @@
+{
+  "agent_name": "Workflow Kernel Operator",
+  "agent_pack_id": "agent.workflow_kernel_operator",
+  "agent_version": "2026.06.13-phase49",
+  "allowed_tools": [
+    "terminal",
+    "read_file",
+    "write_file",
+    "patch",
+    "skill_manage",
+    "todo"
+  ],
+  "artifacts": {
+    "agent_schema": "/Users/charles/.hermes/hermes-agent/schemas/agent_pack_manifest.schema.json",
+    "recommended_next": "Phase49 Workflow Pack / Agent Pack schema",
+    "sequence_status": "WORKFLOW_SEQUENCE_MAP_READY",
+    "workflow_pack_id": "workflow_kernel_external_dispatch_governance"
+  },
+  "backing_workflow_pack_id": "workflow_kernel_external_dispatch_governance",
+  "decision_policy": {
+    "when_exact_external_target_supplied": "prepare_guarded_single_send_packet_before_send",
+    "when_natural_schedule_missing": "observation_pending_not_failure",
+    "when_no_external_target": "select_local_outbox_only"
+  },
+  "default_mode": "local_outbox_only",
+  "human_gate_policy": {
+    "external_send": "requires exact adapter, target, payload, mode, idempotency key, rollback/correction path",
+    "unattended_dispatch": "requires future policy gate and rate/allowlist/readback evidence"
+  },
+  "role": "Operate workflow-kernel evidence, observation, and external-dispatch governance without inventing external targets.",
+  "schema_version": "1.0.0",
+  "side_effect_policy": {
+    "credential_access_enabled": false,
+    "external_side_effects_enabled": false,
+    "local_outbox_write_enabled": true,
+    "unattended_external_dispatch_enabled": false
+  },
+  "verification_commands": [
+    "python3 -m py_compile scripts/workflow_pack_manifest_compiler.py",
+    "./scripts/run_tests.sh tests/scripts/test_workflow_pack_manifest_compiler.py",
+    "python3 scripts/workflow_pack_manifest_compiler.py --write-report --json"
+  ]
+}

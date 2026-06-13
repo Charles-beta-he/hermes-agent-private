@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes.local/schemas/agent_pack_manifest.schema.json",
+  "title": "Hermes Agent Pack Manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "agent_pack_id",
+    "agent_name",
+    "agent_version",
+    "backing_workflow_pack_id",
+    "role",
+    "allowed_tools",
+    "default_mode",
+    "decision_policy",
+    "human_gate_policy",
+    "side_effect_policy",
+    "verification_commands",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^1\\.0\\.0$"},
+    "agent_pack_id": {"type": "string", "pattern": "^[a-z0-9_.-]+$"},
+    "agent_name": {"type": "string", "minLength": 1},
+    "agent_version": {"type": "string", "minLength": 1},
+    "backing_workflow_pack_id": {"type": "string", "minLength": 1},
+    "role": {"type": "string", "minLength": 1},
+    "allowed_tools": {"type": "array", "items": {"type": "string"}},
+    "default_mode": {"type": "string", "enum": ["read_only_projection", "local_outbox_only", "guarded_single_send"]},
+    "decision_policy": {"type": "object"},
+    "human_gate_policy": {"type": "object"},
+    "side_effect_policy": {
+      "type": "object",
+      "required": ["unattended_external_dispatch_enabled", "external_side_effects_enabled", "credential_access_enabled"],
+      "properties": {
+        "unattended_external_dispatch_enabled": {"type": "boolean"},
+        "external_side_effects_enabled": {"type": "boolean"},
+        "credential_access_enabled": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "verification_commands": {"type": "array", "items": {"type": "string"}},
+    "artifacts": {"type": "object"}
+  },
+  "additionalProperties": false
+}

@@ -36,10 +36,11 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 46: Post-auto-enable Scheduled Observation — layer=`runtime observation`, gate=`do not trigger cron solely to create post-projection evidence`
 - Phase 47: External Dispatch Expansion Candidate Packet — layer=`external dispatch governance`, gate=`no external send without exact target/payload/mode`
 - Phase 48: External Dispatch Policy Gate Local Outbox — layer=`external dispatch policy gate`, gate=`external adapters still require exact target/payload/mode`
+- Phase 49: Workflow Pack / Agent Pack Schema — layer=`pack productization`, gate=`runtime adoption and external send remain separate gates`
 
 ## Next ladder
-- Phase 49: Workflow Pack / Agent Pack Schema — track=`PACK_PRODUCTIZATION`, authority=`none for schema/projection; scoped gate for runtime adoption`
 - Phase 50: Guarded Single External Send — track=`GUARDED_EXTERNAL_SEND`, authority=`exact adapter/target/payload/mode/idempotency/rollback`
+- Phase 51: Pack Registry / Control Tower Projection — track=`PACK_REGISTRY_PROJECTION`, authority=`none for read-only registry projection`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence
