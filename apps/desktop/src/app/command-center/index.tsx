@@ -17,7 +17,7 @@ import {
 import type { ActionStatusResponse, AnalyticsResponse, StatusResponse } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { sessionTitle } from '@/lib/chat-runtime'
-import { Activity, AlertCircle, BarChart3, Pin } from '@/lib/icons'
+import { Activity, AlertCircle, BarChart3, MessageCircle, Pin } from '@/lib/icons'
 import { exportSession } from '@/lib/session-export'
 import { cn } from '@/lib/utils'
 import { upsertDesktopActionTask } from '@/store/activity'
@@ -29,14 +29,15 @@ import { useRouteEnumParam } from '../hooks/use-route-enum-param'
 import { OverlayMain, OverlayNavItem, OverlaySidebar, OverlaySplitLayout } from '../overlays/overlay-split-layout'
 import { OverlayView } from '../overlays/overlay-view'
 
-export type CommandCenterSection = 'sessions' | 'system' | 'usage'
+export type CommandCenterSection = 'conversation' | 'sessions' | 'system' | 'usage'
 
-const SECTIONS = ['sessions', 'system', 'usage'] as const satisfies readonly CommandCenterSection[]
+const SECTIONS = ['conversation', 'sessions', 'system', 'usage'] as const satisfies readonly CommandCenterSection[]
 
 const USAGE_PERIODS = [7, 30, 90] as const
 type UsagePeriod = (typeof USAGE_PERIODS)[number]
 
 interface CommandCenterViewProps {
+  conversationPanel?: ReactNode
   initialSection?: CommandCenterSection
   onClose: () => void
   onDeleteSession: (sessionId: string) => Promise<void>
@@ -113,13 +114,19 @@ function EmptyPanel({ action, description, title }: { action?: ReactNode; descri
   )
 }
 
-export function CommandCenterView({ initialSection, onClose, onDeleteSession, onOpenSession }: CommandCenterViewProps) {
+export function CommandCenterView({
+  conversationPanel,
+  initialSection,
+  onClose,
+  onDeleteSession,
+  onOpenSession
+}: CommandCenterViewProps) {
   const { t } = useI18n()
   const cc = t.commandCenter
   const sessions = useStore($sessions)
   const pinnedSessionIds = useStore($pinnedSessionIds)
 
-  const [section, setSection] = useRouteEnumParam('section', SECTIONS, initialSection ?? 'sessions')
+  const [section, setSection] = useRouteEnumParam('section', SECTIONS, initialSection ?? 'conversation')
 
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<StatusResponse | null>(null)
@@ -271,7 +278,7 @@ export function CommandCenterView({ initialSection, onClose, onDeleteSession, on
           {SECTIONS.map(value => (
             <OverlayNavItem
               active={section === value}
-              icon={value === 'sessions' ? Pin : value === 'system' ? Activity : BarChart3}
+              icon={value === 'conversation' ? MessageCircle : value === 'sessions' ? Pin : value === 'system' ? Activity : BarChart3}
               key={value}
               label={cc.sections[value]}
               onClick={() => setSection(value)}
@@ -308,7 +315,11 @@ export function CommandCenterView({ initialSection, onClose, onDeleteSession, on
             </div>
           </header>
 
-          {section === 'sessions' ? (
+          {section === 'conversation' ? (
+            <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-(--ui-stroke-tertiary) bg-(--ui-chat-surface-background) shadow-sm">
+              {conversationPanel ?? <EmptyPanel description={cc.sectionDescriptions.conversation} />}
+            </div>
+          ) : section === 'sessions' ? (
             <div className="min-h-0 flex-1 overflow-y-auto">
               {!sessionListHasResults ? (
                 <EmptyPanel description={debouncedQuery ? cc.noResults : cc.noSessions} />

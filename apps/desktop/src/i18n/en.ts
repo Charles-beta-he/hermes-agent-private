@@ -630,8 +630,9 @@ export const en: Translations = {
     settingsFields: 'Settings fields',
     mcpServers: 'MCP servers',
     archivedChats: 'Archived chats',
-    sections: { sessions: 'Sessions', system: 'System', usage: 'Usage' },
+    sections: { conversation: 'Conversation', sessions: 'Sessions', system: 'System', usage: 'Usage' },
     sectionDescriptions: {
+      conversation: 'Talk with Hermes directly from the control console',
       sessions: 'Search and manage sessions',
       system: 'Status, logs, and system actions',
       usage: 'Token, cost, and skill activity over time'
@@ -644,6 +645,7 @@ export const en: Translations = {
       artifacts: { title: 'Artifacts', detail: 'Browse generated outputs' }
     },
     sectionEntries: {
+      conversation: { title: 'Conversation panel', detail: 'Chat with Hermes in the control console' },
       sessions: { title: 'Sessions panel', detail: 'Search, pin, and manage sessions' },
       system: { title: 'System panel', detail: 'Gateway status, logs, restart/update' },
       usage: { title: 'Usage panel', detail: 'Token, cost, and skill activity' }

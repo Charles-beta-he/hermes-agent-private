@@ -765,8 +765,9 @@ export const ja = defineLocale({
     settingsFields: '設定フィールド',
     mcpServers: 'MCP サーバー',
     archivedChats: 'アーカイブ済みチャット',
-    sections: { sessions: 'セッション', system: 'システム', usage: '使用状況' },
+    sections: { conversation: '会話', sessions: 'セッション', system: 'システム', usage: '使用状況' },
     sectionDescriptions: {
+      conversation: 'コントロールコンソールから Hermes と直接会話',
       sessions: 'セッションの検索と管理',
       system: 'ステータス、ログ、システムアクション',
       usage: 'トークン、コスト、スキルの活動履歴'
@@ -779,6 +780,7 @@ export const ja = defineLocale({
       artifacts: { title: 'アーティファクト', detail: '生成された出力を閲覧' }
     },
     sectionEntries: {
+      conversation: { title: '会話パネル', detail: 'コントロールコンソールで Hermes とチャット' },
       sessions: { title: 'セッションパネル', detail: 'セッションの検索、ピン留め、管理' },
       system: { title: 'システムパネル', detail: 'ゲートウェイのステータス、ログ、再起動/更新' },
       usage: { title: '使用状況パネル', detail: 'トークン、コスト、スキルの活動' }

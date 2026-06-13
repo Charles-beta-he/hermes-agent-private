@@ -537,10 +537,10 @@ export interface Translations {
     settingsFields: string
     mcpServers: string
     archivedChats: string
-    sections: Record<'sessions' | 'system' | 'usage', string>
-    sectionDescriptions: Record<'sessions' | 'system' | 'usage', string>
+    sections: Record<'conversation' | 'sessions' | 'system' | 'usage', string>
+    sectionDescriptions: Record<'conversation' | 'sessions' | 'system' | 'usage', string>
     nav: Record<'newChat' | 'settings' | 'skills' | 'messaging' | 'artifacts', { title: string; detail: string }>
-    sectionEntries: Record<'sessions' | 'system' | 'usage', { title: string; detail: string }>
+    sectionEntries: Record<'conversation' | 'sessions' | 'system' | 'usage', { title: string; detail: string }>
     providerNavigate: string
     providerSessions: string
     refresh: string

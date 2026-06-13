@@ -721,6 +721,38 @@ export function DesktopController() {
     />
   )
 
+  const renderChatView = () => (
+    <ChatView
+      gateway={gatewayRef.current}
+      maxVoiceRecordingSeconds={voiceMaxRecordingSeconds}
+      onAddContextRef={composer.addContextRefAttachment}
+      onAddUrl={url => composer.addContextRefAttachment(`@url:${formatRefValue(url)}`, url)}
+      onAttachDroppedItems={composer.attachDroppedItems}
+      onAttachImageBlob={composer.attachImageBlob}
+      onBranchInNewChat={branchInNewChat}
+      onCancel={cancelRun}
+      onDeleteSelectedSession={() => {
+        if (selectedStoredSessionId) {
+          void removeSession(selectedStoredSessionId)
+        }
+      }}
+      onEdit={editMessage}
+      onPasteClipboardImage={() => void composer.pasteClipboardImage()}
+      onPickFiles={() => void composer.pickContextPaths('file')}
+      onPickFolders={() => void composer.pickContextPaths('folder')}
+      onPickImages={() => void composer.pickImages()}
+      onReload={reloadFromMessage}
+      onRemoveAttachment={id => void composer.removeAttachment(id)}
+      onSteer={steerPrompt}
+      onSubmit={submitText}
+      onThreadMessagesChange={handleThreadMessagesChange}
+      onToggleSelectedPin={toggleSelectedPin}
+      onTranscribeAudio={transcribeVoiceAudio}
+    />
+  )
+
+  const chatView = renderChatView()
+
   const overlays = (
     <>
       <DesktopInstallOverlay />
@@ -767,6 +799,7 @@ export function DesktopController() {
       {commandCenterOpen && (
         <Suspense fallback={null}>
           <CommandCenterView
+            conversationPanel={renderChatView()}
             initialSection={commandCenterInitialSection}
             onClose={closeOverlayToPreviousRoute}
             onDeleteSession={removeSession}
@@ -797,36 +830,6 @@ export function DesktopController() {
         </Suspense>
       )}
     </>
-  )
-
-  const chatView = (
-    <ChatView
-      gateway={gatewayRef.current}
-      maxVoiceRecordingSeconds={voiceMaxRecordingSeconds}
-      onAddContextRef={composer.addContextRefAttachment}
-      onAddUrl={url => composer.addContextRefAttachment(`@url:${formatRefValue(url)}`, url)}
-      onAttachDroppedItems={composer.attachDroppedItems}
-      onAttachImageBlob={composer.attachImageBlob}
-      onBranchInNewChat={branchInNewChat}
-      onCancel={cancelRun}
-      onDeleteSelectedSession={() => {
-        if (selectedStoredSessionId) {
-          void removeSession(selectedStoredSessionId)
-        }
-      }}
-      onEdit={editMessage}
-      onPasteClipboardImage={() => void composer.pasteClipboardImage()}
-      onPickFiles={() => void composer.pickContextPaths('file')}
-      onPickFolders={() => void composer.pickContextPaths('folder')}
-      onPickImages={() => void composer.pickImages()}
-      onReload={reloadFromMessage}
-      onRemoveAttachment={id => void composer.removeAttachment(id)}
-      onSteer={steerPrompt}
-      onSubmit={submitText}
-      onThreadMessagesChange={handleThreadMessagesChange}
-      onToggleSelectedPin={toggleSelectedPin}
-      onTranscribeAudio={transcribeVoiceAudio}
-    />
   )
 
   const takeoverTerminalView = (
