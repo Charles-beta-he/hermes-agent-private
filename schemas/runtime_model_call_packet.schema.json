@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/runtime_model_call_packet.schema.json",
+  "title": "Hermes Workflow Runtime Model Call Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "model_call_id",
+    "done_execution_id",
+    "module_execution_id",
+    "runtime_execution_id",
+    "claim_execution_id",
+    "runtime_packet_id",
+    "workflow_id",
+    "run_id",
+    "generated_at",
+    "selected_group_id",
+    "selected_task_id",
+    "module_id",
+    "route_trace",
+    "prompt_artifact",
+    "response_artifact",
+    "verification",
+    "taskpool_write_enabled",
+    "model_call_enabled",
+    "adapter_write_enabled",
+    "external_side_effects_enabled",
+    "readback_verified",
+    "rollback_plan",
+    "boundary"
+  ],
+  "properties": {
+    "model_call_id": {"type": "string", "minLength": 1},
+    "done_execution_id": {"type": "string", "minLength": 1},
+    "module_execution_id": {"type": "string", "minLength": 1},
+    "runtime_execution_id": {"type": "string", "minLength": 1},
+    "claim_execution_id": {"type": "string", "minLength": 1},
+    "runtime_packet_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "minLength": 1},
+    "selected_group_id": {"type": "string", "minLength": 1},
+    "selected_task_id": {"type": "string", "minLength": 1},
+    "module_id": {"type": "string", "minLength": 1},
+    "route_trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route_alias", "provider", "model", "run_mode", "fallback_chain", "routing_policy_version", "dynamic_routing_enabled", "adapter_write_enabled", "external_side_effects_enabled"],
+      "properties": {
+        "route_alias": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "run_mode": {"const": "pinned_read_only"},
+        "fallback_chain": {"type": "array", "items": {"type": "object"}},
+        "routing_policy_version": {"type": "string", "minLength": 1},
+        "dynamic_routing_enabled": {"const": false},
+        "adapter_write_enabled": {"const": false},
+        "external_side_effects_enabled": {"const": false}
+      }
+    },
+    "prompt_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "response_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "non_empty", "expected_marker_present"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "bytes": {"type": "integer", "minimum": 1},
+        "non_empty": {"const": true},
+        "expected_marker_present": {"const": true}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "checks"],
+      "properties": {
+        "status": {"const": "PASS"},
+        "checks": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+      }
+    },
+    "taskpool_write_enabled": {"const": true},
+    "model_call_enabled": {"const": true},
+    "adapter_write_enabled": {"const": false},
+    "external_side_effects_enabled": {"const": false},
+    "readback_verified": {"const": true},
+    "derived_refresh": {"type": ["object", "null"]},
+    "rollback_plan": {"type": "string", "minLength": 1},
+    "boundary": {"const": "runtime_model_call_completed_before_adapter_or_external_write"}
+  }
+}

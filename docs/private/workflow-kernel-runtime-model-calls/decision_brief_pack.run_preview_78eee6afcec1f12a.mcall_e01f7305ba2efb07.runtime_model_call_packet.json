@@ -1,0 +1,64 @@
+{
+  "model_call_id": "mcall_e01f7305ba2efb07",
+  "done_execution_id": "done_928841ef9a25840f",
+  "module_execution_id": "modex_5bca069e18d6d922",
+  "runtime_execution_id": "rtex_8d01cdb6170a549f",
+  "claim_execution_id": "clex_22a18e493dc020c4",
+  "runtime_packet_id": "rti_2c322fc59264ae3d",
+  "workflow_id": "decision_brief_pack",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "generated_at": "2026-06-13T06:44:49Z",
+  "selected_group_id": "contract_acceptance_governance",
+  "selected_task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+  "module_id": "goal_calibrator.v1",
+  "route_trace": {
+    "route_alias": "best.goal_calibration.structured",
+    "provider": "openai-codex",
+    "model": "gpt-5.5",
+    "run_mode": "pinned_read_only",
+    "fallback_chain": [],
+    "routing_policy_version": "phase13.model_call_gate.v1",
+    "dynamic_routing_enabled": false,
+    "adapter_write_enabled": false,
+    "external_side_effects_enabled": false
+  },
+  "prompt_artifact": {
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-model-calls/decision_brief_pack.run_preview_78eee6afcec1f12a.mcall_e01f7305ba2efb07.prompt.txt",
+    "sha256": "8d4f74c2a28b1625507ed3680ceaea8aa2b3c1586494550262065ca7cac7086b",
+    "bytes": 483
+  },
+  "response_artifact": {
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-model-calls/decision_brief_pack.run_preview_78eee6afcec1f12a.mcall_e01f7305ba2efb07.response.txt",
+    "sha256": "462f1f24fe1d75c0a87ff60ed12cba98d682ed85d5cf4e4d6e673b597e0ead4c",
+    "bytes": 19,
+    "non_empty": true,
+    "expected_marker_present": true
+  },
+  "verification": {
+    "status": "PASS",
+    "checks": [
+      "model_process_exit_zero",
+      "response_non_empty",
+      "expected_marker_present",
+      "prompt_artifact_persisted",
+      "response_artifact_persisted",
+      "adapter_write_disabled",
+      "external_side_effects_disabled"
+    ]
+  },
+  "taskpool_write_enabled": true,
+  "model_call_enabled": true,
+  "adapter_write_enabled": false,
+  "external_side_effects_enabled": false,
+  "readback_verified": true,
+  "derived_refresh": {
+    "status": "OK",
+    "reason": "workflow_runtime_model_call_gate",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "generated_at": "2026-06-13T14:44:49+08:00"
+  },
+  "rollback_plan": "Remove workflow_model_call_id / workflow_model_call_status / workflow_model_call_record and evidence markers after rollback authorization; no adapter/external write was performed.",
+  "boundary": "runtime_model_call_completed_before_adapter_or_external_write"
+}

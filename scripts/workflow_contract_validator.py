@@ -31,6 +31,7 @@ DEFAULT_RUNTIME_CLAIM_EXECUTION_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime
 DEFAULT_RUNTIME_EXECUTION_WORKER_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_execution_worker_packet.schema.json"
 DEFAULT_RUNTIME_MODULE_EXECUTION_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_module_execution_packet.schema.json"
 DEFAULT_RUNTIME_REVIEW_DONE_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_review_done_packet.schema.json"
+DEFAULT_RUNTIME_MODEL_CALL_PACKET_SCHEMA = REPO_ROOT / "schemas" / "runtime_model_call_packet.schema.json"
 
 ALLOWED_LANES = {"work", "evolution", "advisory"}
 ALLOWED_STAGES = {
@@ -105,6 +106,7 @@ class ValidationResult:
     runtime_execution_worker_packet_schema: str = ""
     runtime_module_execution_packet_schema: str = ""
     runtime_review_done_packet_schema: str = ""
+    runtime_model_call_packet_schema: str = ""
     model_registry: str = ""
     validated_workflows: int = 0
     validated_modules: int = 0
@@ -140,6 +142,7 @@ class ValidationResult:
             "runtime_execution_worker_packet_schema": self.runtime_execution_worker_packet_schema,
             "runtime_module_execution_packet_schema": self.runtime_module_execution_packet_schema,
             "runtime_review_done_packet_schema": self.runtime_review_done_packet_schema,
+            "runtime_model_call_packet_schema": self.runtime_model_call_packet_schema,
             "model_registry": self.model_registry,
             "validated_workflows": self.validated_workflows,
             "validated_modules": self.validated_modules,
@@ -405,6 +408,7 @@ def validate_registry(
     runtime_execution_worker_packet_schema_path: Path = DEFAULT_RUNTIME_EXECUTION_WORKER_PACKET_SCHEMA,
     runtime_module_execution_packet_schema_path: Path = DEFAULT_RUNTIME_MODULE_EXECUTION_PACKET_SCHEMA,
     runtime_review_done_packet_schema_path: Path = DEFAULT_RUNTIME_REVIEW_DONE_PACKET_SCHEMA,
+    runtime_model_call_packet_schema_path: Path = DEFAULT_RUNTIME_MODEL_CALL_PACKET_SCHEMA,
 ) -> ValidationResult:
     result = ValidationResult(
         registry=str(registry_path),
@@ -421,6 +425,7 @@ def validate_registry(
         runtime_execution_worker_packet_schema=str(runtime_execution_worker_packet_schema_path),
         runtime_module_execution_packet_schema=str(runtime_module_execution_packet_schema_path),
         runtime_review_done_packet_schema=str(runtime_review_done_packet_schema_path),
+        runtime_model_call_packet_schema=str(runtime_model_call_packet_schema_path),
         model_registry=str(model_registry_path),
     )
     schema = _load_json(schema_path, result, "schema")
@@ -456,6 +461,9 @@ def validate_registry(
     runtime_review_done_packet_schema = _load_json(
         runtime_review_done_packet_schema_path, result, "runtime_review_done_packet_schema"
     )
+    runtime_model_call_packet_schema = _load_json(
+        runtime_model_call_packet_schema_path, result, "runtime_model_call_packet_schema"
+    )
     registry = _load_json(registry_path, result, "registry")
     model_registry = _load_json(model_registry_path, result, "model_registry")
     if (
@@ -472,6 +480,7 @@ def validate_registry(
         or runtime_execution_worker_packet_schema is None
         or runtime_module_execution_packet_schema is None
         or runtime_review_done_packet_schema is None
+        or runtime_model_call_packet_schema is None
         or registry is None
         or model_registry is None
     ):
@@ -503,6 +512,8 @@ def validate_registry(
         result.fail("runtime_module_execution_packet_schema title is unexpected")
     if runtime_review_done_packet_schema.get("title") != "Hermes Workflow Runtime Review Done Packet":
         result.fail("runtime_review_done_packet_schema title is unexpected")
+    if runtime_model_call_packet_schema.get("title") != "Hermes Workflow Runtime Model Call Packet":
+        result.fail("runtime_model_call_packet_schema title is unexpected")
 
     workflows = registry.get("workflows") if isinstance(registry, dict) else None
     if not isinstance(workflows, list) or not workflows:
@@ -552,6 +563,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime-execution-worker-packet-schema", type=Path, default=DEFAULT_RUNTIME_EXECUTION_WORKER_PACKET_SCHEMA)
     parser.add_argument("--runtime-module-execution-packet-schema", type=Path, default=DEFAULT_RUNTIME_MODULE_EXECUTION_PACKET_SCHEMA)
     parser.add_argument("--runtime-review-done-packet-schema", type=Path, default=DEFAULT_RUNTIME_REVIEW_DONE_PACKET_SCHEMA)
+    parser.add_argument("--runtime-model-call-packet-schema", type=Path, default=DEFAULT_RUNTIME_MODEL_CALL_PACKET_SCHEMA)
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
 
@@ -571,6 +583,7 @@ def main(argv: list[str] | None = None) -> int:
         args.runtime_execution_worker_packet_schema,
         args.runtime_module_execution_packet_schema,
         args.runtime_review_done_packet_schema,
+        args.runtime_model_call_packet_schema,
     )
     if args.as_json:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))

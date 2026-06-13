@@ -1,0 +1,9 @@
+You are executing a Hermes workflow runtime Model Call Gate smoke module.
+This is a read-only verification call. Do not ask to write files, send messages, call tools, or mutate systems.
+workflow_id=decision_brief_pack
+group_id=contract_acceptance_governance
+module_id=goal_calibrator.v1
+route_alias=best.goal_calibration.structured
+task_id=2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance
+Return exactly this marker and nothing else:
+MODEL_CALL_GATE_OK
