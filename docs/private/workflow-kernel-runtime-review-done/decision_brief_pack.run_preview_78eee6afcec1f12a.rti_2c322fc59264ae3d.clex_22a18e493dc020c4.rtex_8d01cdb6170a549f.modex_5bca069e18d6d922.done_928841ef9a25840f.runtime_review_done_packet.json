@@ -1,0 +1,55 @@
+{
+  "done_execution_id": "done_928841ef9a25840f",
+  "module_execution_id": "modex_5bca069e18d6d922",
+  "runtime_execution_id": "rtex_8d01cdb6170a549f",
+  "claim_execution_id": "clex_22a18e493dc020c4",
+  "runtime_packet_id": "rti_2c322fc59264ae3d",
+  "workflow_id": "decision_brief_pack",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "generated_at": "2026-06-13T06:31:24Z",
+  "selected_group_id": "contract_acceptance_governance",
+  "selected_task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+  "taskpool_write_enabled": true,
+  "taskpool_claim_enabled": true,
+  "runtime_enabled": true,
+  "runtime_worker_enabled": true,
+  "runtime_module_enabled": true,
+  "review_done_enabled": true,
+  "model_call_enabled": false,
+  "adapter_write_enabled": false,
+  "external_side_effects_enabled": false,
+  "review_done": {
+    "task_id": "2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance",
+    "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-consolidated-candidatecontract-acceptance-governance.md",
+    "group_id": "contract_acceptance_governance",
+    "previous_status": "review",
+    "new_status": "done",
+    "executor_actor": "workflow_runtime_review_done_gate",
+    "done_scope": "local_review_done_closeout_no_model_no_adapter",
+    "done_status": "done_local_review_closed",
+    "verification_status": "PASS",
+    "verification": {
+      "verification_status": "PASS",
+      "verification_summary": {
+        "validated_workflows": 1,
+        "validated_modules": 5,
+        "validated_route_aliases": 5,
+        "errors": [],
+        "warnings": []
+      },
+      "verification_digest": "sha256:63e66b1af1511a77d25b627fbb0af9b1224f0be34564996d6159d261da5b03e7"
+    },
+    "readback_verified": true
+  },
+  "readback_verified": true,
+  "derived_refresh": {
+    "status": "OK",
+    "reason": "workflow_runtime_review_done_gate",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "generated_at": "2026-06-13T14:31:24+08:00"
+  },
+  "rollback_plan": "Transition the selected task from done back to review and remove workflow_review_done_execution_id / workflow_review_done_status / workflow_review_done_record after rollback authorization; no model/adapter/external work was started.",
+  "boundary": "runtime_review_done_closed_before_model_or_adapter"
+}
