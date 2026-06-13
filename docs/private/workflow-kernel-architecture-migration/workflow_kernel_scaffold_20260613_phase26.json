@@ -1,0 +1,30 @@
+{
+  "autorun_enabled_by_this_phase": false,
+  "boundaries": [
+    "no cron wrapper rollout",
+    "no external dispatch expansion",
+    "no autorun enablement",
+    "no evidence directory consolidation/deletion",
+    "no taskpool lifecycle mutation beyond evidence fields"
+  ],
+  "compatibility_shims": [
+    "scripts/workflow_architecture_migration_evaluation.py",
+    "scripts/cron_provider_health_gate.py"
+  ],
+  "created_at": "2026-06-13T11:01:50Z",
+  "cron_mutation_enabled": false,
+  "external_side_effects_enabled": false,
+  "green_evidence": "12 tests passed across kernel scaffold, architecture migration evaluation, and cron provider health gate",
+  "new_modules": [
+    "workflow_kernel/__init__.py",
+    "workflow_kernel/io.py"
+  ],
+  "next_phase": "Phase 27 should extract contracts/ledger helpers behind workflow_kernel modules with parity tests for Phase17-24 behavior.",
+  "phase": "26",
+  "red_evidence": "tests/workflow_kernel/test_kernel_scaffold.py failed first with ModuleNotFoundError and missing workflow_kernel.io imports",
+  "report_id": "workflow_kernel_scaffold_20260613_phase26",
+  "runtime_switch_enabled": false,
+  "scope": "create workflow_kernel package scaffold and move shared JSON artifact IO behind imported modules while keeping scripts as compatibility CLIs",
+  "sha256": "e79b7129c41c89ff9d839743028b09b703e0ae9b53d5ffa750a959f2e89d0482",
+  "status": "KERNEL_SCAFFOLD_COMPAT_ONLY_RUNTIME_UNCHANGED"
+}

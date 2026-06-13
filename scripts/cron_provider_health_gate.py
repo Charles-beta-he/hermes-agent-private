@@ -9,11 +9,12 @@ messages.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from workflow_kernel.io import read_json_artifact, write_json_artifact
 
 DEFAULT_JOBS = Path.home() / ".hermes" / "cron" / "jobs.json"
 DEFAULT_PROBE = Path("docs/private/workflow-kernel-provider-network-probe/provider_network_probe_20260613_phase23.json")
@@ -46,7 +47,7 @@ def utc_now() -> str:
 
 
 def load_json(path: Path) -> Any:
-    return json.loads(path.read_text())
+    return read_json_artifact(path)
 
 
 def load_jobs(path: Path) -> list[dict[str, Any]]:
@@ -196,9 +197,8 @@ def write_report(report: dict[str, Any], out_dir: Path) -> dict[str, str]:
     out_dir.mkdir(parents=True, exist_ok=True)
     json_path = out_dir / "cron_provider_health_gate_20260613_phase24.json"
     md_path = out_dir / "cron_provider_health_gate_20260613_phase24.md"
-    data = (json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
-    json_path.write_bytes(data)
-    sha = hashlib.sha256(data).hexdigest()
+    artifact = write_json_artifact(json_path, report)
+    sha = artifact["sha256"]
     lines = [
         "# Hermes Cron Provider Health Gate — Phase 24",
         "",

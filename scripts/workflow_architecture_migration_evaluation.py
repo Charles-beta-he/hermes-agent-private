@@ -9,11 +9,12 @@ enable autorun.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from workflow_kernel.io import read_json_artifact, write_json_artifact
 
 DEFAULT_OUT = Path("docs/private/workflow-kernel-architecture-migration")
 DEFAULT_INPUTS = {
@@ -29,10 +30,7 @@ def now() -> str:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(path.read_text())
-    except FileNotFoundError:
-        return {"missing": True, "path": str(path)}
+    data = read_json_artifact(path, missing_ok=True)
     if not isinstance(data, dict):
         return {"invalid": True, "path": str(path)}
     return data
@@ -196,9 +194,8 @@ def write_report(report: dict[str, Any], out_dir: Path) -> dict[str, str]:
     out_dir.mkdir(parents=True, exist_ok=True)
     json_path = out_dir / "workflow_kernel_architecture_migration_20260613_phase25.json"
     md_path = out_dir / "workflow_kernel_architecture_migration_20260613_phase25.md"
-    payload = (json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
-    json_path.write_bytes(payload)
-    sha = hashlib.sha256(payload).hexdigest()
+    artifact = write_json_artifact(json_path, report)
+    sha = artifact["sha256"]
     lines = [
         "# Workflow Kernel Architecture Migration Evaluation — Phase 25",
         "",
