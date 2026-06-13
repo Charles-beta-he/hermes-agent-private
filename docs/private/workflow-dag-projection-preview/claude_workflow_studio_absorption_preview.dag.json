@@ -1,0 +1,44 @@
+{
+  "workflow_id": "claude_workflow_studio_absorption_preview",
+  "version": "phase52-local-draft",
+  "nodes": [
+    {
+      "id": "read_source_evidence",
+      "type": "task",
+      "title": "Read local/reference evidence only",
+      "risk": "local_read_only",
+      "side_effect": "none"
+    },
+    {
+      "id": "compile_dag_map",
+      "type": "task",
+      "title": "Compile graphical workflow DAG map",
+      "depends_on": ["read_source_evidence"],
+      "risk": "local_read_only",
+      "side_effect": "none"
+    },
+    {
+      "id": "approval_before_external_executor",
+      "type": "approval",
+      "title": "External executor boundary",
+      "depends_on": ["compile_dag_map"],
+      "risk": "permission_boundary",
+      "side_effect": "blocked_external_surface",
+      "question": "Should Hermes authorize any external workflow execution surface beyond local preview artifacts?",
+      "options": [
+        "A: keep workflow DAG absorption local-preview-only",
+        "B: authorize one scoped dry-run adapter with exact target/payload/rollback",
+        "C: stop this absorption track and return to mission control-plane internals"
+      ],
+      "recommend": "A: keep workflow DAG absorption local-preview-only"
+    },
+    {
+      "id": "emit_stage_report",
+      "type": "task",
+      "title": "Emit evidence-backed stage report",
+      "depends_on": ["approval_before_external_executor"],
+      "risk": "local_ledger_write",
+      "side_effect": "mission_stage_report_only"
+    }
+  ]
+}

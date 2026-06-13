@@ -1,0 +1,30 @@
+{
+  "approval_packet_count": 1,
+  "approval_packet_plans": [
+    {
+      "durable_command_template": "hermes mission handoff <mission_id> --question <question> --option <option> --recommend <recommend>",
+      "node_id": "approval_before_external_executor",
+      "options": [
+        "A: keep workflow DAG absorption local-preview-only",
+        "B: authorize one scoped dry-run adapter with exact target/payload/rollback",
+        "C: stop this absorption track and return to mission control-plane internals"
+      ],
+      "question": "Should Hermes authorize any external workflow execution surface beyond local preview artifacts?",
+      "recommend": "A: keep workflow DAG absorption local-preview-only",
+      "status": "draft_only_not_recorded"
+    }
+  ],
+  "boundary": "no_execution_no_task_claim_no_model_call_no_adapter_write_no_handoff_recorded",
+  "graph_hash": "sha256:891d000ddf3f3833d849ba671cbad9111debacc03657bd9291982f6d173ae573",
+  "node_count": 4,
+  "projection_only": true,
+  "status": "PASS",
+  "topological_order": [
+    "read_source_evidence",
+    "compile_dag_map",
+    "approval_before_external_executor",
+    "emit_stage_report"
+  ],
+  "version": "phase52-local-draft",
+  "workflow_id": "claude_workflow_studio_absorption_preview"
+}
