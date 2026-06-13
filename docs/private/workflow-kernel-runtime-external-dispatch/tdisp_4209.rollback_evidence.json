@@ -1,0 +1,16 @@
+{
+  "post_rollback_readback": {
+    "correction_sent": false,
+    "no_correction_needed_for_smoke_test": true,
+    "original_message_id": "4209"
+  },
+  "rollback_id": "trollback_4209",
+  "rollback_mode": "compensating_action",
+  "rollback_receipt": {
+    "needed": false,
+    "strategy": "If needed, send a correction/retraction Telegram message; Telegram delivery itself is not data-roll-backable by Hermes."
+  },
+  "source_receipt_id": "tdisp_4209",
+  "target_adapter": "telegram_notification",
+  "verification_status": "PASS"
+}

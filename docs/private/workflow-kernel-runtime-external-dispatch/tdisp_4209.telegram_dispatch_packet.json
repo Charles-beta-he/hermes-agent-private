@@ -1,0 +1,67 @@
+{
+  "boundary": "single_telegram_smoke_test_complete_unattended_dispatch_not_enabled",
+  "created_at": "2026-06-13T08:06:21Z",
+  "dispatch_id": "tdisp_4209",
+  "external_side_effect_executed": true,
+  "message_digest": "sha256:eb64d632153ee559154a46866b081bd64e9b53f884c0b80ecf8246cc8329da2a",
+  "operation": "send_system_test_message",
+  "receipt": {
+    "apply_mode": "real_apply",
+    "external_receipt": {
+      "chat_id": "5524172309",
+      "message_id": "4209",
+      "mirrored": true,
+      "note": "Sent to telegram home channel (chat_id: 5524172309)",
+      "platform": "telegram",
+      "success": true
+    },
+    "operation": "send_system_test_message",
+    "post_apply_readback": {
+      "chat_id": "5524172309",
+      "message_id_present": true,
+      "tool_result_received": true,
+      "verified": true
+    },
+    "receipt_id": "tdisp_4209",
+    "rollback_evidence_required": true,
+    "target_adapter": "telegram_notification",
+    "verification_status": "PASS"
+  },
+  "receipt_artifact": {
+    "bytes": 591,
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-dispatch/tdisp_4209.runtime_external_apply_receipt.json",
+    "sha256": "acb337e9c90eb1af01291ad4e9b65b77ca11048bd90b5c4f8e57092cec2401b2"
+  },
+  "rollback_evidence": {
+    "post_rollback_readback": {
+      "correction_sent": false,
+      "no_correction_needed_for_smoke_test": true,
+      "original_message_id": "4209"
+    },
+    "rollback_id": "trollback_4209",
+    "rollback_mode": "compensating_action",
+    "rollback_receipt": {
+      "needed": false,
+      "strategy": "If needed, send a correction/retraction Telegram message; Telegram delivery itself is not data-roll-backable by Hermes."
+    },
+    "source_receipt_id": "tdisp_4209",
+    "target_adapter": "telegram_notification",
+    "verification_status": "PASS"
+  },
+  "source_local_apply_id": "xlocal_910913832457b33c",
+  "target": {
+    "chat_id": "5524172309",
+    "home_channel": true,
+    "platform": "telegram"
+  },
+  "target_adapter": "telegram_notification",
+  "verification": {
+    "checks": [
+      "send_message_tool_success",
+      "telegram_message_id_present",
+      "receipt_written",
+      "rollback_evidence_written"
+    ],
+    "status": "PASS"
+  }
+}

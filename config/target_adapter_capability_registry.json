@@ -43,14 +43,14 @@
     },
     "telegram_notification": {
       "kind": "external_delivery",
-      "real_apply_supported": false,
+      "real_apply_supported": true,
       "dry_run_supported": true,
       "blast_radius": "could send user-visible chat notification",
       "required_authority": "explicit_human_authorization_plus_target_chat",
       "required_inputs": ["target chat", "message body", "delivery timing", "rollback/clarification note", "post-send receipt"],
       "post_apply_verification": ["send_message result", "message target confirmation"],
       "rollback_plan": ["send correction/retraction message where platform supports social rollback only"],
-      "status": "contract_only_no_real_apply"
+      "status": "system_tested_via_send_message_tool"
     }
   }
 }
