@@ -19,61 +19,60 @@ def write_json(path: Path, data: dict) -> Path:
     return path
 
 
-def test_provider_endpoint_mapping_and_inference():
+def test_infer_endpoint_from_provider_model_deliver_and_name():
     mod = load()
-    assert mod.provider_endpoint("xiaomi") == "xiaomi"
-    assert mod.provider_endpoint("openai-codex") == "openai"
-    assert mod.provider_endpoint("google-gemini-cli") == "google_gemini"
-    assert mod.infer_provider({"provider":"xiaomi"}) == "xiaomi"
-    assert mod.infer_provider({"model":"mimo-v2.5-pro"}) == "xiaomi"
-    assert mod.infer_provider({"name":"multi-model-smoke"}) == "multi_provider"
+    assert mod.infer_endpoint({"provider":"xiaomi"}) == "xiaomi"
+    assert mod.infer_endpoint({"model":"mimo-v2.5-pro"}) == "xiaomi"
+    assert mod.infer_endpoint({"deliver":"telegram:he cheng"}) == "telegram"
+    assert mod.infer_endpoint({"name":"hermes-upstream-ratchet-review"}) == "github"
+    assert mod.infer_endpoint({"name":"unknown"}) is None
 
 
-def test_decide_job_skips_only_degraded_target_provider():
+def test_decide_degraded_pinned_provider_skips_only_target_provider():
     mod = load()
-    health = {
-        "xiaomi": {"classification":"tls_error"},
-        "openai": {"classification":"reachable"},
+    statuses = {
+        "xiaomi": {"id":"xiaomi", "classification":"tls_error"},
+        "openai": {"id":"openai", "classification":"reachable"},
     }
-    xiaomi = {"id":"x", "name":"mimo", "provider":"xiaomi", "last_status":"error"}
-    openai = {"id":"o", "name":"codex", "provider":"openai-codex", "last_status":"error"}
-    assert mod.decide_job(xiaomi, health)["decision"] == "skip_provider_health_degraded"
-    assert mod.decide_job(openai, health)["decision"] == "retry_allowed_by_provider_health"
+    decision = mod.decide_job({"id":"j1", "name":"mimo", "provider":"xiaomi", "last_status":"error"}, {"primary_class":"provider_generation"}, statuses)
+    assert decision["decision"] == "skip_provider_health_degraded"
+    assert decision["target_endpoint"] == "xiaomi"
+    assert "tls_error" in decision["reason"]
 
 
-def test_mult_provider_job_gets_exclusion_decision():
+def test_unpinned_provider_job_excludes_degraded_endpoints():
     mod = load()
-    health = {"xiaomi":{"classification":"tls_error"}, "openai":{"classification":"reachable"}}
-    job = {"id":"m", "name":"multi-model-smoke-every-4h", "last_status":"error"}
-    d = mod.decide_job(job, health)
-    assert d["decision"] == "run_with_degraded_provider_exclusions"
-    assert d["degraded_endpoints"] == ["xiaomi"]
+    statuses = {"xiaomi": {"id":"xiaomi", "classification":"tls_error"}, "openai": {"id":"openai", "classification":"reachable"}}
+    decision = mod.decide_job({"id":"j2", "name":"untyped", "last_status":"error"}, {"primary_class":"provider_generation"}, statuses)
+    assert decision["decision"] == "run_with_degraded_provider_exclusions"
+    assert "xiaomi" in decision["reason"]
 
 
-def test_build_report_from_jobs_and_probe(tmp_path):
+def test_telegram_reachable_still_requires_governed_manual_retry():
     mod = load()
-    jobs = {
-        "jobs": [
-            {"id":"x", "name":"daily full", "provider":"xiaomi", "last_status":"error"},
-            {"id":"o", "name":"aihot", "provider":"openai-codex", "last_status":"error"},
-            {"id":"m", "name":"multi-model-smoke", "last_status":"error"},
-            {"id":"u", "name":"unknown", "last_status":"error"},
-        ]
-    }
-    probe = {"status":"DEGRADED_PARTIAL", "classification_counts":{"reachable":1,"tls_error":1}, "results":[{"id":"xiaomi","classification":"tls_error"},{"id":"openai","classification":"reachable"}]}
+    statuses = {"telegram": {"id":"telegram", "classification":"reachable"}}
+    decision = mod.decide_job({"id":"tg", "name":"daily", "provider":"openai-codex", "deliver":"telegram:dm", "last_status":"error"}, {"primary_class":"telegram_delivery"}, statuses)
+    assert decision["target_endpoint"] == "telegram"
+    assert decision["decision"] == "retry_allowed_by_provider_health_manual_only"
+    assert "governed notification ledger" in decision["reason"]
+
+
+def test_build_and_write_report(tmp_path):
+    mod = load()
+    jobs = {"jobs": [
+        {"id":"ok", "name":"ok", "last_status":"ok"},
+        {"id":"a", "name":"mimo", "provider":"xiaomi", "last_status":"error"},
+        {"id":"b", "name":"generic", "last_status":"error"},
+    ]}
+    probe = {"results": [{"id":"xiaomi", "classification":"tls_error"}, {"id":"openai", "classification":"reachable"}]}
+    triage = {"failed_jobs": [{"job_id":"a", "primary_class":"provider_generation"}, {"job_id":"b", "primary_class":"provider_generation"}]}
     jobs_path = write_json(tmp_path / "jobs.json", jobs)
     probe_path = write_json(tmp_path / "probe.json", probe)
-    report = mod.build_report(jobs_path, probe_path)
+    triage_path = write_json(tmp_path / "triage.json", triage)
+    report = mod.build_report(jobs_path, probe_path, triage_path)
+    assert report["failed_job_count"] == 2
     assert report["decision_counts"]["skip_provider_health_degraded"] == 1
-    assert report["decision_counts"]["retry_allowed_by_provider_health"] == 1
     assert report["decision_counts"]["run_with_degraded_provider_exclusions"] == 1
-    assert report["decision_counts"]["needs_provider_resolution"] == 1
-
-
-def test_write_report_is_local_only(tmp_path):
-    mod = load()
-    report = {"status":"READY", "probe_status":"DEGRADED_PARTIAL", "decision_counts":{"run":1}, "decisions":[{"job_id":"a","name":"job","decision":"run","reason":"ok"}], "safe_boundaries":["no cron job mutation"], "next_actions":["wire gate"]}
     artifacts = mod.write_report(report, tmp_path / "out")
     assert Path(artifacts["json"]).exists()
-    assert Path(artifacts["md"]).exists()
     assert len(artifacts["sha256"]) == 64
