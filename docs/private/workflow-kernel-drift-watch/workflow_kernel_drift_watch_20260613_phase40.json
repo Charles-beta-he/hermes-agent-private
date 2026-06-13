@@ -1,17 +1,17 @@
 {
   "artifact_states": {
     "correlation": {
-      "age_seconds": 1676.0,
-      "created_at": "2026-06-13T16:59:29Z",
+      "age_seconds": 0.0,
+      "created_at": "2026-06-13T17:48:26Z",
       "exists": true,
       "name": "correlation",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json",
       "stale": false,
-      "status": "REAL_RUN_CORRELATION_PARTIAL_READY"
+      "status": "RECEIPT_CORRELATION_PARTIAL_READY"
     },
     "projection": {
-      "age_seconds": 10809.0,
-      "created_at": "2026-06-13T14:27:16Z",
+      "age_seconds": 188.0,
+      "created_at": "2026-06-13T17:45:18Z",
       "exists": true,
       "name": "projection",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json",
@@ -19,8 +19,8 @@
       "status": "SCHEDULER_READBACK_PROJECTION_READY"
     },
     "summary": {
-      "age_seconds": 1094.0,
-      "created_at": "2026-06-13T17:09:11Z",
+      "age_seconds": 0.0,
+      "created_at": "2026-06-13T17:48:26Z",
       "exists": true,
       "name": "summary",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-readiness-summary/workflow_kernel_runtime_readiness_summary_20260613_phase36.json",
@@ -28,17 +28,17 @@
       "status": "RUNTIME_READINESS_SUMMARY_READY_PENDING_EXPLICIT_ENABLE"
     }
   },
-  "created_at": "2026-06-13T17:27:25Z",
+  "created_at": "2026-06-13T17:48:26Z",
   "drift_signals": [
     "production_receipts_not_complete"
   ],
   "job_receipts": {
     "2c14ca2a9bd2": {
       "job_name": "multi-model-smoke-every4h",
-      "kernel_shim": null,
-      "latest_receipt_created_at": null,
-      "receipt_present": false,
-      "runtime_mode": null
+      "kernel_shim": true,
+      "latest_receipt_created_at": "2026-06-13T17:48:26Z",
+      "receipt_present": true,
+      "runtime_mode": "scheduler_native_plan_only"
     },
     "42baeebb646c": {
       "job_name": "multi-model-smoke-daily-full",
@@ -49,8 +49,7 @@
     }
   },
   "missing_receipt_jobs": [
-    "42baeebb646c",
-    "2c14ca2a9bd2"
+    "42baeebb646c"
   ],
   "next_boundary": "If only missing production receipts remain, wait for natural scheduled runs or explicitly authorize B/C.",
   "receipt_ledger": "/Users/charles/.hermes/state/cron-provider-health-gate/wrapper_run_receipts.jsonl",

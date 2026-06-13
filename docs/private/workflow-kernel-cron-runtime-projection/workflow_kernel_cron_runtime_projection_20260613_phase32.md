@@ -7,20 +7,20 @@ Probe path: `/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-pr
 
 ## Wrapper projections
 - **42baeebb646c multi-model-smoke-daily-full** — `KERNEL_SHIM_SCHEDULER_READBACK_READY` kernel=True decision=retry_allowed_by_provider_health next=2026-06-14T08:35:00+08:00
-- **2c14ca2a9bd2 multi-model-smoke-every-4h** — `KERNEL_SHIM_NO_GATE_DECISION_NEEDED` kernel=True decision=None next=2026-06-14T00:17:00+08:00
+- **2c14ca2a9bd2 multi-model-smoke-every-4h** — `KERNEL_SHIM_NO_GATE_DECISION_NEEDED` kernel=True decision=None next=2026-06-14T06:17:00+08:00
 
 ## Artifact freshness
 ```json
 {
   "gate": {
-    "age_seconds": 43.0,
+    "age_seconds": 11925.0,
     "created_at": "2026-06-13T14:26:33Z",
     "exists": true,
     "stale": false,
     "stale_threshold_hours": 24.0
   },
   "probe": {
-    "age_seconds": 43.0,
+    "age_seconds": 11925.0,
     "created_at": "2026-06-13T14:26:33Z",
     "exists": true,
     "stale": false,

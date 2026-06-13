@@ -24,17 +24,16 @@ def test_build_map_has_current_boundary_and_safe_default():
     mod = load()
     report = mod.build_map()
     assert report["status"] == "WORKFLOW_SEQUENCE_MAP_READY"
-    assert report["safe_default_track"] == "A_READ_ONLY_CONTINUE"
-    assert report["recommended_next"].startswith("Phase39")
+    assert report["safe_default_track"] == "POST_C_ROLLOUT_OBSERVATION"
+    assert report["recommended_next"].startswith("Phase43")
     assert "mutate ~/.hermes/cron/jobs.json" in report["closed_boundaries_without_explicit_authorization"]
 
 
-def test_next_ladder_requires_authority_for_runtime_crossing():
+def test_next_ladder_requires_authority_for_future_expansion():
     mod = load()
     by_track = {item["track"]: item for item in mod.NEXT_LADDER}
-    assert by_track["A_READ_ONLY_CONTINUE"]["authority_needed"] == "none"
-    assert by_track["B_SINGLE_WRAPPER_RUNTIME_ENABLE_DRY_RUN"]["authority_needed"] == "explicit B"
-    assert by_track["C_SINGLE_WRAPPER_SCHEDULER_NATIVE_ROLLOUT"]["authority_needed"] == "explicit C"
+    assert by_track["POST_C_ROLLOUT_OBSERVATION"]["phase"] == 43
+    assert by_track["FUTURE_EXPLICIT_C2"]["authority_needed"] == "explicit follow-up authorization"
 
 
 def test_write_report_creates_artifacts(tmp_path):

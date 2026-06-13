@@ -31,8 +31,8 @@ DEFAULT_RECEIPT_LEDGER = Path.home() / ".hermes" / "state" / "cron-provider-heal
 DEFAULT_OUT = ROOT / "docs" / "private" / "workflow-kernel-cron-run-correlation"
 
 WRAPPER_LOGS = {
-    cron_wrappers.DAILY_FULL_JOB_ID: "multi-model-smoke-daily-full-wrapper.jsonl",
-    cron_wrappers.EVERY4H_JOB_ID: "multi-model-smoke-every4h-wrapper.jsonl",
+    cron_wrappers.DAILY_FULL_JOB_ID: ["multi-model-smoke-daily-full-wrapper.jsonl"],
+    cron_wrappers.EVERY4H_JOB_ID: ["workflow-kernel-multi-model-smoke-every4h-runner.jsonl", "multi-model-smoke-every4h-wrapper.jsonl"],
 }
 
 
@@ -93,6 +93,22 @@ def latest_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not candidates:
         return None
     return max(candidates, key=lambda item: item[0])[1]
+
+
+def latest_log_for_job(job_id: str, log_dir: Path) -> tuple[Path | None, dict[str, Any] | None]:
+    best_path: Path | None = None
+    best_row: dict[str, Any] | None = None
+    best_ts: datetime | None = None
+    for name in WRAPPER_LOGS[job_id]:
+        path = log_dir / name
+        row = latest_row(read_jsonl(path))
+        ts = parse_time(str((row or {}).get("timestamp") or ""))
+        if row and ts and (best_ts is None or ts > best_ts):
+            best_path, best_row, best_ts = path, row, ts
+    if best_path is None:
+        names = WRAPPER_LOGS[job_id]
+        best_path = log_dir / names[0]
+    return best_path, best_row
 
 
 def projection_by_job(projection: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -166,8 +182,7 @@ def correlate_job(job_id: str, *, jobs: dict[str, dict[str, Any]], projection: d
     job = jobs.get(job_id)
     proj = projection.get(job_id)
     receipt = receipts.get(job_id)
-    log_path = log_dir / WRAPPER_LOGS[job_id]
-    row = latest_row(read_jsonl(log_path))
+    log_path, row = latest_log_for_job(job_id, log_dir)
     row_ts = parse_time(str(row.get("timestamp") or "")) if row else None
     status = outcome_status(projection=proj, job=job, row=row, receipt=receipt, projection_created_at=projection_created_at)
     return {

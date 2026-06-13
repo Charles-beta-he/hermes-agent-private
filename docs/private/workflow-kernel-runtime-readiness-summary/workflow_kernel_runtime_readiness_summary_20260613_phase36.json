@@ -1,18 +1,18 @@
 {
   "artifact_states": {
     "correlation": {
-      "age_seconds": 582.0,
-      "created_at": "2026-06-13T16:59:29Z",
+      "age_seconds": 0.0,
+      "created_at": "2026-06-13T17:48:26Z",
       "exists": true,
       "name": "correlation",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json",
       "report_id": "workflow_kernel_cron_run_correlation_20260613_phase33",
       "stale": false,
       "stale_threshold_hours": 24.0,
-      "status": "REAL_RUN_CORRELATION_PARTIAL_READY"
+      "status": "RECEIPT_CORRELATION_PARTIAL_READY"
     },
     "gate": {
-      "age_seconds": 9758.0,
+      "age_seconds": 12113.0,
       "created_at": "2026-06-13T14:26:33Z",
       "exists": true,
       "name": "gate",
@@ -23,7 +23,7 @@
       "status": "GATE_COMPILED_NO_MUTATION"
     },
     "probe": {
-      "age_seconds": 9758.0,
+      "age_seconds": 12113.0,
       "created_at": "2026-06-13T14:26:33Z",
       "exists": true,
       "name": "probe",
@@ -34,8 +34,8 @@
       "status": "PASS"
     },
     "projection": {
-      "age_seconds": 9715.0,
-      "created_at": "2026-06-13T14:27:16Z",
+      "age_seconds": 188.0,
+      "created_at": "2026-06-13T17:45:18Z",
       "exists": true,
       "name": "projection",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json",
@@ -45,7 +45,7 @@
       "status": "SCHEDULER_READBACK_PROJECTION_READY"
     },
     "receipt_aware_correlation": {
-      "age_seconds": 563.0,
+      "age_seconds": 2918.0,
       "created_at": "2026-06-13T16:59:48Z",
       "exists": true,
       "name": "receipt_aware_correlation",
@@ -56,7 +56,7 @@
       "status": "RECEIPT_AWARE_CORRELATION_READY"
     },
     "wrapper_run_receipts": {
-      "age_seconds": 951.0,
+      "age_seconds": 3306.0,
       "created_at": "2026-06-13T16:53:20Z",
       "exists": true,
       "name": "wrapper_run_receipts",
@@ -80,9 +80,9 @@
   },
   "correlation_counts": {
     "ONLY_PRE_PROJECTION_RUN_OBSERVED": 1,
-    "REAL_RUN_AFTER_PROJECTION_CORRELATED": 1
+    "RECEIPT_AFTER_PROJECTION_CORRELATED": 1
   },
-  "created_at": "2026-06-13T17:09:11Z",
+  "created_at": "2026-06-13T17:48:26Z",
   "endpoint_statuses": {
     "deepseek": "reachable",
     "github": "reachable",

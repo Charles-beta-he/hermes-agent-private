@@ -101,6 +101,22 @@ def test_latest_row_uses_timestamp_order_not_file_order():
     assert row["status"] == "new"
 
 
+def test_native_scheduler_log_is_considered_for_every4h(tmp_path):
+    mod = load()
+    jobs = write_json(tmp_path / "jobs.json", jobs_payload())
+    projection = write_json(tmp_path / "projection.json", projection_payload())
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    write_jsonl(log_dir / "workflow-kernel-multi-model-smoke-every4h-runner.jsonl", [{"timestamp": "2026-06-13T16:17:36Z", "status": "ok", "ok": True, "scheduler_native": True}])
+    write_jsonl(log_dir / "multi-model-smoke-daily-full-wrapper.jsonl", [{"timestamp": "2026-06-13T00:35:19Z", "status": "partial_fail_recorded", "ok": False}])
+
+    report = mod.build_report(jobs_path=jobs, projection_path=projection, log_dir=log_dir, receipt_ledger=tmp_path / "receipts.jsonl")
+
+    by_id = {o["job_id"]: o for o in report["outcomes"]}
+    assert by_id["2c14ca2a9bd2"]["latest_log_after_projection"] is True
+    assert by_id["2c14ca2a9bd2"]["log_path"].endswith("workflow-kernel-multi-model-smoke-every4h-runner.jsonl")
+
+
 def test_receipt_after_projection_takes_precedence(tmp_path):
     mod = load()
     jobs = write_json(tmp_path / "jobs.json", jobs_payload())

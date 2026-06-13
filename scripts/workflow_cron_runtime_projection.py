@@ -40,8 +40,9 @@ WRAPPER_REGISTRY = [
         "job_id": cron_wrappers.EVERY4H_JOB_ID,
         "job_name": cron_wrappers.EVERY4H_JOB_NAME,
         "script": "multi-model-smoke-every4h-wrapper.py",
+        "allowed_scripts": ["multi-model-smoke-every4h-wrapper.py", "workflow-kernel-multi-model-smoke-every4h-runner.py"],
         "kernel_module": "workflow_kernel.cron_wrappers",
-        "expected_runtime_mode": "provider_exclusion_plan_or_original_run",
+        "expected_runtime_mode": "provider_exclusion_plan_or_original_run_or_scheduler_native",
     },
 ]
 
@@ -128,7 +129,9 @@ def project_wrapper(entry: dict[str, Any], *, jobs: dict[str, dict[str, Any]], d
     job_id = entry["job_id"]
     job = jobs.get(job_id)
     decision = decisions.get(job_id)
-    script_path = script_dir / entry["script"]
+    script_name = str((job or {}).get("script") or entry["script"])
+    script_path = script_dir / script_name
+    allowed_scripts = set(entry.get("allowed_scripts") or [entry["script"]])
     return {
         "job_id": job_id,
         "job_name": entry["job_name"],
@@ -137,7 +140,9 @@ def project_wrapper(entry: dict[str, Any], *, jobs: dict[str, dict[str, Any]], d
         "cron_state": job.get("state") if job else None,
         "last_status": job.get("last_status") if job else None,
         "next_run_at": job.get("next_run_at") if job else None,
-        "script": entry["script"],
+        "script": script_name,
+        "expected_scripts": sorted(allowed_scripts),
+        "script_allowed": script_name in allowed_scripts,
         "script_path": str(script_path),
         "script_exists": script_path.exists(),
         "kernel_shim_declared": entry["kernel_module"],
@@ -147,13 +152,15 @@ def project_wrapper(entry: dict[str, Any], *, jobs: dict[str, dict[str, Any]], d
         "gate_target_endpoint": decision.get("target_endpoint") if decision else None,
         "gate_endpoint_classification": decision.get("endpoint_classification") if decision else None,
         "degraded_endpoints": decision.get("degraded_endpoints") if decision else None,
-        "projection_status": projection_status(job, script_path, decision),
+        "projection_status": projection_status(job, script_path, decision, script_name in allowed_scripts),
     }
 
 
-def projection_status(job: dict[str, Any] | None, script_path: Path, decision: dict[str, Any] | None) -> str:
+def projection_status(job: dict[str, Any] | None, script_path: Path, decision: dict[str, Any] | None, script_allowed: bool = True) -> str:
     if job is None:
         return "CRON_JOB_MISSING"
+    if not script_allowed:
+        return "CRON_JOB_SCRIPT_UNEXPECTED"
     if not script_path.exists():
         return "WRAPPER_SCRIPT_MISSING"
     if not wrapper_uses_kernel(script_path):

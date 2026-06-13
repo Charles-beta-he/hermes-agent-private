@@ -1,12 +1,12 @@
 # Workflow Kernel Cron Run Correlation — Phase 33
 
-Status: **REAL_RUN_CORRELATION_PARTIAL_READY**
-Correlation counts: `{"ONLY_PRE_PROJECTION_RUN_OBSERVED": 1, "REAL_RUN_AFTER_PROJECTION_CORRELATED": 1}`
+Status: **RECEIPT_CORRELATION_PARTIAL_READY**
+Correlation counts: `{"ONLY_PRE_PROJECTION_RUN_OBSERVED": 1, "RECEIPT_AFTER_PROJECTION_CORRELATED": 1}`
 Projection: `/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json`
 
 ## Outcomes
 - **42baeebb646c multi-model-smoke-daily-full** — `ONLY_PRE_PROJECTION_RUN_OBSERVED` cron_last=2026-06-13T08:37:48.296336+08:00 log_ts=2026-06-13T00:35:19.517710Z log_status=partial_fail_recorded interpretation=no post-projection scheduled wrapper run has occurred yet
-- **2c14ca2a9bd2 multi-model-smoke-every-4h** — `REAL_RUN_AFTER_PROJECTION_CORRELATED` cron_last=2026-06-14T00:17:57.124057+08:00 log_ts=2026-06-13T16:17:36.937542Z log_status=ok interpretation=scheduler ran wrapper after projection and wrapper outcome was ok
+- **2c14ca2a9bd2 multi-model-smoke-every-4h** — `RECEIPT_AFTER_PROJECTION_CORRELATED` cron_last=2026-06-14T00:17:57.124057+08:00 log_ts=2026-06-13T16:17:36.937542Z log_status=ok interpretation=direct wrapper-run receipt after projection confirms kernel/gate metadata capture
 
 ## Safe boundaries
 - no cron/jobs.json mutation

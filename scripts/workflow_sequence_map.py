@@ -44,14 +44,16 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 35, "name": "Receipt-aware Correlation", "layer": "correlation upgrade", "status": "complete", "depends_on": [34], "authority": "read-only receipt/log correlation", "gate": "do not trigger cron to create receipts", "next_unlocked": [36]},
     {"phase": 36, "name": "Runtime Readiness Summary", "layer": "operator summary", "status": "complete", "depends_on": [35], "authority": "read-only aggregation", "gate": "summary is not enablement authority", "next_unlocked": [37]},
     {"phase": 37, "name": "Runtime Enablement Authorization Packet", "layer": "human gate", "status": "complete", "depends_on": [36], "authority": "decision packet only", "gate": "B/C require explicit authorization", "next_unlocked": [38]},
-    {"phase": 38, "name": "Sequence Map and Ordering", "layer": "workflow map", "status": "current", "depends_on": [37], "authority": "read-only ordering", "gate": "do not cross enablement boundary", "next_unlocked": [39]},
+    {"phase": 38, "name": "Sequence Map and Ordering", "layer": "workflow map", "status": "complete", "depends_on": [37], "authority": "read-only ordering", "gate": "do not cross enablement boundary", "next_unlocked": [39]},
+    {"phase": 39, "name": "Enablement Runbook and Rollback Drill", "layer": "operator runbook", "status": "complete", "depends_on": [38], "authority": "read-only executable documentation", "gate": "do not execute runbook as authorization", "next_unlocked": [40]},
+    {"phase": 40, "name": "Receipt/Projection Drift Watcher", "layer": "drift monitoring", "status": "complete", "depends_on": [39], "authority": "read-only drift detection", "gate": "do not trigger cron solely for receipts", "next_unlocked": [41]},
+    {"phase": 41, "name": "Single-wrapper Runtime-enable Shadow Dry-run", "layer": "runtime-adjacent dry-run", "status": "complete", "depends_on": [40], "authority": "explicit B authorization", "gate": "no cron mutation, no credentialed generation", "next_unlocked": [42]},
+    {"phase": 42, "name": "Single-wrapper Scheduler-native Rollout", "layer": "scheduler-native single job", "status": "complete", "depends_on": [41], "authority": "explicit C authorization", "gate": "one job script field only; rollback backup required", "next_unlocked": [43]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 39, "name": "Enablement Runbook and Rollback Drill", "track": "A_READ_ONLY_CONTINUE", "authority_needed": "none", "why_next": "turn the packet into exact operator commands/checklists without executing them"},
-    {"phase": 40, "name": "Receipt/Projection Drift Watcher", "track": "A_READ_ONLY_CONTINUE", "authority_needed": "none", "why_next": "detect stale summaries and future receipts without triggering cron"},
-    {"phase": 41, "name": "Single-wrapper Runtime-enable Dry-run", "track": "B_SINGLE_WRAPPER_RUNTIME_ENABLE_DRY_RUN", "authority_needed": "explicit B", "why_next": "first runtime-adjacent shadow exercise"},
-    {"phase": 42, "name": "Single-wrapper Scheduler-native Rollout", "track": "C_SINGLE_WRAPPER_SCHEDULER_NATIVE_ROLLOUT", "authority_needed": "explicit C", "why_next": "first real scheduler/runtime boundary crossing"},
+    {"phase": 43, "name": "Daily-wrapper Receipt Closure or Natural Scheduled Wait", "track": "POST_C_ROLLOUT_OBSERVATION", "authority_needed": "none for readback; explicit authorization if manually dry-running daily", "why_next": "close remaining production receipt drift for daily-full without broadening scheduler-native rollout"},
+    {"phase": 44, "name": "Second-wrapper Scheduler-native Candidate Packet", "track": "FUTURE_EXPLICIT_C2", "authority_needed": "explicit follow-up authorization", "why_next": "only after Phase42 single-job rollout remains healthy"},
 ]
 
 
@@ -93,15 +95,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-37 的顺序、依赖、门禁和下一步推进路径，保持全盘推进但不越过显式授权边界。",
+        "objective": "梳理 Phase17-42 的顺序、依赖、门禁和后续推进路径；B/C 已授权并完成单 wrapper rollout，后续不得自动扩展到第二个 scheduler-native job。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase37 has produced a human authorization packet; Phase38 maps sequence and defaults to safe read-only continuation.",
-        "safe_default_track": "A_READ_ONLY_CONTINUE",
+        "current_boundary": "Phase42 has applied one authorized scheduler-native job rollout; do not expand to a second job without a fresh explicit authorization.",
+        "safe_default_track": "POST_C_ROLLOUT_OBSERVATION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Phase39 Enablement Runbook and Rollback Drill under A_READ_ONLY_CONTINUE",
+        "recommended_next": "Phase43 Daily-wrapper receipt closure or natural scheduled wait",
     }
 
 

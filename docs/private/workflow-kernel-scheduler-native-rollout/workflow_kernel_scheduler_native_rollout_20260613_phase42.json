@@ -1,0 +1,20 @@
+{
+  "after_job_script": "workflow-kernel-multi-model-smoke-every4h-runner.py",
+  "backup_path": "/Users/charles/.hermes/cron/jobs.json.bak-phase42-scheduler-native-20260614014254",
+  "before_job_script": "multi-model-smoke-every4h-wrapper.py",
+  "created_at": "2026-06-13T17:42:54Z",
+  "cron_jobs_sha_after": "d6ca473bef9513b3eb36e6d5f3933bc94319d6fbde6adfec8b1c68a9de90d796",
+  "cron_jobs_sha_before": "e3378ebd99ffc645f49cf280030d01e05f911775fb117600f26c1935a0ac42c2",
+  "cron_state_mutated": true,
+  "dry_run": false,
+  "external_side_effects": false,
+  "job_id": "2c14ca2a9bd2",
+  "model_generation_attempted": false,
+  "new_script": "workflow-kernel-multi-model-smoke-every4h-runner.py",
+  "new_script_count_before": 0,
+  "old_script": "multi-model-smoke-every4h-wrapper.py",
+  "old_script_count": 1,
+  "report_id": "workflow_kernel_scheduler_native_rollout_20260613_phase42",
+  "rollback_command": "cp /Users/charles/.hermes/cron/jobs.json.bak-phase42-scheduler-native-20260614014254 /Users/charles/.hermes/cron/jobs.json",
+  "status": "SCHEDULER_NATIVE_ROLLOUT_APPLIED"
+}

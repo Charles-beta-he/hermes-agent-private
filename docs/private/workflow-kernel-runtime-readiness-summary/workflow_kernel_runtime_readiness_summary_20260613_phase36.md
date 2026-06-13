@@ -18,7 +18,7 @@ Explicit enable required: `True`
 - none
 
 ## Artifacts
-- `correlation`: status=`REAL_RUN_CORRELATION_PARTIAL_READY`, stale=`False`, path=`/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json`
+- `correlation`: status=`RECEIPT_CORRELATION_PARTIAL_READY`, stale=`False`, path=`/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json`
 - `gate`: status=`GATE_COMPILED_NO_MUTATION`, stale=`False`, path=`/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-provider-health-gate/cron_provider_health_gate_20260613_phase24.json`
 - `probe`: status=`PASS`, stale=`False`, path=`/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-provider-network-probe/provider_network_probe_20260613_phase23.json`
 - `projection`: status=`SCHEDULER_READBACK_PROJECTION_READY`, stale=`False`, path=`/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json`

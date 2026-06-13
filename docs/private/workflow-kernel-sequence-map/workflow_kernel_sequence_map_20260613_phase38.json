@@ -7,40 +7,26 @@
     "credentialed model generation smoke",
     "external message delivery"
   ],
-  "created_at": "2026-06-13T17:20:53Z",
-  "current_boundary": "Phase37 has produced a human authorization packet; Phase38 maps sequence and defaults to safe read-only continuation.",
+  "created_at": "2026-06-13T17:50:15Z",
+  "current_boundary": "Phase42 has applied one authorized scheduler-native job rollout; do not expand to a second job without a fresh explicit authorization.",
   "next_ladder": [
     {
-      "authority_needed": "none",
-      "name": "Enablement Runbook and Rollback Drill",
-      "phase": 39,
-      "track": "A_READ_ONLY_CONTINUE",
-      "why_next": "turn the packet into exact operator commands/checklists without executing them"
+      "authority_needed": "none for readback; explicit authorization if manually dry-running daily",
+      "name": "Daily-wrapper Receipt Closure or Natural Scheduled Wait",
+      "phase": 43,
+      "track": "POST_C_ROLLOUT_OBSERVATION",
+      "why_next": "close remaining production receipt drift for daily-full without broadening scheduler-native rollout"
     },
     {
-      "authority_needed": "none",
-      "name": "Receipt/Projection Drift Watcher",
-      "phase": 40,
-      "track": "A_READ_ONLY_CONTINUE",
-      "why_next": "detect stale summaries and future receipts without triggering cron"
-    },
-    {
-      "authority_needed": "explicit B",
-      "name": "Single-wrapper Runtime-enable Dry-run",
-      "phase": 41,
-      "track": "B_SINGLE_WRAPPER_RUNTIME_ENABLE_DRY_RUN",
-      "why_next": "first runtime-adjacent shadow exercise"
-    },
-    {
-      "authority_needed": "explicit C",
-      "name": "Single-wrapper Scheduler-native Rollout",
-      "phase": 42,
-      "track": "C_SINGLE_WRAPPER_SCHEDULER_NATIVE_ROLLOUT",
-      "why_next": "first real scheduler/runtime boundary crossing"
+      "authority_needed": "explicit follow-up authorization",
+      "name": "Second-wrapper Scheduler-native Candidate Packet",
+      "phase": 44,
+      "track": "FUTURE_EXPLICIT_C2",
+      "why_next": "only after Phase42 single-job rollout remains healthy"
     }
   ],
-  "objective": "梳理 Phase17-37 的顺序、依赖、门禁和下一步推进路径，保持全盘推进但不越过显式授权边界。",
-  "phase_count": 22,
+  "objective": "梳理 Phase17-42 的顺序、依赖、门禁和后续推进路径；B/C 已授权并完成单 wrapper rollout，后续不得自动扩展到第二个 scheduler-native job。",
+  "phase_count": 26,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -346,12 +332,68 @@
         39
       ],
       "phase": 38,
-      "status": "current"
+      "status": "complete"
+    },
+    {
+      "authority": "read-only executable documentation",
+      "depends_on": [
+        38
+      ],
+      "gate": "do not execute runbook as authorization",
+      "layer": "operator runbook",
+      "name": "Enablement Runbook and Rollback Drill",
+      "next_unlocked": [
+        40
+      ],
+      "phase": 39,
+      "status": "complete"
+    },
+    {
+      "authority": "read-only drift detection",
+      "depends_on": [
+        39
+      ],
+      "gate": "do not trigger cron solely for receipts",
+      "layer": "drift monitoring",
+      "name": "Receipt/Projection Drift Watcher",
+      "next_unlocked": [
+        41
+      ],
+      "phase": 40,
+      "status": "complete"
+    },
+    {
+      "authority": "explicit B authorization",
+      "depends_on": [
+        40
+      ],
+      "gate": "no cron mutation, no credentialed generation",
+      "layer": "runtime-adjacent dry-run",
+      "name": "Single-wrapper Runtime-enable Shadow Dry-run",
+      "next_unlocked": [
+        42
+      ],
+      "phase": 41,
+      "status": "complete"
+    },
+    {
+      "authority": "explicit C authorization",
+      "depends_on": [
+        41
+      ],
+      "gate": "one job script field only; rollback backup required",
+      "layer": "scheduler-native single job",
+      "name": "Single-wrapper Scheduler-native Rollout",
+      "next_unlocked": [
+        43
+      ],
+      "phase": 42,
+      "status": "complete"
     }
   ],
-  "recommended_next": "Phase39 Enablement Runbook and Rollback Drill under A_READ_ONLY_CONTINUE",
+  "recommended_next": "Phase43 Daily-wrapper receipt closure or natural scheduled wait",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
-  "safe_default_track": "A_READ_ONLY_CONTINUE",
+  "safe_default_track": "POST_C_ROLLOUT_OBSERVATION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",
   "validation_errors": []
 }

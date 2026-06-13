@@ -1,7 +1,7 @@
 # Workflow Kernel Sequence Map — Phase 38
 
 Status: **WORKFLOW_SEQUENCE_MAP_READY**
-Safe default track: `A_READ_ONLY_CONTINUE`
+Safe default track: `POST_C_ROLLOUT_OBSERVATION`
 
 ## Phase order
 - Phase 17: External Apply Requirements — layer=`contract`, gate=`real_apply_enabled=false`
@@ -26,12 +26,14 @@ Safe default track: `A_READ_ONLY_CONTINUE`
 - Phase 36: Runtime Readiness Summary — layer=`operator summary`, gate=`summary is not enablement authority`
 - Phase 37: Runtime Enablement Authorization Packet — layer=`human gate`, gate=`B/C require explicit authorization`
 - Phase 38: Sequence Map and Ordering — layer=`workflow map`, gate=`do not cross enablement boundary`
+- Phase 39: Enablement Runbook and Rollback Drill — layer=`operator runbook`, gate=`do not execute runbook as authorization`
+- Phase 40: Receipt/Projection Drift Watcher — layer=`drift monitoring`, gate=`do not trigger cron solely for receipts`
+- Phase 41: Single-wrapper Runtime-enable Shadow Dry-run — layer=`runtime-adjacent dry-run`, gate=`no cron mutation, no credentialed generation`
+- Phase 42: Single-wrapper Scheduler-native Rollout — layer=`scheduler-native single job`, gate=`one job script field only; rollback backup required`
 
 ## Next ladder
-- Phase 39: Enablement Runbook and Rollback Drill — track=`A_READ_ONLY_CONTINUE`, authority=`none`
-- Phase 40: Receipt/Projection Drift Watcher — track=`A_READ_ONLY_CONTINUE`, authority=`none`
-- Phase 41: Single-wrapper Runtime-enable Dry-run — track=`B_SINGLE_WRAPPER_RUNTIME_ENABLE_DRY_RUN`, authority=`explicit B`
-- Phase 42: Single-wrapper Scheduler-native Rollout — track=`C_SINGLE_WRAPPER_SCHEDULER_NATIVE_ROLLOUT`, authority=`explicit C`
+- Phase 43: Daily-wrapper Receipt Closure or Natural Scheduled Wait — track=`POST_C_ROLLOUT_OBSERVATION`, authority=`none for readback; explicit authorization if manually dry-running daily`
+- Phase 44: Second-wrapper Scheduler-native Candidate Packet — track=`FUTURE_EXPLICIT_C2`, authority=`explicit follow-up authorization`
 
 ## Closed boundaries
 - enable workflow_kernel.RUNTIME_SWITCH_ENABLED

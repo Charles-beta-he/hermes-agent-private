@@ -1,0 +1,21 @@
+{
+  "created_at": "2026-06-13T17:40:47Z",
+  "credentialed_generation_attempted": false,
+  "cron_jobs_sha_after": "e6573472e12eb996c767d2b0b7191298c3725799696bb959095a105f5f0fa293",
+  "cron_jobs_sha_before": "e6573472e12eb996c767d2b0b7191298c3725799696bb959095a105f5f0fa293",
+  "cron_state_mutated": false,
+  "external_side_effects": false,
+  "job_id": "2c14ca2a9bd2",
+  "payload_kernel_shim": true,
+  "payload_model_generation_attempted": false,
+  "payload_status": "provider_health_exclusion_plan",
+  "receipt_kernel_shim": true,
+  "receipt_ledger": "/var/folders/1h/g3g460m9029dd5_71xl27nz00000gn/T/phase41_shadow_receipts_7503.jsonl",
+  "receipt_runtime_mode": "plan_only",
+  "receipt_status": "wrapper_run_receipt_recorded",
+  "report_id": "workflow_kernel_runtime_shadow_dry_run_20260613_phase41",
+  "returncode": 0,
+  "status": "RUNTIME_SHADOW_DRY_RUN_READY",
+  "stderr_tail": "",
+  "wrapper": "/Users/charles/.hermes/scripts/multi-model-smoke-every4h-wrapper.py"
+}

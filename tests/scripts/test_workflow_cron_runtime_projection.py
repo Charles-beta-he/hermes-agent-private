@@ -72,7 +72,7 @@ def probe_payload(created_at: str) -> dict:
 
 def write_kernel_wrappers(script_dir: Path):
     script_dir.mkdir()
-    for name in ["multi-model-smoke-daily-full-wrapper.py", "multi-model-smoke-every4h-wrapper.py"]:
+    for name in ["multi-model-smoke-daily-full-wrapper.py", "multi-model-smoke-every4h-wrapper.py", "workflow-kernel-multi-model-smoke-every4h-runner.py"]:
         (script_dir / name).write_text("from workflow_kernel import cron_wrappers as kernel_cron\n")
 
 
@@ -127,6 +127,26 @@ def test_projection_detects_wrapper_not_using_kernel(tmp_path):
     statuses = {p["job_id"]: p["projection_status"] for p in report["wrapper_projections"]}
     assert statuses["42baeebb646c"] == "WRAPPER_NOT_USING_KERNEL_SHIM"
     assert statuses["2c14ca2a9bd2"] == "KERNEL_SHIM_SCHEDULER_READBACK_READY"
+
+
+def test_projection_ready_for_scheduler_native_every4h_script(tmp_path):
+    mod = load()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    payload = jobs_payload()
+    payload["jobs"][1]["script"] = "workflow-kernel-multi-model-smoke-every4h-runner.py"
+    jobs = write_json(tmp_path / "jobs.json", payload)
+    gate = write_json(tmp_path / "gate.json", gate_payload(now.isoformat().replace("+00:00", "Z")))
+    probe = write_json(tmp_path / "probe.json", probe_payload(now.isoformat().replace("+00:00", "Z")))
+    script_dir = tmp_path / "scripts"
+    write_kernel_wrappers(script_dir)
+
+    report = mod.build_report(jobs_path=jobs, gate_path=gate, probe_path=probe, script_dir=script_dir, stale_hours=24)
+
+    assert report["status"] == "SCHEDULER_READBACK_PROJECTION_READY"
+    every4h = {p["job_id"]: p for p in report["wrapper_projections"]}["2c14ca2a9bd2"]
+    assert every4h["script"] == "workflow-kernel-multi-model-smoke-every4h-runner.py"
+    assert every4h["script_allowed"] is True
+    assert every4h["projection_status"] == "KERNEL_SHIM_SCHEDULER_READBACK_READY"
 
 
 def test_newest_path_selects_latest_mtime(tmp_path):

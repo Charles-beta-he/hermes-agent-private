@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-06-13T14:27:16Z",
+  "created_at": "2026-06-13T17:45:18Z",
   "endpoint_statuses": {
     "deepseek": "reachable",
     "github": "reachable",
@@ -9,7 +9,7 @@
     "xiaomi": "reachable"
   },
   "gate_artifact": {
-    "age_seconds": 43.0,
+    "age_seconds": 11925.0,
     "created_at": "2026-06-13T14:26:33Z",
     "exists": true,
     "stale": false,
@@ -23,7 +23,7 @@
     "keep global runtime switch disabled until a separate explicit enable gate"
   ],
   "probe_artifact": {
-    "age_seconds": 43.0,
+    "age_seconds": 11925.0,
     "created_at": "2026-06-13T14:26:33Z",
     "exists": true,
     "stale": false,
@@ -54,6 +54,9 @@
       "cron_state": "scheduled",
       "degraded_endpoints": null,
       "expected_runtime_mode": "typed_skip_or_original_run",
+      "expected_scripts": [
+        "multi-model-smoke-daily-full-wrapper.py"
+      ],
       "gate_decision": "retry_allowed_by_provider_health",
       "gate_endpoint_classification": "reachable",
       "gate_target_endpoint": "xiaomi",
@@ -65,6 +68,7 @@
       "next_run_at": "2026-06-14T08:35:00+08:00",
       "projection_status": "KERNEL_SHIM_SCHEDULER_READBACK_READY",
       "script": "multi-model-smoke-daily-full-wrapper.py",
+      "script_allowed": true,
       "script_exists": true,
       "script_path": "/Users/charles/.hermes/scripts/multi-model-smoke-daily-full-wrapper.py"
     },
@@ -73,7 +77,11 @@
       "cron_job_present": true,
       "cron_state": "scheduled",
       "degraded_endpoints": null,
-      "expected_runtime_mode": "provider_exclusion_plan_or_original_run",
+      "expected_runtime_mode": "provider_exclusion_plan_or_original_run_or_scheduler_native",
+      "expected_scripts": [
+        "multi-model-smoke-every4h-wrapper.py",
+        "workflow-kernel-multi-model-smoke-every4h-runner.py"
+      ],
       "gate_decision": null,
       "gate_endpoint_classification": null,
       "gate_target_endpoint": null,
@@ -82,11 +90,12 @@
       "kernel_shim_declared": "workflow_kernel.cron_wrappers",
       "kernel_shim_detected": true,
       "last_status": "ok",
-      "next_run_at": "2026-06-14T00:17:00+08:00",
+      "next_run_at": "2026-06-14T06:17:00+08:00",
       "projection_status": "KERNEL_SHIM_NO_GATE_DECISION_NEEDED",
-      "script": "multi-model-smoke-every4h-wrapper.py",
+      "script": "workflow-kernel-multi-model-smoke-every4h-runner.py",
+      "script_allowed": true,
       "script_exists": true,
-      "script_path": "/Users/charles/.hermes/scripts/multi-model-smoke-every4h-wrapper.py"
+      "script_path": "/Users/charles/.hermes/scripts/workflow-kernel-multi-model-smoke-every4h-runner.py"
     }
   ]
 }
