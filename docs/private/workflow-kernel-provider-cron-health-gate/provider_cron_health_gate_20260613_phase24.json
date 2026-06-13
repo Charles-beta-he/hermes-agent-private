@@ -1,0 +1,121 @@
+{
+  "created_at": "2026-06-13T10:02:17Z",
+  "failed_count": 7,
+  "gate_counts": {
+    "hold_for_unmapped_provider_probe": 4,
+    "manual_governed_notification_retry_candidate": 1,
+    "skip_provider_generation_retry": 2
+  },
+  "job_decisions": [
+    {
+      "deliver": "local",
+      "failure_class": "provider_generation",
+      "gate_decision": "hold_for_unmapped_provider_probe",
+      "job_id": "789ca7d5e718",
+      "mapped_endpoint": null,
+      "model": null,
+      "name": "自进化健康监控告警",
+      "probe_classification": null,
+      "provider": null,
+      "script": null,
+      "typed_reason": "provider-generation failure has no mapped endpoint probe; do not retry blindly"
+    },
+    {
+      "deliver": "local",
+      "failure_class": "provider_generation",
+      "gate_decision": "hold_for_unmapped_provider_probe",
+      "job_id": "2c14ca2a9bd2",
+      "mapped_endpoint": null,
+      "model": null,
+      "name": "multi-model-smoke-every-4h",
+      "probe_classification": null,
+      "provider": null,
+      "script": "multi-model-smoke-every4h-wrapper.py",
+      "typed_reason": "provider-generation failure has no mapped endpoint probe; do not retry blindly"
+    },
+    {
+      "deliver": "local",
+      "failure_class": "provider_generation",
+      "gate_decision": "skip_provider_generation_retry",
+      "job_id": "42baeebb646c",
+      "mapped_endpoint": "xiaomi",
+      "model": "mimo-v2.5-pro",
+      "name": "multi-model-smoke-daily-full",
+      "probe_classification": "tls_error",
+      "provider": "xiaomi",
+      "script": "multi-model-smoke-daily-full-wrapper.py",
+      "typed_reason": "target provider endpoint xiaomi is currently tls_error; avoid burning retries"
+    },
+    {
+      "deliver": "local",
+      "failure_class": "provider_generation",
+      "gate_decision": "hold_for_unmapped_provider_probe",
+      "job_id": "30842cd6b22b",
+      "mapped_endpoint": null,
+      "model": null,
+      "name": "cron-health-quarantine-report-6h",
+      "probe_classification": null,
+      "provider": null,
+      "script": "cron-health-quarantine.py",
+      "typed_reason": "provider-generation failure has no mapped endpoint probe; do not retry blindly"
+    },
+    {
+      "deliver": "local",
+      "failure_class": "provider_generation",
+      "gate_decision": "skip_provider_generation_retry",
+      "job_id": "8c40491124b1",
+      "mapped_endpoint": "xiaomi",
+      "model": "mimo-v2.5-pro",
+      "name": "memory-selfcheck-6h",
+      "probe_classification": "tls_error",
+      "provider": "xiaomi",
+      "script": "agent_memory_architecture_selfcheck.py",
+      "typed_reason": "target provider endpoint xiaomi is currently tls_error; avoid burning retries"
+    },
+    {
+      "deliver": "telegram:he cheng (dm)",
+      "failure_class": "telegram_delivery",
+      "gate_decision": "manual_governed_notification_retry_candidate",
+      "job_id": "c01e3574e31c",
+      "mapped_endpoint": "openai",
+      "model": "gpt-5.4",
+      "name": "aihot-daily-report",
+      "probe_classification": "reachable",
+      "provider": "openai-codex",
+      "script": null,
+      "typed_reason": "telegram edge is reachable, but unattended/external sends remain blocked by mission policy"
+    },
+    {
+      "deliver": "local",
+      "failure_class": "provider_generation",
+      "gate_decision": "hold_for_unmapped_provider_probe",
+      "job_id": "56cba2b9feff",
+      "mapped_endpoint": null,
+      "model": null,
+      "name": "Hermes self-architecture mission",
+      "probe_classification": null,
+      "provider": null,
+      "script": "mission_tick_msn_20260610_120149_27c88cfc.py",
+      "typed_reason": "provider-generation failure has no mapped endpoint probe; do not retry blindly"
+    }
+  ],
+  "jobs_path": "/Users/charles/.hermes/cron/jobs.json",
+  "next_actions": [
+    "wire this gate into future cron retry planning as a dry-run preflight first",
+    "only retry provider_generation jobs when endpoint is reachable and a separate governed retry scope exists",
+    "route telegram retries through the governed notification policy and explicit send authorization"
+  ],
+  "probe_path": "docs/private/workflow-kernel-provider-network-probe/provider_network_probe_20260613_phase23.json",
+  "probe_status": "DEGRADED_PARTIAL",
+  "report_id": "provider_cron_health_gate_20260613_phase24",
+  "safe_boundaries": [
+    "no cron schedule mutation",
+    "no job pause/resume/remove",
+    "no model generation call",
+    "no provider retry loop",
+    "no credential read/write",
+    "no external message send"
+  ],
+  "scope": "local-only provider health gate plan for failed Hermes cron jobs",
+  "status": "DEGRADED_GATED"
+}
