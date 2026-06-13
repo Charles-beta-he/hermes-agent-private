@@ -24,6 +24,7 @@ DEFAULT_GATE_GLOB = str(
     / "cron_provider_health_gate_*.json"
 )
 DEFAULT_SKIP_LEDGER = Path.home() / ".hermes" / "state" / "cron-provider-health-gate" / "provider_health_skips.jsonl"
+DEFAULT_RUN_RECEIPT_LEDGER = Path.home() / ".hermes" / "state" / "cron-provider-health-gate" / "wrapper_run_receipts.jsonl"
 
 DAILY_FULL_JOB_ID = "42baeebb646c"
 DAILY_FULL_JOB_NAME = "multi-model-smoke-daily-full"
@@ -128,3 +129,74 @@ def every4h_script_args_for_decision(decision: dict[str, Any] | None) -> tuple[l
 
 def every4h_gate_decision() -> dict[str, Any] | None:
     return load_gate_decision(EVERY4H_JOB_ID)
+
+
+def wrapper_run_receipt(
+    *,
+    job_id: str,
+    job_name: str,
+    payload: dict[str, Any],
+    gate_decision: dict[str, Any] | None,
+    runtime_mode: str,
+) -> dict[str, Any]:
+    summary = payload.get("summary") if isinstance(payload, dict) else None
+    receipt = {
+        "status": "wrapper_run_receipt_recorded",
+        "created_at": utc_now(),
+        "job_id": job_id,
+        "job_name": job_name,
+        "runtime_mode": runtime_mode,
+        "kernel_shim": True,
+        "gate_report": gate_decision.get("gate_report") if gate_decision else None,
+        "gate_report_id": gate_decision.get("gate_report_id") if gate_decision else None,
+        "gate_decision": gate_decision.get("decision") if gate_decision else None,
+        "payload_status": payload.get("status"),
+        "payload_ok": payload.get("ok"),
+        "payload_returncode": payload.get("returncode"),
+        "model_generation_attempted": bool(payload.get("model_generation_attempted", True)),
+        "cron_state_mutated": False,
+        "external_side_effects": False,
+        "summary": summary if isinstance(summary, dict) else None,
+    }
+    receipt["idempotency_key"] = hashlib.sha256(
+        json.dumps(
+            {
+                "job_id": job_id,
+                "runtime_mode": runtime_mode,
+                "gate_report_id": receipt["gate_report_id"],
+                "payload_status": receipt["payload_status"],
+                "summary": receipt["summary"],
+                "created_at": receipt["created_at"],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()[:16]
+    return receipt
+
+
+def append_run_receipt(receipt: dict[str, Any], ledger: Path | None = None) -> dict[str, Any]:
+    target = ledger or Path(os.environ.get("HERMES_CRON_WRAPPER_RECEIPT_LEDGER", str(DEFAULT_RUN_RECEIPT_LEDGER)))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n")
+    return {**receipt, "ledger": str(target)}
+
+
+def record_wrapper_run_receipt(
+    *,
+    job_id: str,
+    job_name: str,
+    payload: dict[str, Any],
+    gate_decision: dict[str, Any] | None,
+    runtime_mode: str,
+) -> dict[str, Any]:
+    return append_run_receipt(
+        wrapper_run_receipt(
+            job_id=job_id,
+            job_name=job_name,
+            payload=payload,
+            gate_decision=gate_decision,
+            runtime_mode=runtime_mode,
+        )
+    )

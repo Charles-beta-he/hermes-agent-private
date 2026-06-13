@@ -60,6 +60,7 @@ def test_main_does_not_call_original_when_gate_says_skip(tmp_path, monkeypatch, 
     report = write_report(tmp_path / "gate.json")
     monkeypatch.setenv("HERMES_CRON_HEALTH_GATE_REPORT", str(report))
     monkeypatch.setenv("HERMES_CRON_HEALTH_SKIP_LEDGER", str(tmp_path / "skips.jsonl"))
+    monkeypatch.setenv("HERMES_CRON_WRAPPER_RECEIPT_LEDGER", str(tmp_path / "receipts.jsonl"))
     def boom():
         raise AssertionError("original smoke should not run")
     monkeypatch.setattr(mod, "run_original", boom)
@@ -73,6 +74,7 @@ def test_main_runs_original_when_gate_allows(tmp_path, monkeypatch, capsys):
     report = write_report(tmp_path / "gate.json", decision="retry_allowed_by_provider_health")
     monkeypatch.setenv("HERMES_CRON_HEALTH_GATE_REPORT", str(report))
     monkeypatch.setenv("HERMES_CRON_HEALTH_SKIP_LEDGER", str(tmp_path / "skips.jsonl"))
+    monkeypatch.setenv("HERMES_CRON_WRAPPER_RECEIPT_LEDGER", str(tmp_path / "receipts.jsonl"))
     monkeypatch.setattr(mod, "run_original", lambda: {"status": "original_called"})
     assert mod.main() == 0
     payload = json.loads(capsys.readouterr().out)

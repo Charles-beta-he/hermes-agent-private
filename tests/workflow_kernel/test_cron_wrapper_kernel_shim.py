@@ -52,3 +52,21 @@ def test_every4h_base_args_when_no_degraded_provider():
     assert args == cw.EVERY4H_BASE_ARGS
     assert meta["selected_models"] == []
     assert meta["kernel_shim"] is True
+
+
+def test_wrapper_run_receipt_records_kernel_gate_metadata(tmp_path, monkeypatch):
+    ledger = tmp_path / "receipts.jsonl"
+    monkeypatch.setenv("HERMES_CRON_WRAPPER_RECEIPT_LEDGER", str(ledger))
+    receipt = cw.record_wrapper_run_receipt(
+        job_id=cw.EVERY4H_JOB_ID,
+        job_name=cw.EVERY4H_JOB_NAME,
+        payload={"status": "ok", "ok": True, "returncode": 0, "summary": {"status": "pass"}},
+        gate_decision={"decision": "retry_allowed_by_provider_health", "gate_report": "/tmp/gate.json", "gate_report_id": "gate1"},
+        runtime_mode="provider_exclusion_or_original_run",
+    )
+    assert receipt["kernel_shim"] is True
+    assert receipt["gate_report_id"] == "gate1"
+    assert receipt["payload_status"] == "ok"
+    assert receipt["cron_state_mutated"] is False
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert rows[0]["runtime_mode"] == "provider_exclusion_or_original_run"

@@ -61,6 +61,7 @@ def test_main_plan_only_does_not_call_original(tmp_path, monkeypatch, capsys):
     report = write_report(tmp_path / "gate.json")
     monkeypatch.setenv("HERMES_CRON_HEALTH_GATE_REPORT", str(report))
     monkeypatch.setenv("HERMES_MULTI_MODEL_SMOKE_EVERY4H_PLAN_ONLY", "1")
+    monkeypatch.setenv("HERMES_CRON_WRAPPER_RECEIPT_LEDGER", str(tmp_path / "receipts.jsonl"))
     def boom(_args):
         raise AssertionError("original smoke should not run in plan-only mode")
     monkeypatch.setattr(mod, "run_original", boom)
@@ -77,6 +78,7 @@ def test_main_passes_exclusion_args_to_original(tmp_path, monkeypatch, capsys):
     mod = load()
     report = write_report(tmp_path / "gate.json")
     monkeypatch.setenv("HERMES_CRON_HEALTH_GATE_REPORT", str(report))
+    monkeypatch.setenv("HERMES_CRON_WRAPPER_RECEIPT_LEDGER", str(tmp_path / "receipts.jsonl"))
     captured = {}
     def fake_run(args):
         captured["args"] = args
