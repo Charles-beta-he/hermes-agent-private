@@ -41,7 +41,10 @@ Scope:
 - private install channel scripts;
 - private README / install docs;
 - tests for private channel behavior;
-- safe templates and governance docs.
+- safe templates and governance docs;
+- sanitized experience-pack templates under `templates/private-experience/` that
+  reproduce capability shape without copying local memory, credentials, project
+  profiles, logs, or runtime databases.
 
 Install role:
 
@@ -49,6 +52,10 @@ Install role:
   private Hermes build.
 - Users clone `private/main`, run `scripts/install-private.sh`, then update with
   `hermes update`.
+- The private installer also copies the sanitized experience pack to
+  `$HERMES_HOME/templates/private-experience/` by default. This gives other
+  users the same setup checklist, persona/config/project-profile shapes, and
+  cron examples without transferring Charles' private state.
 
 Do not store here:
 

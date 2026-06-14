@@ -1,0 +1,33 @@
+{
+  "name": "example-project",
+  "description": "Non-secret project profile template. Copy to $HERMES_HOME/project-profiles/<project>.json and fill manually.",
+  "repos": [
+    {
+      "role": "frontend",
+      "path": "/absolute/path/to/repo",
+      "default_branch_role": "integration",
+      "protected_branches": ["main", "release"]
+    }
+  ],
+  "environments": {
+    "local": {
+      "app_url": "http://localhost:3000",
+      "api_url": "http://localhost:8000"
+    },
+    "staging": {
+      "app_url": "https://staging.example.invalid"
+    }
+  },
+  "verification": {
+    "required_before_claiming_done": [
+      "git diff scoped to intended files",
+      "relevant tests/build pass",
+      "runtime or UI readback when user-visible"
+    ]
+  },
+  "red_lines": [
+    "do not commit secrets",
+    "do not push without explicit permission",
+    "do not change production database schema without migration and approval"
+  ]
+}

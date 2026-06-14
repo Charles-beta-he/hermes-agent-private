@@ -19,6 +19,7 @@ PRIVATE_BRANCH="${HERMES_PRIVATE_BRANCH:-private/main}"
 PRIVATE_CHANNEL="${HERMES_PRIVATE_CHANNEL:-charles-private}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 SKIP_SETUP=false
+INSTALL_EXPERIENCE_PACK=true
 DRY_RUN=false
 YES=false
 
@@ -27,7 +28,7 @@ usage() {
 Charles private Hermes installer finalizer
 
 Usage:
-  scripts/install-private.sh [--skip-setup] [--dry-run] [--yes]
+  scripts/install-private.sh [--skip-setup] [--skip-experience-pack] [--dry-run] [--yes]
 
 Environment overrides:
   HERMES_HOME                 Data directory (default: ~/.hermes)
@@ -37,14 +38,15 @@ Environment overrides:
   HERMES_OFFICIAL_UPSTREAM    Official upstream URL
 
 This script must be run inside the authorized private repository checkout.
-It configures origin/upstream, stamps install metadata, then delegates to
-./setup-hermes.sh unless --skip-setup is passed.
+It configures origin/upstream, stamps install metadata, installs the sanitized
+experience templates, then delegates to ./setup-hermes.sh unless --skip-setup is passed.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-setup) SKIP_SETUP=true; shift ;;
+    --skip-experience-pack) INSTALL_EXPERIENCE_PACK=false; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     --yes|-y) YES=true; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -161,6 +163,38 @@ path.write_text(json.dumps({
 PY
   printf 'git\n' > "$HERMES_HOME/.install_method"
 fi
+
+install_experience_pack() {
+  local src="$repo_root/templates/private-experience"
+  local dst="$HERMES_HOME/templates/private-experience"
+  if [[ "$INSTALL_EXPERIENCE_PACK" != true ]]; then
+    warn "Skipped sanitized experience templates (--skip-experience-pack)."
+    return 0
+  fi
+  if [[ ! -d "$src" ]]; then
+    warn "Sanitized experience templates not found at $src"
+    return 0
+  fi
+  info "Installing sanitized experience templates"
+  if [[ "$DRY_RUN" == true ]]; then
+    echo "DRY-RUN: mkdir -p $dst"
+    echo "DRY-RUN: copy missing files from $src to $dst"
+  else
+    mkdir -p "$dst"
+    (cd "$src" && find . -type d -print) | while IFS= read -r dir; do
+      mkdir -p "$dst/$dir"
+    done
+    (cd "$src" && find . -type f -print) | while IFS= read -r file; do
+      if [[ -e "$dst/$file" ]]; then
+        continue
+      fi
+      cp "$src/$file" "$dst/$file"
+    done
+  fi
+  success "Sanitized experience templates available at $dst"
+}
+
+install_experience_pack
 
 if [[ "$SKIP_SETUP" == true ]]; then
   warn "Skipped ./setup-hermes.sh (--skip-setup)."

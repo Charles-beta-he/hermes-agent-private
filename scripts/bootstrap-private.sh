@@ -15,6 +15,7 @@ PRIVATE_BRANCH="${HERMES_PRIVATE_BRANCH:-private/main}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 INSTALL_DIR="${HERMES_INSTALL_DIR:-$HERMES_HOME/hermes-agent}"
 SKIP_SETUP=false
+INSTALL_EXPERIENCE_PACK=true
 DRY_RUN=false
 YES=false
 PREFER_SSH=false
@@ -33,12 +34,14 @@ Recommended user flow:
          | bash
 
 Usage:
-  bootstrap-private.sh [--yes] [--dry-run] [--skip-setup] [--dir PATH] [--ssh]
+  bootstrap-private.sh [--yes] [--dry-run] [--skip-setup] [--skip-experience-pack] [--dir PATH] [--ssh]
 
 Options:
   --yes          Non-interactive where safe; backup official checkout if found.
   --dry-run      Print actions without cloning/updating/running setup.
   --skip-setup   Clone/stamp channel metadata but skip ./setup-hermes.sh.
+  --skip-experience-pack
+                  Do not copy sanitized capability templates into HERMES_HOME.
   --dir PATH     Install checkout directory (default: ~/.hermes/hermes-agent).
   --ssh          Prefer SSH clone even when gh HTTPS credentials are available.
 
@@ -51,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --yes|-y) YES=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     --skip-setup) SKIP_SETUP=true; shift ;;
+    --skip-experience-pack) INSTALL_EXPERIENCE_PACK=false; shift ;;
     --ssh) PREFER_SSH=true; shift ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -192,6 +196,9 @@ finalize_install() {
   local args=("$INSTALL_DIR/scripts/install-private.sh" --yes)
   if [[ "$SKIP_SETUP" == true ]]; then
     args+=(--skip-setup)
+  fi
+  if [[ "$INSTALL_EXPERIENCE_PACK" != true ]]; then
+    args+=(--skip-experience-pack)
   fi
   if [[ "$DRY_RUN" == true ]]; then
     args+=(--dry-run)

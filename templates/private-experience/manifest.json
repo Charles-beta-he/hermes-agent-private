@@ -1,0 +1,53 @@
+{
+  "name": "charles-private-hermes-sanitized-experience-pack",
+  "version": 1,
+  "policy": "templates_only_no_secrets_no_memory_no_runtime_state",
+  "source_model": {
+    "copied": [
+      "safe templates",
+      "capability-shape documentation",
+      "post-install checklist",
+      "example config structures with placeholders"
+    ],
+    "not_copied": [
+      "live config.yaml or .env",
+      "auth tokens and OAuth sessions",
+      "memory/user profile/session databases",
+      "project-profiles with real client/project facts",
+      "logs/checkpoints/runtime state/task evidence",
+      "local brain vault or private notes"
+    ]
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "purpose": "operator guide for the sanitized experience pack",
+      "installed_to": "$HERMES_HOME/templates/private-experience/README.md"
+    },
+    {
+      "path": "config.example.yaml",
+      "purpose": "non-secret feature-shape config template",
+      "installed_to": "$HERMES_HOME/templates/private-experience/config.example.yaml"
+    },
+    {
+      "path": "hermes-agent-persona.example.md",
+      "purpose": "persona style template with no personal memory",
+      "installed_to": "$HERMES_HOME/templates/private-experience/hermes-agent-persona.example.md"
+    },
+    {
+      "path": "project-profile.example.json",
+      "purpose": "project-profile schema example without project facts",
+      "installed_to": "$HERMES_HOME/templates/private-experience/project-profile.example.json"
+    },
+    {
+      "path": "cron.examples.md",
+      "purpose": "scheduled-job examples that require explicit user targets",
+      "installed_to": "$HERMES_HOME/templates/private-experience/cron.examples.md"
+    },
+    {
+      "path": "post-install-checklist.md",
+      "purpose": "manual checklist to reach Charles-like capability coverage",
+      "installed_to": "$HERMES_HOME/templates/private-experience/post-install-checklist.md"
+    }
+  ]
+}

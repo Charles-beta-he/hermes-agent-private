@@ -1,0 +1,46 @@
+# Sanitized Hermes config template.
+# Copy selected sections into ~/.hermes/config.yaml after running `hermes setup`.
+# Do not paste secrets into this template file if you plan to commit or share it.
+
+# Provider routing shape. Replace placeholders through `hermes setup` or your own secret manager.
+model:
+  provider: openrouter
+  model: openai/gpt-5.5
+
+fallback_providers:
+  - provider: anthropic
+    model: claude-sonnet-4
+  - provider: google-gemini-cli
+    model: gemini-3.1-pro-preview
+
+# Operator safety posture: fail closed by default.
+safety:
+  external_side_effects_default: fail_closed
+  require_exact_target_for_delivery: true
+  require_payload_digest_for_external_writes: true
+  require_rollback_plan_for_apply: true
+
+# Toolset defaults: enable local productivity without opening external side effects.
+tools:
+  browser: true
+  computer_use: true
+  file: true
+  terminal: true
+  web: true
+  cronjob: true
+
+# Dashboard / Control Tower.
+dashboard:
+  host: 127.0.0.1
+  port: 9119
+  open_browser: false
+
+# Gateway platforms are examples only. Fill tokens via setup/env, not here.
+gateway:
+  enabled: false
+  platforms: {}
+
+# Cron examples should be created with `hermes cron` after exact delivery target is known.
+cron:
+  default_delivery: origin
+  require_explicit_target_for_external_messages: true

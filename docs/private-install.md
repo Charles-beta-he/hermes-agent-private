@@ -45,10 +45,53 @@ The finalizer script:
 - sets `upstream` to `NousResearch/hermes-agent` for fetch-only maintenance use;
 - stamps `$HERMES_HOME/install.json` with channel metadata;
 - stamps `$HERMES_HOME/.install_method` as `git`;
+- copies sanitized experience templates into `$HERMES_HOME/templates/private-experience`
+  unless `--skip-experience-pack` is passed;
 - delegates dependency/setup work to `./setup-hermes.sh` unless `--skip-setup` is passed.
 
 The stamped metadata makes plain `hermes update` follow `origin/private/main`
 instead of falling back to the public `main` branch.
+
+## Sanitized experience pack
+
+The private installer now includes a safe onboarding scaffold at:
+
+```text
+templates/private-experience/
+```
+
+It is copied to:
+
+```text
+$HERMES_HOME/templates/private-experience/
+```
+
+The goal is to reproduce the capability shape of Charles' machine without
+copying Charles' private memory or runtime state. The pack contains:
+
+- `config.example.yaml` — non-secret provider/tool/dashboard/safety shape;
+- `hermes-agent-persona.example.md` — communication and operating-style template;
+- `project-profile.example.json` — project-profile schema example with placeholder URLs;
+- `cron.examples.md` — scheduled-job examples that start with local/origin delivery;
+- `post-install-checklist.md` — capability-verification checklist;
+- `manifest.json` — machine-readable list of copied and explicitly not-copied items.
+
+The pack intentionally does **not** include:
+
+- live `config.yaml` or `.env`;
+- API keys, OAuth sessions, platform tokens, or browser credentials;
+- personal memory, user profile, sessions, or `state.db`;
+- real project profiles, client facts, local-brain vaults, notes, or task evidence;
+- logs, checkpoints, runtime DBs, or cron/gateway state.
+
+Run this repository check before releasing changes to the pack:
+
+```bash
+./venv/bin/python scripts/private_experience_selfcheck.py --write-manifest --json
+```
+
+Use `--skip-experience-pack` when a user wants only the private code channel and
+no templates copied into their Hermes home.
 
 ## User data boundary
 
