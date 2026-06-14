@@ -291,6 +291,8 @@
     const publicationArchive = kernel.publication_governance_archive || {};
     const publicationArchiveRetention = kernel.publication_archive_retention_watch || {};
     const publicationExportReview = kernel.publication_export_review_packet || {};
+    const exportReviewRetention = kernel.publication_export_review_retention_watch || {};
+    const finalBoundaryPacket = kernel.publication_apply_final_boundary_packet || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -328,6 +330,8 @@
         <span>Publication archive: <strong>${escapeHtml(publicationArchive.status || 'not_ready')}</strong></span>
         <span>Publication archive retention: <strong>${escapeHtml(publicationArchiveRetention.status || 'not_ready')}</strong></span>
         <span>Publication export review: <strong>${escapeHtml(publicationExportReview.status || 'not_ready')}</strong></span>
+        <span>Export review retention: <strong>${escapeHtml(exportReviewRetention.status || 'not_ready')}</strong></span>
+        <span>Final boundary packet: <strong>${escapeHtml(finalBoundaryPacket.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -362,6 +366,8 @@
           <tr><th>Publication governance archive</th><td>${escapeHtml(publicationArchive.status || '—')} items=<code>${escapeHtml(String(publicationArchive.item_count ?? '—'))}</code> read_only=<strong>${publicationArchive.read_only ? 'true' : 'false'}</strong> apply=<strong>${publicationArchive.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication archive retention</th><td>${escapeHtml(publicationArchiveRetention.status || '—')} drift=<code>${escapeHtml(String((publicationArchiveRetention.drift || []).length))}</code> read_only=<strong>${publicationArchiveRetention.read_only ? 'true' : 'false'}</strong> apply=<strong>${publicationArchiveRetention.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication export review packet</th><td>${escapeHtml(publicationExportReview.status || '—')} default=<code>${escapeHtml(publicationExportReview.recommended_default || '—')}</code> selected=<code>${escapeHtml(publicationExportReview.selected_option || '—')}</code> apply=<strong>${publicationExportReview.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication export review retention</th><td>${escapeHtml(exportReviewRetention.status || '—')} drift=<code>${escapeHtml(String((exportReviewRetention.drift || []).length))}</code> packet_only=<strong>${exportReviewRetention.packet_only ? 'true' : 'false'}</strong> apply=<strong>${exportReviewRetention.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication apply final boundary</th><td>${escapeHtml(finalBoundaryPacket.status || '—')} default=<code>${escapeHtml(finalBoundaryPacket.recommended_default || '—')}</code> selected=<code>${escapeHtml(finalBoundaryPacket.selected_option || '—')}</code> apply=<strong>${finalBoundaryPacket.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

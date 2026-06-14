@@ -1,0 +1,32 @@
+{
+  "properties": {
+    "operator_reason": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "option": {
+      "enum": [
+        "A_STOP_AT_PRIVATE_REVIEW",
+        "B_PREPARE_EXACT_TARGET_APPLY_DESIGN",
+        "C_REQUEST_HUMAN_EXACT_TARGET_FOR_APPLY"
+      ]
+    },
+    "payload_digest": {
+      "type": "string"
+    },
+    "rollback_plan": {
+      "type": "string"
+    },
+    "target_adapter": {
+      "type": "string"
+    },
+    "target_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "option",
+    "operator_reason"
+  ],
+  "type": "object"
+}

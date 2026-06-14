@@ -1,0 +1,41 @@
+{
+  "checks": {
+    "archive_retention_clear": true,
+    "review_no_export_apply": true,
+    "review_no_publication_apply": true,
+    "review_packet_only": true,
+    "review_packet_ready": true
+  },
+  "created_at": "2026-06-14T16:27:16Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "drift": [],
+  "export_apply_enabled": false,
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "input_refs": [
+    {
+      "name": "phase82_review_packet",
+      "path": "docs/private/workflow-kernel-publication-export-review-packet/workflow_kernel_publication_export_review_packet_20260613_phase82.json",
+      "sha256": "5887a9687146caaa32e2dff70918d42a963c7575f2bfd8a5c7564122acc2d2da",
+      "status": "PUBLICATION_EXPORT_REVIEW_PACKET_READY"
+    },
+    {
+      "name": "phase81_archive_retention",
+      "path": "docs/private/workflow-kernel-publication-archive-retention-watch/workflow_kernel_publication_archive_retention_watch_20260613_phase81.json",
+      "sha256": "8545ccec98b8576ce918b6419a666e4734d082af25eda1efa4d4a2e4a3b7735b",
+      "status": "PUBLICATION_ARCHIVE_RETENTION_WATCH_CLEAR"
+    }
+  ],
+  "message_sent": false,
+  "next_boundary": "Phase84 may compile final boundary packet only",
+  "packet_only": true,
+  "phase": 83,
+  "publication_apply_enabled": false,
+  "read_only": true,
+  "retention_digest": "a95e75852ea94cb76afe3759f1fcd0a6dcac1c5111977454069e74b3c86cd825",
+  "retention_policy": "export_review_packet_retained_packet_only_no_apply",
+  "schema": "workflow_kernel_publication_export_review_retention_watch_v1",
+  "status": "PUBLICATION_EXPORT_REVIEW_RETENTION_WATCH_CLEAR",
+  "unattended_dispatch_enabled": false
+}
