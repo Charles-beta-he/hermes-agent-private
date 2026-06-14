@@ -6130,6 +6130,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase52_path = root / "docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.json"
     policy_path = root / "docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json"
     phase55_path = root / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+    phase57_path = root / "docs/private/workflow-kernel-dry-run-cron-rollout/workflow_kernel_dry_run_cron_rollout_20260613_phase57.json"
+    phase58_path = root / "docs/private/workflow-kernel-guarded-send-runner-activation/workflow_kernel_guarded_send_runner_activation_20260613_phase58.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6150,6 +6152,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         control_tower_projection = json.loads(phase52_path.read_text())
         policy = json.loads(policy_path.read_text()) if policy_path.exists() else None
         dry_run_scheduler = json.loads(phase55_path.read_text()) if phase55_path.exists() else None
+        dry_run_cron_rollout = json.loads(phase57_path.read_text()) if phase57_path.exists() else None
+        guarded_send_activation = json.loads(phase58_path.read_text()) if phase58_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6198,10 +6202,26 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "receipt_ledger": (dry_run_scheduler or {}).get("receipt_ledger"),
         },
         "policy_editor": policy_editor,
+        "dry_run_cron_rollout": {
+            "status": (dry_run_cron_rollout or {}).get("status", "not_applied"),
+            "job_id": (dry_run_cron_rollout or {}).get("job_id"),
+            "script": (dry_run_cron_rollout or {}).get("script"),
+            "schedule_display": (dry_run_cron_rollout or {}).get("schedule_display"),
+            "rollback_command": (dry_run_cron_rollout or {}).get("rollback_command"),
+            "would_send": (dry_run_cron_rollout or {}).get("would_send"),
+            "cron_state_mutated": (dry_run_cron_rollout or {}).get("cron_state_mutated"),
+        },
+        "guarded_send_runner_activation": {
+            "status": (guarded_send_activation or {}).get("status", "not_ready"),
+            "contract_digest": (guarded_send_activation or {}).get("contract_digest"),
+            "manual_send_runner_is_active_now": ((guarded_send_activation or {}).get("authority_assessment") or {}).get("manual_send_runner_is_active_now"),
+            "external_side_effects_executed": ((guarded_send_activation or {}).get("execution_boundary") or {}).get("external_side_effects_executed"),
+            "next_boundary": ((guarded_send_activation or {}).get("execution_boundary") or {}).get("next_boundary"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "Phase56 Control Tower policy editor / approval UI" if policy_editor.get("pending_decisions") else "post-Phase56 larger automation authority boundary",
+        "next_boundary": (((guarded_send_activation or {}).get("execution_boundary") or {}).get("next_boundary") or "Phase59 guarded manual-send runner implementation"),
     }
 
 

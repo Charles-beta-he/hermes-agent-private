@@ -62,12 +62,14 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 53, "name": "Durable Control Tower Runtime/API Integration", "layer": "live control tower snapshot", "status": "live_snapshot_integration_ready", "depends_on": [52], "authority": "read-only dashboard plugin/API integration", "gate": "operator projection only; no lifecycle mutation", "next_unlocked": [54]},
     {"phase": 54, "name": "Unattended Dispatch Policy Gate", "layer": "dispatch policy", "status": "policy_gate_ready_disabled", "depends_on": [50, 53], "authority": "policy compiler only", "gate": "unattended_dispatch_enabled=false; dry-run preview only", "next_unlocked": [55, 56]},
     {"phase": 55, "name": "Unattended Dry-run Scheduler", "layer": "dry-run scheduler", "status": "dry_run_scheduler_ready", "depends_on": [54], "authority": "dry-run receipt only", "gate": "no cron mutation; no external send", "next_unlocked": [56]},
-    {"phase": 56, "name": "Control Tower Policy Editor / Approval UI", "layer": "policy editor", "status": "approval_ui_ready", "depends_on": [55], "authority": "approval ledger only", "gate": "no policy activation; no unattended send", "next_unlocked": [57, 58]},
+    {"phase": 56, "name": "Control Tower Policy Editor / Approval UI", "layer": "policy editor", "status": "approval_ui_ready", "depends_on": [55], "authority": "approval ledger only", "gate": "no policy activation; no unattended send", "next_unlocked": [57]},
+    {"phase": 57, "name": "Dry-run Cron Rollout", "layer": "scheduler rollout", "status": "dry_run_cron_rollout_applied", "depends_on": [56], "authority": "single no-agent local cron job", "gate": "no external send; rollback backup required", "next_unlocked": [58]},
+    {"phase": 58, "name": "Guarded Send Runner Activation Packet", "layer": "send runner activation boundary", "status": "activation_packet_ready", "depends_on": [57], "authority": "activation packet only", "gate": "manual runner not active; no send executed", "next_unlocked": [59, 60]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 57, "name": "Dry-run Cron Rollout", "track": "DRY_RUN_CRON_ROLLOUT", "authority_needed": "choose real cron cadence and rollback backup scope", "why_next": "turn the dry-run runner into a scheduled no-send proof loop"},
-    {"phase": 58, "name": "Guarded Send Runner Activation Packet", "track": "GUARDED_SEND_RUNNER_ACTIVATION", "authority_needed": "decide whether approved policy can activate a guarded manual-send runner", "why_next": "cross from approvals into controlled send execution authority"},
+    {"phase": 59, "name": "Guarded Manual-send Runner Implementation", "track": "GUARDED_MANUAL_SEND_RUNNER", "authority_needed": "implement runner but keep execution behind exact manual gate", "why_next": "turn the activation packet into a non-auto runner that can preview and wait for explicit send approval"},
+    {"phase": 60, "name": "One-shot Guarded Send Activation", "track": "ONE_SHOT_GUARDED_SEND_ACTIVATION", "authority_needed": "execute exactly one packet-approved manual send with target/payload/idempotency", "why_next": "cross from runner contract into a single external side effect with receipt"},
 ]
 
 
@@ -109,15 +111,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-56 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase50 单次 Telegram guarded send 已验证，Phase55 dry-run scheduler 已记录 no-send receipt，Phase56 Control Tower policy editor/approval UI 已接入且仅写 approval ledger。",
+        "objective": "梳理 Phase17-58 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase57 已安装 no-agent/local dry-run cron job，Phase58 已生成 guarded send runner activation packet 但 runner 未激活、未外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase56 has added an approval-ledger-only Control Tower policy editor and Phase55 has proven scheduled-runner dry-run receipts without sending. The next larger divergence is real cron rollout for dry-run scheduling versus guarded send runner activation authority.",
+        "current_boundary": "Phase58 has produced an activation packet/contract while keeping the guarded send runner inactive. The next larger boundary is implementing the manual-send runner versus executing one packet-approved external send.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Human choice required: Phase57 dry-run cron rollout vs Phase58 guarded send runner activation packet",
+        "recommended_next": "Human choice required: Phase59 guarded manual-send runner implementation vs Phase60 one-shot guarded send activation",
     }
 
 

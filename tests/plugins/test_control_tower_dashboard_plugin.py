@@ -123,6 +123,10 @@ def test_control_tower_dashboard_renders_workflow_kernel_projection_panel():
     assert "data-workflow-kernel-decision" in script
     assert "Approve dry-run only" in script
     assert "workflow-kernel/policy-editor/decision" in script
+    assert "dry_run_cron_rollout" in script
+    assert "guarded_send_runner_activation" in script
+    assert "Dry-run cron rollout" in script
+    assert "Guarded send activation" in script
     assert "Pack, guarded send, and dispatch policy" in script
     assert "Latest guarded send" not in script  # keep wording in static Phase52 page only
     assert "control-tower-workflow-kernel-card" in style

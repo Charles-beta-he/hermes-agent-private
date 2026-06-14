@@ -153,6 +153,8 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["unattended_dispatch_policy"]["unattended_dispatch_enabled"] is False
     assert kernel["unattended_dry_run_scheduler"]["status"] in {"UNATTENDED_DRY_RUN_SCHEDULER_READY", "not_compiled"}
     assert kernel["policy_editor"]["status"] == "POLICY_EDITOR_APPROVAL_UI_READY"
+    assert kernel["dry_run_cron_rollout"]["status"] in {"DRY_RUN_CRON_ROLLOUT_APPLIED", "not_applied"}
+    assert kernel["guarded_send_runner_activation"]["status"] in {"GUARDED_SEND_RUNNER_ACTIVATION_PACKET_READY", "not_ready"}
     assert kernel["external_side_effects_enabled"] is False
 
 

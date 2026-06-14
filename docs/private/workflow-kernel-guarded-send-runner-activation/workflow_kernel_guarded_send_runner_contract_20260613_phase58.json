@@ -1,0 +1,42 @@
+{
+  "activation_status": "packet_ready_not_activated",
+  "allowed_adapter": "telegram_home",
+  "correction_path": "send compensating correction message only after explicit operator approval",
+  "idempotency_fields": [
+    "adapter",
+    "target",
+    "payload_sha256",
+    "policy_digest",
+    "operator_reason"
+  ],
+  "phase": 58,
+  "rate_limit": {
+    "telegram_home": "manual only"
+  },
+  "receipt_required_fields": [
+    "platform",
+    "target",
+    "message_id",
+    "payload_sha256",
+    "sent_at",
+    "operator_reason",
+    "policy_digest"
+  ],
+  "required_manual_gate": {
+    "requires_exact_payload": true,
+    "requires_exact_target": true,
+    "requires_idempotency_key": true,
+    "requires_operator_reason": true,
+    "requires_policy_digest_match": true,
+    "requires_pre_send_preview": true
+  },
+  "rollback_path": "no automatic rollback for external messages; record correction/compensation receipt",
+  "runner_mode": "manual_guarded_send_only",
+  "safe_defaults": {
+    "automatic_send_allowed": false,
+    "external_side_effects_executed": false,
+    "send_runner_activated": false,
+    "unattended_dispatch_enabled": false
+  },
+  "schema": "workflow_kernel_guarded_send_runner_contract_v1"
+}

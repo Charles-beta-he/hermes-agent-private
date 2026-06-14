@@ -44,10 +44,12 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 54: Unattended Dispatch Policy Gate — layer=`dispatch policy`, gate=`unattended_dispatch_enabled=false; dry-run preview only`
 - Phase 55: Unattended Dry-run Scheduler — layer=`dry-run scheduler`, gate=`no cron mutation; no external send`
 - Phase 56: Control Tower Policy Editor / Approval UI — layer=`policy editor`, gate=`no policy activation; no unattended send`
+- Phase 57: Dry-run Cron Rollout — layer=`scheduler rollout`, gate=`no external send; rollback backup required`
+- Phase 58: Guarded Send Runner Activation Packet — layer=`send runner activation boundary`, gate=`manual runner not active; no send executed`
 
 ## Next ladder
-- Phase 57: Dry-run Cron Rollout — track=`DRY_RUN_CRON_ROLLOUT`, authority=`choose real cron cadence and rollback backup scope`
-- Phase 58: Guarded Send Runner Activation Packet — track=`GUARDED_SEND_RUNNER_ACTIVATION`, authority=`decide whether approved policy can activate a guarded manual-send runner`
+- Phase 59: Guarded Manual-send Runner Implementation — track=`GUARDED_MANUAL_SEND_RUNNER`, authority=`implement runner but keep execution behind exact manual gate`
+- Phase 60: One-shot Guarded Send Activation — track=`ONE_SHOT_GUARDED_SEND_ACTIVATION`, authority=`execute exactly one packet-approved manual send with target/payload/idempotency`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence

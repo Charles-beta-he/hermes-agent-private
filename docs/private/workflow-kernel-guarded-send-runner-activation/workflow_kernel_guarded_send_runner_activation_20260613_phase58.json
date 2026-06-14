@@ -1,0 +1,69 @@
+{
+  "authority_assessment": {
+    "dry_run_policy_approved": true,
+    "manual_send_runner_can_be_implemented_next": true,
+    "manual_send_runner_is_active_now": false,
+    "unattended_dispatch_enabled": false
+  },
+  "contract": {
+    "activation_status": "packet_ready_not_activated",
+    "allowed_adapter": "telegram_home",
+    "correction_path": "send compensating correction message only after explicit operator approval",
+    "idempotency_fields": [
+      "adapter",
+      "target",
+      "payload_sha256",
+      "policy_digest",
+      "operator_reason"
+    ],
+    "phase": 58,
+    "rate_limit": {
+      "telegram_home": "manual only"
+    },
+    "receipt_required_fields": [
+      "platform",
+      "target",
+      "message_id",
+      "payload_sha256",
+      "sent_at",
+      "operator_reason",
+      "policy_digest"
+    ],
+    "required_manual_gate": {
+      "requires_exact_payload": true,
+      "requires_exact_target": true,
+      "requires_idempotency_key": true,
+      "requires_operator_reason": true,
+      "requires_policy_digest_match": true,
+      "requires_pre_send_preview": true
+    },
+    "rollback_path": "no automatic rollback for external messages; record correction/compensation receipt",
+    "runner_mode": "manual_guarded_send_only",
+    "safe_defaults": {
+      "automatic_send_allowed": false,
+      "external_side_effects_executed": false,
+      "send_runner_activated": false,
+      "unattended_dispatch_enabled": false
+    },
+    "schema": "workflow_kernel_guarded_send_runner_contract_v1"
+  },
+  "contract_digest": "900189e72a8de75b68c0b5f1dcf25f9f8d079e70330aaa5d5ec38e024a5a6e99",
+  "created_at": "2026-06-14T04:35:46Z",
+  "execution_boundary": {
+    "cron_state_mutated": false,
+    "external_side_effects_executed": false,
+    "hermes_send_called": false,
+    "next_boundary": "Phase59 implement guarded manual-send runner vs Phase60 activate one manual guarded send from packet",
+    "send_message_called": false
+  },
+  "inputs": {
+    "phase54_status": "UNATTENDED_DISPATCH_POLICY_GATE_READY",
+    "phase56_latest_decision": "draft",
+    "phase56_status": "POLICY_EDITOR_APPROVAL_UI_READY",
+    "phase57_job_id": "wk57dryrun01",
+    "phase57_status": "DRY_RUN_CRON_ROLLOUT_APPLIED"
+  },
+  "phase": 58,
+  "schema": "workflow_kernel_guarded_send_runner_activation_packet_v1",
+  "status": "GUARDED_SEND_RUNNER_ACTIVATION_PACKET_READY"
+}

@@ -265,6 +265,8 @@
     const policy = kernel.unattended_dispatch_policy || {};
     const dryRun = kernel.unattended_dry_run_scheduler || {};
     const editor = kernel.policy_editor || {};
+    const cronRollout = kernel.dry_run_cron_rollout || {};
+    const activation = kernel.guarded_send_runner_activation || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -276,6 +278,8 @@
         <span>Policy: <strong>${escapeHtml(policy.status || 'not_compiled')}</strong></span>
         <span>Dry-run: <strong>${escapeHtml(dryRun.status || 'not_compiled')}</strong></span>
         <span>Editor: <strong>${escapeHtml(editor.status || 'not_ready')}</strong></span>
+        <span>Cron: <strong>${escapeHtml(cronRollout.status || 'not_applied')}</strong></span>
+        <span>Activation: <strong>${escapeHtml(activation.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -284,6 +288,8 @@
           <tr><th>Unattended dispatch</th><td>enabled=<strong>${policy.unattended_dispatch_enabled ? 'true' : 'false'}</strong>, mode=<code>${escapeHtml(policy.default_mode || 'dry_run_preview')}</code></td></tr>
           <tr><th>Dry-run scheduler</th><td>${escapeHtml(dryRun.status || '—')} cadence=<code>${escapeHtml(dryRun.cadence || '—')}</code> would_send=<strong>${dryRun.would_send === false ? 'false' : escapeHtml(dryRun.would_send || '—')}</strong></td></tr>
           <tr><th>Policy editor</th><td>${escapeHtml(editor.editor_mode || '—')} pending=${escapeHtml(String(editor.pending_decisions ?? '—'))} latest=${escapeHtml(editor.latest_decision?.decision || '—')}</td></tr>
+          <tr><th>Dry-run cron rollout</th><td>${escapeHtml(cronRollout.status || '—')} job=<code>${escapeHtml(cronRollout.job_id || '—')}</code> script=<code>${escapeHtml(cronRollout.script || '—')}</code> would_send=<strong>${cronRollout.would_send === false ? 'false' : escapeHtml(cronRollout.would_send || '—')}</strong></td></tr>
+          <tr><th>Guarded send activation</th><td>${escapeHtml(activation.status || '—')} active=<strong>${activation.manual_send_runner_is_active_now ? 'true' : 'false'}</strong> external=<strong>${activation.external_side_effects_executed ? 'true' : 'false'}</strong> digest=<code>${escapeHtml(activation.contract_digest || '—')}</code></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>
