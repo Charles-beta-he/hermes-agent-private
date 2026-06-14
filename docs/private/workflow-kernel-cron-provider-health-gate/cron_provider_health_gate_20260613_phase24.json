@@ -1,41 +1,9 @@
 {
-  "created_at": "2026-06-13T14:26:33Z",
-  "decision_counts": {
-    "retry_allowed_by_provider_health": 1,
-    "retry_allowed_by_provider_health_manual_only": 1
-  },
-  "decisions": [
-    {
-      "decision": "retry_allowed_by_provider_health",
-      "deliver": "local",
-      "endpoint_classification": "reachable",
-      "job_id": "42baeebb646c",
-      "last_status": "error",
-      "model": "mimo-v2.5-pro",
-      "name": "multi-model-smoke-daily-full",
-      "provider": "xiaomi",
-      "reason": "target endpoint xiaomi reachable; provider generation failure is not explained by edge reachability alone",
-      "script": "multi-model-smoke-daily-full-wrapper.py",
-      "target_endpoint": "xiaomi",
-      "triage_class": "provider_generation"
-    },
-    {
-      "decision": "retry_allowed_by_provider_health_manual_only",
-      "deliver": "telegram:he cheng (dm)",
-      "endpoint_classification": "reachable",
-      "job_id": "c01e3574e31c",
-      "last_status": "error",
-      "model": "gpt-5.4",
-      "name": "aihot-daily-report",
-      "provider": "openai-codex",
-      "reason": "telegram endpoint reachable; retry must still go through governed notification ledger",
-      "script": null,
-      "target_endpoint": "telegram",
-      "triage_class": "telegram_delivery"
-    }
-  ],
+  "created_at": "2026-06-14T17:37:46Z",
+  "decision_counts": {},
+  "decisions": [],
   "degraded_endpoints": [],
-  "failed_job_count": 2,
+  "failed_job_count": 0,
   "jobs_path": "/Users/charles/.hermes/cron/jobs.json",
   "next_actions": [
     "wire cron wrappers to read this gate before provider generation in a later opt-in phase",
@@ -52,6 +20,6 @@
     "no provider credential check"
   ],
   "scope": "read-only provider health gate decisions for failed cron jobs",
-  "status": "GATE_COMPILED_NO_MUTATION",
+  "status": "PASS",
   "triage_path": "docs/private/workflow-kernel-cron-provider-triage/cron_provider_triage_20260613_phase22.json"
 }

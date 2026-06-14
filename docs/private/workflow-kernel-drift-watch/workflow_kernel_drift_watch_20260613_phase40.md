@@ -6,8 +6,8 @@ Status: **DRIFT_WATCH_CLEAR_READ_ONLY**
 - none
 
 ## Job receipts
-- `42baeebb646c` multi-model-smoke-daily-full: present=`True`, created_at=`2026-06-13T18:03:33Z`
-- `2c14ca2a9bd2` multi-model-smoke-every4h: present=`True`, created_at=`2026-06-13T17:48:26Z`
+- `42baeebb646c` multi-model-smoke-daily-full: present=`True`, created_at=`2026-06-14T17:38:58Z`
+- `2c14ca2a9bd2` multi-model-smoke-every4h: present=`True`, created_at=`2026-06-14T17:38:58Z`
 
 ## Safe boundaries
 - no cron trigger

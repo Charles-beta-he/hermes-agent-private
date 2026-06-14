@@ -1,19 +1,17 @@
 {
   "correlation_counts": {
-    "ONLY_PRE_PROJECTION_RUN_OBSERVED": 2
+    "RECEIPT_AFTER_PROJECTION_CORRELATED": 2
   },
-  "correlation_status": "AWAITING_POST_PROJECTION_SCHEDULED_RUN",
-  "created_at": "2026-06-13T18:38:34Z",
+  "correlation_status": "RECEIPT_CORRELATION_PARTIAL_READY",
+  "created_at": "2026-06-14T17:39:20Z",
   "drift_status": "DRIFT_WATCH_CLEAR_READ_ONLY",
-  "interpretation": "auto-enabled runtime is healthy, but no post-projection natural scheduled run has occurred yet",
+  "interpretation": "auto-enabled runtime observation has current post-projection evidence",
   "kernel_phase": "45",
   "missing_receipt_jobs": [],
   "next_boundary": "wait for natural scheduled run, then refresh projection/correlation/readiness/drift again",
   "projection_status": "SCHEDULER_READBACK_PROJECTION_READY",
-  "readiness_blocking_checks": [
-    "run_correlation_partial_or_better"
-  ],
-  "readiness_status": "RUNTIME_READINESS_SUMMARY_DEGRADED_NOT_BLOCKED",
+  "readiness_blocking_checks": [],
+  "readiness_status": "RUNTIME_READINESS_SUMMARY_AUTO_ENABLED",
   "report_id": "workflow_kernel_post_auto_enable_observation_20260613_phase46",
   "runtime_switch_enabled": true,
   "safe_boundaries": [
@@ -28,19 +26,19 @@
     {
       "job_id": "42baeebb646c",
       "job_name": "multi-model-smoke-daily-full",
-      "last_status": "error",
-      "next_run_at": "2026-06-14T08:35:00+08:00",
-      "projection_status": "KERNEL_SHIM_SCHEDULER_READBACK_READY",
+      "last_status": "ok",
+      "next_run_at": "2026-06-15T08:35:00+08:00",
+      "projection_status": "KERNEL_SHIM_NO_GATE_DECISION_NEEDED",
       "script": "workflow-kernel-multi-model-smoke-daily-full-runner.py"
     },
     {
       "job_id": "2c14ca2a9bd2",
       "job_name": "multi-model-smoke-every-4h",
       "last_status": "ok",
-      "next_run_at": "2026-06-14T06:17:00+08:00",
+      "next_run_at": "2026-06-15T06:17:00+08:00",
       "projection_status": "KERNEL_SHIM_NO_GATE_DECISION_NEEDED",
       "script": "workflow-kernel-multi-model-smoke-every4h-runner.py"
     }
   ],
-  "status": "POST_AUTO_ENABLE_OBSERVATION_PENDING_SCHEDULED_RUN"
+  "status": "POST_AUTO_ENABLE_OBSERVATION_READY"
 }

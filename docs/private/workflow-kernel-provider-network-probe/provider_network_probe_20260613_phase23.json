@@ -2,7 +2,7 @@
   "classification_counts": {
     "reachable": 6
   },
-  "created_at": "2026-06-13T14:26:33Z",
+  "created_at": "2026-06-14T17:37:46Z",
   "next_actions": [
     "if github is unreachable, use upstream ratchet no-fetch fallback",
     "if provider hosts are unreachable, keep provider_generation jobs quarantined until next probe",
@@ -15,7 +15,7 @@
     {
       "classification": "reachable",
       "configured_base_url_host": null,
-      "duration_ms": 1293,
+      "duration_ms": 1401,
       "error": null,
       "final_host": "github.com",
       "id": "github",
@@ -28,7 +28,7 @@
     {
       "classification": "reachable",
       "configured_base_url_host": null,
-      "duration_ms": 1241,
+      "duration_ms": 1494,
       "error": null,
       "final_host": "api.openai.com",
       "id": "openai",
@@ -41,7 +41,7 @@
     {
       "classification": "reachable",
       "configured_base_url_host": null,
-      "duration_ms": 296,
+      "duration_ms": 166,
       "error": null,
       "final_host": "api.deepseek.com",
       "id": "deepseek",
@@ -54,7 +54,7 @@
     {
       "classification": "reachable",
       "configured_base_url_host": "token-plan-cn.xiaomimimo.com",
-      "duration_ms": 147,
+      "duration_ms": 199,
       "error": null,
       "final_host": "token-plan-cn.xiaomimimo.com",
       "id": "xiaomi",
@@ -67,7 +67,7 @@
     {
       "classification": "reachable",
       "configured_base_url_host": null,
-      "duration_ms": 895,
+      "duration_ms": 1019,
       "error": null,
       "final_host": "generativelanguage.googleapis.com",
       "id": "google_gemini",
@@ -80,7 +80,7 @@
     {
       "classification": "reachable",
       "configured_base_url_host": null,
-      "duration_ms": 3155,
+      "duration_ms": 6569,
       "error": null,
       "final_host": "core.telegram.org",
       "id": "telegram",

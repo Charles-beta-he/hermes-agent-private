@@ -6166,6 +6166,11 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase90_path = root / "docs/private/workflow-kernel-publication-governance-final-index/workflow_kernel_publication_governance_final_index_20260613_phase90.json"
     phase91_path = root / "docs/private/workflow-kernel-publication-final-index-retention-watch/workflow_kernel_publication_final_index_retention_watch_20260613_phase91.json"
     phase92_path = root / "docs/private/workflow-kernel-publication-governance-terminal-summary/workflow_kernel_publication_governance_terminal_summary_20260613_phase92.json"
+    runtime_projection_path = root / "docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json"
+    runtime_correlation_path = root / "docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json"
+    runtime_readiness_path = root / "docs/private/workflow-kernel-runtime-readiness-summary/workflow_kernel_runtime_readiness_summary_20260613_phase36.json"
+    runtime_drift_path = root / "docs/private/workflow-kernel-drift-watch/workflow_kernel_drift_watch_20260613_phase40.json"
+    post_auto_enable_path = root / "docs/private/workflow-kernel-post-auto-enable-observation/workflow_kernel_post_auto_enable_observation_20260613_phase46.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6222,6 +6227,11 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         publication_governance_final_index = json.loads(phase90_path.read_text()) if phase90_path.exists() else None
         publication_final_index_retention_watch = json.loads(phase91_path.read_text()) if phase91_path.exists() else None
         publication_governance_terminal_summary = json.loads(phase92_path.read_text()) if phase92_path.exists() else None
+        runtime_projection = json.loads(runtime_projection_path.read_text()) if runtime_projection_path.exists() else None
+        runtime_correlation = json.loads(runtime_correlation_path.read_text()) if runtime_correlation_path.exists() else None
+        runtime_readiness = json.loads(runtime_readiness_path.read_text()) if runtime_readiness_path.exists() else None
+        runtime_drift = json.loads(runtime_drift_path.read_text()) if runtime_drift_path.exists() else None
+        post_auto_enable_observation = json.loads(post_auto_enable_path.read_text()) if post_auto_enable_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6560,6 +6570,20 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "terminal_state": (publication_governance_terminal_summary or {}).get("terminal_state"),
             "read_only": (publication_governance_terminal_summary or {}).get("read_only"),
             "publication_apply_enabled": (publication_governance_terminal_summary or {}).get("publication_apply_enabled"),
+        },
+        "runtime_stability": {
+            "status": (runtime_readiness or {}).get("status", "not_ready"),
+            "scheduler_projection_status": (runtime_projection or {}).get("status"),
+            "run_correlation_status": (runtime_correlation or {}).get("status"),
+            "drift_status": (runtime_drift or {}).get("status"),
+            "post_auto_enable_status": (post_auto_enable_observation or {}).get("status"),
+            "blocking_checks": (runtime_readiness or {}).get("blocking_checks", []),
+            "checks": (runtime_readiness or {}).get("checks", {}),
+            "correlation_counts": (runtime_correlation or {}).get("correlation_counts", {}),
+            "runtime_switch_enabled": (post_auto_enable_observation or {}).get("runtime_switch_enabled"),
+            "read_only": True,
+            "external_side_effects_executed": False,
+            "next_boundary": (runtime_readiness or {}).get("next_boundary") or (post_auto_enable_observation or {}).get("next_boundary"),
         },
         "blockers": blockers,
         "external_side_effects_enabled": False,

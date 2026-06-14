@@ -189,6 +189,11 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["publication_governance_final_index"]["status"] in {"PUBLICATION_GOVERNANCE_FINAL_INDEX_READY", "PUBLICATION_GOVERNANCE_FINAL_INDEX_DEGRADED", "not_ready"}
     assert kernel["publication_final_index_retention_watch"]["status"] in {"PUBLICATION_FINAL_INDEX_RETENTION_WATCH_CLEAR", "PUBLICATION_FINAL_INDEX_RETENTION_WATCH_DRIFT", "not_ready"}
     assert kernel["publication_governance_terminal_summary"]["status"] in {"PUBLICATION_GOVERNANCE_TERMINAL_SUMMARY_READY", "PUBLICATION_GOVERNANCE_TERMINAL_SUMMARY_DEGRADED", "not_ready"}
+    assert kernel["runtime_stability"]["status"] in {"RUNTIME_READINESS_SUMMARY_AUTO_ENABLED", "RUNTIME_READINESS_SUMMARY_READY_PENDING_EXPLICIT_ENABLE", "RUNTIME_READINESS_SUMMARY_DEGRADED_NOT_BLOCKED", "not_ready"}
+    assert kernel["runtime_stability"]["scheduler_projection_status"] in {"SCHEDULER_READBACK_PROJECTION_READY", "SCHEDULER_READBACK_PROJECTION_DEGRADED", None}
+    assert kernel["runtime_stability"]["run_correlation_status"] in {"RECEIPT_CORRELATION_PARTIAL_READY", "REAL_RUN_CORRELATION_PARTIAL_READY", "AWAITING_POST_PROJECTION_SCHEDULED_RUN", "RUN_CORRELATION_DEGRADED", None}
+    assert kernel["runtime_stability"]["post_auto_enable_status"] in {"POST_AUTO_ENABLE_OBSERVATION_READY", "POST_AUTO_ENABLE_OBSERVATION_PENDING_SCHEDULED_RUN", "POST_AUTO_ENABLE_OBSERVATION_DEGRADED", None}
+    assert kernel["runtime_stability"]["external_side_effects_executed"] is False
     assert kernel["external_side_effects_enabled"] is False
 
 

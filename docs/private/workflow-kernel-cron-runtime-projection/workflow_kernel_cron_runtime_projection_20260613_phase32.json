@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-06-13T18:35:39Z",
+  "created_at": "2026-06-14T17:37:46Z",
   "endpoint_statuses": {
     "deepseek": "reachable",
     "github": "reachable",
@@ -9,8 +9,8 @@
     "xiaomi": "reachable"
   },
   "gate_artifact": {
-    "age_seconds": 14946.0,
-    "created_at": "2026-06-13T14:26:33Z",
+    "age_seconds": 0.0,
+    "created_at": "2026-06-14T17:37:46Z",
     "exists": true,
     "stale": false,
     "stale_threshold_hours": 24.0
@@ -23,16 +23,15 @@
     "keep global runtime switch disabled until a separate explicit enable gate"
   ],
   "probe_artifact": {
-    "age_seconds": 14946.0,
-    "created_at": "2026-06-13T14:26:33Z",
+    "age_seconds": 0.0,
+    "created_at": "2026-06-14T17:37:46Z",
     "exists": true,
     "stale": false,
     "stale_threshold_hours": 24.0
   },
   "probe_path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-provider-network-probe/provider_network_probe_20260613_phase23.json",
   "projection_counts": {
-    "KERNEL_SHIM_NO_GATE_DECISION_NEEDED": 1,
-    "KERNEL_SHIM_SCHEDULER_READBACK_READY": 1
+    "KERNEL_SHIM_NO_GATE_DECISION_NEEDED": 2
   },
   "report_id": "workflow_kernel_cron_runtime_projection_20260613_phase32",
   "runtime_switch_enabled_by_default": false,
@@ -58,16 +57,16 @@
         "multi-model-smoke-daily-full-wrapper.py",
         "workflow-kernel-multi-model-smoke-daily-full-runner.py"
       ],
-      "gate_decision": "retry_allowed_by_provider_health",
-      "gate_endpoint_classification": "reachable",
-      "gate_target_endpoint": "xiaomi",
+      "gate_decision": null,
+      "gate_endpoint_classification": null,
+      "gate_target_endpoint": null,
       "job_id": "42baeebb646c",
       "job_name": "multi-model-smoke-daily-full",
       "kernel_shim_declared": "workflow_kernel.cron_wrappers",
       "kernel_shim_detected": true,
-      "last_status": "error",
-      "next_run_at": "2026-06-14T08:35:00+08:00",
-      "projection_status": "KERNEL_SHIM_SCHEDULER_READBACK_READY",
+      "last_status": "ok",
+      "next_run_at": "2026-06-15T08:35:00+08:00",
+      "projection_status": "KERNEL_SHIM_NO_GATE_DECISION_NEEDED",
       "script": "workflow-kernel-multi-model-smoke-daily-full-runner.py",
       "script_allowed": true,
       "script_exists": true,
@@ -91,7 +90,7 @@
       "kernel_shim_declared": "workflow_kernel.cron_wrappers",
       "kernel_shim_detected": true,
       "last_status": "ok",
-      "next_run_at": "2026-06-14T06:17:00+08:00",
+      "next_run_at": "2026-06-15T06:17:00+08:00",
       "projection_status": "KERNEL_SHIM_NO_GATE_DECISION_NEEDED",
       "script": "workflow-kernel-multi-model-smoke-every4h-runner.py",
       "script_allowed": true,

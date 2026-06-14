@@ -1,27 +1,27 @@
 # Workflow Kernel Cron Runtime Projection — Phase 32
 
 Status: **SCHEDULER_READBACK_PROJECTION_READY**
-Projection counts: `{"KERNEL_SHIM_NO_GATE_DECISION_NEEDED": 1, "KERNEL_SHIM_SCHEDULER_READBACK_READY": 1}`
+Projection counts: `{"KERNEL_SHIM_NO_GATE_DECISION_NEEDED": 2}`
 Gate path: `/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-provider-health-gate/cron_provider_health_gate_20260613_phase24.json`
 Probe path: `/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-provider-network-probe/provider_network_probe_20260613_phase23.json`
 
 ## Wrapper projections
-- **42baeebb646c multi-model-smoke-daily-full** — `KERNEL_SHIM_SCHEDULER_READBACK_READY` kernel=True decision=retry_allowed_by_provider_health next=2026-06-14T08:35:00+08:00
-- **2c14ca2a9bd2 multi-model-smoke-every-4h** — `KERNEL_SHIM_NO_GATE_DECISION_NEEDED` kernel=True decision=None next=2026-06-14T06:17:00+08:00
+- **42baeebb646c multi-model-smoke-daily-full** — `KERNEL_SHIM_NO_GATE_DECISION_NEEDED` kernel=True decision=None next=2026-06-15T08:35:00+08:00
+- **2c14ca2a9bd2 multi-model-smoke-every-4h** — `KERNEL_SHIM_NO_GATE_DECISION_NEEDED` kernel=True decision=None next=2026-06-15T06:17:00+08:00
 
 ## Artifact freshness
 ```json
 {
   "gate": {
-    "age_seconds": 14946.0,
-    "created_at": "2026-06-13T14:26:33Z",
+    "age_seconds": 0.0,
+    "created_at": "2026-06-14T17:37:46Z",
     "exists": true,
     "stale": false,
     "stale_threshold_hours": 24.0
   },
   "probe": {
-    "age_seconds": 14946.0,
-    "created_at": "2026-06-13T14:26:33Z",
+    "age_seconds": 0.0,
+    "created_at": "2026-06-14T17:37:46Z",
     "exists": true,
     "stale": false,
     "stale_threshold_hours": 24.0

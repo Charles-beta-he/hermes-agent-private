@@ -1,30 +1,30 @@
 {
   "artifact_states": {
     "correlation": {
-      "age_seconds": 0.0,
-      "created_at": "2026-06-13T18:35:39Z",
+      "age_seconds": 1.0,
+      "created_at": "2026-06-14T17:38:58Z",
       "exists": true,
       "name": "correlation",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json",
       "report_id": "workflow_kernel_cron_run_correlation_20260613_phase33",
       "stale": false,
       "stale_threshold_hours": 24.0,
-      "status": "AWAITING_POST_PROJECTION_SCHEDULED_RUN"
+      "status": "RECEIPT_CORRELATION_PARTIAL_READY"
     },
     "gate": {
-      "age_seconds": 14946.0,
-      "created_at": "2026-06-13T14:26:33Z",
+      "age_seconds": 73.0,
+      "created_at": "2026-06-14T17:37:46Z",
       "exists": true,
       "name": "gate",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-provider-health-gate/cron_provider_health_gate_20260613_phase24.json",
       "report_id": "cron_provider_health_gate_20260613_phase24",
       "stale": false,
       "stale_threshold_hours": 24.0,
-      "status": "GATE_COMPILED_NO_MUTATION"
+      "status": "PASS"
     },
     "probe": {
-      "age_seconds": 14946.0,
-      "created_at": "2026-06-13T14:26:33Z",
+      "age_seconds": 73.0,
+      "created_at": "2026-06-14T17:37:46Z",
       "exists": true,
       "name": "probe",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-provider-network-probe/provider_network_probe_20260613_phase23.json",
@@ -34,8 +34,8 @@
       "status": "PASS"
     },
     "projection": {
-      "age_seconds": 0.0,
-      "created_at": "2026-06-13T18:35:39Z",
+      "age_seconds": 73.0,
+      "created_at": "2026-06-14T17:37:46Z",
       "exists": true,
       "name": "projection",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json",
@@ -45,45 +45,43 @@
       "status": "SCHEDULER_READBACK_PROJECTION_READY"
     },
     "receipt_aware_correlation": {
-      "age_seconds": 5751.0,
+      "age_seconds": 88751.0,
       "created_at": "2026-06-13T16:59:48Z",
       "exists": true,
       "name": "receipt_aware_correlation",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-receipt-aware-correlation/workflow_kernel_receipt_aware_correlation_20260613_phase35.json",
       "report_id": "workflow_kernel_receipt_aware_correlation_20260613_phase35",
-      "stale": false,
+      "stale": true,
       "stale_threshold_hours": 24.0,
       "status": "RECEIPT_AWARE_CORRELATION_READY"
     },
     "wrapper_run_receipts": {
-      "age_seconds": 6139.0,
+      "age_seconds": 89139.0,
       "created_at": "2026-06-13T16:53:20Z",
       "exists": true,
       "name": "wrapper_run_receipts",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-wrapper-run-receipts/workflow_kernel_wrapper_run_receipts_20260613_phase34.json",
       "report_id": "workflow_kernel_wrapper_run_receipts_20260613_phase34",
-      "stale": false,
+      "stale": true,
       "stale_threshold_hours": 24.0,
       "status": "WRAPPER_RUN_RECEIPT_LEDGER_READY"
     }
   },
-  "blocking_checks": [
-    "run_correlation_partial_or_better"
-  ],
+  "blocking_checks": [],
   "checks": {
     "gate_artifact_fresh": true,
     "global_runtime_switch_auto_enabled": true,
     "probe_artifact_fresh": true,
     "receipt_aware_correlation_ready": true,
-    "run_correlation_partial_or_better": false,
+    "run_correlation_partial_or_better": true,
     "runtime_switch_ready_or_enabled": true,
     "scheduler_projection_ready": true,
     "wrapper_receipt_ledger_ready": true
   },
   "correlation_counts": {
-    "ONLY_PRE_PROJECTION_RUN_OBSERVED": 2
+    "RECEIPT_AFTER_PROJECTION_CORRELATED": 2
   },
-  "created_at": "2026-06-13T18:35:39Z",
+  "created_at": "2026-06-14T17:38:59Z",
   "endpoint_statuses": {
     "deepseek": "reachable",
     "github": "reachable",
@@ -95,8 +93,7 @@
   "explicit_enable_required": false,
   "next_boundary": "runtime switch auto-enabled; future external dispatch expansion, credentialed generation changes, or broad scheduler rewrites still require scoped gates",
   "projection_counts": {
-    "KERNEL_SHIM_NO_GATE_DECISION_NEEDED": 1,
-    "KERNEL_SHIM_SCHEDULER_READBACK_READY": 1
+    "KERNEL_SHIM_NO_GATE_DECISION_NEEDED": 2
   },
   "receipt_aware_correlation_status": "REAL_RUN_CORRELATION_PARTIAL_READY",
   "report_id": "workflow_kernel_runtime_readiness_summary_20260613_phase36",
@@ -110,5 +107,5 @@
     "runtime switch is auto-enabled"
   ],
   "scope": "read-only operator summary for workflow kernel runtime switch, cron projection, run correlation, receipts, gate, and probe",
-  "status": "RUNTIME_READINESS_SUMMARY_DEGRADED_NOT_BLOCKED"
+  "status": "RUNTIME_READINESS_SUMMARY_AUTO_ENABLED"
 }

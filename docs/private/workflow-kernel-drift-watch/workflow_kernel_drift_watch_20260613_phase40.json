@@ -1,17 +1,17 @@
 {
   "artifact_states": {
     "correlation": {
-      "age_seconds": 0.0,
-      "created_at": "2026-06-13T18:35:39Z",
+      "age_seconds": 1.0,
+      "created_at": "2026-06-14T17:38:58Z",
       "exists": true,
       "name": "correlation",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json",
       "stale": false,
-      "status": "AWAITING_POST_PROJECTION_SCHEDULED_RUN"
+      "status": "RECEIPT_CORRELATION_PARTIAL_READY"
     },
     "projection": {
-      "age_seconds": 0.0,
-      "created_at": "2026-06-13T18:35:39Z",
+      "age_seconds": 73.0,
+      "created_at": "2026-06-14T17:37:46Z",
       "exists": true,
       "name": "projection",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json",
@@ -20,28 +20,28 @@
     },
     "summary": {
       "age_seconds": 0.0,
-      "created_at": "2026-06-13T18:35:39Z",
+      "created_at": "2026-06-14T17:38:59Z",
       "exists": true,
       "name": "summary",
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-readiness-summary/workflow_kernel_runtime_readiness_summary_20260613_phase36.json",
       "stale": false,
-      "status": "RUNTIME_READINESS_SUMMARY_DEGRADED_NOT_BLOCKED"
+      "status": "RUNTIME_READINESS_SUMMARY_AUTO_ENABLED"
     }
   },
-  "created_at": "2026-06-13T18:35:39Z",
+  "created_at": "2026-06-14T17:38:59Z",
   "drift_signals": [],
   "job_receipts": {
     "2c14ca2a9bd2": {
       "job_name": "multi-model-smoke-every4h",
       "kernel_shim": true,
-      "latest_receipt_created_at": "2026-06-13T17:48:26Z",
+      "latest_receipt_created_at": "2026-06-14T17:38:58Z",
       "receipt_present": true,
       "runtime_mode": "scheduler_native_plan_only"
     },
     "42baeebb646c": {
       "job_name": "multi-model-smoke-daily-full",
       "kernel_shim": true,
-      "latest_receipt_created_at": "2026-06-13T18:03:33Z",
+      "latest_receipt_created_at": "2026-06-14T17:38:58Z",
       "receipt_present": true,
       "runtime_mode": "scheduler_native_plan_only"
     }
