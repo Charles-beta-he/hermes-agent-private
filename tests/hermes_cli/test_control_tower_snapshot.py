@@ -1656,6 +1656,14 @@ def test_conflicting_evidence_override_authorization_is_non_executing_projection
         source_surface="dashboard",
         reason="admin approved projection only",
     )
+    closeout = control_tower.request_closeout_authorization(
+        evidence_review_id=review["evidence_review_id"],
+        actor_type="human",
+        actor_id="charles",
+        actor_role="owner",
+        source_surface="dashboard",
+        reason="consume approved conflict override for closeout authorization projection",
+    )
     drifted_repeat_failed = False
     control_tower.record_evidence(
         task_id="task:override-conflict",
@@ -1690,17 +1698,22 @@ def test_conflicting_evidence_override_authorization_is_non_executing_projection
     assert repeated["created"] is False
     assert repeated["conflict_override_authorization_id"] == request["conflict_override_authorization_id"]
     assert decided["status"] == "approved"
-    assert decided["override_allowed"] is False
+    assert decided["override_allowed"] is True
     assert decided["closeout_allowed"] is False
+    assert closeout["status"] == "requested"
+    assert closeout["closeout_allowed"] is False
+    assert closeout["execution"] == "not_executed"
     assert drifted_repeat_failed is True
     with sqlite3.connect(home / "control_tower.db") as ledger:
         rows = ledger.execute("SELECT status, override_allowed, closeout_allowed FROM conflicting_evidence_override_authorizations").fetchall()
         task_rows = ledger.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
         event_types = [row[0] for row in ledger.execute("SELECT event_type FROM events ORDER BY sequence")]
-    assert rows == [("approved", 0, 0)]
+    assert rows == [("approved", 1, 0)]
     assert task_rows == 0
     assert "ConflictingEvidenceOverrideAuthorizationRequested" in event_types
     assert "ConflictingEvidenceOverrideAuthorizationGranted" in event_types
+    assert "ConflictingEvidenceOverrideConsumedForCloseout" in event_types
+    assert "CloseoutAuthorizationRequested" in event_types
 
 
 def test_conflicting_evidence_override_authorization_expires_and_rejects_conflicting_decisions(tmp_path, monkeypatch):

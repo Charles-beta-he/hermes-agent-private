@@ -480,6 +480,14 @@ def test_control_tower_dashboard_plugin_requests_and_decides_conflicting_evidenc
             "reason": "projection only",
         },
     )
+    closeout_request = client.post(
+        f"/api/plugins/control-tower/evidence-gates/{review['evidence_review_id']}/closeout-authorization",
+        json={
+            "actor_id": "charles",
+            "actor_role": "owner",
+            "reason": "consume approved conflict override",
+        },
+    )
     snapshot = client.get("/api/plugins/control-tower/snapshot")
 
     assert omitted_role_decision.status_code == 422, omitted_role_decision.text
@@ -487,11 +495,16 @@ def test_control_tower_dashboard_plugin_requests_and_decides_conflicting_evidenc
     decided_data = decided.json()
     assert decided_data["status"] == "approved"
     assert decided_data["execution"] == "not_executed"
-    assert decided_data["override_allowed"] is False
+    assert decided_data["override_allowed"] is True
     assert decided_data["closeout_allowed"] is False
+    assert closeout_request.status_code == 200, closeout_request.text
+    closeout_data = closeout_request.json()
+    assert closeout_data["status"] == "requested"
+    assert closeout_data["execution"] == "not_executed"
+    assert closeout_data["closeout_allowed"] is False
     snapshot_data = snapshot.json()["conflicting_evidence_override_authorizations"]
-    assert snapshot_data["mode"] == "conflicting_evidence_override_projection_only"
-    assert snapshot_data["override_consumption_enabled"] is False
+    assert snapshot_data["mode"] == "conflicting_evidence_override_authorization_projection"
+    assert snapshot_data["override_consumption_enabled"] is True
     assert snapshot_data["closeout_execution_enabled"] is False
     assert snapshot_data["decided_count"] == 1
 
