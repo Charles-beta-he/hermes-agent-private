@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Charles private Hermes bootstrap installer.
 #
-# This script is safe to run from outside a checkout. It recommends the GitHub
-# CLI path, validates private-repo access, clones/updates the private checkout,
-# then delegates to scripts/install-private.sh for channel stamping and setup.
-# It never accepts or stores GitHub tokens.
+# This script is safe to run from outside a checkout. It supports GitHub CLI
+# auth and headless SSH-key installs, validates private-repo access, clones or
+# updates the private checkout, then delegates to scripts/install-private.sh for
+# channel stamping and setup. It never accepts or stores GitHub tokens.
 
 set -euo pipefail
 
@@ -24,14 +24,28 @@ usage() {
   cat <<'EOF'
 Charles private Hermes bootstrap installer
 
-Recommended user flow:
-  1. Charles grants your GitHub account access to the private repo.
-  2. Run:
+Access requirement:
+  Charles grants your GitHub account or SSH deploy key access to the private repo.
+
+Install paths:
+
+  A) GitHub CLI, works on desktop or headless with device-code login:
        gh auth login
        gh auth setup-git
        gh api -H "Accept: application/vnd.github.raw" \
          repos/Charles-beta-he/hermes-agent-private/contents/scripts/bootstrap-private.sh?ref=private/main \
          | bash
+
+  B) Headless SSH, no gh and no browser required after an authorized SSH key exists:
+       mkdir -p ~/.hermes
+       git clone --branch private/main --single-branch \
+         git@github.com:Charles-beta-he/hermes-agent-private.git \
+         ~/.hermes/hermes-agent
+       ~/.hermes/hermes-agent/scripts/install-private.sh --yes
+
+  C) Existing checkout / offline transfer:
+       cd ~/.hermes/hermes-agent
+       scripts/install-private.sh --yes
 
 Usage:
   bootstrap-private.sh [--yes] [--dry-run] [--skip-setup] [--skip-experience-pack] [--dir PATH] [--ssh]
@@ -43,9 +57,10 @@ Options:
   --skip-experience-pack
                   Do not copy sanitized capability templates into HERMES_HOME.
   --dir PATH     Install checkout directory (default: ~/.hermes/hermes-agent).
-  --ssh          Prefer SSH clone even when gh HTTPS credentials are available.
+  --ssh          Prefer SSH clone and SSH access checks; no gh required.
 
-No GitHub token is accepted on the command line. Use gh auth or SSH keys.
+No GitHub token is accepted on the command line. Use gh auth, SSH keys, or a
+normal git credential helper. Never put a token in the repository URL.
 EOF
 }
 
@@ -93,12 +108,21 @@ confirm_or_fail() {
 
 print_recommendation() {
   cat <<EOF
-Recommended private install path:
-  gh auth login
-  gh auth setup-git
-  gh api -H "Accept: application/vnd.github.raw" \\
-    repos/${PRIVATE_REPO_SLUG}/contents/scripts/bootstrap-private.sh?ref=${PRIVATE_BRANCH} \\
-    | bash
+Private install paths:
+
+  GitHub CLI:
+    gh auth login
+    gh auth setup-git
+    gh api -H "Accept: application/vnd.github.raw" \\
+      repos/${PRIVATE_REPO_SLUG}/contents/scripts/bootstrap-private.sh?ref=${PRIVATE_BRANCH} \\
+      | bash
+
+  Headless SSH, no gh/browser after key authorization:
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    git clone --branch "${PRIVATE_BRANCH}" --single-branch \\
+      ${PRIVATE_REPO_SSH} \\
+      ${INSTALL_DIR}
+    ${INSTALL_DIR}/scripts/install-private.sh --yes
 
 This bootstrap will now automate the clone/update/finalize steps for:
   repo:   ${PRIVATE_REPO_SLUG}
@@ -117,11 +141,15 @@ check_install_dir_safety() {
 
 ensure_access() {
   if [[ "$DRY_RUN" == true ]]; then
-    info "Dry-run: would verify GitHub CLI or SSH access to $PRIVATE_REPO_SLUG"
+    if [[ "$PREFER_SSH" == true ]]; then
+      info "Dry-run: would verify SSH access to $PRIVATE_REPO_SLUG"
+    else
+      info "Dry-run: would verify GitHub CLI or SSH access to $PRIVATE_REPO_SLUG"
+    fi
     return 0
   fi
 
-  if command -v gh >/dev/null 2>&1; then
+  if [[ "$PREFER_SSH" != true ]] && command -v gh >/dev/null 2>&1; then
     if gh auth status >/dev/null 2>&1; then
       info "GitHub CLI authenticated; checking private repo access"
       if gh repo view "$PRIVATE_REPO_SLUG" >/dev/null 2>&1; then
@@ -130,10 +158,12 @@ ensure_access() {
       fi
       fail "GitHub CLI is authenticated, but cannot access $PRIVATE_REPO_SLUG. Accept the invite or ask Charles to grant this GitHub account access."
     fi
-    warn "GitHub CLI is installed but not authenticated."
-    echo "  Run: gh auth login && gh auth setup-git"
+    warn "GitHub CLI is installed but not authenticated. Will try SSH next."
+    echo "  Optional gh path: gh auth login && gh auth setup-git"
+  elif [[ "$PREFER_SSH" != true ]]; then
+    warn "GitHub CLI not found. Trying SSH key access next."
   else
-    warn "GitHub CLI not found. Install gh or use --ssh with a configured GitHub SSH key."
+    info "SSH mode requested; skipping GitHub CLI checks"
   fi
 
   if GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=5" git ls-remote "$PRIVATE_REPO_SSH" "$PRIVATE_BRANCH" >/dev/null 2>&1; then
@@ -142,7 +172,7 @@ ensure_access() {
     return 0
   fi
 
-  fail "Cannot access $PRIVATE_REPO_SLUG. Recommended fix: gh auth login && gh auth setup-git, or configure SSH and run with --ssh."
+  fail "Cannot access $PRIVATE_REPO_SLUG. Headless fix: add this machine's SSH public key or deploy key to the private repo, then rerun with --ssh. GH fix: gh auth login && gh auth setup-git. Do not put tokens in clone URLs."
 }
 
 clone_or_update_checkout() {

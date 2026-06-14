@@ -6,11 +6,16 @@ installation, see `docs/private-self-installation-layers.md`.
 
 ## Default user flow
 
-Charles first grants the user's GitHub account access to:
+Charles first grants the user's GitHub account or SSH deploy key access to:
 
   https://github.com/Charles-beta-he/hermes-agent-private
 
-Then the recommended flow is GitHub CLI plus the automated bootstrap:
+There are three supported install paths. All avoid putting tokens in clone URLs.
+
+### A. GitHub CLI path
+
+Works on desktops and on headless servers that can complete GitHub device-code
+login from another browser:
 
 ```bash
 gh auth login
@@ -20,16 +25,39 @@ gh api -H "Accept: application/vnd.github.raw" \
   | bash
 ```
 
-The bootstrap prints this recommendation, verifies access, clones or refreshes
-`~/.hermes/hermes-agent`, and delegates to `scripts/install-private.sh`.
+The bootstrap prints the equivalent SSH path, verifies access, clones or
+refreshes `~/.hermes/hermes-agent`, and delegates to `scripts/install-private.sh`.
 
-Manual SSH fallback remains available:
+### B. Headless SSH path, no `gh`, no browser
+
+Use this on servers, containers, NAS boxes, CI hosts, or any machine where a
+GitHub SSH key or deploy key has already been authorized for the private repo:
 
 ```bash
 mkdir -p ~/.hermes
-git clone --branch private/main --single-branch git@github.com:Charles-beta-he/hermes-agent-private.git ~/.hermes/hermes-agent
-~/.hermes/hermes-agent/scripts/install-private.sh
+git clone --branch private/main --single-branch \
+  git@github.com:Charles-beta-he/hermes-agent-private.git \
+  ~/.hermes/hermes-agent
+~/.hermes/hermes-agent/scripts/install-private.sh --yes
 ```
+
+Optional no-interactive setup/install-only variant:
+
+```bash
+~/.hermes/hermes-agent/scripts/install-private.sh --yes --skip-setup
+```
+
+### C. Existing checkout or offline transfer
+
+If the source checkout was copied by rsync/tar/scp from another authorized
+machine, finalize the private channel locally:
+
+```bash
+cd ~/.hermes/hermes-agent
+scripts/install-private.sh --yes
+```
+
+`install-private.sh` does not need `gh`; it only needs a valid checkout.
 
 Do not ask users to put a GitHub token in a URL. Do not use private raw
 `curl | bash` as the primary path; ordinary curl does not inherit GitHub browser

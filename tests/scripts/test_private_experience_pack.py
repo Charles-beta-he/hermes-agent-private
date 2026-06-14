@@ -56,3 +56,34 @@ def test_private_bootstrap_passes_skip_experience_pack_to_finalizer() -> None:
     text = BOOTSTRAP_PRIVATE.read_text(encoding="utf-8")
     assert "--skip-experience-pack" in text
     assert "args+=(--skip-experience-pack)" in text
+
+
+def test_private_bootstrap_documents_headless_ssh_path() -> None:
+    proc = subprocess.run(
+        ["bash", str(BOOTSTRAP_PRIVATE), "--help"],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert "Headless SSH" in proc.stdout
+    assert "no gh" in proc.stdout
+    assert "git@github.com:Charles-beta-he/hermes-agent-private.git" in proc.stdout
+    assert "Never put a token in the repository URL" in proc.stdout
+
+
+def test_private_bootstrap_dry_run_prints_ssh_path(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["HERMES_HOME"] = str(tmp_path / "home")
+    proc = subprocess.run(
+        ["bash", str(BOOTSTRAP_PRIVATE), "--dry-run", "--skip-setup", "--ssh", "--yes"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert "Headless SSH, no gh/browser" in proc.stdout
+    assert "Dry-run: would verify SSH access" in proc.stdout
+    assert "git clone --branch" in proc.stdout
+    assert "--ssh" not in proc.stderr
