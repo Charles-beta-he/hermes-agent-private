@@ -6154,6 +6154,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase78_path = root / "docs/private/workflow-kernel-publication-apply-reopen-packet/workflow_kernel_publication_apply_reopen_packet_20260613_phase78.json"
     phase79_path = root / "docs/private/workflow-kernel-publication-closure-health-report/workflow_kernel_publication_closure_health_report_20260613_phase79.json"
     phase80_path = root / "docs/private/workflow-kernel-publication-governance-archive/workflow_kernel_publication_governance_archive_20260613_phase80.json"
+    phase81_path = root / "docs/private/workflow-kernel-publication-archive-retention-watch/workflow_kernel_publication_archive_retention_watch_20260613_phase81.json"
+    phase82_path = root / "docs/private/workflow-kernel-publication-export-review-packet/workflow_kernel_publication_export_review_packet_20260613_phase82.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6198,6 +6200,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         publication_apply_reopen_packet = json.loads(phase78_path.read_text()) if phase78_path.exists() else None
         publication_closure_health_report = json.loads(phase79_path.read_text()) if phase79_path.exists() else None
         publication_governance_archive = json.loads(phase80_path.read_text()) if phase80_path.exists() else None
+        publication_archive_retention_watch = json.loads(phase81_path.read_text()) if phase81_path.exists() else None
+        publication_export_review_packet = json.loads(phase82_path.read_text()) if phase82_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6438,10 +6442,27 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "read_only": (publication_governance_archive or {}).get("read_only"),
             "publication_apply_enabled": (publication_governance_archive or {}).get("publication_apply_enabled"),
         },
+        "publication_archive_retention_watch": {
+            "status": (publication_archive_retention_watch or {}).get("status", "not_ready"),
+            "retention_digest": (publication_archive_retention_watch or {}).get("retention_digest"),
+            "retention_policy": (publication_archive_retention_watch or {}).get("retention_policy"),
+            "drift": (publication_archive_retention_watch or {}).get("drift", []),
+            "read_only": (publication_archive_retention_watch or {}).get("read_only"),
+            "publication_apply_enabled": (publication_archive_retention_watch or {}).get("publication_apply_enabled"),
+        },
+        "publication_export_review_packet": {
+            "status": (publication_export_review_packet or {}).get("status", "not_ready"),
+            "packet_digest": (publication_export_review_packet or {}).get("packet_digest"),
+            "recommended_default": (publication_export_review_packet or {}).get("recommended_default"),
+            "selected_option": (publication_export_review_packet or {}).get("selected_option"),
+            "packet_only": (publication_export_review_packet or {}).get("packet_only"),
+            "export_apply_enabled": (publication_export_review_packet or {}).get("export_apply_enabled"),
+            "publication_apply_enabled": (publication_export_review_packet or {}).get("publication_apply_enabled"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase80 archive: publication governance remains read-only; continue retention/export review unless exact apply target is supplied",
+        "next_boundary": "post-Phase82 packet: publication export review remains packet-only; no export/apply without exact target",
     }
 
 

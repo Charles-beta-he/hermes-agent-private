@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T16:03:49Z",
-  "current_boundary": "Phase80 has updated the read-only publication governance archive while keeping publication_apply_enabled=false.",
+  "created_at": "2026-06-14T16:10:28Z",
+  "current_boundary": "Phase82 has produced a packet-only publication export review packet while keeping publication_apply_enabled=false and selected_option=null.",
   "next_ladder": [
     {
-      "authority_needed": "read-only retention/drift watch over publication archive",
-      "name": "Publication Archive Retention Watch",
-      "phase": 81,
-      "track": "PUBLICATION_ARCHIVE_RETENTION_WATCH",
-      "why_next": "verify archive remains private/read-only"
+      "authority_needed": "read-only retention/drift watch over export review packet",
+      "name": "Publication Export Review Retention Watch",
+      "phase": 83,
+      "track": "PUBLICATION_EXPORT_REVIEW_RETENTION_WATCH",
+      "why_next": "verify review packet remains packet-only"
     },
     {
-      "authority_needed": "packet only; no export or publication apply",
-      "name": "Publication Export Review Packet",
-      "phase": 82,
-      "track": "PUBLICATION_EXPORT_REVIEW_PACKET",
-      "why_next": "compile future review packet without external side effects"
+      "authority_needed": "packet only; no apply without exact target",
+      "name": "Publication Apply Final Boundary Packet",
+      "phase": 84,
+      "track": "PUBLICATION_APPLY_FINAL_BOUNDARY_PACKET",
+      "why_next": "formalize final apply boundary"
     }
   ],
-  "objective": "梳理 Phase17-80 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase79 已完成 publication closure health report，Phase80 已更新 publication governance archive；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
-  "phase_count": 64,
+  "objective": "梳理 Phase17-82 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase81 已完成 publication archive retention watch，Phase82 已生成 publication export review packet；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+  "phase_count": 66,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -926,9 +926,37 @@
       ],
       "phase": 80,
       "status": "publication_governance_archive_ready"
+    },
+    {
+      "authority": "read-only watch",
+      "depends_on": [
+        80
+      ],
+      "gate": "drift=[]; publication apply disabled",
+      "layer": "archive retention watch",
+      "name": "Publication Archive Retention Watch",
+      "next_unlocked": [
+        82
+      ],
+      "phase": 81,
+      "status": "publication_archive_retention_clear"
+    },
+    {
+      "authority": "packet only",
+      "depends_on": [
+        81
+      ],
+      "gate": "recommended_default=A_REVIEW_PRIVATE_ARCHIVE_ONLY; apply disabled",
+      "layer": "export review packet",
+      "name": "Publication Export Review Packet",
+      "next_unlocked": [
+        83
+      ],
+      "phase": 82,
+      "status": "publication_export_review_packet_ready"
     }
   ],
-  "recommended_next": "Stage-report cadence: Phase81 publication archive retention watch; Phase82 publication export review packet remains packet-only",
+  "recommended_next": "Stage-report cadence: Phase83 publication export review retention watch; Phase84 final boundary packet remains packet-only",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

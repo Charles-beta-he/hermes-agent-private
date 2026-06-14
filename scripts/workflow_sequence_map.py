@@ -87,11 +87,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 78, "name": "Publication Apply Reopen Packet", "layer": "reopen packet", "status": "publication_apply_reopen_packet_ready", "depends_on": [77], "authority": "packet only", "gate": "recommended_default=A_NO_REOPEN_KEEP_PRIVATE; apply disabled", "next_unlocked": [79]},
     {"phase": 79, "name": "Publication Closure Health Report", "layer": "publication health", "status": "publication_closure_health_clear", "depends_on": [78], "authority": "read-only report", "gate": "health=clear; apply disabled", "next_unlocked": [80]},
     {"phase": 80, "name": "Publication Governance Archive Update", "layer": "governance archive", "status": "publication_governance_archive_ready", "depends_on": [79], "authority": "read-only archive", "gate": "read_only=true; publication apply disabled", "next_unlocked": [81]},
+    {"phase": 81, "name": "Publication Archive Retention Watch", "layer": "archive retention watch", "status": "publication_archive_retention_clear", "depends_on": [80], "authority": "read-only watch", "gate": "drift=[]; publication apply disabled", "next_unlocked": [82]},
+    {"phase": 82, "name": "Publication Export Review Packet", "layer": "export review packet", "status": "publication_export_review_packet_ready", "depends_on": [81], "authority": "packet only", "gate": "recommended_default=A_REVIEW_PRIVATE_ARCHIVE_ONLY; apply disabled", "next_unlocked": [83]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 81, "name": "Publication Archive Retention Watch", "track": "PUBLICATION_ARCHIVE_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over publication archive", "why_next": "verify archive remains private/read-only"},
-    {"phase": 82, "name": "Publication Export Review Packet", "track": "PUBLICATION_EXPORT_REVIEW_PACKET", "authority_needed": "packet only; no export or publication apply", "why_next": "compile future review packet without external side effects"},
+    {"phase": 83, "name": "Publication Export Review Retention Watch", "track": "PUBLICATION_EXPORT_REVIEW_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over export review packet", "why_next": "verify review packet remains packet-only"},
+    {"phase": 84, "name": "Publication Apply Final Boundary Packet", "track": "PUBLICATION_APPLY_FINAL_BOUNDARY_PACKET", "authority_needed": "packet only; no apply without exact target", "why_next": "formalize final apply boundary"},
 ]
 
 
@@ -133,15 +135,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-80 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase79 已完成 publication closure health report，Phase80 已更新 publication governance archive；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-82 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase81 已完成 publication archive retention watch，Phase82 已生成 publication export review packet；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase80 has updated the read-only publication governance archive while keeping publication_apply_enabled=false.",
+        "current_boundary": "Phase82 has produced a packet-only publication export review packet while keeping publication_apply_enabled=false and selected_option=null.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Stage-report cadence: Phase81 publication archive retention watch; Phase82 publication export review packet remains packet-only",
+        "recommended_next": "Stage-report cadence: Phase83 publication export review retention watch; Phase84 final boundary packet remains packet-only",
     }
 
 
