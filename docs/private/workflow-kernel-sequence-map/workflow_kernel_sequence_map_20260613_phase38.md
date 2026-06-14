@@ -42,10 +42,12 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 52: Control Tower UI/API Projection — layer=`control tower productization`, gate=`durable runtime API and unattended dispatch remain separate gates`
 - Phase 53: Durable Control Tower Runtime/API Integration — layer=`live control tower snapshot`, gate=`operator projection only; no lifecycle mutation`
 - Phase 54: Unattended Dispatch Policy Gate — layer=`dispatch policy`, gate=`unattended_dispatch_enabled=false; dry-run preview only`
+- Phase 55: Unattended Dry-run Scheduler — layer=`dry-run scheduler`, gate=`no cron mutation; no external send`
+- Phase 56: Control Tower Policy Editor / Approval UI — layer=`policy editor`, gate=`no policy activation; no unattended send`
 
 ## Next ladder
-- Phase 55: Unattended Dry-run Scheduler — track=`UNATTENDED_DRY_RUN_SCHEDULER`, authority=`choose cadence, target allowlist, and receipt ledger retention`
-- Phase 56: Control Tower Policy Editor / Approval UI — track=`CONTROL_TOWER_POLICY_EDITOR`, authority=`choose UI edit authority, approval roles, and persistence semantics`
+- Phase 57: Dry-run Cron Rollout — track=`DRY_RUN_CRON_ROLLOUT`, authority=`choose real cron cadence and rollback backup scope`
+- Phase 58: Guarded Send Runner Activation Packet — track=`GUARDED_SEND_RUNNER_ACTIVATION`, authority=`decide whether approved policy can activate a guarded manual-send runner`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence

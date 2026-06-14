@@ -6027,6 +6027,96 @@ def _operator_overview_snapshot(
     }
 
 
+def _workflow_kernel_policy_editor_paths() -> dict[str, Path]:
+    root = Path(__file__).resolve().parents[1]
+    base = root / "docs/private/workflow-kernel-policy-editor"
+    return {
+        "base": base,
+        "ledger": base / "workflow_kernel_policy_editor_approvals.jsonl",
+        "projection": base / "workflow_kernel_policy_editor_projection_20260613_phase56.json",
+    }
+
+
+def record_workflow_kernel_policy_editor_decision(
+    *,
+    decision: str,
+    actor_type: str = "human",
+    actor_id: str = "dashboard",
+    actor_role: str = "operator",
+    reason: str = "",
+    policy_digest: str | None = None,
+) -> dict[str, Any]:
+    """Append a local Workflow Kernel policy-editor decision.
+
+    This records operator intent only. It never edits dispatch policy, enables
+    unattended dispatch, calls external adapters, or mutates cron state.
+    """
+    normalized = decision.strip().lower()
+    allowed = {"draft", "approve_dry_run_only", "reject", "request_changes"}
+    status = "recorded" if normalized in allowed else "blocked"
+    paths = _workflow_kernel_policy_editor_paths()
+    paths["base"].mkdir(parents=True, exist_ok=True)
+    event = {
+        "schema": "workflow_kernel_policy_editor_approval_v1",
+        "phase": 56,
+        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "status": status,
+        "decision": normalized,
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+        "reason": reason,
+        "policy_digest": policy_digest,
+        "unattended_dispatch_enabled": False,
+        "external_side_effects_executed": False,
+        "cron_state_mutated": False,
+        "safe_boundaries": [
+            "approval ledger only",
+            "no policy mutation",
+            "no unattended dispatch enablement",
+            "no external send",
+            "no cron mutation",
+        ],
+    }
+    with paths["ledger"].open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+    projection = build_workflow_kernel_policy_editor_projection()
+    paths["projection"].write_text(json.dumps(projection, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return {"status": status, "event": event, "projection": projection, "ledger": str(paths["ledger"])}
+
+
+def build_workflow_kernel_policy_editor_projection() -> dict[str, Any]:
+    paths = _workflow_kernel_policy_editor_paths()
+    root = Path(__file__).resolve().parents[1]
+    policy_path = root / "docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json"
+    phase55_path = root / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+    policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
+    phase55 = json.loads(phase55_path.read_text()) if phase55_path.exists() else {}
+    events: list[dict[str, Any]] = []
+    if paths["ledger"].exists():
+        for line in paths["ledger"].read_text().splitlines():
+            if line.strip():
+                events.append(json.loads(line))
+    latest = events[-1] if events else None
+    return {
+        "schema": "workflow_kernel_policy_editor_projection_v1",
+        "phase": 56,
+        "status": "POLICY_EDITOR_APPROVAL_UI_READY",
+        "editor_mode": "approval_ledger_only",
+        "policy_digest": policy.get("policy_digest"),
+        "policy_status": policy.get("status"),
+        "phase55_status": phase55.get("status"),
+        "pending_decisions": 0 if latest else 1,
+        "latest_decision": latest,
+        "approval_ledger": str(paths["ledger"]),
+        "unattended_dispatch_enabled": False,
+        "external_side_effects_executed": False,
+        "cron_state_mutated": False,
+        "allowed_decisions": ["draft", "approve_dry_run_only", "reject", "request_changes"],
+        "next_boundary": "larger divergence: enable dry-run cron job vs allow approved policy to activate guarded send runner",
+    }
+
+
 def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     """Return the Workflow Kernel Control Tower projection artifacts.
 
@@ -6039,6 +6129,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase50_path = root / "docs/private/workflow-kernel-guarded-external-send/workflow_kernel_guarded_external_send_20260613_phase50.json"
     phase52_path = root / "docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.json"
     policy_path = root / "docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json"
+    phase55_path = root / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6058,6 +6149,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         guarded_send = json.loads(phase50_path.read_text())
         control_tower_projection = json.loads(phase52_path.read_text())
         policy = json.loads(policy_path.read_text()) if policy_path.exists() else None
+        dry_run_scheduler = json.loads(phase55_path.read_text()) if phase55_path.exists() else None
+        policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
             "status": "error",
@@ -6097,10 +6190,18 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "unattended_dispatch_enabled": unattended_enabled,
             "policy_artifact": str(policy_path) if policy_path.exists() else None,
         },
+        "unattended_dry_run_scheduler": {
+            "status": (dry_run_scheduler or {}).get("status", "not_compiled"),
+            "cadence": (dry_run_scheduler or {}).get("cadence"),
+            "latest_idempotency_key": ((dry_run_scheduler or {}).get("latest_receipt") or {}).get("idempotency_key"),
+            "would_send": ((dry_run_scheduler or {}).get("latest_receipt") or {}).get("would_send"),
+            "receipt_ledger": (dry_run_scheduler or {}).get("receipt_ledger"),
+        },
+        "policy_editor": policy_editor,
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "Phase54 unattended dispatch policy gate" if policy is None else "post-Phase54 larger product/policy boundary",
+        "next_boundary": "Phase56 Control Tower policy editor / approval UI" if policy_editor.get("pending_decisions") else "post-Phase56 larger automation authority boundary",
     }
 
 

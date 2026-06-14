@@ -147,6 +147,15 @@ class ExternalAdapterWriteExecutionRequest(BaseModel):
     reason: str = Field(default="", min_length=0)
 
 
+class WorkflowKernelPolicyEditorDecisionRequest(BaseModel):
+    decision: str = Field(min_length=1)
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    actor_role: str = Field(default="operator", min_length=1)
+    reason: str = Field(default="", min_length=0)
+    policy_digest: str | None = None
+
+
 @router.get("/snapshot")
 def get_snapshot():
     """Return the read-only Control Tower Phase 1 snapshot."""
@@ -161,6 +170,19 @@ def get_missions():
         "board": store.board(),
         "inbox": store.inbox(),
     }
+
+
+@router.post("/workflow-kernel/policy-editor/decision")
+def record_workflow_kernel_policy_editor_decision(req: WorkflowKernelPolicyEditorDecisionRequest):
+    """Record Workflow Kernel policy-editor intent without activating dispatch."""
+    return control_tower.record_workflow_kernel_policy_editor_decision(
+        decision=req.decision,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        reason=req.reason,
+        policy_digest=req.policy_digest,
+    )
 
 
 @router.post("/commands/propose")

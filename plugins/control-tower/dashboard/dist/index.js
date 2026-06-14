@@ -263,6 +263,8 @@
     }
     const send = kernel.latest_guarded_send || {};
     const policy = kernel.unattended_dispatch_policy || {};
+    const dryRun = kernel.unattended_dry_run_scheduler || {};
+    const editor = kernel.policy_editor || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -272,17 +274,42 @@
         <span>Agent: <strong>${escapeHtml(kernel.agent_pack_id || '—')}</strong></span>
         <span>Last send: <strong>${escapeHtml(send.message_id || '—')}</strong></span>
         <span>Policy: <strong>${escapeHtml(policy.status || 'not_compiled')}</strong></span>
+        <span>Dry-run: <strong>${escapeHtml(dryRun.status || 'not_compiled')}</strong></span>
+        <span>Editor: <strong>${escapeHtml(editor.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
           <tr><th>Guarded send</th><td>${escapeHtml(send.status || '—')} via ${escapeHtml(send.adapter || '—')} message_id=<code>${escapeHtml(send.message_id || '—')}</code></td></tr>
           <tr><th>Control Tower projection</th><td>${escapeHtml(projection.status || '—')} api=<code>${escapeHtml(projection.api_version || '—')}</code></td></tr>
           <tr><th>Unattended dispatch</th><td>enabled=<strong>${policy.unattended_dispatch_enabled ? 'true' : 'false'}</strong>, mode=<code>${escapeHtml(policy.default_mode || 'dry_run_preview')}</code></td></tr>
+          <tr><th>Dry-run scheduler</th><td>${escapeHtml(dryRun.status || '—')} cadence=<code>${escapeHtml(dryRun.cadence || '—')}</code> would_send=<strong>${dryRun.would_send === false ? 'false' : escapeHtml(dryRun.would_send || '—')}</strong></td></tr>
+          <tr><th>Policy editor</th><td>${escapeHtml(editor.editor_mode || '—')} pending=${escapeHtml(String(editor.pending_decisions ?? '—'))} latest=${escapeHtml(editor.latest_decision?.decision || '—')}</td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>
+      <div class="control-tower-actions control-tower-workflow-kernel-actions">
+        <button type="button" data-workflow-kernel-decision="draft">Record draft review</button>
+        <button type="button" data-workflow-kernel-decision="approve_dry_run_only">Approve dry-run only</button>
+      </div>
+      <p class="control-tower-muted">Policy editor actions record local approval intent only; they do not enable unattended dispatch or send messages.</p>
       ${blockers ? `<h3>Blockers</h3><ul>${blockers}</ul>` : '<p>No Workflow Kernel projection blockers.</p>'}
     `;
+    workflowKernelEl.querySelectorAll('[data-workflow-kernel-decision]').forEach((button) => {
+      button.addEventListener('click', () => recordWorkflowKernelDecision(button.dataset.workflowKernelDecision));
+    });
+  };
+
+  const recordWorkflowKernelDecision = (decision) => {
+    authFetch('/api/plugins/control-tower/workflow-kernel/policy-editor/decision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision, reason: 'dashboard policy editor action' })
+    })
+      .then((response) => response.json())
+      .then(() => loadSnapshot())
+      .catch((error) => {
+        if (workflowKernelEl) workflowKernelEl.insertAdjacentHTML('beforeend', `<p class="control-tower-error">Policy editor record failed: ${escapeHtml(error)}</p>`);
+      });
   };
 
   const renderOperatorOverview = (data) => {

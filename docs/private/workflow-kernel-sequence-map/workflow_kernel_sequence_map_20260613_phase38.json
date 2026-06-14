@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T03:51:25Z",
-  "current_boundary": "Phase54 has compiled a fail-closed unattended dispatch policy gate and Control Tower live snapshot now exposes workflow-kernel status. The next larger divergence is dry-run scheduler automation versus Control Tower policy editor/approval UI.",
+  "created_at": "2026-06-14T04:21:50Z",
+  "current_boundary": "Phase56 has added an approval-ledger-only Control Tower policy editor and Phase55 has proven scheduled-runner dry-run receipts without sending. The next larger divergence is real cron rollout for dry-run scheduling versus guarded send runner activation authority.",
   "next_ladder": [
     {
-      "authority_needed": "choose cadence, target allowlist, and receipt ledger retention",
-      "name": "Unattended Dry-run Scheduler",
-      "phase": 55,
-      "track": "UNATTENDED_DRY_RUN_SCHEDULER",
-      "why_next": "exercise policy without sending by scheduling dry-run previews only"
+      "authority_needed": "choose real cron cadence and rollback backup scope",
+      "name": "Dry-run Cron Rollout",
+      "phase": 57,
+      "track": "DRY_RUN_CRON_ROLLOUT",
+      "why_next": "turn the dry-run runner into a scheduled no-send proof loop"
     },
     {
-      "authority_needed": "choose UI edit authority, approval roles, and persistence semantics",
-      "name": "Control Tower Policy Editor / Approval UI",
-      "phase": 56,
-      "track": "CONTROL_TOWER_POLICY_EDITOR",
-      "why_next": "let operators review/approve dispatch policy changes from Control Tower"
+      "authority_needed": "decide whether approved policy can activate a guarded manual-send runner",
+      "name": "Guarded Send Runner Activation Packet",
+      "phase": 58,
+      "track": "GUARDED_SEND_RUNNER_ACTIVATION",
+      "why_next": "cross from approvals into controlled send execution authority"
     }
   ],
-  "objective": "梳理 Phase17-54 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase50 单次 Telegram guarded send 已验证，Phase53 live Control Tower snapshot/API 已接入，Phase54 unattended dispatch policy gate 已就绪但保持 disabled/dry-run。",
-  "phase_count": 38,
+  "objective": "梳理 Phase17-56 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase50 单次 Telegram guarded send 已验证，Phase55 dry-run scheduler 已记录 no-send receipt，Phase56 Control Tower policy editor/approval UI 已接入且仅写 approval ledger。",
+  "phase_count": 40,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -562,9 +562,38 @@
       ],
       "phase": 54,
       "status": "policy_gate_ready_disabled"
+    },
+    {
+      "authority": "dry-run receipt only",
+      "depends_on": [
+        54
+      ],
+      "gate": "no cron mutation; no external send",
+      "layer": "dry-run scheduler",
+      "name": "Unattended Dry-run Scheduler",
+      "next_unlocked": [
+        56
+      ],
+      "phase": 55,
+      "status": "dry_run_scheduler_ready"
+    },
+    {
+      "authority": "approval ledger only",
+      "depends_on": [
+        55
+      ],
+      "gate": "no policy activation; no unattended send",
+      "layer": "policy editor",
+      "name": "Control Tower Policy Editor / Approval UI",
+      "next_unlocked": [
+        57,
+        58
+      ],
+      "phase": 56,
+      "status": "approval_ui_ready"
     }
   ],
-  "recommended_next": "Human choice required: Phase55 unattended dry-run scheduler vs Phase56 Control Tower policy editor/approval UI",
+  "recommended_next": "Human choice required: Phase57 dry-run cron rollout vs Phase58 guarded send runner activation packet",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

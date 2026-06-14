@@ -1,0 +1,44 @@
+{
+  "cadence": "daily",
+  "created_at": "2026-06-14T04:15:22Z",
+  "cron_state_mutated": false,
+  "external_side_effects_executed": false,
+  "latest_receipt": {
+    "adapter": "telegram",
+    "blockers": [],
+    "chat_id": "5524172309",
+    "created_at": "2026-06-14T04:15:22Z",
+    "external_side_effects_executed": false,
+    "idempotency_key": "f274078196745bc9962b1e4dcee7e1fe5797dcd4b8f4dccb803f12a42e8edeb6",
+    "mode": "dry_run_preview",
+    "payload_digest": "b7eafb4d4b19eec8fb42083007eb21a1de1d3b5ccc2daa77f7d1de24ba3d278c",
+    "phase": 55,
+    "policy_digest": "ec5d9f01f2b75d0bea722445ecd2250afd60142e26448c9b21a84edd2d5f052f",
+    "policy_version": "20260613.phase54.v1",
+    "purpose": "workflow_kernel_status_smoke",
+    "rate_limit_decision": {
+      "decision": "dry_run_allowed",
+      "per_target_per_day": 3,
+      "per_target_per_hour": 1
+    },
+    "safe_boundaries": [
+      "dry-run receipt only",
+      "no send_message/hermes send invocation",
+      "no credential access",
+      "no cron mutation",
+      "append-only local ledger"
+    ],
+    "schema": "workflow_kernel_unattended_dry_run_receipt_v1",
+    "status": "UNATTENDED_DRY_RUN_RECEIPT_RECORDED",
+    "target_type": "telegram_home_channel",
+    "time_bucket_utc_hour": "20260614T04",
+    "unattended_dispatch_enabled": false,
+    "would_send": false
+  },
+  "next_boundary": "Phase56 Control Tower policy editor / approval UI",
+  "phase": 55,
+  "receipt_ledger": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dry-run-scheduler/unattended_dispatch_dry_run_receipts.jsonl",
+  "report_id": "workflow_kernel_unattended_dry_run_scheduler_20260613_phase55",
+  "status": "UNATTENDED_DRY_RUN_SCHEDULER_READY",
+  "unattended_dispatch_enabled": false
+}

@@ -151,7 +151,31 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["latest_guarded_send"]["message_id"] == "4261"
     assert kernel["control_tower_projection"]["status"] == "CONTROL_TOWER_UI_API_PROJECTION_READY"
     assert kernel["unattended_dispatch_policy"]["unattended_dispatch_enabled"] is False
+    assert kernel["unattended_dry_run_scheduler"]["status"] in {"UNATTENDED_DRY_RUN_SCHEDULER_READY", "not_compiled"}
+    assert kernel["policy_editor"]["status"] == "POLICY_EDITOR_APPROVAL_UI_READY"
     assert kernel["external_side_effects_enabled"] is False
+
+
+def test_workflow_kernel_policy_editor_decision_records_ledger(monkeypatch, tmp_path):
+    paths = {
+        "base": tmp_path,
+        "ledger": tmp_path / "approvals.jsonl",
+        "projection": tmp_path / "projection.json",
+    }
+    monkeypatch.setattr(control_tower, "_workflow_kernel_policy_editor_paths", lambda: paths)
+
+    result = control_tower.record_workflow_kernel_policy_editor_decision(
+        decision="approve_dry_run_only",
+        actor_id="pytest",
+        reason="safe dry-run approval",
+    )
+
+    assert result["status"] == "recorded"
+    assert result["event"]["unattended_dispatch_enabled"] is False
+    assert result["event"]["external_side_effects_executed"] is False
+    assert paths["ledger"].exists()
+    assert "approve_dry_run_only" in paths["ledger"].read_text()
+    assert paths["projection"].exists()
 
 
 def test_snapshot_projects_pending_and_stale_mission_flow_signals(tmp_path, monkeypatch):

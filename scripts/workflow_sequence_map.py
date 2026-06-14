@@ -61,11 +61,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 52, "name": "Control Tower UI/API Projection", "layer": "control tower productization", "status": "ui_api_projection_ready", "depends_on": [50, 51], "authority": "read-only static UI/API projection", "gate": "durable runtime API and unattended dispatch remain separate gates", "next_unlocked": [53]},
     {"phase": 53, "name": "Durable Control Tower Runtime/API Integration", "layer": "live control tower snapshot", "status": "live_snapshot_integration_ready", "depends_on": [52], "authority": "read-only dashboard plugin/API integration", "gate": "operator projection only; no lifecycle mutation", "next_unlocked": [54]},
     {"phase": 54, "name": "Unattended Dispatch Policy Gate", "layer": "dispatch policy", "status": "policy_gate_ready_disabled", "depends_on": [50, 53], "authority": "policy compiler only", "gate": "unattended_dispatch_enabled=false; dry-run preview only", "next_unlocked": [55, 56]},
+    {"phase": 55, "name": "Unattended Dry-run Scheduler", "layer": "dry-run scheduler", "status": "dry_run_scheduler_ready", "depends_on": [54], "authority": "dry-run receipt only", "gate": "no cron mutation; no external send", "next_unlocked": [56]},
+    {"phase": 56, "name": "Control Tower Policy Editor / Approval UI", "layer": "policy editor", "status": "approval_ui_ready", "depends_on": [55], "authority": "approval ledger only", "gate": "no policy activation; no unattended send", "next_unlocked": [57, 58]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 55, "name": "Unattended Dry-run Scheduler", "track": "UNATTENDED_DRY_RUN_SCHEDULER", "authority_needed": "choose cadence, target allowlist, and receipt ledger retention", "why_next": "exercise policy without sending by scheduling dry-run previews only"},
-    {"phase": 56, "name": "Control Tower Policy Editor / Approval UI", "track": "CONTROL_TOWER_POLICY_EDITOR", "authority_needed": "choose UI edit authority, approval roles, and persistence semantics", "why_next": "let operators review/approve dispatch policy changes from Control Tower"},
+    {"phase": 57, "name": "Dry-run Cron Rollout", "track": "DRY_RUN_CRON_ROLLOUT", "authority_needed": "choose real cron cadence and rollback backup scope", "why_next": "turn the dry-run runner into a scheduled no-send proof loop"},
+    {"phase": 58, "name": "Guarded Send Runner Activation Packet", "track": "GUARDED_SEND_RUNNER_ACTIVATION", "authority_needed": "decide whether approved policy can activate a guarded manual-send runner", "why_next": "cross from approvals into controlled send execution authority"},
 ]
 
 
@@ -107,15 +109,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-54 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase50 单次 Telegram guarded send 已验证，Phase53 live Control Tower snapshot/API 已接入，Phase54 unattended dispatch policy gate 已就绪但保持 disabled/dry-run。",
+        "objective": "梳理 Phase17-56 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase50 单次 Telegram guarded send 已验证，Phase55 dry-run scheduler 已记录 no-send receipt，Phase56 Control Tower policy editor/approval UI 已接入且仅写 approval ledger。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase54 has compiled a fail-closed unattended dispatch policy gate and Control Tower live snapshot now exposes workflow-kernel status. The next larger divergence is dry-run scheduler automation versus Control Tower policy editor/approval UI.",
+        "current_boundary": "Phase56 has added an approval-ledger-only Control Tower policy editor and Phase55 has proven scheduled-runner dry-run receipts without sending. The next larger divergence is real cron rollout for dry-run scheduling versus guarded send runner activation authority.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Human choice required: Phase55 unattended dry-run scheduler vs Phase56 Control Tower policy editor/approval UI",
+        "recommended_next": "Human choice required: Phase57 dry-run cron rollout vs Phase58 guarded send runner activation packet",
     }
 
 
