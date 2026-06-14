@@ -1,0 +1,64 @@
+{
+  "backlog_digest": "e60f5ca1a5ad3c469191747b802601213ae92ed08b5f9f543452514324217bfa",
+  "candidate_classes": [
+    "completion_evidence_backlog",
+    "optimization_backlog",
+    "self_healing_candidate"
+  ],
+  "candidate_count": 4,
+  "candidates": [
+    {
+      "class": "self_healing_candidate",
+      "id": "phase-g-runtime-freshness-watchdog",
+      "priority": "P2",
+      "proposal": "add periodic read-only freshness watchdog for provider/gate/projection artifacts",
+      "side_effects": "none",
+      "source": "runtime_readiness",
+      "status": "candidate_only"
+    },
+    {
+      "class": "completion_evidence_backlog",
+      "id": "phase-g-gate-boundary-regression",
+      "priority": "P2",
+      "proposal": "add regression that fail-closed terminal gates stay visible in Control Tower",
+      "side_effects": "none",
+      "source": "remaining_gates",
+      "status": "candidate_only"
+    },
+    {
+      "class": "optimization_backlog",
+      "id": "phase-g-adapter-contract-expansion-playbook",
+      "priority": "P3",
+      "proposal": "turn candidate adapter gate fields into a reusable adapter-specific contract template",
+      "side_effects": "none",
+      "source": "broader_adapter_contract",
+      "status": "candidate_only"
+    },
+    {
+      "class": "optimization_backlog",
+      "id": "phase-g-publication-reopen-dossier-template",
+      "priority": "P3",
+      "proposal": "create exact-target publication reopen dossier template for future human decision",
+      "side_effects": "none",
+      "source": "publication_terminal",
+      "status": "candidate_only"
+    }
+  ],
+  "checks": {
+    "candidate_only": true,
+    "no_executor_enablement": true,
+    "no_external_side_effects": true,
+    "no_taskpool_enqueue": true,
+    "sources_present": true
+  },
+  "created_at": "2026-06-14T18:03:05Z",
+  "executor_enabled": false,
+  "external_side_effects_executed": false,
+  "missing_sources": [],
+  "mission_mutated": false,
+  "projection_policy": "read_only_candidates_no_enqueue_no_executor_enablement",
+  "read_only": true,
+  "schema": "workflow_kernel_phase_g_optimization_backlog_v1",
+  "status": "PHASE_G_OPTIMIZATION_BACKLOG_READY",
+  "taskpool_mutated": false
+}

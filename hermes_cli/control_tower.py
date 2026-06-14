@@ -6292,6 +6292,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     post_auto_enable_path = root / "docs/private/workflow-kernel-post-auto-enable-observation/workflow_kernel_post_auto_enable_observation_20260613_phase46.json"
     broader_adapter_contract_path = root / "docs/private/workflow-kernel-broader-adapter-operation-contract/workflow_kernel_broader_adapter_operation_contract_20260615.json"
     remaining_gates_terminal_index_path = root / "docs/private/workflow-kernel-remaining-gates-terminal-index/workflow_kernel_remaining_gates_terminal_index_20260615.json"
+    phase_g_optimization_backlog_path = root / "docs/private/workflow-kernel-phase-g-optimization-backlog/workflow_kernel_phase_g_optimization_backlog_20260615.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6355,6 +6356,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         post_auto_enable_observation = json.loads(post_auto_enable_path.read_text()) if post_auto_enable_path.exists() else None
         broader_adapter_contract = json.loads(broader_adapter_contract_path.read_text()) if broader_adapter_contract_path.exists() else None
         remaining_gates_terminal_index = json.loads(remaining_gates_terminal_index_path.read_text()) if remaining_gates_terminal_index_path.exists() else None
+        phase_g_optimization_backlog = json.loads(phase_g_optimization_backlog_path.read_text()) if phase_g_optimization_backlog_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6728,6 +6730,19 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "external_side_effects_executed": (remaining_gates_terminal_index or {}).get("external_side_effects_executed", False),
             "unattended_dispatch_enabled": (remaining_gates_terminal_index or {}).get("unattended_dispatch_enabled", False),
             "publication_apply_enabled": (remaining_gates_terminal_index or {}).get("publication_apply_enabled", False),
+        },
+        "phase_g_optimization_backlog": {
+            "status": (phase_g_optimization_backlog or {}).get("status", "not_ready"),
+            "projection_policy": (phase_g_optimization_backlog or {}).get("projection_policy"),
+            "backlog_digest": (phase_g_optimization_backlog or {}).get("backlog_digest"),
+            "candidate_count": (phase_g_optimization_backlog or {}).get("candidate_count", 0),
+            "candidate_classes": (phase_g_optimization_backlog or {}).get("candidate_classes", []),
+            "checks": (phase_g_optimization_backlog or {}).get("checks", {}),
+            "read_only": (phase_g_optimization_backlog or {}).get("read_only", True),
+            "taskpool_mutated": (phase_g_optimization_backlog or {}).get("taskpool_mutated", False),
+            "mission_mutated": (phase_g_optimization_backlog or {}).get("mission_mutated", False),
+            "executor_enabled": (phase_g_optimization_backlog or {}).get("executor_enabled", False),
+            "external_side_effects_executed": (phase_g_optimization_backlog or {}).get("external_side_effects_executed", False),
         },
         "blockers": blockers,
         "external_side_effects_enabled": False,

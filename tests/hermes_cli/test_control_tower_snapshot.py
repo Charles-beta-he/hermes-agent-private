@@ -204,6 +204,15 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["remaining_gates_terminal_index"]["external_side_effects_executed"] is False
     assert kernel["remaining_gates_terminal_index"]["unattended_dispatch_enabled"] is False
     assert kernel["remaining_gates_terminal_index"]["publication_apply_enabled"] is False
+    assert kernel["phase_g_optimization_backlog"]["status"] in {"PHASE_G_OPTIMIZATION_BACKLOG_READY", "PHASE_G_OPTIMIZATION_BACKLOG_DEGRADED", "not_ready"}
+    assert kernel["phase_g_optimization_backlog"]["read_only"] is True
+    assert kernel["phase_g_optimization_backlog"]["taskpool_mutated"] is False
+    assert kernel["phase_g_optimization_backlog"]["mission_mutated"] is False
+    assert kernel["phase_g_optimization_backlog"]["executor_enabled"] is False
+    assert kernel["phase_g_optimization_backlog"]["external_side_effects_executed"] is False
+    if kernel["phase_g_optimization_backlog"]["status"] == "PHASE_G_OPTIMIZATION_BACKLOG_READY":
+        assert kernel["phase_g_optimization_backlog"]["candidate_count"] >= 4
+        assert "optimization_backlog" in kernel["phase_g_optimization_backlog"]["candidate_classes"]
     assert kernel["external_side_effects_enabled"] is False
 
 
