@@ -1,0 +1,27 @@
+{
+  "properties": {
+    "operator_reason": {
+      "type": "string"
+    },
+    "option": {
+      "enum": [
+        "A_KEEP_PRIVATE_NO_PUBLICATION",
+        "B_PREPARE_REDACTED_INTERNAL_SUMMARY",
+        "C_PUBLISH_TO_EXTERNAL_TARGET"
+      ]
+    },
+    "payload": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "option",
+    "target",
+    "payload",
+    "operator_reason"
+  ],
+  "type": "object"
+}

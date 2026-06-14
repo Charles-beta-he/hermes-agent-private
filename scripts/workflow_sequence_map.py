@@ -75,11 +75,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 66, "name": "Future Unattended Apply Reopen Packet", "layer": "future reopen packet", "status": "future_reopen_packet_ready_disabled", "depends_on": [65], "authority": "packet only", "gate": "reopen_apply_enabled=false; selected_option=null", "next_unlocked": [67]},
     {"phase": 67, "name": "Single-point Reopen Implementation Choice", "layer": "single implementation point choice", "status": "keep_closed_choice_recorded", "depends_on": [66], "authority": "record-only safe default", "gate": "choice=A_NO_REOPEN_KEEP_MANUAL_ONLY; no apply", "next_unlocked": [68]},
     {"phase": 68, "name": "Manual-only Governance Archive", "layer": "archive", "status": "manual_only_governance_archive_ready", "depends_on": [67], "authority": "read-only archive", "gate": "archive/index only; no mutation", "next_unlocked": [69]},
+    {"phase": 69, "name": "Periodic Closure Health Report", "layer": "stage report", "status": "periodic_closure_health_clear", "depends_on": [68], "authority": "read-only report", "gate": "stage_report_only=true; no publication", "next_unlocked": [70]},
+    {"phase": 70, "name": "Governance Archive Index Publication Packet", "layer": "publication packet", "status": "archive_publication_packet_ready", "depends_on": [69], "authority": "packet only", "gate": "publication_apply_enabled=false; private default", "next_unlocked": [71]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 69, "name": "Periodic Closure Health Report", "track": "PERIODIC_CLOSURE_HEALTH", "authority_needed": "read-only periodic report over archived manual-only invariants", "why_next": "stage-only reporting without reopening applies"},
-    {"phase": 70, "name": "Governance Archive Index Publication Packet", "track": "ARCHIVE_INDEX_PUBLICATION_PACKET", "authority_needed": "packet-only decision before any publication or external delivery", "why_next": "if reports need sharing, keep publication as a separate explicit side-effect point"},
+    {"phase": 71, "name": "Private Archive Retention Watch", "track": "PRIVATE_ARCHIVE_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over private archive", "why_next": "continue stage-report cadence without publication"},
+    {"phase": 72, "name": "Publication Apply Exact-target Gate", "track": "PUBLICATION_APPLY_EXACT_TARGET_GATE", "authority_needed": "fresh exact target/payload/operator authorization before any external publication", "why_next": "external publication remains a separate implementation point"},
 ]
 
 
@@ -121,15 +123,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-68 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase67 已记录 reopen 单点选择为继续关闭，Phase68 已生成 manual-only governance archive；reopen/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-70 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase69 已生成 periodic closure health report，Phase70 已生成 archive publication packet；archive 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase68 has archived the closed manual-only governance ladder. Future work should remain read-only reporting unless a new concrete implementation point is opened.",
+        "current_boundary": "Phase70 has produced a packet-only publication gate while keeping archive private and publication_apply_enabled=false.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Stage-report cadence: Phase69 periodic closure health report; external publication remains a separate packet-only Phase70",
+        "recommended_next": "Stage-report cadence: Phase71 private archive retention watch; Phase72 remains exact-target gate before any publication",
     }
 
 

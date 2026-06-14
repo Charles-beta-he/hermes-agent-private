@@ -6142,6 +6142,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase66_path = root / "docs/private/workflow-kernel-future-unattended-reopen-packet/workflow_kernel_future_unattended_reopen_packet_20260613_phase66.json"
     phase67_path = root / "docs/private/workflow-kernel-single-point-reopen-choice/workflow_kernel_single_point_reopen_choice_20260613_phase67.json"
     phase68_path = root / "docs/private/workflow-kernel-manual-only-governance-archive/workflow_kernel_manual_only_governance_archive_20260613_phase68.json"
+    phase69_path = root / "docs/private/workflow-kernel-periodic-closure-health-report/workflow_kernel_periodic_closure_health_report_20260613_phase69.json"
+    phase70_path = root / "docs/private/workflow-kernel-archive-publication-packet/workflow_kernel_archive_publication_packet_20260613_phase70.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6174,6 +6176,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         future_reopen_packet = json.loads(phase66_path.read_text()) if phase66_path.exists() else None
         single_point_reopen_choice = json.loads(phase67_path.read_text()) if phase67_path.exists() else None
         manual_governance_archive = json.loads(phase68_path.read_text()) if phase68_path.exists() else None
+        periodic_closure_health = json.loads(phase69_path.read_text()) if phase69_path.exists() else None
+        archive_publication_packet = json.loads(phase70_path.read_text()) if phase70_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6315,10 +6319,27 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "read_only": (manual_governance_archive or {}).get("read_only"),
             "unattended_dispatch_enabled": (manual_governance_archive or {}).get("unattended_dispatch_enabled"),
         },
+        "periodic_closure_health_report": {
+            "status": (periodic_closure_health or {}).get("status", "not_ready"),
+            "health": (periodic_closure_health or {}).get("health"),
+            "health_digest": (periodic_closure_health or {}).get("health_digest"),
+            "stage_report_only": (periodic_closure_health or {}).get("stage_report_only"),
+            "read_only": (periodic_closure_health or {}).get("read_only"),
+            "unattended_dispatch_enabled": (periodic_closure_health or {}).get("unattended_dispatch_enabled"),
+        },
+        "archive_publication_packet": {
+            "status": (archive_publication_packet or {}).get("status", "not_ready"),
+            "packet_digest": (archive_publication_packet or {}).get("packet_digest"),
+            "recommended_default": (archive_publication_packet or {}).get("recommended_default"),
+            "selected_option": (archive_publication_packet or {}).get("selected_option"),
+            "packet_only": (archive_publication_packet or {}).get("packet_only"),
+            "publication_apply_enabled": (archive_publication_packet or {}).get("publication_apply_enabled"),
+            "external_publication_enabled": (archive_publication_packet or {}).get("external_publication_enabled"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase68 archive: staged report complete; future work should remain no-apply unless a new concrete implementation point is opened",
+        "next_boundary": "post-Phase70 packet: archive remains private; external publication requires a future exact target/payload apply phase",
     }
 
 

@@ -56,10 +56,12 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 66: Future Unattended Apply Reopen Packet — layer=`future reopen packet`, gate=`reopen_apply_enabled=false; selected_option=null`
 - Phase 67: Single-point Reopen Implementation Choice — layer=`single implementation point choice`, gate=`choice=A_NO_REOPEN_KEEP_MANUAL_ONLY; no apply`
 - Phase 68: Manual-only Governance Archive — layer=`archive`, gate=`archive/index only; no mutation`
+- Phase 69: Periodic Closure Health Report — layer=`stage report`, gate=`stage_report_only=true; no publication`
+- Phase 70: Governance Archive Index Publication Packet — layer=`publication packet`, gate=`publication_apply_enabled=false; private default`
 
 ## Next ladder
-- Phase 69: Periodic Closure Health Report — track=`PERIODIC_CLOSURE_HEALTH`, authority=`read-only periodic report over archived manual-only invariants`
-- Phase 70: Governance Archive Index Publication Packet — track=`ARCHIVE_INDEX_PUBLICATION_PACKET`, authority=`packet-only decision before any publication or external delivery`
+- Phase 71: Private Archive Retention Watch — track=`PRIVATE_ARCHIVE_RETENTION_WATCH`, authority=`read-only retention/drift watch over private archive`
+- Phase 72: Publication Apply Exact-target Gate — track=`PUBLICATION_APPLY_EXACT_TARGET_GATE`, authority=`fresh exact target/payload/operator authorization before any external publication`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence

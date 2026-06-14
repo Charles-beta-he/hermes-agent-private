@@ -1,0 +1,51 @@
+{
+  "blockers": [],
+  "checks": {
+    "archive_read_only": true,
+    "archive_ready": true,
+    "choice_keep_closed": true,
+    "monitoring_clear": true,
+    "monitoring_no_drift": true,
+    "sequence_phase68_or_later": true
+  },
+  "created_at": "2026-06-14T09:31:25Z",
+  "cron_state_mutated": false,
+  "external_side_effects_executed": false,
+  "health": "clear",
+  "health_digest": "83fbdb46210c2e99e96b539d28c5072b81218d3c405c9c6b9bcb7499b6cd6229",
+  "input_refs": [
+    {
+      "name": "archive",
+      "path": "docs/private/workflow-kernel-manual-only-governance-archive/workflow_kernel_manual_only_governance_archive_20260613_phase68.json",
+      "sha256": "c8adad509939cbcad2555173e99ea344fa4313581203a7dc2c9e0eb7d80fedd8",
+      "status": "MANUAL_ONLY_GOVERNANCE_ARCHIVE_READY"
+    },
+    {
+      "name": "monitoring",
+      "path": "docs/private/workflow-kernel-manual-only-monitoring/workflow_kernel_manual_only_monitoring_20260613_phase65.json",
+      "sha256": "0c777ab045eaaea4841784bd25cf413af0ec3d913e058b66ddc10048e98c7469",
+      "status": "MANUAL_ONLY_MONITORING_CLEAR"
+    },
+    {
+      "name": "choice",
+      "path": "docs/private/workflow-kernel-single-point-reopen-choice/workflow_kernel_single_point_reopen_choice_20260613_phase67.json",
+      "sha256": "f66c88783ebc006961c468c6dfd34293117455782a444d7402ffb83d61b4fc6b",
+      "status": "SINGLE_POINT_REOPEN_CHOICE_RECORDED"
+    },
+    {
+      "name": "sequence",
+      "path": "docs/private/workflow-kernel-sequence-map/workflow_kernel_sequence_map_20260613_phase38.json",
+      "sha256": "461f81fc9143205a5d4aee511350fc5ba2cb23e1a8e46b0c7e03989c03dc4616",
+      "status": "WORKFLOW_SEQUENCE_MAP_READY"
+    }
+  ],
+  "message_sent": false,
+  "next_boundary": "Phase70 archive publication packet remains packet-only",
+  "phase": 69,
+  "read_only": true,
+  "reopen_apply_enabled": false,
+  "schema": "workflow_kernel_periodic_closure_health_report_v1",
+  "stage_report_only": true,
+  "status": "PERIODIC_CLOSURE_HEALTH_REPORT_CLEAR",
+  "unattended_dispatch_enabled": false
+}

@@ -165,6 +165,8 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["future_unattended_reopen_packet"]["status"] in {"FUTURE_UNATTENDED_REOPEN_PACKET_READY", "not_ready"}
     assert kernel["single_point_reopen_choice"]["status"] in {"SINGLE_POINT_REOPEN_CHOICE_RECORDED", "not_ready"}
     assert kernel["manual_only_governance_archive"]["status"] in {"MANUAL_ONLY_GOVERNANCE_ARCHIVE_READY", "not_ready"}
+    assert kernel["periodic_closure_health_report"]["status"] in {"PERIODIC_CLOSURE_HEALTH_REPORT_CLEAR", "PERIODIC_CLOSURE_HEALTH_REPORT_DEGRADED", "not_ready"}
+    assert kernel["archive_publication_packet"]["status"] in {"ARCHIVE_PUBLICATION_PACKET_READY", "ARCHIVE_PUBLICATION_PACKET_BLOCKED", "not_ready"}
     assert kernel["external_side_effects_enabled"] is False
 
 

@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T09:05:43Z",
-  "current_boundary": "Phase68 has archived the closed manual-only governance ladder. Future work should remain read-only reporting unless a new concrete implementation point is opened.",
+  "created_at": "2026-06-14T09:34:49Z",
+  "current_boundary": "Phase70 has produced a packet-only publication gate while keeping archive private and publication_apply_enabled=false.",
   "next_ladder": [
     {
-      "authority_needed": "read-only periodic report over archived manual-only invariants",
-      "name": "Periodic Closure Health Report",
-      "phase": 69,
-      "track": "PERIODIC_CLOSURE_HEALTH",
-      "why_next": "stage-only reporting without reopening applies"
+      "authority_needed": "read-only retention/drift watch over private archive",
+      "name": "Private Archive Retention Watch",
+      "phase": 71,
+      "track": "PRIVATE_ARCHIVE_RETENTION_WATCH",
+      "why_next": "continue stage-report cadence without publication"
     },
     {
-      "authority_needed": "packet-only decision before any publication or external delivery",
-      "name": "Governance Archive Index Publication Packet",
-      "phase": 70,
-      "track": "ARCHIVE_INDEX_PUBLICATION_PACKET",
-      "why_next": "if reports need sharing, keep publication as a separate explicit side-effect point"
+      "authority_needed": "fresh exact target/payload/operator authorization before any external publication",
+      "name": "Publication Apply Exact-target Gate",
+      "phase": 72,
+      "track": "PUBLICATION_APPLY_EXACT_TARGET_GATE",
+      "why_next": "external publication remains a separate implementation point"
     }
   ],
-  "objective": "梳理 Phase17-68 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase67 已记录 reopen 单点选择为继续关闭，Phase68 已生成 manual-only governance archive；reopen/apply/unattended/repeated dispatch 仍关闭、无新外发。",
-  "phase_count": 52,
+  "objective": "梳理 Phase17-70 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase69 已生成 periodic closure health report，Phase70 已生成 archive publication packet；archive 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+  "phase_count": 54,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -758,9 +758,37 @@
       ],
       "phase": 68,
       "status": "manual_only_governance_archive_ready"
+    },
+    {
+      "authority": "read-only report",
+      "depends_on": [
+        68
+      ],
+      "gate": "stage_report_only=true; no publication",
+      "layer": "stage report",
+      "name": "Periodic Closure Health Report",
+      "next_unlocked": [
+        70
+      ],
+      "phase": 69,
+      "status": "periodic_closure_health_clear"
+    },
+    {
+      "authority": "packet only",
+      "depends_on": [
+        69
+      ],
+      "gate": "publication_apply_enabled=false; private default",
+      "layer": "publication packet",
+      "name": "Governance Archive Index Publication Packet",
+      "next_unlocked": [
+        71
+      ],
+      "phase": 70,
+      "status": "archive_publication_packet_ready"
     }
   ],
-  "recommended_next": "Stage-report cadence: Phase69 periodic closure health report; external publication remains a separate packet-only Phase70",
+  "recommended_next": "Stage-report cadence: Phase71 private archive retention watch; Phase72 remains exact-target gate before any publication",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

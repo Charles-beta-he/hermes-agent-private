@@ -147,6 +147,10 @@ def test_control_tower_dashboard_renders_workflow_kernel_projection_panel():
     assert "manual_only_governance_archive" in script
     assert "Single-point reopen choice" in script
     assert "Governance archive" in script
+    assert "periodic_closure_health_report" in script
+    assert "archive_publication_packet" in script
+    assert "Closure health report" in script
+    assert "Archive publication packet" in script
     assert "Pack, guarded send, and dispatch policy" in script
     assert "Latest guarded send" not in script  # keep wording in static Phase52 page only
     assert "control-tower-workflow-kernel-card" in style
