@@ -199,6 +199,11 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     if kernel["broader_adapter_operation_contract"]["status"] == "BROADER_ADAPTER_OPERATION_CONTRACT_READY":
         assert kernel["broader_adapter_operation_contract"]["global_invariants"]["external_side_effects_enabled"] is False
         assert kernel["broader_adapter_operation_contract"]["global_invariants"]["no_generic_adapter_write_through"] is True
+    assert kernel["remaining_gates_terminal_index"]["status"] in {"REMAINING_GATES_TERMINAL_INDEX_READY", "REMAINING_GATES_TERMINAL_INDEX_DEGRADED", "not_ready"}
+    assert kernel["remaining_gates_terminal_index"]["read_only"] is True
+    assert kernel["remaining_gates_terminal_index"]["external_side_effects_executed"] is False
+    assert kernel["remaining_gates_terminal_index"]["unattended_dispatch_enabled"] is False
+    assert kernel["remaining_gates_terminal_index"]["publication_apply_enabled"] is False
     assert kernel["external_side_effects_enabled"] is False
 
 

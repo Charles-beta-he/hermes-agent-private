@@ -1,0 +1,36 @@
+{
+  "checks": {
+    "broader_adapter_fail_closed": true,
+    "future_unattended_reopen_packet_only": true,
+    "manual_monitoring_clear": true,
+    "manual_only_closed": true,
+    "publication_terminal_closed": true
+  },
+  "created_at": "2026-06-14T17:59:22Z",
+  "external_side_effects_executed": false,
+  "index_digest": "fa7f8b079dab8476f9feff6e9fe535b5725486265980080e34ef129976bdc06d",
+  "index_policy": "read_only_terminal_index_no_apply_no_unattended_no_generic_adapter_write",
+  "missing_artifacts": [],
+  "publication_apply_enabled": false,
+  "read_only": true,
+  "schema": "workflow_kernel_remaining_gates_terminal_index_v1",
+  "status": "REMAINING_GATES_TERMINAL_INDEX_READY",
+  "terminal_gates": {
+    "broader_adapter_operations": {
+      "enabled": false,
+      "reopen_requires": "adapter-specific contract + exact operation target",
+      "state": "fail_closed_contract_only"
+    },
+    "publication_apply": {
+      "enabled": false,
+      "reopen_requires": "human exact target + payload digest + rollback + blast-radius choice",
+      "state": "closed_no_apply_human_gated_reopen_only"
+    },
+    "unattended_dispatch": {
+      "enabled": false,
+      "reopen_requires": "fresh human decision + exact target/payload/idempotency/rollback",
+      "state": "manual_only"
+    }
+  },
+  "unattended_dispatch_enabled": false
+}
