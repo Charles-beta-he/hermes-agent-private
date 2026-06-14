@@ -91,11 +91,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 82, "name": "Publication Export Review Packet", "layer": "export review packet", "status": "publication_export_review_packet_ready", "depends_on": [81], "authority": "packet only", "gate": "recommended_default=A_REVIEW_PRIVATE_ARCHIVE_ONLY; apply disabled", "next_unlocked": [83]},
     {"phase": 83, "name": "Publication Export Review Retention Watch", "layer": "export review retention", "status": "publication_export_review_retention_clear", "depends_on": [82], "authority": "read-only watch", "gate": "drift=[]; packet_only=true; apply disabled", "next_unlocked": [84]},
     {"phase": 84, "name": "Publication Apply Final Boundary Packet", "layer": "final boundary packet", "status": "publication_apply_final_boundary_packet_ready", "depends_on": [83], "authority": "packet only", "gate": "recommended_default=A_STOP_AT_PRIVATE_REVIEW; apply disabled", "next_unlocked": [85]},
+    {"phase": 85, "name": "Publication Final Boundary Retention Watch", "layer": "final boundary retention", "status": "publication_final_boundary_retention_clear", "depends_on": [84], "authority": "read-only watch", "gate": "drift=[]; apply disabled", "next_unlocked": [86]},
+    {"phase": 86, "name": "Publication Governance Closure Summary", "layer": "governance closure", "status": "publication_governance_closure_summary_ready", "depends_on": [85], "authority": "read-only summary", "gate": "summary_only=true; apply disabled", "next_unlocked": [87]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 85, "name": "Publication Final Boundary Retention Watch", "track": "PUBLICATION_FINAL_BOUNDARY_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over final boundary packet", "why_next": "verify final boundary remains fail-closed"},
-    {"phase": 86, "name": "Publication Governance Closure Summary", "track": "PUBLICATION_GOVERNANCE_CLOSURE_SUMMARY", "authority_needed": "read-only closure summary; no publication", "why_next": "summarize governance closure evidence"},
+    {"phase": 87, "name": "Publication Closure Retention Watch", "track": "PUBLICATION_CLOSURE_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over closure summary", "why_next": "verify closed governance remains stable"},
+    {"phase": 88, "name": "Publication Apply Reopen Human Gate Packet", "track": "PUBLICATION_APPLY_REOPEN_HUMAN_GATE_PACKET", "authority_needed": "packet only; no apply without human exact target", "why_next": "formalize future human-gated reopen"},
 ]
 
 
@@ -137,15 +139,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-84 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase83 已完成 publication export review retention watch，Phase84 已生成 final boundary packet；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-86 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase85 已完成 final boundary retention watch，Phase86 已生成 governance closure summary；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase84 has produced the final fail-closed boundary packet while keeping publication_apply_enabled=false and selected_option=null.",
+        "current_boundary": "Phase86 has produced a read-only governance closure summary while keeping publication_apply_enabled=false.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Stage-report cadence: Phase85 final boundary retention watch; Phase86 governance closure summary remains read-only",
+        "recommended_next": "Stage-report cadence: Phase87 closure retention watch; Phase88 reopen human-gate packet remains packet-only",
     }
 
 

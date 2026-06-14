@@ -181,6 +181,8 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["publication_export_review_packet"]["status"] in {"PUBLICATION_EXPORT_REVIEW_PACKET_READY", "PUBLICATION_EXPORT_REVIEW_PACKET_BLOCKED", "not_ready"}
     assert kernel["publication_export_review_retention_watch"]["status"] in {"PUBLICATION_EXPORT_REVIEW_RETENTION_WATCH_CLEAR", "PUBLICATION_EXPORT_REVIEW_RETENTION_WATCH_DRIFT", "not_ready"}
     assert kernel["publication_apply_final_boundary_packet"]["status"] in {"PUBLICATION_APPLY_FINAL_BOUNDARY_PACKET_READY", "PUBLICATION_APPLY_FINAL_BOUNDARY_PACKET_BLOCKED", "not_ready"}
+    assert kernel["publication_final_boundary_retention_watch"]["status"] in {"PUBLICATION_FINAL_BOUNDARY_RETENTION_WATCH_CLEAR", "PUBLICATION_FINAL_BOUNDARY_RETENTION_WATCH_DRIFT", "not_ready"}
+    assert kernel["publication_governance_closure_summary"]["status"] in {"PUBLICATION_GOVERNANCE_CLOSURE_SUMMARY_READY", "PUBLICATION_GOVERNANCE_CLOSURE_SUMMARY_DEGRADED", "not_ready"}
     assert kernel["external_side_effects_enabled"] is False
 
 

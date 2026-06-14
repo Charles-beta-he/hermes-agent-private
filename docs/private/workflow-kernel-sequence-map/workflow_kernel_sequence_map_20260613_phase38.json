@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T16:28:50Z",
-  "current_boundary": "Phase84 has produced the final fail-closed boundary packet while keeping publication_apply_enabled=false and selected_option=null.",
+  "created_at": "2026-06-14T16:35:29Z",
+  "current_boundary": "Phase86 has produced a read-only governance closure summary while keeping publication_apply_enabled=false.",
   "next_ladder": [
     {
-      "authority_needed": "read-only retention/drift watch over final boundary packet",
-      "name": "Publication Final Boundary Retention Watch",
-      "phase": 85,
-      "track": "PUBLICATION_FINAL_BOUNDARY_RETENTION_WATCH",
-      "why_next": "verify final boundary remains fail-closed"
+      "authority_needed": "read-only retention/drift watch over closure summary",
+      "name": "Publication Closure Retention Watch",
+      "phase": 87,
+      "track": "PUBLICATION_CLOSURE_RETENTION_WATCH",
+      "why_next": "verify closed governance remains stable"
     },
     {
-      "authority_needed": "read-only closure summary; no publication",
-      "name": "Publication Governance Closure Summary",
-      "phase": 86,
-      "track": "PUBLICATION_GOVERNANCE_CLOSURE_SUMMARY",
-      "why_next": "summarize governance closure evidence"
+      "authority_needed": "packet only; no apply without human exact target",
+      "name": "Publication Apply Reopen Human Gate Packet",
+      "phase": 88,
+      "track": "PUBLICATION_APPLY_REOPEN_HUMAN_GATE_PACKET",
+      "why_next": "formalize future human-gated reopen"
     }
   ],
-  "objective": "梳理 Phase17-84 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase83 已完成 publication export review retention watch，Phase84 已生成 final boundary packet；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
-  "phase_count": 68,
+  "objective": "梳理 Phase17-86 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase85 已完成 final boundary retention watch，Phase86 已生成 governance closure summary；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+  "phase_count": 70,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -982,9 +982,37 @@
       ],
       "phase": 84,
       "status": "publication_apply_final_boundary_packet_ready"
+    },
+    {
+      "authority": "read-only watch",
+      "depends_on": [
+        84
+      ],
+      "gate": "drift=[]; apply disabled",
+      "layer": "final boundary retention",
+      "name": "Publication Final Boundary Retention Watch",
+      "next_unlocked": [
+        86
+      ],
+      "phase": 85,
+      "status": "publication_final_boundary_retention_clear"
+    },
+    {
+      "authority": "read-only summary",
+      "depends_on": [
+        85
+      ],
+      "gate": "summary_only=true; apply disabled",
+      "layer": "governance closure",
+      "name": "Publication Governance Closure Summary",
+      "next_unlocked": [
+        87
+      ],
+      "phase": 86,
+      "status": "publication_governance_closure_summary_ready"
     }
   ],
-  "recommended_next": "Stage-report cadence: Phase85 final boundary retention watch; Phase86 governance closure summary remains read-only",
+  "recommended_next": "Stage-report cadence: Phase87 closure retention watch; Phase88 reopen human-gate packet remains packet-only",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",
