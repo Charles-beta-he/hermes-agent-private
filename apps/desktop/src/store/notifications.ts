@@ -33,6 +33,11 @@ interface NotificationInput {
 
 let notificationCounter = 0
 const timers = new Map<string, number>()
+let cachedNotificationSoundDataUrl: string | null | undefined
+let notificationSoundLoad: Promise<string | null> | null = null
+let lastNotificationSoundAt = 0
+
+const DEFAULT_NOTIFICATION_SOUND_PATH = ''
 
 export const $notifications = atom<AppNotification[]>([])
 
@@ -100,6 +105,68 @@ function readableError(error: unknown, fallback: string): { message: string; det
   return { message: summary, detail: detail === summary ? undefined : detail }
 }
 
+function configuredNotificationSoundPath(config: unknown): string {
+  if (!config || typeof config !== 'object') {
+    return DEFAULT_NOTIFICATION_SOUND_PATH
+  }
+  const desktop = (config as { desktop?: unknown }).desktop
+  if (!desktop || typeof desktop !== 'object') {
+    return DEFAULT_NOTIFICATION_SOUND_PATH
+  }
+  const value = (desktop as { notification_sound?: unknown }).notification_sound
+  return typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_NOTIFICATION_SOUND_PATH
+}
+
+async function loadNotificationSoundDataUrl(): Promise<string | null> {
+  if (cachedNotificationSoundDataUrl !== undefined) {
+    return cachedNotificationSoundDataUrl
+  }
+  if (notificationSoundLoad) {
+    return notificationSoundLoad
+  }
+  const desktop = window.hermesDesktop
+  if (!desktop?.readFileDataUrl || !desktop?.api) {
+    cachedNotificationSoundDataUrl = null
+    return null
+  }
+  notificationSoundLoad = desktop
+    .api<unknown>({ path: '/api/config' })
+    .then(config => {
+      const soundPath = configuredNotificationSoundPath(config)
+      return soundPath ? desktop.readFileDataUrl(soundPath) : null
+    })
+    .then(dataUrl => {
+      cachedNotificationSoundDataUrl = dataUrl
+      return dataUrl
+    })
+    .catch(() => {
+      cachedNotificationSoundDataUrl = null
+      return null
+    })
+    .finally(() => {
+      notificationSoundLoad = null
+    })
+  return notificationSoundLoad
+}
+
+async function playNotificationSound(kind: NotificationKind): Promise<void> {
+  if (kind === 'error') {
+    return
+  }
+  const now = Date.now()
+  if (now - lastNotificationSoundAt < 1_200) {
+    return
+  }
+  lastNotificationSoundAt = now
+  const dataUrl = await loadNotificationSoundDataUrl()
+  if (!dataUrl) {
+    return
+  }
+  const audio = new Audio(dataUrl)
+  audio.volume = 0.72
+  await audio.play()
+}
+
 export function notify(input: NotificationInput): string {
   const kind = input.kind ?? 'info'
   const id = input.id ?? `${Date.now()}-${notificationCounter++}`
@@ -118,6 +185,7 @@ export function notify(input: NotificationInput): string {
   window.clearTimeout(timers.get(id))
   timers.delete(id)
   $notifications.set([notification, ...$notifications.get().filter(item => item.id !== id)].slice(0, 4))
+  void playNotificationSound(kind).catch(() => undefined)
 
   const duration = input.durationMs ?? defaultDuration(kind)
 
