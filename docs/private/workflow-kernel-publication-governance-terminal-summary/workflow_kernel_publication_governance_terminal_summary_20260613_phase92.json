@@ -1,0 +1,38 @@
+{
+  "apply_drift": [],
+  "created_at": "2026-06-14T17:10:42Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "item_count": 2,
+  "items": [
+    {
+      "name": "phase90_final_index",
+      "path": "docs/private/workflow-kernel-publication-governance-final-index/workflow_kernel_publication_governance_final_index_20260613_phase90.json",
+      "publication_apply_enabled": false,
+      "sha256": "213b2d570b9de5fabb8fb362faa0b038c4cefa637d5b14a8981f95c0d791ff93",
+      "status": "PUBLICATION_GOVERNANCE_FINAL_INDEX_READY"
+    },
+    {
+      "name": "phase91_final_index_retention",
+      "path": "docs/private/workflow-kernel-publication-final-index-retention-watch/workflow_kernel_publication_final_index_retention_watch_20260613_phase91.json",
+      "publication_apply_enabled": false,
+      "sha256": "85155679e20b44b6fe956902c98bda4e37b819028390de05784e2905062e3ba8",
+      "status": "PUBLICATION_FINAL_INDEX_RETENTION_WATCH_CLEAR"
+    }
+  ],
+  "message_sent": false,
+  "missing": [],
+  "next_boundary": "Terminal publication governance summary complete; future real apply requires explicit human exact target/payload/rollback",
+  "phase": 92,
+  "publication_apply_enabled": false,
+  "read_only": true,
+  "schema": "workflow_kernel_publication_governance_terminal_summary_v1",
+  "status": "PUBLICATION_GOVERNANCE_TERMINAL_SUMMARY_READY",
+  "summary_digest": "fdf8ebf88dcc4d887079a99eb119b4a6264106393ecc9da3ab82f11b02eb5685",
+  "summary_policy": "read_only_terminal_summary_closed_no_apply",
+  "terminal_state": "closed_no_apply_human_gated_reopen_only",
+  "terminal_summary_only": true,
+  "unattended_dispatch_enabled": false
+}

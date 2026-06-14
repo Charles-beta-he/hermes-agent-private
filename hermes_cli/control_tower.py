@@ -6164,6 +6164,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase88_path = root / "docs/private/workflow-kernel-publication-apply-reopen-human-gate-packet/workflow_kernel_publication_apply_reopen_human_gate_packet_20260613_phase88.json"
     phase89_path = root / "docs/private/workflow-kernel-publication-human-gate-retention-watch/workflow_kernel_publication_human_gate_retention_watch_20260613_phase89.json"
     phase90_path = root / "docs/private/workflow-kernel-publication-governance-final-index/workflow_kernel_publication_governance_final_index_20260613_phase90.json"
+    phase91_path = root / "docs/private/workflow-kernel-publication-final-index-retention-watch/workflow_kernel_publication_final_index_retention_watch_20260613_phase91.json"
+    phase92_path = root / "docs/private/workflow-kernel-publication-governance-terminal-summary/workflow_kernel_publication_governance_terminal_summary_20260613_phase92.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6218,6 +6220,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         publication_apply_reopen_human_gate_packet = json.loads(phase88_path.read_text()) if phase88_path.exists() else None
         publication_human_gate_retention_watch = json.loads(phase89_path.read_text()) if phase89_path.exists() else None
         publication_governance_final_index = json.loads(phase90_path.read_text()) if phase90_path.exists() else None
+        publication_final_index_retention_watch = json.loads(phase91_path.read_text()) if phase91_path.exists() else None
+        publication_governance_terminal_summary = json.loads(phase92_path.read_text()) if phase92_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6541,10 +6545,26 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "read_only": (publication_governance_final_index or {}).get("read_only"),
             "publication_apply_enabled": (publication_governance_final_index or {}).get("publication_apply_enabled"),
         },
+        "publication_final_index_retention_watch": {
+            "status": (publication_final_index_retention_watch or {}).get("status", "not_ready"),
+            "retention_digest": (publication_final_index_retention_watch or {}).get("retention_digest"),
+            "retention_policy": (publication_final_index_retention_watch or {}).get("retention_policy"),
+            "drift": (publication_final_index_retention_watch or {}).get("drift", []),
+            "read_only": (publication_final_index_retention_watch or {}).get("read_only"),
+            "publication_apply_enabled": (publication_final_index_retention_watch or {}).get("publication_apply_enabled"),
+        },
+        "publication_governance_terminal_summary": {
+            "status": (publication_governance_terminal_summary or {}).get("status", "not_ready"),
+            "summary_digest": (publication_governance_terminal_summary or {}).get("summary_digest"),
+            "summary_policy": (publication_governance_terminal_summary or {}).get("summary_policy"),
+            "terminal_state": (publication_governance_terminal_summary or {}).get("terminal_state"),
+            "read_only": (publication_governance_terminal_summary or {}).get("read_only"),
+            "publication_apply_enabled": (publication_governance_terminal_summary or {}).get("publication_apply_enabled"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase90 final index: publication governance remains closed/no-apply; future work stays read-only unless human supplies exact target/payload/rollback",
+        "next_boundary": "post-Phase92 terminal summary: publication governance terminal state is closed/no-apply; any real reopen requires human exact target/payload/rollback",
     }
 
 

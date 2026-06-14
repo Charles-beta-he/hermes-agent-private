@@ -299,6 +299,8 @@
     const reopenHumanGate = kernel.publication_apply_reopen_human_gate_packet || {};
     const humanGateRetention = kernel.publication_human_gate_retention_watch || {};
     const governanceFinalIndex = kernel.publication_governance_final_index || {};
+    const finalIndexRetention = kernel.publication_final_index_retention_watch || {};
+    const terminalSummary = kernel.publication_governance_terminal_summary || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -344,6 +346,8 @@
         <span>Reopen human gate: <strong>${escapeHtml(reopenHumanGate.status || 'not_ready')}</strong></span>
         <span>Human gate retention: <strong>${escapeHtml(humanGateRetention.status || 'not_ready')}</strong></span>
         <span>Governance final index: <strong>${escapeHtml(governanceFinalIndex.status || 'not_ready')}</strong></span>
+        <span>Final index retention: <strong>${escapeHtml(finalIndexRetention.status || 'not_ready')}</strong></span>
+        <span>Terminal summary: <strong>${escapeHtml(terminalSummary.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -386,6 +390,8 @@
           <tr><th>Publication reopen human gate</th><td>${escapeHtml(reopenHumanGate.status || '—')} default=<code>${escapeHtml(reopenHumanGate.recommended_default || '—')}</code> selected=<code>${escapeHtml(reopenHumanGate.selected_option || '—')}</code> apply=<strong>${reopenHumanGate.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication human gate retention</th><td>${escapeHtml(humanGateRetention.status || '—')} drift=<code>${escapeHtml(String((humanGateRetention.drift || []).length))}</code> packet_only=<strong>${humanGateRetention.packet_only ? 'true' : 'false'}</strong> apply=<strong>${humanGateRetention.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication governance final index</th><td>${escapeHtml(governanceFinalIndex.status || '—')} items=<code>${escapeHtml(String(governanceFinalIndex.item_count ?? '—'))}</code> read_only=<strong>${governanceFinalIndex.read_only ? 'true' : 'false'}</strong> apply=<strong>${governanceFinalIndex.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication final index retention</th><td>${escapeHtml(finalIndexRetention.status || '—')} drift=<code>${escapeHtml(String((finalIndexRetention.drift || []).length))}</code> read_only=<strong>${finalIndexRetention.read_only ? 'true' : 'false'}</strong> apply=<strong>${finalIndexRetention.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication terminal summary</th><td>${escapeHtml(terminalSummary.status || '—')} terminal=<code>${escapeHtml(terminalSummary.terminal_state || '—')}</code> read_only=<strong>${terminalSummary.read_only ? 'true' : 'false'}</strong> apply=<strong>${terminalSummary.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

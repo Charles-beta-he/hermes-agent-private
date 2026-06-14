@@ -1,0 +1,33 @@
+{
+  "checks": {
+    "apply_disabled": true,
+    "external_publication_disabled": true,
+    "final_index_ready": true,
+    "index_read_only": true,
+    "item_count_eight": true
+  },
+  "created_at": "2026-06-14T17:10:42Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "drift": [],
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "input_refs": [
+    {
+      "name": "phase90_final_index",
+      "path": "docs/private/workflow-kernel-publication-governance-final-index/workflow_kernel_publication_governance_final_index_20260613_phase90.json",
+      "sha256": "213b2d570b9de5fabb8fb362faa0b038c4cefa637d5b14a8981f95c0d791ff93",
+      "status": "PUBLICATION_GOVERNANCE_FINAL_INDEX_READY"
+    }
+  ],
+  "message_sent": false,
+  "next_boundary": "Phase92 may compile read-only terminal summary",
+  "phase": 91,
+  "publication_apply_enabled": false,
+  "read_only": true,
+  "retention_digest": "496c43c3a9c8d9a1a4b1ccea41b5b5de888fbb2df2f85b476ec77afe2f1fecac",
+  "retention_policy": "final_index_retained_read_only_no_apply",
+  "schema": "workflow_kernel_publication_final_index_retention_watch_v1",
+  "status": "PUBLICATION_FINAL_INDEX_RETENTION_WATCH_CLEAR",
+  "unattended_dispatch_enabled": false
+}
