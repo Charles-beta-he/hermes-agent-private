@@ -68,12 +68,14 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 59, "name": "Guarded Manual-send Runner Implementation", "layer": "manual send runner", "status": "manual_send_runner_ready", "depends_on": [58], "authority": "preview by default; execute only with explicit flag", "gate": "no send unless --execute and packet validation pass", "next_unlocked": [60]},
     {"phase": 60, "name": "One-shot Guarded Send Activation", "layer": "external dispatch execution", "status": "one_shot_guarded_send_verified", "depends_on": [59], "authority": "single Telegram home guarded send", "gate": "unattended dispatch remains disabled; future sends require fresh packet/manual gate", "next_unlocked": [61]},
     {"phase": 61, "name": "Post-send Correlation and Compensation Watch", "layer": "post-send audit", "status": "post_send_correlation_ready", "depends_on": [60], "authority": "read-only correlation", "gate": "no new message; automatic compensation disabled", "next_unlocked": [62]},
-    {"phase": 62, "name": "Unattended Dispatch Enablement Packet", "layer": "enablement packet", "status": "enablement_packet_ready_disabled", "depends_on": [61], "authority": "decision packet only", "gate": "unattended_dispatch_enabled=false; no cron/apply mutation", "next_unlocked": [63, 64]},
+    {"phase": 62, "name": "Unattended Dispatch Enablement Packet", "layer": "enablement packet", "status": "enablement_packet_ready_disabled", "depends_on": [61], "authority": "decision packet only", "gate": "unattended_dispatch_enabled=false; no cron/apply mutation", "next_unlocked": [63]},
+    {"phase": 63, "name": "Explicit Unattended Enablement Decision Record", "layer": "decision record", "status": "keep_manual_only_recorded", "depends_on": [62], "authority": "record-only decision", "gate": "selected_option=A_KEEP_MANUAL_ONLY; no apply mutation", "next_unlocked": [64]},
+    {"phase": 64, "name": "Safe-default Manual-only Closure", "layer": "closure", "status": "manual_only_closure_ready", "depends_on": [63], "authority": "closure evidence only", "gate": "repeated/unattended dispatch closed without new authorization", "next_unlocked": [65, 66]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 63, "name": "Explicit Unattended Enablement Decision Record", "track": "UNATTENDED_DECISION_RECORD", "authority_needed": "record a concrete option from the Phase62 decision schema without applying it", "why_next": "turn the enablement packet into an auditable decision while still avoiding automatic sends"},
-    {"phase": 64, "name": "Safe-default Manual-only Closure", "track": "MANUAL_ONLY_CLOSURE", "authority_needed": "close the workflow on A_KEEP_MANUAL_ONLY and retain dry-run/manual paths", "why_next": "codify that repeated external dispatch remains disabled"},
+    {"phase": 65, "name": "Manual-only Closure Monitoring Projection", "track": "MANUAL_ONLY_MONITORING", "authority_needed": "read-only monitoring of manual-only closure invariants", "why_next": "detect drift from the closed safe-default state without enabling sends"},
+    {"phase": 66, "name": "Future Unattended Apply Reopen Packet", "track": "FUTURE_UNATTENDED_REOPEN_PACKET", "authority_needed": "new explicit authorization to reopen unattended apply design", "why_next": "document what would be required if the user later reopens repeated dispatch"},
 ]
 
 
@@ -115,15 +117,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-62 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase61 已完成 post-send correlation/compensation watch，Phase62 已生成 unattended dispatch enablement packet，但 unattended dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-64 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase63 已记录 keep_manual_only 决策，Phase64 已关闭为 manual-only safe default，unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase62 has produced a fail-closed unattended dispatch enablement packet. The next boundary is recording an explicit option decision versus closing on manual-only safe default; no repeated/unattended dispatch has been enabled.",
+        "current_boundary": "Phase64 has closed the Workflow Kernel external-dispatch ladder on manual-only safe default. Future unattended/repeated dispatch requires a new explicit reopen/apply phase.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Human choice required: Phase63 explicit unattended enablement decision record vs Phase64 safe-default manual-only closure",
+        "recommended_next": "Human choice required: Phase65 manual-only closure monitoring projection vs Phase66 future unattended apply reopen packet",
     }
 
 

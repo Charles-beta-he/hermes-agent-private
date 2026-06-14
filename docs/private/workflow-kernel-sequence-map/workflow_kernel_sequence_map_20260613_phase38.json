@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T07:57:56Z",
-  "current_boundary": "Phase62 has produced a fail-closed unattended dispatch enablement packet. The next boundary is recording an explicit option decision versus closing on manual-only safe default; no repeated/unattended dispatch has been enabled.",
+  "created_at": "2026-06-14T08:13:58Z",
+  "current_boundary": "Phase64 has closed the Workflow Kernel external-dispatch ladder on manual-only safe default. Future unattended/repeated dispatch requires a new explicit reopen/apply phase.",
   "next_ladder": [
     {
-      "authority_needed": "record a concrete option from the Phase62 decision schema without applying it",
-      "name": "Explicit Unattended Enablement Decision Record",
-      "phase": 63,
-      "track": "UNATTENDED_DECISION_RECORD",
-      "why_next": "turn the enablement packet into an auditable decision while still avoiding automatic sends"
+      "authority_needed": "read-only monitoring of manual-only closure invariants",
+      "name": "Manual-only Closure Monitoring Projection",
+      "phase": 65,
+      "track": "MANUAL_ONLY_MONITORING",
+      "why_next": "detect drift from the closed safe-default state without enabling sends"
     },
     {
-      "authority_needed": "close the workflow on A_KEEP_MANUAL_ONLY and retain dry-run/manual paths",
-      "name": "Safe-default Manual-only Closure",
-      "phase": 64,
-      "track": "MANUAL_ONLY_CLOSURE",
-      "why_next": "codify that repeated external dispatch remains disabled"
+      "authority_needed": "new explicit authorization to reopen unattended apply design",
+      "name": "Future Unattended Apply Reopen Packet",
+      "phase": 66,
+      "track": "FUTURE_UNATTENDED_REOPEN_PACKET",
+      "why_next": "document what would be required if the user later reopens repeated dispatch"
     }
   ],
-  "objective": "梳理 Phase17-62 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase61 已完成 post-send correlation/compensation watch，Phase62 已生成 unattended dispatch enablement packet，但 unattended dispatch 仍关闭、无新外发。",
-  "phase_count": 46,
+  "objective": "梳理 Phase17-64 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase63 已记录 keep_manual_only 决策，Phase64 已关闭为 manual-only safe default，unattended/repeated dispatch 仍关闭、无新外发。",
+  "phase_count": 48,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -670,14 +670,42 @@
       "layer": "enablement packet",
       "name": "Unattended Dispatch Enablement Packet",
       "next_unlocked": [
-        63,
-        64
+        63
       ],
       "phase": 62,
       "status": "enablement_packet_ready_disabled"
+    },
+    {
+      "authority": "record-only decision",
+      "depends_on": [
+        62
+      ],
+      "gate": "selected_option=A_KEEP_MANUAL_ONLY; no apply mutation",
+      "layer": "decision record",
+      "name": "Explicit Unattended Enablement Decision Record",
+      "next_unlocked": [
+        64
+      ],
+      "phase": 63,
+      "status": "keep_manual_only_recorded"
+    },
+    {
+      "authority": "closure evidence only",
+      "depends_on": [
+        63
+      ],
+      "gate": "repeated/unattended dispatch closed without new authorization",
+      "layer": "closure",
+      "name": "Safe-default Manual-only Closure",
+      "next_unlocked": [
+        65,
+        66
+      ],
+      "phase": 64,
+      "status": "manual_only_closure_ready"
     }
   ],
-  "recommended_next": "Human choice required: Phase63 explicit unattended enablement decision record vs Phase64 safe-default manual-only closure",
+  "recommended_next": "Human choice required: Phase65 manual-only closure monitoring projection vs Phase66 future unattended apply reopen packet",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

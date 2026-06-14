@@ -159,6 +159,8 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["one_shot_guarded_send"]["status"] in {"ONE_SHOT_GUARDED_SEND_VERIFIED", "not_executed"}
     assert kernel["post_send_correlation_watch"]["status"] in {"POST_SEND_CORRELATION_COMPENSATION_WATCH_READY", "not_ready"}
     assert kernel["unattended_dispatch_enablement_packet"]["status"] in {"UNATTENDED_DISPATCH_ENABLEMENT_PACKET_READY", "not_ready"}
+    assert kernel["unattended_decision_record"]["status"] in {"UNATTENDED_DECISION_RECORD_READY", "not_ready"}
+    assert kernel["manual_only_closure"]["status"] in {"MANUAL_ONLY_CLOSURE_READY", "not_ready"}
     assert kernel["external_side_effects_enabled"] is False
 
 

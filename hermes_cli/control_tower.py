@@ -6136,6 +6136,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase60_path = root / "docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_one_shot_guarded_send_20260613_phase60.json"
     phase61_path = root / "docs/private/workflow-kernel-post-send-correlation-watch/workflow_kernel_post_send_correlation_watch_20260613_phase61.json"
     phase62_path = root / "docs/private/workflow-kernel-unattended-dispatch-enablement-packet/workflow_kernel_unattended_dispatch_enablement_packet_20260613_phase62.json"
+    phase63_path = root / "docs/private/workflow-kernel-unattended-decision-record/workflow_kernel_unattended_decision_record_20260613_phase63.json"
+    phase64_path = root / "docs/private/workflow-kernel-manual-only-closure/workflow_kernel_manual_only_closure_20260613_phase64.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6162,6 +6164,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         one_shot_guarded_send = json.loads(phase60_path.read_text()) if phase60_path.exists() else None
         post_send_correlation = json.loads(phase61_path.read_text()) if phase61_path.exists() else None
         unattended_enablement_packet = json.loads(phase62_path.read_text()) if phase62_path.exists() else None
+        unattended_decision_record = json.loads(phase63_path.read_text()) if phase63_path.exists() else None
+        manual_only_closure = json.loads(phase64_path.read_text()) if phase64_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6255,10 +6259,25 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "unattended_dispatch_enabled": (unattended_enablement_packet or {}).get("unattended_dispatch_enabled"),
             "external_side_effects_executed": (unattended_enablement_packet or {}).get("external_side_effects_executed"),
         },
+        "unattended_decision_record": {
+            "status": (unattended_decision_record or {}).get("status", "not_ready"),
+            "decision": (unattended_decision_record or {}).get("decision"),
+            "selected_option": (unattended_decision_record or {}).get("selected_option"),
+            "record_digest": (unattended_decision_record or {}).get("record_digest"),
+            "unattended_dispatch_enabled": (unattended_decision_record or {}).get("unattended_dispatch_enabled"),
+            "record_only": (unattended_decision_record or {}).get("record_only"),
+        },
+        "manual_only_closure": {
+            "status": (manual_only_closure or {}).get("status", "not_ready"),
+            "final_mode": (manual_only_closure or {}).get("final_mode"),
+            "closure_digest": (manual_only_closure or {}).get("closure_digest"),
+            "unattended_dispatch_enabled": (manual_only_closure or {}).get("unattended_dispatch_enabled"),
+            "external_side_effects_executed": (manual_only_closure or {}).get("external_side_effects_executed"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase62 boundary: explicit unattended enablement decision/apply remains disabled",
+        "next_boundary": "post-Phase64 closure: manual-only safe default is closed; future unattended enablement requires a new explicit apply phase",
     }
 
 
