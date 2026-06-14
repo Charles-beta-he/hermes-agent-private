@@ -295,6 +295,8 @@
     const finalBoundaryPacket = kernel.publication_apply_final_boundary_packet || {};
     const finalBoundaryRetention = kernel.publication_final_boundary_retention_watch || {};
     const governanceClosure = kernel.publication_governance_closure_summary || {};
+    const closureRetention = kernel.publication_closure_retention_watch || {};
+    const reopenHumanGate = kernel.publication_apply_reopen_human_gate_packet || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -336,6 +338,8 @@
         <span>Final boundary packet: <strong>${escapeHtml(finalBoundaryPacket.status || 'not_ready')}</strong></span>
         <span>Final boundary retention: <strong>${escapeHtml(finalBoundaryRetention.status || 'not_ready')}</strong></span>
         <span>Governance closure: <strong>${escapeHtml(governanceClosure.status || 'not_ready')}</strong></span>
+        <span>Closure retention: <strong>${escapeHtml(closureRetention.status || 'not_ready')}</strong></span>
+        <span>Reopen human gate: <strong>${escapeHtml(reopenHumanGate.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -374,6 +378,8 @@
           <tr><th>Publication apply final boundary</th><td>${escapeHtml(finalBoundaryPacket.status || '—')} default=<code>${escapeHtml(finalBoundaryPacket.recommended_default || '—')}</code> selected=<code>${escapeHtml(finalBoundaryPacket.selected_option || '—')}</code> apply=<strong>${finalBoundaryPacket.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication final boundary retention</th><td>${escapeHtml(finalBoundaryRetention.status || '—')} drift=<code>${escapeHtml(String((finalBoundaryRetention.drift || []).length))}</code> packet_only=<strong>${finalBoundaryRetention.packet_only ? 'true' : 'false'}</strong> apply=<strong>${finalBoundaryRetention.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication governance closure</th><td>${escapeHtml(governanceClosure.status || '—')} items=<code>${escapeHtml(String(governanceClosure.item_count ?? '—'))}</code> read_only=<strong>${governanceClosure.read_only ? 'true' : 'false'}</strong> apply=<strong>${governanceClosure.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication closure retention</th><td>${escapeHtml(closureRetention.status || '—')} drift=<code>${escapeHtml(String((closureRetention.drift || []).length))}</code> read_only=<strong>${closureRetention.read_only ? 'true' : 'false'}</strong> apply=<strong>${closureRetention.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication reopen human gate</th><td>${escapeHtml(reopenHumanGate.status || '—')} default=<code>${escapeHtml(reopenHumanGate.recommended_default || '—')}</code> selected=<code>${escapeHtml(reopenHumanGate.selected_option || '—')}</code> apply=<strong>${reopenHumanGate.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

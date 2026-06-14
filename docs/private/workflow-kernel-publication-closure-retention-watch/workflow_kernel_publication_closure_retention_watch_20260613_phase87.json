@@ -1,0 +1,33 @@
+{
+  "checks": {
+    "apply_disabled": true,
+    "closure_ready": true,
+    "external_publication_disabled": true,
+    "item_count_six": true,
+    "summary_read_only": true
+  },
+  "created_at": "2026-06-14T16:55:35Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "drift": [],
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "input_refs": [
+    {
+      "name": "phase86_governance_closure",
+      "path": "docs/private/workflow-kernel-publication-governance-closure-summary/workflow_kernel_publication_governance_closure_summary_20260613_phase86.json",
+      "sha256": "d27f028ff81e1a8a1b5a6f4fee2e3dd742bee41564b01c16a9ae963fe1b27389",
+      "status": "PUBLICATION_GOVERNANCE_CLOSURE_SUMMARY_READY"
+    }
+  ],
+  "message_sent": false,
+  "next_boundary": "Phase88 may compile packet-only human-gated reopen packet",
+  "phase": 87,
+  "publication_apply_enabled": false,
+  "read_only": true,
+  "retention_digest": "dc00025ce7a3b1ac96eae56829ff271e9a0b8d6459735732f638419d89ef3bf3",
+  "retention_policy": "governance_closure_retained_read_only_no_apply",
+  "schema": "workflow_kernel_publication_closure_retention_watch_v1",
+  "status": "PUBLICATION_CLOSURE_RETENTION_WATCH_CLEAR",
+  "unattended_dispatch_enabled": false
+}

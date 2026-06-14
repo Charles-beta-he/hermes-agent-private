@@ -6160,6 +6160,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase84_path = root / "docs/private/workflow-kernel-publication-apply-final-boundary-packet/workflow_kernel_publication_apply_final_boundary_packet_20260613_phase84.json"
     phase85_path = root / "docs/private/workflow-kernel-publication-final-boundary-retention-watch/workflow_kernel_publication_final_boundary_retention_watch_20260613_phase85.json"
     phase86_path = root / "docs/private/workflow-kernel-publication-governance-closure-summary/workflow_kernel_publication_governance_closure_summary_20260613_phase86.json"
+    phase87_path = root / "docs/private/workflow-kernel-publication-closure-retention-watch/workflow_kernel_publication_closure_retention_watch_20260613_phase87.json"
+    phase88_path = root / "docs/private/workflow-kernel-publication-apply-reopen-human-gate-packet/workflow_kernel_publication_apply_reopen_human_gate_packet_20260613_phase88.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6210,6 +6212,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         publication_apply_final_boundary_packet = json.loads(phase84_path.read_text()) if phase84_path.exists() else None
         publication_final_boundary_retention_watch = json.loads(phase85_path.read_text()) if phase85_path.exists() else None
         publication_governance_closure_summary = json.loads(phase86_path.read_text()) if phase86_path.exists() else None
+        publication_closure_retention_watch = json.loads(phase87_path.read_text()) if phase87_path.exists() else None
+        publication_apply_reopen_human_gate_packet = json.loads(phase88_path.read_text()) if phase88_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6500,10 +6504,27 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "read_only": (publication_governance_closure_summary or {}).get("read_only"),
             "publication_apply_enabled": (publication_governance_closure_summary or {}).get("publication_apply_enabled"),
         },
+        "publication_closure_retention_watch": {
+            "status": (publication_closure_retention_watch or {}).get("status", "not_ready"),
+            "retention_digest": (publication_closure_retention_watch or {}).get("retention_digest"),
+            "retention_policy": (publication_closure_retention_watch or {}).get("retention_policy"),
+            "drift": (publication_closure_retention_watch or {}).get("drift", []),
+            "read_only": (publication_closure_retention_watch or {}).get("read_only"),
+            "publication_apply_enabled": (publication_closure_retention_watch or {}).get("publication_apply_enabled"),
+        },
+        "publication_apply_reopen_human_gate_packet": {
+            "status": (publication_apply_reopen_human_gate_packet or {}).get("status", "not_ready"),
+            "packet_digest": (publication_apply_reopen_human_gate_packet or {}).get("packet_digest"),
+            "recommended_default": (publication_apply_reopen_human_gate_packet or {}).get("recommended_default"),
+            "selected_option": (publication_apply_reopen_human_gate_packet or {}).get("selected_option"),
+            "packet_only": (publication_apply_reopen_human_gate_packet or {}).get("packet_only"),
+            "human_gate_required_for_apply": (publication_apply_reopen_human_gate_packet or {}).get("human_gate_required_for_apply"),
+            "publication_apply_enabled": (publication_apply_reopen_human_gate_packet or {}).get("publication_apply_enabled"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase86 closure summary: publication governance remains closed/no-apply; future work stays read-only unless exact target/payload/rollback are supplied",
+        "next_boundary": "post-Phase88 human gate packet: publication apply remains closed; real reopen requires human exact target/payload/rollback",
     }
 
 

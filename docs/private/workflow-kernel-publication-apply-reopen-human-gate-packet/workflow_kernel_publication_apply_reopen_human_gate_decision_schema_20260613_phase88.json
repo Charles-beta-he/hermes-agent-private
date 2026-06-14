@@ -1,0 +1,35 @@
+{
+  "properties": {
+    "blast_radius": {
+      "type": "string"
+    },
+    "operator_reason": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "option": {
+      "enum": [
+        "A_KEEP_CLOSED_NO_REOPEN",
+        "B_REQUEST_EXACT_TARGET_REOPEN",
+        "C_REQUEST_EXTERNAL_PUBLICATION_TARGET"
+      ]
+    },
+    "payload_digest": {
+      "type": "string"
+    },
+    "rollback_plan": {
+      "type": "string"
+    },
+    "target_adapter": {
+      "type": "string"
+    },
+    "target_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "option",
+    "operator_reason"
+  ],
+  "type": "object"
+}

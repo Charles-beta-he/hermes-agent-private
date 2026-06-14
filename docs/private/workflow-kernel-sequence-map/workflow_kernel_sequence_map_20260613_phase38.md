@@ -74,10 +74,12 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 84: Publication Apply Final Boundary Packet — layer=`final boundary packet`, gate=`recommended_default=A_STOP_AT_PRIVATE_REVIEW; apply disabled`
 - Phase 85: Publication Final Boundary Retention Watch — layer=`final boundary retention`, gate=`drift=[]; apply disabled`
 - Phase 86: Publication Governance Closure Summary — layer=`governance closure`, gate=`summary_only=true; apply disabled`
+- Phase 87: Publication Closure Retention Watch — layer=`closure retention`, gate=`drift=[]; apply disabled`
+- Phase 88: Publication Apply Reopen Human Gate Packet — layer=`human gate packet`, gate=`recommended_default=A_KEEP_CLOSED_NO_REOPEN; apply disabled`
 
 ## Next ladder
-- Phase 87: Publication Closure Retention Watch — track=`PUBLICATION_CLOSURE_RETENTION_WATCH`, authority=`read-only retention/drift watch over closure summary`
-- Phase 88: Publication Apply Reopen Human Gate Packet — track=`PUBLICATION_APPLY_REOPEN_HUMAN_GATE_PACKET`, authority=`packet only; no apply without human exact target`
+- Phase 89: Publication Human Gate Retention Watch — track=`PUBLICATION_HUMAN_GATE_RETENTION_WATCH`, authority=`read-only retention/drift watch over human gate packet`
+- Phase 90: Publication Governance Final Index — track=`PUBLICATION_GOVERNANCE_FINAL_INDEX`, authority=`read-only final index`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence
