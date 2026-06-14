@@ -1005,6 +1005,7 @@ hermes skills intake https://github.com/acme/hermes-skills
 hermes skills intake https://github.com/acme/hermes-skills --max-skills-per-repo 10 --json
 hermes skills install official/migration/openclaw-migration
 hermes skills install skills-sh/anthropics/skills/pdf --force
+hermes skills install skills-sh/anthropics/skills/pdf --yes --intake-output /tmp/pdf-install-intake.json
 hermes skills install https://sharethis.chat/SKILL.md                     # Direct URL (single-file SKILL.md)
 hermes skills install https://example.com/SKILL.md --name my-skill        # Override name when frontmatter has none
 hermes skills check
@@ -1022,6 +1023,7 @@ Notes:
 - `--force` does not override a `dangerous` scan verdict.
 - `hermes skills intake ...` is a read-only preflight for external repositories, identifiers, and direct URLs. It surfaces discovery counts, compatibility scores/grades, compatibility signals, prerequisites, and policy reasons before you install anything.
 - `hermes skills install ...` now re-runs the governed compatibility audit for non-official skills before quarantine/install. Compatible candidates continue normally, `review_needed` candidates pause on non-interactive surfaces unless you intentionally pass `--force`, and `incompatible` candidates are blocked until the intake issue is remediated and re-audited.
+- `hermes skills install ... --intake-output PATH` writes the install-time governed intake JSON report as a durable proof artifact, so CI/headless runs can keep the exact audit evidence that gated the install attempt.
 - `--source skills-sh` searches the public `skills.sh` directory.
 - `--source well-known` lets you point Hermes at a site exposing `/.well-known/skills/index.json`.
 - `--source browse-sh` searches [browse.sh](https://browse.sh)'s catalog of 200+ site-specific browser-automation skills. Identifiers look like `browse-sh/airbnb.com/search-listings-ddgioa`.

@@ -82,6 +82,8 @@ hermes skills intake skills-sh/anthropics/skills/pdf --json
 
 `hermes skills intake` reuses Hermes's governed external-skill audit pipeline and does not install anything. The report captures candidate discovery, compatibility scores/grades, compatibility signals, required environment variables, tool/package prerequisites, and policy reason codes so you can decide whether to proceed with `hermes skills install`.
 
+If you do proceed with install in CI or another non-interactive flow, `hermes skills install ... --intake-output PATH` writes the exact install-time governed intake JSON report to disk before the install continues, pauses for review, or is blocked. That gives you a durable proof artifact for the decision that gated the install attempt.
+
 ## Progressive Disclosure
 
 Skills use a token-efficient loading pattern:
@@ -428,6 +430,7 @@ hermes skills inspect openai/skills/k8s           # Preview before installing
 hermes skills install openai/skills/k8s           # Install with security scan
 hermes skills install official/security/1password
 hermes skills install skills-sh/vercel-labs/json-render/json-render-react --force
+hermes skills install skills-sh/vercel-labs/json-render/json-render-react --yes --intake-output /tmp/json-render-install-intake.json
 hermes skills install well-known:https://mintlify.com/docs/.well-known/skills/mintlify
 hermes skills install https://sharethis.chat/SKILL.md              # Direct URL (single-file SKILL.md)
 hermes skills install https://example.com/SKILL.md --name my-skill # Override name when frontmatter has none

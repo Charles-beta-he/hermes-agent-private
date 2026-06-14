@@ -90,3 +90,29 @@ def test_skills_parser_supports_intake_subcommand():
     assert ns.json is True
     assert ns.output == "/tmp/intake.json"
     assert ns.func is handler
+
+
+def test_skills_parser_supports_install_intake_output_flag():
+    parser = argparse.ArgumentParser(prog="hermes")
+    sub = parser.add_subparsers(dest="command")
+    handler = _h("skills")
+    build_skills_parser(sub, cmd_skills=handler)
+
+    ns = parser.parse_args([
+        "skills",
+        "install",
+        "https://example.com/SKILL.md",
+        "--name",
+        "demo-skill",
+        "--intake-output",
+        "/tmp/install-intake.json",
+        "--yes",
+    ])
+
+    assert ns.command == "skills"
+    assert ns.skills_action == "install"
+    assert ns.identifier == "https://example.com/SKILL.md"
+    assert ns.name == "demo-skill"
+    assert ns.intake_output == "/tmp/install-intake.json"
+    assert ns.yes is True
+    assert ns.func is handler

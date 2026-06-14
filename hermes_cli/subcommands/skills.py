@@ -90,6 +90,10 @@ def build_skills_parser(subparsers, *, cmd_skills: Callable) -> None:
         action="store_true",
         help="Skip confirmation prompt (needed in TUI mode)",
     )
+    skills_install.add_argument(
+        "--intake-output",
+        help="Write the install-time governed intake JSON report to PATH as a proof artifact",
+    )
 
     skills_inspect = skills_subparsers.add_parser(
         "inspect", help="Preview a skill without installing"

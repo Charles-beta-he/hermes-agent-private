@@ -506,7 +506,7 @@ def do_browse(page: int = 1, page_size: int = 20, source: str = "all",
 def do_install(identifier: str, category: str = "", force: bool = False,
                console: Optional[Console] = None, skip_confirm: bool = False,
                invalidate_cache: bool = True,
-               name_override: str = "") -> None:
+               name_override: str = "", intake_output: str = "") -> None:
     """Fetch, quarantine, scan, confirm, and install a skill.
 
     ``name_override`` lets non-interactive callers (slash commands, gateway,
@@ -630,6 +630,12 @@ def do_install(identifier: str, category: str = "", force: bool = False,
                 (src for src in sources if getattr(src, "source_id", lambda: "")() == "github"),
                 None,
             ),
+        )
+        _write_json_artifact(
+            intake_report,
+            intake_output,
+            label="install intake proof artifact",
+            console=c,
         )
         _render_install_intake_summary(intake_report, c)
         if not _should_continue_install_after_intake(
@@ -945,6 +951,18 @@ def _should_continue_install_after_intake(
     return True
 
 
+def _write_json_artifact(payload: dict[str, Any], output: Optional[str], *, label: str, console: Console) -> None:
+    if not output:
+        return
+    output_path = Path(output).expanduser()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    console.print(f"[green]Wrote {label}:[/] {output_path}")
+
+
 def do_intake(
     candidates: list[str],
     *,
@@ -958,11 +976,7 @@ def do_intake(
 
     c = console or _console
     report = audit_candidates(candidates, max_skills_per_repo=max_skills_per_repo)
-    if output:
-        output_path = Path(output).expanduser()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        c.print(f"[green]Wrote intake proof artifact:[/] {output_path}")
+    _write_json_artifact(report, output, label="intake proof artifact", console=c)
     if as_json:
         c.print_json(data=report)
     else:
@@ -1829,7 +1843,8 @@ def skills_command(args) -> None:
     elif action == "install":
         do_install(args.identifier, category=args.category, force=args.force,
                    skip_confirm=getattr(args, "yes", False),
-                   name_override=getattr(args, "name", "") or "")
+                   name_override=getattr(args, "name", "") or "",
+                   intake_output=getattr(args, "intake_output", "") or "")
     elif action == "inspect":
         do_inspect(args.identifier)
     elif action == "intake":
@@ -2004,11 +2019,12 @@ def handle_skills_slash(cmd: str, console: Optional[Console] = None) -> None:
 
     elif action == "install":
         if not args:
-            c.print("[bold red]Usage:[/] /skills install <identifier-or-url> [--name <name>] [--category <cat>] [--force] [--now]\n")
+            c.print("[bold red]Usage:[/] /skills install <identifier-or-url> [--name <name>] [--category <cat>] [--force] [--now] [--intake-output PATH]\n")
             return
         identifier = args[0]
         category = ""
         name_override = ""
+        intake_output = ""
         # Slash commands run inside prompt_toolkit where input() hangs.
         # Always skip confirmation — the user typing the command is implicit consent.
         skip_confirm = True
@@ -2021,9 +2037,11 @@ def handle_skills_slash(cmd: str, console: Optional[Console] = None) -> None:
                 category = args[i + 1]
             elif a == "--name" and i + 1 < len(args):
                 name_override = args[i + 1]
+            elif a == "--intake-output" and i + 1 < len(args):
+                intake_output = args[i + 1]
         do_install(identifier, category=category, force=force,
                    skip_confirm=skip_confirm, invalidate_cache=invalidate_cache,
-                   name_override=name_override, console=c)
+                   name_override=name_override, intake_output=intake_output, console=c)
 
     elif action == "inspect":
         if not args:

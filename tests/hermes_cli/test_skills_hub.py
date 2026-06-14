@@ -1,6 +1,6 @@
 import json
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 from rich.console import Console
@@ -297,13 +297,13 @@ def test_do_intake_renders_summary(monkeypatch):
     assert "review_needed" in rendered
     assert "90 (A)" in rendered
 
-
 def test_handle_skills_slash_intake_dispatches(monkeypatch):
     captured = {}
 
     def _fake_do_intake(candidates, *, max_skills_per_repo=5, console=None, as_json=False, output=None):
         captured["candidates"] = candidates
         captured["max_skills_per_repo"] = max_skills_per_repo
+        captured["console"] = console
         captured["as_json"] = as_json
         captured["output"] = output
         return {}
@@ -318,10 +318,46 @@ def test_handle_skills_slash_intake_dispatches(monkeypatch):
     assert captured == {
         "candidates": ["https://github.com/acme/skills"],
         "max_skills_per_repo": 7,
+        "console": ANY,
         "as_json": True,
         "output": "/tmp/intake.json",
     }
 
+
+def test_handle_skills_slash_install_dispatches_intake_output(monkeypatch):
+    captured = {}
+
+    def _fake_do_install(identifier, *, category="", force=False, console=None, skip_confirm=False, invalidate_cache=True, name_override="", intake_output=""):
+        captured.update(
+            {
+                "identifier": identifier,
+                "category": category,
+                "force": force,
+                "console": console,
+                "skip_confirm": skip_confirm,
+                "invalidate_cache": invalidate_cache,
+                "name_override": name_override,
+                "intake_output": intake_output,
+            }
+        )
+
+    monkeypatch.setattr("hermes_cli.skills_hub.do_install", _fake_do_install)
+
+    handle_skills_slash(
+        "/skills install https://example.com/SKILL.md --name demo-skill --category productivity --force --now --intake-output /tmp/install-intake.json",
+        console=Console(file=StringIO(), force_terminal=False, color_system=None),
+    )
+
+    assert captured == {
+        "identifier": "https://example.com/SKILL.md",
+        "category": "productivity",
+        "force": True,
+        "console": ANY,
+        "skip_confirm": True,
+        "invalidate_cache": True,
+        "name_override": "demo-skill",
+        "intake_output": "/tmp/install-intake.json",
+    }
 
 def test_handle_skills_slash_search_accepts_chatconsole_without_status_errors():
     results = [type("R", (), {
@@ -745,6 +781,53 @@ def test_do_install_pauses_review_needed_external_skills_on_non_interactive_surf
     assert "Governed Intake Compatibility" in output
     assert "Installation paused:" in output
     assert "requires manual review" in output
+
+
+def test_do_install_writes_install_intake_output_artifact(monkeypatch, tmp_path, hub_env):
+    report = {
+        "candidate": "https://example.com/demo/SKILL.md",
+        "evaluation_status": "compatible",
+        "compatibility_score": {"score": 100, "grade": "A"},
+        "hermes_compatibility": {"install_guidance": "eligible_for_reviewed_install", "summary": "ok"},
+        "reason_codes": [],
+    }
+
+    class _Source:
+        def inspect(self, identifier):
+            return type("Meta", (), {
+                "extra": {"url": "https://example.com/demo/SKILL.md", "awaiting_name": False},
+                "identifier": "https://example.com/demo/SKILL.md",
+                "name": "demo-skill",
+                "path": "demo-skill",
+            })()
+
+        def fetch(self, identifier):
+            return type("Bundle", (), {
+                "name": "demo-skill",
+                "files": {"SKILL.md": "---\nname: demo-skill\ndescription: demo\n---\nbody\n"},
+                "source": "url",
+                "identifier": "https://example.com/demo/SKILL.md",
+                "trust_level": "community",
+                "metadata": {"url": "https://example.com/demo/SKILL.md", "awaiting_name": False},
+            })()
+
+    installs = _install_mocks(monkeypatch, tmp_path, _Source)
+    monkeypatch.setattr("tools.skills_intake_audit.evaluate_bundle", lambda *a, **k: report)
+
+    sink = StringIO()
+    console = Console(file=sink, force_terminal=False, color_system=None)
+    output = tmp_path / "install-intake-proof.json"
+
+    do_install(
+        "https://example.com/demo/SKILL.md",
+        console=console,
+        skip_confirm=True,
+        intake_output=str(output),
+    )
+
+    assert installs == [{"name": "demo-skill", "category": ""}]
+    assert json.loads(output.read_text()) == report
+    assert "Wrote install intake proof artifact" in sink.getvalue()
 
 
 # ── _existing_categories ────────────────────────────────────────────────────
