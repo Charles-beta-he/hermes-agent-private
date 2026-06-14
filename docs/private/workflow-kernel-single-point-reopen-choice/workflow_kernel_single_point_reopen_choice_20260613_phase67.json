@@ -1,0 +1,25 @@
+{
+  "blockers": [],
+  "checks": {
+    "choice_allowed": true,
+    "packet_apply_disabled": true,
+    "packet_unattended_disabled": true,
+    "phase66_packet_ready": true
+  },
+  "choice": "A_NO_REOPEN_KEEP_MANUAL_ONLY",
+  "choice_digest": "22a4e6f6927bfce336dd26d50d9928b56974b38aa797764a5bb5758056fc6793",
+  "created_at": "2026-06-14T09:01:12Z",
+  "cron_state_mutated": false,
+  "external_side_effects_executed": false,
+  "message_sent": false,
+  "next_boundary": "Phase68 manual-only governance archive",
+  "phase": 67,
+  "phase66_packet_digest": "edd8c74ce4d649e76d5e7be997fbf12a545ba38d8eca0a922ccab9a5d425906c",
+  "reason": "approved staged continuation: keep closed safe default",
+  "record_only": true,
+  "reopen_apply_enabled": false,
+  "schema": "workflow_kernel_single_point_reopen_choice_v1",
+  "selected_option": "A_NO_REOPEN_KEEP_MANUAL_ONLY",
+  "status": "SINGLE_POINT_REOPEN_CHOICE_RECORDED",
+  "unattended_dispatch_enabled": false
+}

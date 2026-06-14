@@ -73,11 +73,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 64, "name": "Safe-default Manual-only Closure", "layer": "closure", "status": "manual_only_closure_ready", "depends_on": [63], "authority": "closure evidence only", "gate": "repeated/unattended dispatch closed without new authorization", "next_unlocked": [65]},
     {"phase": 65, "name": "Manual-only Closure Monitoring Projection", "layer": "closure monitoring", "status": "manual_only_monitoring_clear", "depends_on": [64], "authority": "read-only monitoring", "gate": "no send; no cron mutation; no apply", "next_unlocked": [66]},
     {"phase": 66, "name": "Future Unattended Apply Reopen Packet", "layer": "future reopen packet", "status": "future_reopen_packet_ready_disabled", "depends_on": [65], "authority": "packet only", "gate": "reopen_apply_enabled=false; selected_option=null", "next_unlocked": [67]},
+    {"phase": 67, "name": "Single-point Reopen Implementation Choice", "layer": "single implementation point choice", "status": "keep_closed_choice_recorded", "depends_on": [66], "authority": "record-only safe default", "gate": "choice=A_NO_REOPEN_KEEP_MANUAL_ONLY; no apply", "next_unlocked": [68]},
+    {"phase": 68, "name": "Manual-only Governance Archive", "layer": "archive", "status": "manual_only_governance_archive_ready", "depends_on": [67], "authority": "read-only archive", "gate": "archive/index only; no mutation", "next_unlocked": [69]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 67, "name": "Single-point Reopen Implementation Choice", "track": "SINGLE_POINT_REOPEN_CHOICE", "authority_needed": "choose one concrete implementation point only if reopening is requested", "why_next": "honor the rule that divergence is only between alternatives for the same implementation point"},
-    {"phase": 68, "name": "Manual-only Governance Archive", "track": "MANUAL_ONLY_ARCHIVE", "authority_needed": "read-only archive/index of the closed ladder", "why_next": "make the closed state easier to audit without reopening applies"},
+    {"phase": 69, "name": "Periodic Closure Health Report", "track": "PERIODIC_CLOSURE_HEALTH", "authority_needed": "read-only periodic report over archived manual-only invariants", "why_next": "stage-only reporting without reopening applies"},
+    {"phase": 70, "name": "Governance Archive Index Publication Packet", "track": "ARCHIVE_INDEX_PUBLICATION_PACKET", "authority_needed": "packet-only decision before any publication or external delivery", "why_next": "if reports need sharing, keep publication as a separate explicit side-effect point"},
 ]
 
 
@@ -119,15 +121,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-66 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase65 已完成 manual-only closure monitoring projection，Phase66 已生成 future unattended apply reopen packet，但 reopen/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-68 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase67 已记录 reopen 单点选择为继续关闭，Phase68 已生成 manual-only governance archive；reopen/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase66 has produced a packet-only future reopen design while keeping reopen_apply_enabled=false. Future divergence should be evaluated only when there are alternative schemes for one concrete implementation point.",
+        "current_boundary": "Phase68 has archived the closed manual-only governance ladder. Future work should remain read-only reporting unless a new concrete implementation point is opened.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Human choice required only for a single implementation point with competing schemes: Phase67 single-point reopen implementation choice vs Phase68 manual-only governance archive",
+        "recommended_next": "Stage-report cadence: Phase69 periodic closure health report; external publication remains a separate packet-only Phase70",
     }
 
 

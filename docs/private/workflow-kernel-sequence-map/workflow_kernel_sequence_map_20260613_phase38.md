@@ -54,10 +54,12 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 64: Safe-default Manual-only Closure — layer=`closure`, gate=`repeated/unattended dispatch closed without new authorization`
 - Phase 65: Manual-only Closure Monitoring Projection — layer=`closure monitoring`, gate=`no send; no cron mutation; no apply`
 - Phase 66: Future Unattended Apply Reopen Packet — layer=`future reopen packet`, gate=`reopen_apply_enabled=false; selected_option=null`
+- Phase 67: Single-point Reopen Implementation Choice — layer=`single implementation point choice`, gate=`choice=A_NO_REOPEN_KEEP_MANUAL_ONLY; no apply`
+- Phase 68: Manual-only Governance Archive — layer=`archive`, gate=`archive/index only; no mutation`
 
 ## Next ladder
-- Phase 67: Single-point Reopen Implementation Choice — track=`SINGLE_POINT_REOPEN_CHOICE`, authority=`choose one concrete implementation point only if reopening is requested`
-- Phase 68: Manual-only Governance Archive — track=`MANUAL_ONLY_ARCHIVE`, authority=`read-only archive/index of the closed ladder`
+- Phase 69: Periodic Closure Health Report — track=`PERIODIC_CLOSURE_HEALTH`, authority=`read-only periodic report over archived manual-only invariants`
+- Phase 70: Governance Archive Index Publication Packet — track=`ARCHIVE_INDEX_PUBLICATION_PACKET`, authority=`packet-only decision before any publication or external delivery`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence

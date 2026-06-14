@@ -1,0 +1,61 @@
+{
+  "archive_digest": "21a004f34577c0ec5da66443af7a20747e5ce11540484308875e4a1959f3ed28",
+  "archive_policy": "read_only_index_closed_ladder",
+  "blockers": [],
+  "checks": {
+    "artifacts_present": true,
+    "phase64_closure_ready": true,
+    "phase65_monitor_clear": true,
+    "phase66_apply_disabled": true,
+    "phase67_keep_closed": true
+  },
+  "created_at": "2026-06-14T09:01:12Z",
+  "cron_state_mutated": false,
+  "external_side_effects_executed": false,
+  "items": [
+    {
+      "path": "docs/private/workflow-kernel-dry-run-cron-rollout/workflow_kernel_dry_run_cron_rollout_20260613_phase57.json",
+      "phase": 57,
+      "sha256": "93471f1e07c48f59513c1bc917fbf972c2a7dc306a607513f0940185c5dacd96",
+      "status": "DRY_RUN_CRON_ROLLOUT_APPLIED"
+    },
+    {
+      "path": "docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_one_shot_guarded_send_20260613_phase60.json",
+      "phase": 60,
+      "sha256": "f3fb274c809a69861f8e37fbe17d29ceca156f1e76d15d8a0e743224001f1d44",
+      "status": "ONE_SHOT_GUARDED_SEND_VERIFIED"
+    },
+    {
+      "path": "docs/private/workflow-kernel-manual-only-closure/workflow_kernel_manual_only_closure_20260613_phase64.json",
+      "phase": 64,
+      "sha256": "5a4152dccd40c557dad6d0eda599cc0038daba64a479a435f1a5d2576ed45fc7",
+      "status": "MANUAL_ONLY_CLOSURE_READY"
+    },
+    {
+      "path": "docs/private/workflow-kernel-manual-only-monitoring/workflow_kernel_manual_only_monitoring_20260613_phase65.json",
+      "phase": 65,
+      "sha256": "0c777ab045eaaea4841784bd25cf413af0ec3d913e058b66ddc10048e98c7469",
+      "status": "MANUAL_ONLY_MONITORING_CLEAR"
+    },
+    {
+      "path": "docs/private/workflow-kernel-future-unattended-reopen-packet/workflow_kernel_future_unattended_reopen_packet_20260613_phase66.json",
+      "phase": 66,
+      "sha256": "522fb68e09eb59f76c5274bfac4b19e321e60cd8d3bb0d1c5cc35ba6d5735dd8",
+      "status": "FUTURE_UNATTENDED_REOPEN_PACKET_READY"
+    },
+    {
+      "path": "docs/private/workflow-kernel-single-point-reopen-choice/workflow_kernel_single_point_reopen_choice_20260613_phase67.json",
+      "phase": 67,
+      "sha256": "f66c88783ebc006961c468c6dfd34293117455782a444d7402ffb83d61b4fc6b",
+      "status": "SINGLE_POINT_REOPEN_CHOICE_RECORDED"
+    }
+  ],
+  "message_sent": false,
+  "next_boundary": "Phase69 periodic closure health report or stop at archive",
+  "phase": 68,
+  "read_only": true,
+  "reopen_apply_enabled": false,
+  "schema": "workflow_kernel_manual_only_governance_archive_v1",
+  "status": "MANUAL_ONLY_GOVERNANCE_ARCHIVE_READY",
+  "unattended_dispatch_enabled": false
+}

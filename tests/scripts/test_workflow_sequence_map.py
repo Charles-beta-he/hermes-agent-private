@@ -25,15 +25,15 @@ def test_build_map_has_current_boundary_and_safe_default():
     report = mod.build_map()
     assert report["status"] == "WORKFLOW_SEQUENCE_MAP_READY"
     assert report["safe_default_track"] == "EXTERNAL_DISPATCH_GOVERNED_EXPANSION"
-    assert report["recommended_next"].startswith("Human choice required")
+    assert report["recommended_next"].startswith("Stage-report cadence")
     assert "external message delivery without exact target/payload/mode" in report["closed_boundaries_without_explicit_authorization"]
 
 
 def test_next_ladder_requires_authority_for_future_expansion():
     mod = load()
     by_track = {item["track"]: item for item in mod.NEXT_LADDER}
-    assert by_track["SINGLE_POINT_REOPEN_CHOICE"]["phase"] == 67
-    assert by_track["MANUAL_ONLY_ARCHIVE"]["phase"] == 68
+    assert by_track["PERIODIC_CLOSURE_HEALTH"]["phase"] == 69
+    assert by_track["ARCHIVE_INDEX_PUBLICATION_PACKET"]["phase"] == 70
 
 
 def test_write_report_creates_artifacts(tmp_path):

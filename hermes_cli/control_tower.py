@@ -6140,6 +6140,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase64_path = root / "docs/private/workflow-kernel-manual-only-closure/workflow_kernel_manual_only_closure_20260613_phase64.json"
     phase65_path = root / "docs/private/workflow-kernel-manual-only-monitoring/workflow_kernel_manual_only_monitoring_20260613_phase65.json"
     phase66_path = root / "docs/private/workflow-kernel-future-unattended-reopen-packet/workflow_kernel_future_unattended_reopen_packet_20260613_phase66.json"
+    phase67_path = root / "docs/private/workflow-kernel-single-point-reopen-choice/workflow_kernel_single_point_reopen_choice_20260613_phase67.json"
+    phase68_path = root / "docs/private/workflow-kernel-manual-only-governance-archive/workflow_kernel_manual_only_governance_archive_20260613_phase68.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6170,6 +6172,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         manual_only_closure = json.loads(phase64_path.read_text()) if phase64_path.exists() else None
         manual_only_monitoring = json.loads(phase65_path.read_text()) if phase65_path.exists() else None
         future_reopen_packet = json.loads(phase66_path.read_text()) if phase66_path.exists() else None
+        single_point_reopen_choice = json.loads(phase67_path.read_text()) if phase67_path.exists() else None
+        manual_governance_archive = json.loads(phase68_path.read_text()) if phase68_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6295,10 +6299,26 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "unattended_dispatch_enabled": (future_reopen_packet or {}).get("unattended_dispatch_enabled"),
             "packet_only": (future_reopen_packet or {}).get("packet_only"),
         },
+        "single_point_reopen_choice": {
+            "status": (single_point_reopen_choice or {}).get("status", "not_ready"),
+            "choice": (single_point_reopen_choice or {}).get("choice"),
+            "choice_digest": (single_point_reopen_choice or {}).get("choice_digest"),
+            "record_only": (single_point_reopen_choice or {}).get("record_only"),
+            "reopen_apply_enabled": (single_point_reopen_choice or {}).get("reopen_apply_enabled"),
+            "unattended_dispatch_enabled": (single_point_reopen_choice or {}).get("unattended_dispatch_enabled"),
+        },
+        "manual_only_governance_archive": {
+            "status": (manual_governance_archive or {}).get("status", "not_ready"),
+            "archive_digest": (manual_governance_archive or {}).get("archive_digest"),
+            "archive_policy": (manual_governance_archive or {}).get("archive_policy"),
+            "item_count": len((manual_governance_archive or {}).get("items") or []),
+            "read_only": (manual_governance_archive or {}).get("read_only"),
+            "unattended_dispatch_enabled": (manual_governance_archive or {}).get("unattended_dispatch_enabled"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase66 boundary: continue only on a single implementation point; future unattended apply remains disabled",
+        "next_boundary": "post-Phase68 archive: staged report complete; future work should remain no-apply unless a new concrete implementation point is opened",
     }
 
 

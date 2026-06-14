@@ -275,6 +275,8 @@
     const manualClosure = kernel.manual_only_closure || {};
     const manualMonitoring = kernel.manual_only_monitoring || {};
     const reopenPacket = kernel.future_unattended_reopen_packet || {};
+    const reopenChoice = kernel.single_point_reopen_choice || {};
+    const archive = kernel.manual_only_governance_archive || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -296,6 +298,8 @@
         <span>Closure: <strong>${escapeHtml(manualClosure.status || 'not_ready')}</strong></span>
         <span>Monitoring: <strong>${escapeHtml(manualMonitoring.status || 'not_ready')}</strong></span>
         <span>Reopen packet: <strong>${escapeHtml(reopenPacket.status || 'not_ready')}</strong></span>
+        <span>Reopen choice: <strong>${escapeHtml(reopenChoice.status || 'not_ready')}</strong></span>
+        <span>Archive: <strong>${escapeHtml(archive.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -314,6 +318,8 @@
           <tr><th>Manual-only closure</th><td>${escapeHtml(manualClosure.status || '—')} mode=<code>${escapeHtml(manualClosure.final_mode || '—')}</code> unattended=<strong>${manualClosure.unattended_dispatch_enabled ? 'true' : 'false'}</strong> external=<strong>${manualClosure.external_side_effects_executed ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Manual-only monitoring</th><td>${escapeHtml(manualMonitoring.status || '—')} drift=<code>${escapeHtml(String((manualMonitoring.drift || []).length))}</code> read_only=<strong>${manualMonitoring.read_only ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Future reopen packet</th><td>${escapeHtml(reopenPacket.status || '—')} default=<code>${escapeHtml(reopenPacket.recommended_default || '—')}</code> apply=<strong>${reopenPacket.reopen_apply_enabled ? 'true' : 'false'}</strong> packet_only=<strong>${reopenPacket.packet_only ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Single-point reopen choice</th><td>${escapeHtml(reopenChoice.status || '—')} choice=<code>${escapeHtml(reopenChoice.choice || '—')}</code> apply=<strong>${reopenChoice.reopen_apply_enabled ? 'true' : 'false'}</strong> record_only=<strong>${reopenChoice.record_only ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Governance archive</th><td>${escapeHtml(archive.status || '—')} items=<code>${escapeHtml(String(archive.item_count ?? '—'))}</code> read_only=<strong>${archive.read_only ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

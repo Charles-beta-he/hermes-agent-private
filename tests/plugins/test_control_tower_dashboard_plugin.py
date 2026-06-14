@@ -143,6 +143,10 @@ def test_control_tower_dashboard_renders_workflow_kernel_projection_panel():
     assert "future_unattended_reopen_packet" in script
     assert "Manual-only monitoring" in script
     assert "Future reopen packet" in script
+    assert "single_point_reopen_choice" in script
+    assert "manual_only_governance_archive" in script
+    assert "Single-point reopen choice" in script
+    assert "Governance archive" in script
     assert "Pack, guarded send, and dispatch policy" in script
     assert "Latest guarded send" not in script  # keep wording in static Phase52 page only
     assert "control-tower-workflow-kernel-card" in style
