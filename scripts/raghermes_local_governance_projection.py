@@ -73,6 +73,58 @@ SOURCE_PROBES = [
 REQUIRED_SESSION_TABLES = ["sessions", "messages", "messages_fts", "messages_fts_trigram", "schema_version"]
 REQUIRED_KANBAN_TABLES = ["tasks", "task_events"]
 
+RETRIEVAL_QUALITY_FIXTURE = {
+    "documents": [
+        {
+            "id": "doc-session-fts",
+            "source_class": "code",
+            "authority_rank": 3,
+            "content": "hermes_state.py implements SQLite FTS5 session search with messages_fts, messages_fts_trigram, trigram CJK search, and WAL fallback handling.",
+        },
+        {
+            "id": "doc-governance-redline",
+            "source_class": "evaluation_report",
+            "authority_rank": 2,
+            "content": "RAG candidate context is not taskpool ledger authority. Private brain data must not be uploaded to hosted embedding APIs without authorization.",
+        },
+        {
+            "id": "doc-metrics",
+            "source_class": "benchmark_fixture",
+            "authority_rank": 2,
+            "content": "The local-brain RAG benchmark tracks MRR@10, Recall@5, ContextPrecision@5, AuthorityViolationRate, and ProvenanceCompleteness.",
+        },
+        {
+            "id": "doc-distractor",
+            "source_class": "unrelated_note",
+            "authority_rank": 0,
+            "content": "A generic note about UI styling, notifications, and unrelated desktop preferences.",
+        },
+    ],
+    "cases": [
+        {
+            "id": "rq-001",
+            "query": "SQLite FTS5 session search WAL trigram messages_fts",
+            "expected_doc_ids": ["doc-session-fts"],
+            "required_terms": ["FTS5", "messages_fts", "WAL"],
+            "top_k": 3,
+        },
+        {
+            "id": "rq-002",
+            "query": "private brain hosted embedding APIs uploaded authorization",
+            "expected_doc_ids": ["doc-governance-redline"],
+            "required_terms": ["hosted embedding", "taskpool ledger authority"],
+            "top_k": 3,
+        },
+        {
+            "id": "rq-003",
+            "query": "MRR Recall ContextPrecision AuthorityViolationRate ProvenanceCompleteness",
+            "expected_doc_ids": ["doc-metrics"],
+            "required_terms": ["MRR@10", "ProvenanceCompleteness"],
+            "top_k": 3,
+        },
+    ],
+}
+
 
 def sha256_text(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -128,6 +180,66 @@ def probe_sqlite_db(db_path: Path | None, required_tables: list[str], label: str
     return record
 
 
+def evaluate_fixture_retrieval_quality() -> dict[str, Any]:
+    """Run deterministic FTS5 retrieval checks in an in-memory SQLite database."""
+    failures: list[str] = []
+    case_results: list[dict[str, Any]] = []
+    try:
+        with sqlite3.connect(":memory:") as conn:
+            conn.execute(
+                "CREATE VIRTUAL TABLE docs_fts USING fts5("
+                "doc_id UNINDEXED, source_class UNINDEXED, authority_rank UNINDEXED, content)"
+            )
+            for doc in RETRIEVAL_QUALITY_FIXTURE["documents"]:
+                conn.execute(
+                    "INSERT INTO docs_fts(doc_id, source_class, authority_rank, content) VALUES (?, ?, ?, ?)",
+                    (doc["id"], doc["source_class"], doc["authority_rank"], doc["content"]),
+                )
+            for case in RETRIEVAL_QUALITY_FIXTURE["cases"]:
+                rows = conn.execute(
+                    "SELECT doc_id, source_class, authority_rank, content, bm25(docs_fts) AS rank "
+                    "FROM docs_fts WHERE docs_fts MATCH ? ORDER BY rank LIMIT ?",
+                    (case["query"], case["top_k"]),
+                ).fetchall()
+                retrieved = [str(row[0]) for row in rows]
+                expected = set(case["expected_doc_ids"])
+                recall_ok = expected.issubset(set(retrieved))
+                provenance_ok = all(row[0] and row[1] and row[2] is not None for row in rows)
+                retrieved_text = "\n".join(str(row[3]) for row in rows)
+                terms_ok = all(term in retrieved_text for term in case["required_terms"])
+                status = "PASS" if recall_ok and provenance_ok and terms_ok else "FAIL"
+                if status != "PASS":
+                    failures.append(case["id"])
+                case_results.append(
+                    {
+                        "id": case["id"],
+                        "status": status,
+                        "retrieved_doc_ids": retrieved,
+                        "expected_doc_ids": sorted(expected),
+                        "recall_at_k_ok": recall_ok,
+                        "required_terms_ok": terms_ok,
+                        "provenance_fields_ok": provenance_ok,
+                    }
+                )
+    except sqlite3.Error as exc:
+        return {
+            "status": "FAIL",
+            "storage": "sqlite_memory_fts5",
+            "boundary": "temporary_fixture_only_no_live_db_mutation",
+            "reason": f"sqlite fixture retrieval failed: {exc}",
+            "case_results": case_results,
+        }
+    return {
+        "status": "PASS" if not failures else "FAIL",
+        "storage": "sqlite_memory_fts5",
+        "boundary": "temporary_fixture_only_no_live_db_mutation",
+        "document_count": len(RETRIEVAL_QUALITY_FIXTURE["documents"]),
+        "case_count": len(RETRIEVAL_QUALITY_FIXTURE["cases"]),
+        "failed_cases": failures,
+        "case_results": case_results,
+    }
+
+
 def derive_findings(source_probes: list[dict[str, Any]], db_probes: list[dict[str, Any]]) -> list[dict[str, str]]:
     findings = []
     for probe in source_probes:
@@ -145,6 +257,18 @@ def derive_findings(source_probes: list[dict[str, Any]], db_probes: list[dict[st
     return findings
 
 
+def derive_retrieval_quality_finding(retrieval_quality: dict[str, Any]) -> dict[str, str]:
+    return {
+        "id": "fixture_retrieval_quality",
+        "status": retrieval_quality["status"],
+        "finding": (
+            "Deterministic in-memory SQLite FTS5 fixture retrieval meets recall, term, and provenance checks without live DB mutation."
+            if retrieval_quality["status"] == "PASS"
+            else retrieval_quality.get("reason", "Fixture retrieval quality checks failed.")
+        ),
+    }
+
+
 def build_projection(args: argparse.Namespace) -> dict[str, Any]:
     repo_root = Path(args.repo_root).resolve()
     state_db = Path(args.state_db).expanduser().resolve() if args.state_db else None
@@ -154,6 +278,9 @@ def build_projection(args: argparse.Namespace) -> dict[str, Any]:
         probe_sqlite_db(state_db, REQUIRED_SESSION_TABLES, "session_state"),
         probe_sqlite_db(kanban_db, REQUIRED_KANBAN_TABLES, "kanban_taskpool"),
     ]
+    retrieval_quality = evaluate_fixture_retrieval_quality()
+    findings = derive_findings(source_probes, db_probes)
+    findings.append(derive_retrieval_quality_finding(retrieval_quality))
     projection = {
         "projection_type": "raghermes_local_evidence_database_governance",
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -161,13 +288,14 @@ def build_projection(args: argparse.Namespace) -> dict[str, Any]:
         "repo_root": str(repo_root),
         "source_probes": source_probes,
         "database_probes": db_probes,
-        "findings": derive_findings(source_probes, db_probes),
+        "retrieval_quality": retrieval_quality,
+        "findings": findings,
         "governance_gaps": [
             "No production RAG ingestion/query pipeline is authorized by this projection; it only inventories local primitives.",
-            "Live DB probes are read-only schema checks and do not certify recall quality, retention policy, PII policy, or embedding freshness.",
+            "Live DB probes are read-only schema checks and fixture retrieval does not certify production recall quality, retention policy, PII policy, or embedding freshness.",
             "Any canonical taskpool/mission synchronization or external retrieval service needs a separate human gate if it changes lifecycle, credentials, cadence, or external systems.",
         ],
-        "next_safe_slice": "Add deterministic fixture-based retrieval-quality checks over temporary SQLite/FTS data, still with no live DB mutation.",
+        "next_safe_slice": "Map the fixture retrieval-quality result into a read-only mission-ledger proof projection without lifecycle/dashboard synchronization.",
     }
     stable = json.dumps({k: v for k, v in projection.items() if k != "created_at"}, ensure_ascii=False, sort_keys=True)
     projection["projection_hash"] = sha256_text(stable)

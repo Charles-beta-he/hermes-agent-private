@@ -1,0 +1,247 @@
+{
+  "boundary": "read_only_projection_no_db_write_no_task_claim_no_external_side_effect",
+  "created_at": "2026-06-14T03:25:21.714937+00:00",
+  "database_probes": [
+    {
+      "label": "session_state",
+      "missing_required_tables": [],
+      "path": "/Users/charles/.hermes/state.db",
+      "present_required_tables": [
+        "messages",
+        "messages_fts",
+        "messages_fts_trigram",
+        "schema_version",
+        "sessions"
+      ],
+      "required_tables": [
+        "sessions",
+        "messages",
+        "messages_fts",
+        "messages_fts_trigram",
+        "schema_version"
+      ],
+      "status": "PASS",
+      "table_count": 20
+    },
+    {
+      "label": "kanban_taskpool",
+      "missing_required_tables": [],
+      "path": "/Users/charles/.hermes/kanban.db",
+      "present_required_tables": [
+        "task_events",
+        "tasks"
+      ],
+      "required_tables": [
+        "tasks",
+        "task_events"
+      ],
+      "status": "PASS",
+      "table_count": 9
+    }
+  ],
+  "findings": [
+    {
+      "finding": "SQLite session ledger with FTS5/trigram retrieval and bounded write-contention handling.",
+      "id": "session_sqlite_fts_trigram",
+      "status": "PASS"
+    },
+    {
+      "finding": "Operator-facing documentation for session storage, retrieval indexes, and contention policy.",
+      "id": "session_storage_docs",
+      "status": "PASS"
+    },
+    {
+      "finding": "Large tool outputs can be spilled to local artifacts and referenced by pointer instead of flooding context.",
+      "id": "tool_result_persistence",
+      "status": "PASS"
+    },
+    {
+      "finding": "Sidecar evidence can be redacted and converted into taskpool-friendly proof records.",
+      "id": "sidecar_taskpool_proof_ingest",
+      "status": "PASS"
+    },
+    {
+      "finding": "Live/read-only SQLite schema contains required governance tables.",
+      "id": "db_session_state",
+      "status": "PASS"
+    },
+    {
+      "finding": "Live/read-only SQLite schema contains required governance tables.",
+      "id": "db_kanban_taskpool",
+      "status": "PASS"
+    },
+    {
+      "finding": "Deterministic in-memory SQLite FTS5 fixture retrieval meets recall, term, and provenance checks without live DB mutation.",
+      "id": "fixture_retrieval_quality",
+      "status": "PASS"
+    }
+  ],
+  "governance_gaps": [
+    "No production RAG ingestion/query pipeline is authorized by this projection; it only inventories local primitives.",
+    "Live DB probes are read-only schema checks and fixture retrieval does not certify production recall quality, retention policy, PII policy, or embedding freshness.",
+    "Any canonical taskpool/mission synchronization or external retrieval service needs a separate human gate if it changes lifecycle, credentials, cadence, or external systems."
+  ],
+  "next_safe_slice": "Map the fixture retrieval-quality result into a read-only mission-ledger proof projection without lifecycle/dashboard synchronization.",
+  "projection_hash": "sha256:815d3f0df0dbb782f3633f19a98ebf1c2a827f980d43302b37d10873f92990ab",
+  "projection_type": "raghermes_local_evidence_database_governance",
+  "repo_root": "/Users/charles/.hermes/hermes-agent",
+  "retrieval_quality": {
+    "boundary": "temporary_fixture_only_no_live_db_mutation",
+    "case_count": 3,
+    "case_results": [
+      {
+        "expected_doc_ids": [
+          "doc-session-fts"
+        ],
+        "id": "rq-001",
+        "provenance_fields_ok": true,
+        "recall_at_k_ok": true,
+        "required_terms_ok": true,
+        "retrieved_doc_ids": [
+          "doc-session-fts"
+        ],
+        "status": "PASS"
+      },
+      {
+        "expected_doc_ids": [
+          "doc-governance-redline"
+        ],
+        "id": "rq-002",
+        "provenance_fields_ok": true,
+        "recall_at_k_ok": true,
+        "required_terms_ok": true,
+        "retrieved_doc_ids": [
+          "doc-governance-redline"
+        ],
+        "status": "PASS"
+      },
+      {
+        "expected_doc_ids": [
+          "doc-metrics"
+        ],
+        "id": "rq-003",
+        "provenance_fields_ok": true,
+        "recall_at_k_ok": true,
+        "required_terms_ok": true,
+        "retrieved_doc_ids": [
+          "doc-metrics"
+        ],
+        "status": "PASS"
+      }
+    ],
+    "document_count": 4,
+    "failed_cases": [],
+    "status": "PASS",
+    "storage": "sqlite_memory_fts5"
+  },
+  "source_probes": [
+    {
+      "capability": "SQLite session ledger with FTS5/trigram retrieval and bounded write-contention handling.",
+      "exists": true,
+      "id": "session_sqlite_fts_trigram",
+      "path": "/Users/charles/.hermes/hermes-agent/hermes_state.py",
+      "patterns": [
+        {
+          "found": true,
+          "pattern": "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts"
+        },
+        {
+          "found": true,
+          "pattern": "messages_fts_trigram"
+        },
+        {
+          "found": true,
+          "pattern": "tokenize='trigram'"
+        },
+        {
+          "found": true,
+          "pattern": "BEGIN IMMEDIATE"
+        },
+        {
+          "found": true,
+          "pattern": "_WRITE_MAX_RETRIES"
+        },
+        {
+          "found": true,
+          "pattern": "wal_checkpoint(TRUNCATE)"
+        }
+      ],
+      "source_sha256": "sha256:2706322ca433b9980f6a6a7cdd44368edddc30edd4a8a227f84bb79c18a08fcd",
+      "status": "PASS"
+    },
+    {
+      "capability": "Operator-facing documentation for session storage, retrieval indexes, and contention policy.",
+      "exists": true,
+      "id": "session_storage_docs",
+      "path": "/Users/charles/.hermes/hermes-agent/website/docs/developer-guide/session-storage.md",
+      "patterns": [
+        {
+          "found": true,
+          "pattern": "messages_fts"
+        },
+        {
+          "found": true,
+          "pattern": "messages_fts_trigram"
+        },
+        {
+          "found": true,
+          "pattern": "WAL mode"
+        },
+        {
+          "found": true,
+          "pattern": "Write Contention Handling"
+        }
+      ],
+      "source_sha256": "sha256:bb2f944d4c2839af94f26d2176ecdac241a6bac269ca836bd440177b649f7114",
+      "status": "PASS"
+    },
+    {
+      "capability": "Large tool outputs can be spilled to local artifacts and referenced by pointer instead of flooding context.",
+      "exists": true,
+      "id": "tool_result_persistence",
+      "path": "/Users/charles/.hermes/hermes-agent/tools/tool_result_storage.py",
+      "patterns": [
+        {
+          "found": true,
+          "pattern": "maybe_persist_tool_result"
+        },
+        {
+          "found": true,
+          "pattern": "enforce_turn_budget"
+        },
+        {
+          "found": true,
+          "pattern": "Full output saved to:"
+        },
+        {
+          "found": true,
+          "pattern": "cat >"
+        }
+      ],
+      "source_sha256": "sha256:bd9ae443988b026f10ef5166cd684766544a58cf730b11c88abdc96fc5135d79",
+      "status": "PASS"
+    },
+    {
+      "capability": "Sidecar evidence can be redacted and converted into taskpool-friendly proof records.",
+      "exists": true,
+      "id": "sidecar_taskpool_proof_ingest",
+      "path": "/Users/charles/.hermes/hermes-agent/session_sidecar/consumer.py",
+      "patterns": [
+        {
+          "found": true,
+          "pattern": "taskpool_proof_ingest"
+        },
+        {
+          "found": true,
+          "pattern": "strip_sensitive"
+        },
+        {
+          "found": true,
+          "pattern": "proof-log"
+        }
+      ],
+      "source_sha256": "sha256:9eb46afbef33936631daa6b5449ad571c2042ee09ad36e061c2f3fd78ccc0c64",
+      "status": "PASS"
+    }
+  ]
+}

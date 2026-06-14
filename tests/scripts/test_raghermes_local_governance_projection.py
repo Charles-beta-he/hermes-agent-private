@@ -22,7 +22,22 @@ def test_projection_stdout_passes_source_probes():
     source_status = {probe["id"]: probe["status"] for probe in report["source_probes"]}
     assert source_status["session_sqlite_fts_trigram"] == "PASS"
     assert source_status["tool_result_persistence"] == "PASS"
+    assert report["retrieval_quality"]["status"] == "PASS"
+    assert report["retrieval_quality"]["boundary"] == "temporary_fixture_only_no_live_db_mutation"
     assert {probe["status"] for probe in report["database_probes"]} == {"SKIPPED"}
+
+
+def test_fixture_retrieval_quality_uses_in_memory_fts_and_provenance():
+    result = projection.evaluate_fixture_retrieval_quality()
+
+    assert result["status"] == "PASS"
+    assert result["storage"] == "sqlite_memory_fts5"
+    assert result["document_count"] == 4
+    assert result["case_count"] == 3
+    assert result["failed_cases"] == []
+    assert all(case["recall_at_k_ok"] for case in result["case_results"])
+    assert all(case["required_terms_ok"] for case in result["case_results"])
+    assert all(case["provenance_fields_ok"] for case in result["case_results"])
 
 
 def test_sqlite_db_probe_uses_readonly_schema_check(tmp_path: Path):
