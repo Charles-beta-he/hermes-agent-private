@@ -56,12 +56,14 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 47, "name": "External Dispatch Expansion Candidate Packet", "layer": "external dispatch governance", "status": "candidate_ready", "depends_on": [46], "authority": "candidate packet only", "gate": "no external send without exact target/payload/mode", "next_unlocked": [48]},
     {"phase": 48, "name": "External Dispatch Policy Gate Local Outbox", "layer": "external dispatch policy gate", "status": "local_outbox_recorded", "depends_on": [47], "authority": "local outbox only", "gate": "external adapters still require exact target/payload/mode", "next_unlocked": [49]},
     {"phase": 49, "name": "Workflow Pack / Agent Pack Schema", "layer": "pack productization", "status": "pack_manifests_ready", "depends_on": [48], "authority": "schema/projection only", "gate": "runtime adoption and external send remain separate gates", "next_unlocked": [50, 51]},
-    {"phase": 51, "name": "Pack Registry / Control Tower Projection", "layer": "operator registry", "status": "registry_projection_ready", "depends_on": [49], "authority": "read-only registry projection", "gate": "UI/API adoption and external send remain separate gates", "next_unlocked": [50, 52]},
+    {"phase": 50, "name": "Guarded Single External Send", "layer": "external dispatch smoke", "status": "guarded_send_verified", "depends_on": [49], "authority": "explicit option-1 Telegram home send", "gate": "single send only; no unattended dispatch", "next_unlocked": [51, 52]},
+    {"phase": 51, "name": "Pack Registry / Control Tower Projection", "layer": "operator registry", "status": "registry_projection_ready", "depends_on": [49], "authority": "read-only registry projection", "gate": "UI/API adoption remains separate gate", "next_unlocked": [52]},
+    {"phase": 52, "name": "Control Tower UI/API Projection", "layer": "control tower productization", "status": "ui_api_projection_ready", "depends_on": [50, 51], "authority": "read-only static UI/API projection", "gate": "durable runtime API and unattended dispatch remain separate gates", "next_unlocked": [53]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 50, "name": "Guarded Single External Send", "track": "GUARDED_EXTERNAL_SEND", "authority_needed": "exact adapter/target/payload/mode/idempotency/rollback", "why_next": "perform at most one named external side effect with receipt only if the user supplies concrete target/payload"},
-    {"phase": 52, "name": "Control Tower UI/API Projection", "track": "CONTROL_TOWER_PRODUCTIZATION", "authority_needed": "larger product direction choice", "why_next": "requires choosing UI/API/dashboard productization path vs external-send execution path"},
+    {"phase": 53, "name": "Durable Control Tower Runtime/API Integration", "track": "CONTROL_TOWER_RUNTIME_API", "authority_needed": "choose server/API integration path and persistence boundary", "why_next": "turn the static projection into a live operator surface"},
+    {"phase": 54, "name": "Unattended Dispatch Policy Gate", "track": "UNATTENDED_DISPATCH_POLICY", "authority_needed": "target allowlist/rate-limit/duplicate policy/correction path", "why_next": "move from one guarded send to policy-governed unattended dispatch"},
 ]
 
 
@@ -103,15 +105,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-51 的顺序、依赖、门禁和后续扩展路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启，Phase46 观察已记录，Phase47 外部扩展候选包已就绪，Phase48 本地 outbox policy gate 已记录，Phase49 Workflow/Agent Pack manifests 已就绪，Phase51 pack registry/control-tower read-only projection 已就绪。",
+        "objective": "梳理 Phase17-52 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase50 单次 Telegram guarded send 已验证，Phase51 pack registry 已就绪，Phase52 Control Tower 静态 UI/API projection 已就绪。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase51 has projected Workflow Pack / Agent Pack manifests into a read-only operator registry. The next step is a larger divergence: exact external send (Phase50) versus Control Tower UI/API productization (Phase52).",
+        "current_boundary": "Phase52 has produced a static Control Tower UI/API projection after the single guarded external send. The next step is a larger divergence: durable live Control Tower runtime/API integration versus unattended dispatch policy gate.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Human choice required: Phase50 guarded external send vs Phase52 Control Tower UI/API projection",
+        "recommended_next": "Human choice required: Phase53 live Control Tower runtime/API integration vs Phase54 unattended dispatch policy gate",
     }
 
 

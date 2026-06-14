@@ -1,0 +1,122 @@
+{
+  "api_version": "workflow-control-tower.v1",
+  "blockers": [],
+  "created_at": "2026-06-14T03:28:07Z",
+  "next_boundary": "larger divergence after Phase52: durable Control Tower runtime/API integration vs unattended dispatch policy gate",
+  "operator_summary": {
+    "agent_pack_id": "agent.workflow_kernel_operator",
+    "guarded_send_status": "GUARDED_EXTERNAL_SEND_VERIFIED",
+    "last_external_send": {
+      "adapter": "telegram",
+      "external_side_effect_executed": true,
+      "message_id": "4261",
+      "target_type": "telegram_home_channel"
+    },
+    "registry_status": "PACK_REGISTRY_PROJECTION_READY",
+    "sequence_phase_count": 34,
+    "workflow_pack_id": "workflow_kernel_external_dispatch_governance"
+  },
+  "panels": [
+    {
+      "id": "pack_registry",
+      "items": [
+        {
+          "entrypoint": "workflow_kernel.runtime.check_runtime_switch_readiness",
+          "human_gate": "completed_phase45_full_authorization",
+          "layer": "runtime_switch",
+          "module_id": "workflow_kernel.runtime_auto_enable.v1",
+          "risk_level": "local_write",
+          "side_effects": {
+            "credential_access": false,
+            "cron_mutation": false,
+            "external_dispatch": false,
+            "model_generation": false
+          }
+        },
+        {
+          "entrypoint": "scripts/workflow_post_auto_enable_observation.py",
+          "human_gate": "none_for_readback",
+          "layer": "runtime_observation",
+          "module_id": "workflow_kernel.post_auto_enable_observation.v1",
+          "risk_level": "read_only",
+          "side_effects": {
+            "credential_access": false,
+            "cron_mutation": false,
+            "external_dispatch": false,
+            "model_generation": false
+          }
+        },
+        {
+          "entrypoint": "scripts/workflow_external_dispatch_expansion_packet.py",
+          "human_gate": "exact_adapter_target_payload_required_for_external_effect",
+          "layer": "external_dispatch_governance",
+          "module_id": "workflow_kernel.external_dispatch_candidate.v1",
+          "risk_level": "read_only",
+          "side_effects": {
+            "credential_access": false,
+            "cron_mutation": false,
+            "external_dispatch": false,
+            "model_generation": false
+          }
+        },
+        {
+          "entrypoint": "scripts/workflow_external_dispatch_policy_gate.py",
+          "human_gate": "default_safe_local_outbox_when_no_external_target",
+          "layer": "external_dispatch_policy_gate",
+          "module_id": "workflow_kernel.external_dispatch_local_outbox.v1",
+          "risk_level": "local_write",
+          "side_effects": {
+            "credential_access": false,
+            "cron_mutation": false,
+            "external_dispatch": false,
+            "model_generation": false
+          }
+        }
+      ],
+      "status": "PACK_REGISTRY_PROJECTION_READY",
+      "title": "Workflow / Agent Pack Registry"
+    },
+    {
+      "id": "external_dispatch_receipt",
+      "items": [
+        {
+          "chat_id": "5524172309",
+          "message_id": "4261",
+          "mirrored": true,
+          "note": "Sent to telegram home channel (chat_id: 5524172309)",
+          "platform": "telegram",
+          "success": true
+        }
+      ],
+      "status": "GUARDED_EXTERNAL_SEND_VERIFIED",
+      "title": "Latest Guarded External Send"
+    },
+    {
+      "id": "next_boundary",
+      "items": [
+        {
+          "option": "control_tower_runtime_api",
+          "requires": "choose durable API/server integration path"
+        },
+        {
+          "option": "unattended_dispatch_policy_gate",
+          "requires": "target allowlist, rate limits, duplicate policy, correction path"
+        }
+      ],
+      "status": "needs_product_direction_after_phase52",
+      "title": "Next Boundary"
+    }
+  ],
+  "phase": 52,
+  "projection_type": "read_only_ui_api_payload_and_static_html",
+  "report_id": "workflow_kernel_control_tower_projection_20260613_phase52",
+  "safe_boundaries": [
+    "static HTML only",
+    "read-only API payload only",
+    "no live server started",
+    "no runtime mutation",
+    "no unattended dispatch enablement",
+    "no additional external send"
+  ],
+  "status": "CONTROL_TOWER_UI_API_PROJECTION_READY"
+}

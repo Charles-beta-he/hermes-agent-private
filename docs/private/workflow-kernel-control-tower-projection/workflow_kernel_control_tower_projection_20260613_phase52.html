@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang='en'>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>Workflow Kernel Control Tower Projection</title>
+<style>
+:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #08111f; color: #e6edf7; }
+body { margin: 0; padding: 32px; background: radial-gradient(circle at top left, #17365f, #08111f 52%); }
+header { max-width: 1120px; margin: 0 auto 24px; }
+h1 { font-size: clamp(28px, 4vw, 48px); margin: 0 0 12px; }
+.grid { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.card { border: 1px solid rgba(148, 163, 184, .28); border-radius: 20px; background: rgba(15, 23, 42, .78); box-shadow: 0 18px 60px rgba(0,0,0,.25); padding: 18px; }
+.status { color: #8ee6b5; font-weight: 700; letter-spacing: .02em; }
+.meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.badge { border: 1px solid rgba(125, 211, 252, .35); border-radius: 999px; padding: 8px 12px; color: #bae6fd; background: rgba(14, 116, 144, .16); }
+pre { overflow: auto; max-height: 420px; color: #cbd5e1; font-size: 12px; line-height: 1.45; }
+</style>
+</head>
+<body>
+<header>
+<h1>Workflow Kernel Control Tower Projection</h1>
+<p class='status'>CONTROL_TOWER_UI_API_PROJECTION_READY</p>
+<div class='meta'>
+<span class='badge'>Workflow: workflow_kernel_external_dispatch_governance</span>
+<span class='badge'>Agent: agent.workflow_kernel_operator</span>
+<span class='badge'>Last message: 4261</span>
+<span class='badge'>Phase count: 34</span>
+</div>
+</header>
+<main class='grid'><section class='card'><h2>Workflow / Agent Pack Registry</h2><p class='status'>PACK_REGISTRY_PROJECTION_READY</p><pre>[
+  {
+    &quot;entrypoint&quot;: &quot;workflow_kernel.runtime.check_runtime_switch_readiness&quot;,
+    &quot;human_gate&quot;: &quot;completed_phase45_full_authorization&quot;,
+    &quot;layer&quot;: &quot;runtime_switch&quot;,
+    &quot;module_id&quot;: &quot;workflow_kernel.runtime_auto_enable.v1&quot;,
+    &quot;risk_level&quot;: &quot;local_write&quot;,
+    &quot;side_effects&quot;: {
+      &quot;credential_access&quot;: false,
+      &quot;cron_mutation&quot;: false,
+      &quot;external_dispatch&quot;: false,
+      &quot;model_generation&quot;: false
+    }
+  },
+  {
+    &quot;entrypoint&quot;: &quot;scripts/workflow_post_auto_enable_observation.py&quot;,
+    &quot;human_gate&quot;: &quot;none_for_readback&quot;,
+    &quot;layer&quot;: &quot;runtime_observation&quot;,
+    &quot;module_id&quot;: &quot;workflow_kernel.post_auto_enable_observation.v1&quot;,
+    &quot;risk_level&quot;: &quot;read_only&quot;,
+    &quot;side_effects&quot;: {
+      &quot;credential_access&quot;: false,
+      &quot;cron_mutation&quot;: false,
+      &quot;external_dispatch&quot;: false,
+      &quot;model_generation&quot;: false
+    }
+  },
+  {
+    &quot;entrypoint&quot;: &quot;scripts/workflow_external_dispatch_expansion_packet.py&quot;,
+    &quot;human_gate&quot;: &quot;exact_adapter_target_payload_required_for_external_effect&quot;,
+    &quot;layer&quot;: &quot;external_dispatch_governance&quot;,
+    &quot;module_id&quot;: &quot;workflow_kernel.external_dispatch_candidate.v1&quot;,
+    &quot;risk_level&quot;: &quot;read_only&quot;,
+    &quot;side_effects&quot;: {
+      &quot;credential_access&quot;: false,
+      &quot;cron_mutation&quot;: false,
+      &quot;external_dispatch&quot;: false,
+      &quot;model_generation&quot;: false
+    }
+  },
+  {
+    &quot;entrypoint&quot;: &quot;scripts/workflow_external_dispatch_policy_gate.py&quot;,
+    &quot;human_gate&quot;: &quot;default_safe_local_outbox_when_no_external_target&quot;,
+    &quot;layer&quot;: &quot;external_dispatch_policy_gate&quot;,
+    &quot;module_id&quot;: &quot;workflow_kernel.external_dispatch_local_outbox.v1&quot;,
+    &quot;risk_level&quot;: &quot;local_write&quot;,
+    &quot;side_effects&quot;: {
+      &quot;credential_access&quot;: false,
+      &quot;cron_mutation&quot;: false,
+      &quot;external_dispatch&quot;: false,
+      &quot;model_generation&quot;: false
+    }
+  }
+]</pre></section>
+<section class='card'><h2>Latest Guarded External Send</h2><p class='status'>GUARDED_EXTERNAL_SEND_VERIFIED</p><pre>[
+  {
+    &quot;chat_id&quot;: &quot;5524172309&quot;,
+    &quot;message_id&quot;: &quot;4261&quot;,
+    &quot;mirrored&quot;: true,
+    &quot;note&quot;: &quot;Sent to telegram home channel (chat_id: 5524172309)&quot;,
+    &quot;platform&quot;: &quot;telegram&quot;,
+    &quot;success&quot;: true
+  }
+]</pre></section>
+<section class='card'><h2>Next Boundary</h2><p class='status'>needs_product_direction_after_phase52</p><pre>[
+  {
+    &quot;option&quot;: &quot;control_tower_runtime_api&quot;,
+    &quot;requires&quot;: &quot;choose durable API/server integration path&quot;
+  },
+  {
+    &quot;option&quot;: &quot;unattended_dispatch_policy_gate&quot;,
+    &quot;requires&quot;: &quot;target allowlist, rate limits, duplicate policy, correction path&quot;
+  }
+]</pre></section></main>
+</body>
+</html>

@@ -1,0 +1,37 @@
+{
+  "adapter": "telegram",
+  "blockers": [],
+  "created_at": "2026-06-14T03:25:56Z",
+  "external_side_effect_executed": true,
+  "idempotency_key": "phase50-telegram-home-20260613-smoke-test",
+  "mode": "guarded_single_send",
+  "next_boundary": "Phase52 Control Tower UI/API projection may proceed after this receipt; unattended external dispatch remains closed",
+  "payload_chars": 81,
+  "payload_digest": "d248fda74c9aba4e881e2eb7e86d031175f243f344ea50e2f770b504aeb8c9b3",
+  "phase": 50,
+  "post_send_readback": "hermes send returned success=true with Telegram message_id",
+  "report_id": "workflow_kernel_guarded_external_send_20260613_phase50",
+  "rollback_or_correction_path": "send a compensating correction message to the same Telegram target if the smoke-test message is later deemed incorrect; no destructive rollback is possible for delivered messages",
+  "safe_boundaries": [
+    "single explicit Telegram home send only",
+    "no repeated send",
+    "no unattended dispatch enablement",
+    "no credential read/write",
+    "no scheduler mutation",
+    "no Lark/GitHub mutation"
+  ],
+  "send_result": {
+    "chat_id": "5524172309",
+    "message_id": "4261",
+    "mirrored": true,
+    "note": "Sent to telegram home channel (chat_id: 5524172309)",
+    "platform": "telegram",
+    "success": true
+  },
+  "status": "GUARDED_EXTERNAL_SEND_VERIFIED",
+  "target": {
+    "chat_id": "5524172309",
+    "type": "telegram_home_channel"
+  },
+  "unattended_external_dispatch_enabled": false
+}

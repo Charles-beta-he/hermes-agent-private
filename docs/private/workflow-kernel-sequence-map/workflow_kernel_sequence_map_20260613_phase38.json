@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-13T19:18:08Z",
-  "current_boundary": "Phase51 has projected Workflow Pack / Agent Pack manifests into a read-only operator registry. The next step is a larger divergence: exact external send (Phase50) versus Control Tower UI/API productization (Phase52).",
+  "created_at": "2026-06-14T03:30:08Z",
+  "current_boundary": "Phase52 has produced a static Control Tower UI/API projection after the single guarded external send. The next step is a larger divergence: durable live Control Tower runtime/API integration versus unattended dispatch policy gate.",
   "next_ladder": [
     {
-      "authority_needed": "exact adapter/target/payload/mode/idempotency/rollback",
-      "name": "Guarded Single External Send",
-      "phase": 50,
-      "track": "GUARDED_EXTERNAL_SEND",
-      "why_next": "perform at most one named external side effect with receipt only if the user supplies concrete target/payload"
+      "authority_needed": "choose server/API integration path and persistence boundary",
+      "name": "Durable Control Tower Runtime/API Integration",
+      "phase": 53,
+      "track": "CONTROL_TOWER_RUNTIME_API",
+      "why_next": "turn the static projection into a live operator surface"
     },
     {
-      "authority_needed": "larger product direction choice",
-      "name": "Control Tower UI/API Projection",
-      "phase": 52,
-      "track": "CONTROL_TOWER_PRODUCTIZATION",
-      "why_next": "requires choosing UI/API/dashboard productization path vs external-send execution path"
+      "authority_needed": "target allowlist/rate-limit/duplicate policy/correction path",
+      "name": "Unattended Dispatch Policy Gate",
+      "phase": 54,
+      "track": "UNATTENDED_DISPATCH_POLICY",
+      "why_next": "move from one guarded send to policy-governed unattended dispatch"
     }
   ],
-  "objective": "梳理 Phase17-51 的顺序、依赖、门禁和后续扩展路径；两个 opt-in wrapper 均已 scheduler-native，runtime switch 已自动开启，Phase46 观察已记录，Phase47 外部扩展候选包已就绪，Phase48 本地 outbox policy gate 已记录，Phase49 Workflow/Agent Pack manifests 已就绪，Phase51 pack registry/control-tower read-only projection 已就绪。",
-  "phase_count": 34,
+  "objective": "梳理 Phase17-52 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase50 单次 Telegram guarded send 已验证，Phase51 pack registry 已就绪，Phase52 Control Tower 静态 UI/API projection 已就绪。",
+  "phase_count": 36,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -490,22 +490,51 @@
       "status": "pack_manifests_ready"
     },
     {
+      "authority": "explicit option-1 Telegram home send",
+      "depends_on": [
+        49
+      ],
+      "gate": "single send only; no unattended dispatch",
+      "layer": "external dispatch smoke",
+      "name": "Guarded Single External Send",
+      "next_unlocked": [
+        51,
+        52
+      ],
+      "phase": 50,
+      "status": "guarded_send_verified"
+    },
+    {
       "authority": "read-only registry projection",
       "depends_on": [
         49
       ],
-      "gate": "UI/API adoption and external send remain separate gates",
+      "gate": "UI/API adoption remains separate gate",
       "layer": "operator registry",
       "name": "Pack Registry / Control Tower Projection",
       "next_unlocked": [
-        50,
         52
       ],
       "phase": 51,
       "status": "registry_projection_ready"
+    },
+    {
+      "authority": "read-only static UI/API projection",
+      "depends_on": [
+        50,
+        51
+      ],
+      "gate": "durable runtime API and unattended dispatch remain separate gates",
+      "layer": "control tower productization",
+      "name": "Control Tower UI/API Projection",
+      "next_unlocked": [
+        53
+      ],
+      "phase": 52,
+      "status": "ui_api_projection_ready"
     }
   ],
-  "recommended_next": "Human choice required: Phase50 guarded external send vs Phase52 Control Tower UI/API projection",
+  "recommended_next": "Human choice required: Phase53 live Control Tower runtime/API integration vs Phase54 unattended dispatch policy gate",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

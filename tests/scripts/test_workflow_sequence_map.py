@@ -32,9 +32,8 @@ def test_build_map_has_current_boundary_and_safe_default():
 def test_next_ladder_requires_authority_for_future_expansion():
     mod = load()
     by_track = {item["track"]: item for item in mod.NEXT_LADDER}
-    assert by_track["GUARDED_EXTERNAL_SEND"]["phase"] == 50
-    assert by_track["GUARDED_EXTERNAL_SEND"]["authority_needed"] == "exact adapter/target/payload/mode/idempotency/rollback"
-    assert by_track["CONTROL_TOWER_PRODUCTIZATION"]["phase"] == 52
+    assert by_track["CONTROL_TOWER_RUNTIME_API"]["phase"] == 53
+    assert by_track["UNATTENDED_DISPATCH_POLICY"]["phase"] == 54
 
 
 def test_write_report_creates_artifacts(tmp_path):
