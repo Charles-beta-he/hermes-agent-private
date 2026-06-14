@@ -1,0 +1,13 @@
+{
+  "decision_id": "telegram-authorization-20260614-local-runtime-dry-run",
+  "digest": "8660cc986c9c38a6d29d08b76cd56c9f3aeb981747c25c1990bd734a56074314",
+  "evidence_refs": [
+    "artifact:/Users/charles/.hermes/docs/private/workflow-kernel-candidate-governance-20260614.md",
+    "command:user-authorized-runtime-boundary-gated-advance"
+  ],
+  "expires_at": "2026-06-15T12:13:04Z",
+  "operator": "he-cheng",
+  "requested_authority": "budget-handoff",
+  "schema": "workflow_kernel_runtime_gate_v1",
+  "scope": "workflow_kernel:local_dry_run_runtime"
+}

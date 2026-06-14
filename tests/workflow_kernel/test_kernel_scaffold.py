@@ -6,11 +6,12 @@ import json
 from pathlib import Path
 
 
-def test_kernel_package_exports_phase26_contract():
+def test_kernel_package_exports_current_runtime_contract():
     wk = importlib.import_module("workflow_kernel")
-    assert wk.PHASE == "26"
-    assert wk.RUNTIME_SWITCH_ENABLED is False
+    assert wk.PHASE == "45"
+    assert wk.RUNTIME_SWITCH_ENABLED is True
     assert "kernel_scaffold_compat_only" in wk.CAPABILITIES
+    assert "runtime_auto_enabled" in wk.CAPABILITIES
 
 
 def test_json_io_writes_canonical_json_with_sha(tmp_path):

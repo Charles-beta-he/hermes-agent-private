@@ -1,0 +1,133 @@
+{
+  "actions": [
+    {
+      "adapter_write": false,
+      "executor": "local_noop_dry_run",
+      "external_side_effect": false,
+      "model_call": false,
+      "module": "goal_calibrator.v1",
+      "route_alias": "model_route:goal_calibrator.v1"
+    },
+    {
+      "adapter_write": false,
+      "executor": "local_noop_dry_run",
+      "external_side_effect": false,
+      "model_call": false,
+      "module": "source_research.v1",
+      "route_alias": "model_route:source_research.v1"
+    },
+    {
+      "adapter_write": false,
+      "executor": "local_noop_dry_run",
+      "external_side_effect": false,
+      "model_call": false,
+      "module": "acceptance_compiler.v1",
+      "route_alias": "model_route:acceptance_compiler.v1"
+    },
+    {
+      "adapter_write": false,
+      "executor": "local_noop_dry_run",
+      "external_side_effect": false,
+      "model_call": false,
+      "module": "evidence_verifier.v1",
+      "route_alias": "model_route:evidence_verifier.v1"
+    },
+    {
+      "adapter_write": false,
+      "executor": "local_noop_dry_run",
+      "external_side_effect": false,
+      "model_call": false,
+      "module": "decision_synthesizer.v1",
+      "route_alias": "model_route:decision_synthesizer.v1"
+    }
+  ],
+  "adapter_writes_enabled": false,
+  "contract_packet": {
+    "created_at": "2026-06-14T12:13:04Z",
+    "evidence_refs": [
+      "artifact:/Users/charles/.hermes/docs/private/workflow-kernel-candidate-governance-20260614.md",
+      "command:user-authorized-runtime-boundary-gated-advance"
+    ],
+    "packet_type": "workflow_kernel_local_dry_run_runtime_plan",
+    "payload": {
+      "actions": [
+        {
+          "adapter_write": false,
+          "executor": "local_noop_dry_run",
+          "external_side_effect": false,
+          "model_call": false,
+          "module": "goal_calibrator.v1",
+          "route_alias": "model_route:goal_calibrator.v1"
+        },
+        {
+          "adapter_write": false,
+          "executor": "local_noop_dry_run",
+          "external_side_effect": false,
+          "model_call": false,
+          "module": "source_research.v1",
+          "route_alias": "model_route:source_research.v1"
+        },
+        {
+          "adapter_write": false,
+          "executor": "local_noop_dry_run",
+          "external_side_effect": false,
+          "model_call": false,
+          "module": "acceptance_compiler.v1",
+          "route_alias": "model_route:acceptance_compiler.v1"
+        },
+        {
+          "adapter_write": false,
+          "executor": "local_noop_dry_run",
+          "external_side_effect": false,
+          "model_call": false,
+          "module": "evidence_verifier.v1",
+          "route_alias": "model_route:evidence_verifier.v1"
+        },
+        {
+          "adapter_write": false,
+          "executor": "local_noop_dry_run",
+          "external_side_effect": false,
+          "model_call": false,
+          "module": "decision_synthesizer.v1",
+          "route_alias": "model_route:decision_synthesizer.v1"
+        }
+      ],
+      "adapter_writes_enabled": false,
+      "created_at": "2026-06-14T12:13:04Z",
+      "errors": [],
+      "executor_mode": "local_noop_dry_run",
+      "external_side_effects_enabled": false,
+      "gate": {
+        "errors": [],
+        "requested_authority": "budget-handoff",
+        "schema": "workflow_kernel_runtime_gate_validation_v1",
+        "scope": "workflow_kernel:local_dry_run_runtime",
+        "status": "PASS",
+        "warnings": []
+      },
+      "model_calls_enabled": false,
+      "runtime_enabled": true,
+      "schema": "workflow_kernel_local_dry_run_plan_v1",
+      "status": "READY_LOCAL_DRY_RUN",
+      "write_through_enabled": false
+    },
+    "payload_digest": "314936aa22f0510f2c7fe7b0d2bc641377a8fe60494730e623b5d0871021ddf8"
+  },
+  "created_at": "2026-06-14T12:13:04Z",
+  "errors": [],
+  "executor_mode": "local_noop_dry_run",
+  "external_side_effects_enabled": false,
+  "gate": {
+    "errors": [],
+    "requested_authority": "budget-handoff",
+    "schema": "workflow_kernel_runtime_gate_validation_v1",
+    "scope": "workflow_kernel:local_dry_run_runtime",
+    "status": "PASS",
+    "warnings": []
+  },
+  "model_calls_enabled": false,
+  "runtime_enabled": true,
+  "schema": "workflow_kernel_local_dry_run_plan_v1",
+  "status": "READY_LOCAL_DRY_RUN",
+  "write_through_enabled": false
+}

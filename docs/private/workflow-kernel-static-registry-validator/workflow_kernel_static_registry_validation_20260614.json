@@ -1,0 +1,17 @@
+{
+  "checked": {
+    "evidence_prefix_count": 6,
+    "human_gate_packet_field_count": 6,
+    "import_guard_count": 6,
+    "model_route_count": 5,
+    "module_count": 5
+  },
+  "errors": [],
+  "external_side_effects_enabled": false,
+  "read_only": true,
+  "runtime_enabled": false,
+  "schema": "workflow_kernel_static_registry_validation_v1",
+  "status": "PASS",
+  "warnings": [],
+  "write_through_enabled": false
+}
