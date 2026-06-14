@@ -77,11 +77,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 68, "name": "Manual-only Governance Archive", "layer": "archive", "status": "manual_only_governance_archive_ready", "depends_on": [67], "authority": "read-only archive", "gate": "archive/index only; no mutation", "next_unlocked": [69]},
     {"phase": 69, "name": "Periodic Closure Health Report", "layer": "stage report", "status": "periodic_closure_health_clear", "depends_on": [68], "authority": "read-only report", "gate": "stage_report_only=true; no publication", "next_unlocked": [70]},
     {"phase": 70, "name": "Governance Archive Index Publication Packet", "layer": "publication packet", "status": "archive_publication_packet_ready", "depends_on": [69], "authority": "packet only", "gate": "publication_apply_enabled=false; private default", "next_unlocked": [71]},
+    {"phase": 71, "name": "Private Archive Retention Watch", "layer": "retention watch", "status": "private_archive_retention_clear", "depends_on": [70], "authority": "read-only watch", "gate": "private archive retained; publication apply disabled", "next_unlocked": [72]},
+    {"phase": 72, "name": "Publication Apply Exact-target Gate", "layer": "exact-target gate", "status": "publication_exact_target_gate_ready", "depends_on": [71], "authority": "gate only", "gate": "exact target/payload required; apply disabled", "next_unlocked": [73]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 71, "name": "Private Archive Retention Watch", "track": "PRIVATE_ARCHIVE_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over private archive", "why_next": "continue stage-report cadence without publication"},
-    {"phase": 72, "name": "Publication Apply Exact-target Gate", "track": "PUBLICATION_APPLY_EXACT_TARGET_GATE", "authority_needed": "fresh exact target/payload/operator authorization before any external publication", "why_next": "external publication remains a separate implementation point"},
+    {"phase": 73, "name": "Exact-target Apply Dry-run Compiler", "track": "EXACT_TARGET_APPLY_DRY_RUN_COMPILER", "authority_needed": "exact target/payload dry-run only; no external publication", "why_next": "prepare validation without sending"},
+    {"phase": 74, "name": "Publication Apply Authorization Packet", "track": "PUBLICATION_APPLY_AUTHORIZATION_PACKET", "authority_needed": "fresh explicit authorization before any external publication apply", "why_next": "external publication remains separate and disabled"},
 ]
 
 
@@ -123,15 +125,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-70 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase69 已生成 periodic closure health report，Phase70 已生成 archive publication packet；archive 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-72 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase71 已完成 private archive retention watch，Phase72 已生成 publication exact-target gate；archive 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase70 has produced a packet-only publication gate while keeping archive private and publication_apply_enabled=false.",
+        "current_boundary": "Phase72 has produced an exact-target publication gate while keeping publication_apply_enabled=false and selected_target=null.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Stage-report cadence: Phase71 private archive retention watch; Phase72 remains exact-target gate before any publication",
+        "recommended_next": "Stage-report cadence: Phase73 exact-target apply dry-run compiler; Phase74 remains explicit authorization packet before any publication",
     }
 
 

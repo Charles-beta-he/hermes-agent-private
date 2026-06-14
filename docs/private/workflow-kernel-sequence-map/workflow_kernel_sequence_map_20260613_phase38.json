@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T09:34:49Z",
-  "current_boundary": "Phase70 has produced a packet-only publication gate while keeping archive private and publication_apply_enabled=false.",
+  "created_at": "2026-06-14T15:15:09Z",
+  "current_boundary": "Phase72 has produced an exact-target publication gate while keeping publication_apply_enabled=false and selected_target=null.",
   "next_ladder": [
     {
-      "authority_needed": "read-only retention/drift watch over private archive",
-      "name": "Private Archive Retention Watch",
-      "phase": 71,
-      "track": "PRIVATE_ARCHIVE_RETENTION_WATCH",
-      "why_next": "continue stage-report cadence without publication"
+      "authority_needed": "exact target/payload dry-run only; no external publication",
+      "name": "Exact-target Apply Dry-run Compiler",
+      "phase": 73,
+      "track": "EXACT_TARGET_APPLY_DRY_RUN_COMPILER",
+      "why_next": "prepare validation without sending"
     },
     {
-      "authority_needed": "fresh exact target/payload/operator authorization before any external publication",
-      "name": "Publication Apply Exact-target Gate",
-      "phase": 72,
-      "track": "PUBLICATION_APPLY_EXACT_TARGET_GATE",
-      "why_next": "external publication remains a separate implementation point"
+      "authority_needed": "fresh explicit authorization before any external publication apply",
+      "name": "Publication Apply Authorization Packet",
+      "phase": 74,
+      "track": "PUBLICATION_APPLY_AUTHORIZATION_PACKET",
+      "why_next": "external publication remains separate and disabled"
     }
   ],
-  "objective": "梳理 Phase17-70 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase69 已生成 periodic closure health report，Phase70 已生成 archive publication packet；archive 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
-  "phase_count": 54,
+  "objective": "梳理 Phase17-72 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase71 已完成 private archive retention watch，Phase72 已生成 publication exact-target gate；archive 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+  "phase_count": 56,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -786,9 +786,37 @@
       ],
       "phase": 70,
       "status": "archive_publication_packet_ready"
+    },
+    {
+      "authority": "read-only watch",
+      "depends_on": [
+        70
+      ],
+      "gate": "private archive retained; publication apply disabled",
+      "layer": "retention watch",
+      "name": "Private Archive Retention Watch",
+      "next_unlocked": [
+        72
+      ],
+      "phase": 71,
+      "status": "private_archive_retention_clear"
+    },
+    {
+      "authority": "gate only",
+      "depends_on": [
+        71
+      ],
+      "gate": "exact target/payload required; apply disabled",
+      "layer": "exact-target gate",
+      "name": "Publication Apply Exact-target Gate",
+      "next_unlocked": [
+        73
+      ],
+      "phase": 72,
+      "status": "publication_exact_target_gate_ready"
     }
   ],
-  "recommended_next": "Stage-report cadence: Phase71 private archive retention watch; Phase72 remains exact-target gate before any publication",
+  "recommended_next": "Stage-report cadence: Phase73 exact-target apply dry-run compiler; Phase74 remains explicit authorization packet before any publication",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

@@ -58,10 +58,12 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 68: Manual-only Governance Archive — layer=`archive`, gate=`archive/index only; no mutation`
 - Phase 69: Periodic Closure Health Report — layer=`stage report`, gate=`stage_report_only=true; no publication`
 - Phase 70: Governance Archive Index Publication Packet — layer=`publication packet`, gate=`publication_apply_enabled=false; private default`
+- Phase 71: Private Archive Retention Watch — layer=`retention watch`, gate=`private archive retained; publication apply disabled`
+- Phase 72: Publication Apply Exact-target Gate — layer=`exact-target gate`, gate=`exact target/payload required; apply disabled`
 
 ## Next ladder
-- Phase 71: Private Archive Retention Watch — track=`PRIVATE_ARCHIVE_RETENTION_WATCH`, authority=`read-only retention/drift watch over private archive`
-- Phase 72: Publication Apply Exact-target Gate — track=`PUBLICATION_APPLY_EXACT_TARGET_GATE`, authority=`fresh exact target/payload/operator authorization before any external publication`
+- Phase 73: Exact-target Apply Dry-run Compiler — track=`EXACT_TARGET_APPLY_DRY_RUN_COMPILER`, authority=`exact target/payload dry-run only; no external publication`
+- Phase 74: Publication Apply Authorization Packet — track=`PUBLICATION_APPLY_AUTHORIZATION_PACKET`, authority=`fresh explicit authorization before any external publication apply`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence

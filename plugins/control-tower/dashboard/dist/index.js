@@ -279,6 +279,8 @@
     const archive = kernel.manual_only_governance_archive || {};
     const healthReport = kernel.periodic_closure_health_report || {};
     const publicationPacket = kernel.archive_publication_packet || {};
+    const retentionWatch = kernel.private_archive_retention_watch || {};
+    const exactTargetGate = kernel.publication_exact_target_gate || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -304,6 +306,8 @@
         <span>Archive: <strong>${escapeHtml(archive.status || 'not_ready')}</strong></span>
         <span>Health: <strong>${escapeHtml(healthReport.status || 'not_ready')}</strong></span>
         <span>Publication packet: <strong>${escapeHtml(publicationPacket.status || 'not_ready')}</strong></span>
+        <span>Retention: <strong>${escapeHtml(retentionWatch.status || 'not_ready')}</strong></span>
+        <span>Exact-target gate: <strong>${escapeHtml(exactTargetGate.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -326,6 +330,8 @@
           <tr><th>Governance archive</th><td>${escapeHtml(archive.status || '—')} items=<code>${escapeHtml(String(archive.item_count ?? '—'))}</code> read_only=<strong>${archive.read_only ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Closure health report</th><td>${escapeHtml(healthReport.status || '—')} health=<code>${escapeHtml(healthReport.health || '—')}</code> stage_report_only=<strong>${healthReport.stage_report_only ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Archive publication packet</th><td>${escapeHtml(publicationPacket.status || '—')} default=<code>${escapeHtml(publicationPacket.recommended_default || '—')}</code> apply=<strong>${publicationPacket.publication_apply_enabled ? 'true' : 'false'}</strong> packet_only=<strong>${publicationPacket.packet_only ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Private archive retention</th><td>${escapeHtml(retentionWatch.status || '—')} drift=<code>${escapeHtml(String((retentionWatch.drift || []).length))}</code> read_only=<strong>${retentionWatch.read_only ? 'true' : 'false'}</strong> apply=<strong>${retentionWatch.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication exact-target gate</th><td>${escapeHtml(exactTargetGate.status || '—')} gate_only=<strong>${exactTargetGate.gate_only ? 'true' : 'false'}</strong> apply=<strong>${exactTargetGate.publication_apply_enabled ? 'true' : 'false'}</strong> target=<code>${escapeHtml(exactTargetGate.selected_target || '—')}</code></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

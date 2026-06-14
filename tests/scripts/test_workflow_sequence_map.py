@@ -32,8 +32,8 @@ def test_build_map_has_current_boundary_and_safe_default():
 def test_next_ladder_requires_authority_for_future_expansion():
     mod = load()
     by_track = {item["track"]: item for item in mod.NEXT_LADDER}
-    assert by_track["PRIVATE_ARCHIVE_RETENTION_WATCH"]["phase"] == 71
-    assert by_track["PUBLICATION_APPLY_EXACT_TARGET_GATE"]["phase"] == 72
+    assert by_track["EXACT_TARGET_APPLY_DRY_RUN_COMPILER"]["phase"] == 73
+    assert by_track["PUBLICATION_APPLY_AUTHORIZATION_PACKET"]["phase"] == 74
 
 
 def test_write_report_creates_artifacts(tmp_path):

@@ -151,6 +151,10 @@ def test_control_tower_dashboard_renders_workflow_kernel_projection_panel():
     assert "archive_publication_packet" in script
     assert "Closure health report" in script
     assert "Archive publication packet" in script
+    assert "private_archive_retention_watch" in script
+    assert "publication_exact_target_gate" in script
+    assert "Private archive retention" in script
+    assert "Publication exact-target gate" in script
     assert "Pack, guarded send, and dispatch policy" in script
     assert "Latest guarded send" not in script  # keep wording in static Phase52 page only
     assert "control-tower-workflow-kernel-card" in style

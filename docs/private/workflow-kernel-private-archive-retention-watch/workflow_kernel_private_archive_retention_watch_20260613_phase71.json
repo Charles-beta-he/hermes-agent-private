@@ -1,0 +1,46 @@
+{
+  "checks": {
+    "archive_read_only": true,
+    "archive_ready": true,
+    "default_private": true,
+    "health_clear": true,
+    "publication_apply_disabled": true,
+    "publication_packet_ready": true
+  },
+  "created_at": "2026-06-14T15:10:55Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "drift": [],
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "input_refs": [
+    {
+      "name": "archive",
+      "path": "docs/private/workflow-kernel-manual-only-governance-archive/workflow_kernel_manual_only_governance_archive_20260613_phase68.json",
+      "sha256": "c8adad509939cbcad2555173e99ea344fa4313581203a7dc2c9e0eb7d80fedd8",
+      "status": "MANUAL_ONLY_GOVERNANCE_ARCHIVE_READY"
+    },
+    {
+      "name": "health",
+      "path": "docs/private/workflow-kernel-periodic-closure-health-report/workflow_kernel_periodic_closure_health_report_20260613_phase69.json",
+      "sha256": "25538887c2526d85e3017693581bfcccd4d76f764cced5ac8f8d57e927663487",
+      "status": "PERIODIC_CLOSURE_HEALTH_REPORT_CLEAR"
+    },
+    {
+      "name": "publication_packet",
+      "path": "docs/private/workflow-kernel-archive-publication-packet/workflow_kernel_archive_publication_packet_20260613_phase70.json",
+      "sha256": "5416c24cd53c2e45af412fca94023aa68807811fb70ce141bccaa28505b16e02",
+      "status": "ARCHIVE_PUBLICATION_PACKET_READY"
+    }
+  ],
+  "message_sent": false,
+  "next_boundary": "Phase72 exact-target publication gate remains disabled unless exact target and payload are authorized",
+  "phase": 71,
+  "private_archive_retained": true,
+  "publication_apply_enabled": false,
+  "read_only": true,
+  "retention_digest": "e11bea94941bd97acd13b229c529791621b00cd7389671e5e76432a49c2e8d99",
+  "retention_policy": "private_archive_retained_no_publication",
+  "schema": "workflow_kernel_private_archive_retention_watch_v1",
+  "status": "PRIVATE_ARCHIVE_RETENTION_WATCH_CLEAR"
+}

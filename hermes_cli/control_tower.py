@@ -6144,6 +6144,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase68_path = root / "docs/private/workflow-kernel-manual-only-governance-archive/workflow_kernel_manual_only_governance_archive_20260613_phase68.json"
     phase69_path = root / "docs/private/workflow-kernel-periodic-closure-health-report/workflow_kernel_periodic_closure_health_report_20260613_phase69.json"
     phase70_path = root / "docs/private/workflow-kernel-archive-publication-packet/workflow_kernel_archive_publication_packet_20260613_phase70.json"
+    phase71_path = root / "docs/private/workflow-kernel-private-archive-retention-watch/workflow_kernel_private_archive_retention_watch_20260613_phase71.json"
+    phase72_path = root / "docs/private/workflow-kernel-publication-exact-target-gate/workflow_kernel_publication_exact_target_gate_20260613_phase72.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6178,6 +6180,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         manual_governance_archive = json.loads(phase68_path.read_text()) if phase68_path.exists() else None
         periodic_closure_health = json.loads(phase69_path.read_text()) if phase69_path.exists() else None
         archive_publication_packet = json.loads(phase70_path.read_text()) if phase70_path.exists() else None
+        private_archive_retention_watch = json.loads(phase71_path.read_text()) if phase71_path.exists() else None
+        publication_exact_target_gate = json.loads(phase72_path.read_text()) if phase72_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6336,10 +6340,26 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "publication_apply_enabled": (archive_publication_packet or {}).get("publication_apply_enabled"),
             "external_publication_enabled": (archive_publication_packet or {}).get("external_publication_enabled"),
         },
+        "private_archive_retention_watch": {
+            "status": (private_archive_retention_watch or {}).get("status", "not_ready"),
+            "retention_digest": (private_archive_retention_watch or {}).get("retention_digest"),
+            "retention_policy": (private_archive_retention_watch or {}).get("retention_policy"),
+            "drift": (private_archive_retention_watch or {}).get("drift", []),
+            "read_only": (private_archive_retention_watch or {}).get("read_only"),
+            "publication_apply_enabled": (private_archive_retention_watch or {}).get("publication_apply_enabled"),
+        },
+        "publication_exact_target_gate": {
+            "status": (publication_exact_target_gate or {}).get("status", "not_ready"),
+            "gate_digest": (publication_exact_target_gate or {}).get("gate_digest"),
+            "gate_only": (publication_exact_target_gate or {}).get("gate_only"),
+            "selected_target": (publication_exact_target_gate or {}).get("selected_target"),
+            "publication_apply_enabled": (publication_exact_target_gate or {}).get("publication_apply_enabled"),
+            "external_publication_enabled": (publication_exact_target_gate or {}).get("external_publication_enabled"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase70 packet: archive remains private; external publication requires a future exact target/payload apply phase",
+        "next_boundary": "post-Phase72 gate: publication remains disabled until a future exact target/payload apply phase is explicitly opened",
     }
 
 

@@ -167,6 +167,8 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["manual_only_governance_archive"]["status"] in {"MANUAL_ONLY_GOVERNANCE_ARCHIVE_READY", "not_ready"}
     assert kernel["periodic_closure_health_report"]["status"] in {"PERIODIC_CLOSURE_HEALTH_REPORT_CLEAR", "PERIODIC_CLOSURE_HEALTH_REPORT_DEGRADED", "not_ready"}
     assert kernel["archive_publication_packet"]["status"] in {"ARCHIVE_PUBLICATION_PACKET_READY", "ARCHIVE_PUBLICATION_PACKET_BLOCKED", "not_ready"}
+    assert kernel["private_archive_retention_watch"]["status"] in {"PRIVATE_ARCHIVE_RETENTION_WATCH_CLEAR", "PRIVATE_ARCHIVE_RETENTION_WATCH_DRIFT", "not_ready"}
+    assert kernel["publication_exact_target_gate"]["status"] in {"PUBLICATION_EXACT_TARGET_GATE_READY", "PUBLICATION_EXACT_TARGET_GATE_BLOCKED", "not_ready"}
     assert kernel["external_side_effects_enabled"] is False
 
 

@@ -1,0 +1,39 @@
+{
+  "properties": {
+    "idempotency_key": {
+      "type": "string"
+    },
+    "operator_reason": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "payload": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "rollback_plan": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target_adapter": {
+      "enum": [
+        "telegram",
+        "lark",
+        "github",
+        "file_export"
+      ]
+    },
+    "target_id": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "target_adapter",
+    "target_id",
+    "payload",
+    "operator_reason",
+    "rollback_plan"
+  ],
+  "type": "object"
+}
