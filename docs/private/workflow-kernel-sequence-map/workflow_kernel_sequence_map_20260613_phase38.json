@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T05:03:42Z",
-  "current_boundary": "Phase60 has executed exactly one packet-approved Telegram guarded send and recorded the receipt. The next boundary is post-send correlation/compensation watch versus any repeated/unattended dispatch enablement packet.",
+  "created_at": "2026-06-14T07:57:56Z",
+  "current_boundary": "Phase62 has produced a fail-closed unattended dispatch enablement packet. The next boundary is recording an explicit option decision versus closing on manual-only safe default; no repeated/unattended dispatch has been enabled.",
   "next_ladder": [
     {
-      "authority_needed": "read back receipts, dashboard state, and compensation readiness without sending",
-      "name": "Post-send Correlation and Compensation Watch",
-      "phase": 61,
-      "track": "POST_SEND_CORRELATION",
-      "why_next": "prove the one-shot external side effect is fully correlated and auditable"
+      "authority_needed": "record a concrete option from the Phase62 decision schema without applying it",
+      "name": "Explicit Unattended Enablement Decision Record",
+      "phase": 63,
+      "track": "UNATTENDED_DECISION_RECORD",
+      "why_next": "turn the enablement packet into an auditable decision while still avoiding automatic sends"
     },
     {
-      "authority_needed": "decide whether repeated/automated sends can ever be enabled",
-      "name": "Unattended Dispatch Enablement Packet",
-      "phase": 62,
-      "track": "UNATTENDED_ENABLEMENT_PACKET",
-      "why_next": "cross from one-shot guarded send into repeated automation authority"
+      "authority_needed": "close the workflow on A_KEEP_MANUAL_ONLY and retain dry-run/manual paths",
+      "name": "Safe-default Manual-only Closure",
+      "phase": 64,
+      "track": "MANUAL_ONLY_CLOSURE",
+      "why_next": "codify that repeated external dispatch remains disabled"
     }
   ],
-  "objective": "梳理 Phase17-60 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase59 guarded manual-send runner 已实现并默认 preview/no-send，Phase60 已执行一次 Telegram home one-shot guarded send，unattended dispatch 仍关闭。",
-  "phase_count": 44,
+  "objective": "梳理 Phase17-62 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase61 已完成 post-send correlation/compensation watch，Phase62 已生成 unattended dispatch enablement packet，但 unattended dispatch 仍关闭、无新外发。",
+  "phase_count": 46,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -642,14 +642,42 @@
       "layer": "external dispatch execution",
       "name": "One-shot Guarded Send Activation",
       "next_unlocked": [
-        61,
-        62
+        61
       ],
       "phase": 60,
       "status": "one_shot_guarded_send_verified"
+    },
+    {
+      "authority": "read-only correlation",
+      "depends_on": [
+        60
+      ],
+      "gate": "no new message; automatic compensation disabled",
+      "layer": "post-send audit",
+      "name": "Post-send Correlation and Compensation Watch",
+      "next_unlocked": [
+        62
+      ],
+      "phase": 61,
+      "status": "post_send_correlation_ready"
+    },
+    {
+      "authority": "decision packet only",
+      "depends_on": [
+        61
+      ],
+      "gate": "unattended_dispatch_enabled=false; no cron/apply mutation",
+      "layer": "enablement packet",
+      "name": "Unattended Dispatch Enablement Packet",
+      "next_unlocked": [
+        63,
+        64
+      ],
+      "phase": 62,
+      "status": "enablement_packet_ready_disabled"
     }
   ],
-  "recommended_next": "Human choice required: Phase61 post-send correlation/compensation watch vs Phase62 unattended dispatch enablement packet",
+  "recommended_next": "Human choice required: Phase63 explicit unattended enablement decision record vs Phase64 safe-default manual-only closure",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

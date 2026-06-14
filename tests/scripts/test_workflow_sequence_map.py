@@ -32,8 +32,8 @@ def test_build_map_has_current_boundary_and_safe_default():
 def test_next_ladder_requires_authority_for_future_expansion():
     mod = load()
     by_track = {item["track"]: item for item in mod.NEXT_LADDER}
-    assert by_track["POST_SEND_CORRELATION"]["phase"] == 61
-    assert by_track["UNATTENDED_ENABLEMENT_PACKET"]["phase"] == 62
+    assert by_track["UNATTENDED_DECISION_RECORD"]["phase"] == 63
+    assert by_track["MANUAL_ONLY_CLOSURE"]["phase"] == 64
 
 
 def test_write_report_creates_artifacts(tmp_path):

@@ -131,6 +131,10 @@ def test_control_tower_dashboard_renders_workflow_kernel_projection_panel():
     assert "one_shot_guarded_send" in script
     assert "Manual-send runner" in script
     assert "One-shot guarded send" in script
+    assert "post_send_correlation_watch" in script
+    assert "unattended_dispatch_enablement_packet" in script
+    assert "Post-send correlation" in script
+    assert "Enablement packet" in script
     assert "Pack, guarded send, and dispatch policy" in script
     assert "Latest guarded send" not in script  # keep wording in static Phase52 page only
     assert "control-tower-workflow-kernel-card" in style

@@ -6134,6 +6134,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase58_path = root / "docs/private/workflow-kernel-guarded-send-runner-activation/workflow_kernel_guarded_send_runner_activation_20260613_phase58.json"
     phase59_path = root / "docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_guarded_manual_send_runner_20260613_phase59.json"
     phase60_path = root / "docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_one_shot_guarded_send_20260613_phase60.json"
+    phase61_path = root / "docs/private/workflow-kernel-post-send-correlation-watch/workflow_kernel_post_send_correlation_watch_20260613_phase61.json"
+    phase62_path = root / "docs/private/workflow-kernel-unattended-dispatch-enablement-packet/workflow_kernel_unattended_dispatch_enablement_packet_20260613_phase62.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6158,6 +6160,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         guarded_send_activation = json.loads(phase58_path.read_text()) if phase58_path.exists() else None
         guarded_manual_runner = json.loads(phase59_path.read_text()) if phase59_path.exists() else None
         one_shot_guarded_send = json.loads(phase60_path.read_text()) if phase60_path.exists() else None
+        post_send_correlation = json.loads(phase61_path.read_text()) if phase61_path.exists() else None
+        unattended_enablement_packet = json.loads(phase62_path.read_text()) if phase62_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6236,10 +6240,25 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "external_side_effects_executed": (one_shot_guarded_send or {}).get("external_side_effects_executed"),
             "unattended_dispatch_enabled": (one_shot_guarded_send or {}).get("unattended_dispatch_enabled"),
         },
+        "post_send_correlation_watch": {
+            "status": (post_send_correlation or {}).get("status", "not_ready"),
+            "message_id": (post_send_correlation or {}).get("message_id"),
+            "matching_ledger_rows": (post_send_correlation or {}).get("matching_ledger_rows"),
+            "new_message_sent": ((post_send_correlation or {}).get("compensation_watch") or {}).get("new_message_sent"),
+            "unattended_dispatch_enabled": (post_send_correlation or {}).get("unattended_dispatch_enabled"),
+        },
+        "unattended_dispatch_enablement_packet": {
+            "status": (unattended_enablement_packet or {}).get("status", "not_ready"),
+            "packet_digest": (unattended_enablement_packet or {}).get("packet_digest"),
+            "recommended_default": (unattended_enablement_packet or {}).get("recommended_default"),
+            "selected_option": (unattended_enablement_packet or {}).get("selected_option"),
+            "unattended_dispatch_enabled": (unattended_enablement_packet or {}).get("unattended_dispatch_enabled"),
+            "external_side_effects_executed": (unattended_enablement_packet or {}).get("external_side_effects_executed"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase60 boundary: unattended dispatch remains disabled; future sends require fresh packet/manual gate",
+        "next_boundary": "post-Phase62 boundary: explicit unattended enablement decision/apply remains disabled",
     }
 
 

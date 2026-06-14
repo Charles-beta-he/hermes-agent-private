@@ -269,6 +269,8 @@
     const activation = kernel.guarded_send_runner_activation || {};
     const manualRunner = kernel.guarded_manual_send_runner || {};
     const oneShot = kernel.one_shot_guarded_send || {};
+    const correlation = kernel.post_send_correlation_watch || {};
+    const enablement = kernel.unattended_dispatch_enablement_packet || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -284,6 +286,8 @@
         <span>Activation: <strong>${escapeHtml(activation.status || 'not_ready')}</strong></span>
         <span>Runner: <strong>${escapeHtml(manualRunner.status || 'not_ready')}</strong></span>
         <span>One-shot: <strong>${escapeHtml(oneShot.status || 'not_executed')}</strong></span>
+        <span>Correlation: <strong>${escapeHtml(correlation.status || 'not_ready')}</strong></span>
+        <span>Enablement: <strong>${escapeHtml(enablement.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -296,6 +300,8 @@
           <tr><th>Guarded send activation</th><td>${escapeHtml(activation.status || '—')} active=<strong>${activation.manual_send_runner_is_active_now ? 'true' : 'false'}</strong> external=<strong>${activation.external_side_effects_executed ? 'true' : 'false'}</strong> digest=<code>${escapeHtml(activation.contract_digest || '—')}</code></td></tr>
           <tr><th>Manual-send runner</th><td>${escapeHtml(manualRunner.status || '—')} target=<code>${escapeHtml(manualRunner.target || '—')}</code> external=<strong>${manualRunner.external_side_effects_executed ? 'true' : 'false'}</strong></td></tr>
           <tr><th>One-shot guarded send</th><td>${escapeHtml(oneShot.status || '—')} message_id=<code>${escapeHtml(oneShot.message_id || '—')}</code> external=<strong>${oneShot.external_side_effects_executed ? 'true' : 'false'}</strong> unattended=<strong>${oneShot.unattended_dispatch_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Post-send correlation</th><td>${escapeHtml(correlation.status || '—')} message_id=<code>${escapeHtml(correlation.message_id || '—')}</code> matching_ledger_rows=<code>${escapeHtml(String(correlation.matching_ledger_rows ?? '—'))}</code> new_message_sent=<strong>${correlation.new_message_sent ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Enablement packet</th><td>${escapeHtml(enablement.status || '—')} default=<code>${escapeHtml(enablement.recommended_default || '—')}</code> selected=<code>${escapeHtml(enablement.selected_option || '—')}</code> unattended=<strong>${enablement.unattended_dispatch_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

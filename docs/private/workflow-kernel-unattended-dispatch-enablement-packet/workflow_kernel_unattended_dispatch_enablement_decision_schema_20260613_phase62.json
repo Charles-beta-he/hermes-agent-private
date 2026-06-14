@@ -1,0 +1,22 @@
+{
+  "allowed_decisions": [
+    "keep_manual_only",
+    "approve_dry_run_only",
+    "approve_limited_unattended_future_phase",
+    "reject",
+    "request_changes"
+  ],
+  "execution_boundary": "This schema records a future decision only; it must not enable unattended dispatch by itself.",
+  "packet_digest": "1cbbc6ccde7e56713742d4c8f852ab5d37315d079b733fb443d0b354599663da",
+  "phase": 62,
+  "required_fields_for_limited_unattended_future_phase": [
+    "target",
+    "payload_template",
+    "cadence",
+    "daily_limit",
+    "idempotency_basis",
+    "rollback_path",
+    "compensation_message_policy"
+  ],
+  "schema": "workflow_kernel_unattended_dispatch_enablement_decision_schema_v1"
+}
