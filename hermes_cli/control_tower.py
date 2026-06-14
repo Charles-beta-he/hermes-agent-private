@@ -6290,6 +6290,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     runtime_readiness_path = root / "docs/private/workflow-kernel-runtime-readiness-summary/workflow_kernel_runtime_readiness_summary_20260613_phase36.json"
     runtime_drift_path = root / "docs/private/workflow-kernel-drift-watch/workflow_kernel_drift_watch_20260613_phase40.json"
     post_auto_enable_path = root / "docs/private/workflow-kernel-post-auto-enable-observation/workflow_kernel_post_auto_enable_observation_20260613_phase46.json"
+    broader_adapter_contract_path = root / "docs/private/workflow-kernel-broader-adapter-operation-contract/workflow_kernel_broader_adapter_operation_contract_20260615.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6351,6 +6352,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         runtime_readiness = json.loads(runtime_readiness_path.read_text()) if runtime_readiness_path.exists() else None
         runtime_drift = json.loads(runtime_drift_path.read_text()) if runtime_drift_path.exists() else None
         post_auto_enable_observation = json.loads(post_auto_enable_path.read_text()) if post_auto_enable_path.exists() else None
+        broader_adapter_contract = json.loads(broader_adapter_contract_path.read_text()) if broader_adapter_contract_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6703,6 +6705,16 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "read_only": True,
             "external_side_effects_executed": False,
             "next_boundary": (runtime_readiness or {}).get("next_boundary") or (post_auto_enable_observation or {}).get("next_boundary"),
+        },
+        "broader_adapter_operation_contract": {
+            "status": (broader_adapter_contract or {}).get("status", "not_ready"),
+            "contract_policy": (broader_adapter_contract or {}).get("contract_policy"),
+            "contract_digest": (broader_adapter_contract or {}).get("contract_digest"),
+            "current_supported_count": len((broader_adapter_contract or {}).get("current_supported_operations") or []),
+            "candidate_locked_count": len((broader_adapter_contract or {}).get("candidate_operations_locked") or []),
+            "safe_default_next": (broader_adapter_contract or {}).get("safe_default_next"),
+            "global_invariants": (broader_adapter_contract or {}).get("global_invariants", {}),
+            "read_only": (broader_adapter_contract or {}).get("read_only", True),
         },
         "blockers": blockers,
         "external_side_effects_enabled": False,

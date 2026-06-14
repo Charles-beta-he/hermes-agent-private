@@ -1,0 +1,73 @@
+{
+  "candidate_operations_locked": [
+    {
+      "adapter": "github",
+      "operation": "issue_or_pr_mutation",
+      "required_gate": "exact repo/issue/pr id + payload digest + rollback/comment plan"
+    },
+    {
+      "adapter": "lark",
+      "operation": "task_or_doc_mutation",
+      "required_gate": "project profile boundary + exact object id + bot/user-token authority + rollback"
+    },
+    {
+      "adapter": "telegram",
+      "operation": "notification_send",
+      "required_gate": "exact allowlisted target + payload digest + idempotency + compensation"
+    },
+    {
+      "adapter": "publication_target",
+      "operation": "external_publication_apply",
+      "required_gate": "exact target + payload digest + rollback + blast-radius choice"
+    },
+    {
+      "adapter": "generic_workflow",
+      "operation": "arbitrary_write_through",
+      "required_gate": "not allowed without new adapter-specific contract"
+    }
+  ],
+  "contract_digest": "bd421fad35dfdcd7c60cb844fd641faeb2f5e50efbd88315ba92514b3c440b53",
+  "contract_policy": "fail_closed_exact_target_required_for_new_adapter_operations",
+  "created_at": "2026-06-14T17:56:39Z",
+  "current_supported_operations": [
+    {
+      "adapter": "taskpool_note",
+      "authority_required": "approved closeout authorization + evidence hash + task note path boundary",
+      "external_side_effect": false,
+      "operation": "closeout_status_write",
+      "rollback_required": true,
+      "status": "implemented_narrow"
+    },
+    {
+      "adapter": "kanban_db",
+      "authority_required": "approved closeout authorization + evidence hash + sqlite task id boundary",
+      "external_side_effect": false,
+      "operation": "closeout_status_write",
+      "rollback_required": true,
+      "status": "implemented_narrow"
+    }
+  ],
+  "future_gate_required_fields": [
+    "adapter",
+    "operation",
+    "exact_target_id",
+    "payload_digest",
+    "authority_actor_role",
+    "idempotency_key",
+    "preflight_readback",
+    "rollback_or_compensation_plan",
+    "post_apply_readback"
+  ],
+  "global_invariants": {
+    "credential_read_required": false,
+    "external_side_effects_enabled": false,
+    "no_generic_adapter_write_through": true,
+    "publication_apply_enabled": false,
+    "task_lifecycle_mutated_by_this_report": false,
+    "unattended_dispatch_enabled": false
+  },
+  "read_only": true,
+  "safe_default_next": "keep_current_narrow_taskpool_kanban_only",
+  "schema": "workflow_kernel_broader_adapter_operation_contract_v1",
+  "status": "BROADER_ADAPTER_OPERATION_CONTRACT_READY"
+}

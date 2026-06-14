@@ -194,6 +194,11 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["runtime_stability"]["run_correlation_status"] in {"RECEIPT_CORRELATION_PARTIAL_READY", "REAL_RUN_CORRELATION_PARTIAL_READY", "AWAITING_POST_PROJECTION_SCHEDULED_RUN", "RUN_CORRELATION_DEGRADED", None}
     assert kernel["runtime_stability"]["post_auto_enable_status"] in {"POST_AUTO_ENABLE_OBSERVATION_READY", "POST_AUTO_ENABLE_OBSERVATION_PENDING_SCHEDULED_RUN", "POST_AUTO_ENABLE_OBSERVATION_DEGRADED", None}
     assert kernel["runtime_stability"]["external_side_effects_executed"] is False
+    assert kernel["broader_adapter_operation_contract"]["status"] in {"BROADER_ADAPTER_OPERATION_CONTRACT_READY", "not_ready"}
+    assert kernel["broader_adapter_operation_contract"]["read_only"] is True
+    if kernel["broader_adapter_operation_contract"]["status"] == "BROADER_ADAPTER_OPERATION_CONTRACT_READY":
+        assert kernel["broader_adapter_operation_contract"]["global_invariants"]["external_side_effects_enabled"] is False
+        assert kernel["broader_adapter_operation_contract"]["global_invariants"]["no_generic_adapter_write_through"] is True
     assert kernel["external_side_effects_enabled"] is False
 
 
