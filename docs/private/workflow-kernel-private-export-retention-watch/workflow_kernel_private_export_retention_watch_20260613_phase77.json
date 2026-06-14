@@ -1,0 +1,40 @@
+{
+  "checks": {
+    "choice_keep_private": true,
+    "choice_no_apply": true,
+    "choice_recorded": true,
+    "export_no_apply": true,
+    "export_private": true,
+    "export_ready": true
+  },
+  "created_at": "2026-06-14T15:46:34Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "drift": [],
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "input_refs": [
+    {
+      "name": "phase75_export",
+      "path": "docs/private/workflow-kernel-private-export-artifact-compiler/workflow_kernel_private_export_artifact_compiler_20260613_phase75.json",
+      "sha256": "3fe2953cf24f47a019b2110af40ba2bf6c9edb79a0614d2281c57057b1610bbc",
+      "status": "PRIVATE_EXPORT_ARTIFACT_COMPILER_READY"
+    },
+    {
+      "name": "phase76_choice",
+      "path": "docs/private/workflow-kernel-publication-apply-implementation-choice/workflow_kernel_publication_apply_implementation_choice_20260613_phase76.json",
+      "sha256": "0237d7413f8f4a2cb555468fc3f34189dc079a01b677faad47eade19a1a6db86",
+      "status": "PUBLICATION_APPLY_IMPLEMENTATION_CHOICE_RECORDED"
+    }
+  ],
+  "message_sent": false,
+  "next_boundary": "Phase78 publication apply reopen packet remains packet-only",
+  "phase": 77,
+  "publication_apply_enabled": false,
+  "read_only": true,
+  "retention_digest": "4028de59d25523cb4bb19fe5aa6fa259f86c6636284ea7c4e8de298cd6a80ce7",
+  "retention_policy": "private_export_retained_no_publication",
+  "schema": "workflow_kernel_private_export_retention_watch_v1",
+  "status": "PRIVATE_EXPORT_RETENTION_WATCH_CLEAR",
+  "unattended_dispatch_enabled": false
+}

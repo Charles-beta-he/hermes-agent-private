@@ -1,0 +1,65 @@
+{
+  "blockers": [],
+  "checks": {
+    "choice_keep_private": true,
+    "choice_no_apply": true,
+    "retention_clear": true
+  },
+  "created_at": "2026-06-14T15:46:34Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "decision_schema": {
+    "properties": {
+      "exact_target_required": {
+        "const": true
+      },
+      "operator_reason": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "option": {
+        "enum": [
+          "A_NO_REOPEN_KEEP_PRIVATE",
+          "B_REOPEN_LOCAL_EXPORT_REVIEW_ONLY",
+          "C_REOPEN_EXACT_TARGET_PUBLICATION_APPLY_DESIGN"
+        ]
+      }
+    },
+    "required": [
+      "option",
+      "operator_reason"
+    ],
+    "type": "object"
+  },
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "message_sent": false,
+  "next_boundary": "Phase79+ may continue read-only review; real apply requires exact-target choice",
+  "options": [
+    {
+      "apply_enabled": false,
+      "id": "A_NO_REOPEN_KEEP_PRIVATE",
+      "label": "Keep private/no-apply; default"
+    },
+    {
+      "apply_enabled": false,
+      "id": "B_REOPEN_LOCAL_EXPORT_REVIEW_ONLY",
+      "label": "Prepare a local export review packet only"
+    },
+    {
+      "apply_enabled": false,
+      "id": "C_REOPEN_EXACT_TARGET_PUBLICATION_APPLY_DESIGN",
+      "label": "Design future exact-target external publication apply; requires target/payload/rollback"
+    }
+  ],
+  "packet_digest": "4d8b567211f0adf2bca448f5bff94339860bf2211927fb8f77ef18494d9814cd",
+  "packet_only": true,
+  "phase": 78,
+  "publication_apply_enabled": false,
+  "recommended_default": "A_NO_REOPEN_KEEP_PRIVATE",
+  "reopen_apply_enabled": false,
+  "schema": "workflow_kernel_publication_apply_reopen_packet_v1",
+  "selected_option": null,
+  "status": "PUBLICATION_APPLY_REOPEN_PACKET_READY",
+  "unattended_dispatch_enabled": false
+}

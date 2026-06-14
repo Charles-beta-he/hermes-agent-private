@@ -1,0 +1,23 @@
+{
+  "properties": {
+    "exact_target_required": {
+      "const": true
+    },
+    "operator_reason": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "option": {
+      "enum": [
+        "A_NO_REOPEN_KEEP_PRIVATE",
+        "B_REOPEN_LOCAL_EXPORT_REVIEW_ONLY",
+        "C_REOPEN_EXACT_TARGET_PUBLICATION_APPLY_DESIGN"
+      ]
+    }
+  },
+  "required": [
+    "option",
+    "operator_reason"
+  ],
+  "type": "object"
+}

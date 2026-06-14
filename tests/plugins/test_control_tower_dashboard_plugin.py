@@ -163,6 +163,10 @@ def test_control_tower_dashboard_renders_workflow_kernel_projection_panel():
     assert "publication_apply_implementation_choice" in script
     assert "Private export artifact" in script
     assert "Publication apply choice" in script
+    assert "private_export_retention_watch" in script
+    assert "publication_apply_reopen_packet" in script
+    assert "Private export retention" in script
+    assert "Publication apply reopen packet" in script
     assert "Pack, guarded send, and dispatch policy" in script
     assert "Latest guarded send" not in script  # keep wording in static Phase52 page only
     assert "control-tower-workflow-kernel-card" in style

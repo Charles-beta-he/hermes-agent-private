@@ -83,11 +83,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 74, "name": "Publication Apply Authorization Packet", "layer": "authorization packet", "status": "publication_apply_authorization_packet_ready", "depends_on": [73], "authority": "packet only", "gate": "recommended_default=A_KEEP_PRIVATE_NO_PUBLICATION; apply disabled", "next_unlocked": [75]},
     {"phase": 75, "name": "Private Export Artifact Compiler", "layer": "private export", "status": "private_export_artifact_compiler_ready", "depends_on": [74], "authority": "local artifact only", "gate": "private local only; public_share_ready=false", "next_unlocked": [76]},
     {"phase": 76, "name": "Publication Apply Implementation Choice", "layer": "implementation choice", "status": "keep_private_no_apply_choice_recorded", "depends_on": [75], "authority": "record-only safe default", "gate": "choice=A_KEEP_PRIVATE_NO_APPLY; no exact target", "next_unlocked": [77]},
+    {"phase": 77, "name": "Private Export Retention Watch", "layer": "export retention watch", "status": "private_export_retention_clear", "depends_on": [76], "authority": "read-only watch", "gate": "drift=[]; publication apply disabled", "next_unlocked": [78]},
+    {"phase": 78, "name": "Publication Apply Reopen Packet", "layer": "reopen packet", "status": "publication_apply_reopen_packet_ready", "depends_on": [77], "authority": "packet only", "gate": "recommended_default=A_NO_REOPEN_KEEP_PRIVATE; apply disabled", "next_unlocked": [79]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 77, "name": "Private Export Retention Watch", "track": "PRIVATE_EXPORT_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over private export artifact", "why_next": "continue no-apply maintenance"},
-    {"phase": 78, "name": "Publication Apply Reopen Packet", "track": "PUBLICATION_APPLY_REOPEN_PACKET", "authority_needed": "packet only; no apply unless exact target/payload is supplied", "why_next": "future reopen remains separate"},
+    {"phase": 79, "name": "Publication Closure Health Report", "track": "PUBLICATION_CLOSURE_HEALTH_REPORT", "authority_needed": "read-only health report over publication/no-apply invariants", "why_next": "continue stage-report cadence"},
+    {"phase": 80, "name": "Publication Governance Archive Update", "track": "PUBLICATION_GOVERNANCE_ARCHIVE_UPDATE", "authority_needed": "read-only archive update; no publication", "why_next": "archive latest packet evidence"},
 ]
 
 
@@ -129,15 +131,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-76 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase75 已生成 private export artifact compiler，Phase76 已记录 keep-private/no-apply implementation choice；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-78 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase77 已完成 private export retention watch，Phase78 已生成 publication apply reopen packet；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase76 has recorded safe default keep-private/no-apply choice; no exact target/payload apply scheme is open.",
+        "current_boundary": "Phase78 has produced a packet-only reopen design while keeping publication_apply_enabled=false and selected_option=null.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Stage-report cadence: Phase77 private export retention watch; Phase78 publication apply reopen packet remains packet-only",
+        "recommended_next": "Stage-report cadence: Phase79 publication closure health report; Phase80 governance archive update remains read-only",
     }
 
 

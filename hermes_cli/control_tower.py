@@ -6150,6 +6150,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase74_path = root / "docs/private/workflow-kernel-publication-apply-authorization-packet/workflow_kernel_publication_apply_authorization_packet_20260613_phase74.json"
     phase75_path = root / "docs/private/workflow-kernel-private-export-artifact-compiler/workflow_kernel_private_export_artifact_compiler_20260613_phase75.json"
     phase76_path = root / "docs/private/workflow-kernel-publication-apply-implementation-choice/workflow_kernel_publication_apply_implementation_choice_20260613_phase76.json"
+    phase77_path = root / "docs/private/workflow-kernel-private-export-retention-watch/workflow_kernel_private_export_retention_watch_20260613_phase77.json"
+    phase78_path = root / "docs/private/workflow-kernel-publication-apply-reopen-packet/workflow_kernel_publication_apply_reopen_packet_20260613_phase78.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6190,6 +6192,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         publication_apply_authorization_packet = json.loads(phase74_path.read_text()) if phase74_path.exists() else None
         private_export_artifact_compiler = json.loads(phase75_path.read_text()) if phase75_path.exists() else None
         publication_apply_implementation_choice = json.loads(phase76_path.read_text()) if phase76_path.exists() else None
+        private_export_retention_watch = json.loads(phase77_path.read_text()) if phase77_path.exists() else None
+        publication_apply_reopen_packet = json.loads(phase78_path.read_text()) if phase78_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6397,10 +6401,27 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "exact_target_present": (publication_apply_implementation_choice or {}).get("exact_target_present"),
             "publication_apply_enabled": (publication_apply_implementation_choice or {}).get("publication_apply_enabled"),
         },
+        "private_export_retention_watch": {
+            "status": (private_export_retention_watch or {}).get("status", "not_ready"),
+            "retention_digest": (private_export_retention_watch or {}).get("retention_digest"),
+            "retention_policy": (private_export_retention_watch or {}).get("retention_policy"),
+            "drift": (private_export_retention_watch or {}).get("drift", []),
+            "read_only": (private_export_retention_watch or {}).get("read_only"),
+            "publication_apply_enabled": (private_export_retention_watch or {}).get("publication_apply_enabled"),
+        },
+        "publication_apply_reopen_packet": {
+            "status": (publication_apply_reopen_packet or {}).get("status", "not_ready"),
+            "packet_digest": (publication_apply_reopen_packet or {}).get("packet_digest"),
+            "recommended_default": (publication_apply_reopen_packet or {}).get("recommended_default"),
+            "selected_option": (publication_apply_reopen_packet or {}).get("selected_option"),
+            "packet_only": (publication_apply_reopen_packet or {}).get("packet_only"),
+            "reopen_apply_enabled": (publication_apply_reopen_packet or {}).get("reopen_apply_enabled"),
+            "publication_apply_enabled": (publication_apply_reopen_packet or {}).get("publication_apply_enabled"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase76 choice: private/no-apply track remains selected; no human divergence until a concrete exact apply scheme is opened",
+        "next_boundary": "post-Phase78 packet: publication apply remains closed; continue read-only/private unless exact apply target is supplied",
     }
 
 

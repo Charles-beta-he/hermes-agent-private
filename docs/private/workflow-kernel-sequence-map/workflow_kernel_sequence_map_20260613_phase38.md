@@ -64,10 +64,12 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 74: Publication Apply Authorization Packet — layer=`authorization packet`, gate=`recommended_default=A_KEEP_PRIVATE_NO_PUBLICATION; apply disabled`
 - Phase 75: Private Export Artifact Compiler — layer=`private export`, gate=`private local only; public_share_ready=false`
 - Phase 76: Publication Apply Implementation Choice — layer=`implementation choice`, gate=`choice=A_KEEP_PRIVATE_NO_APPLY; no exact target`
+- Phase 77: Private Export Retention Watch — layer=`export retention watch`, gate=`drift=[]; publication apply disabled`
+- Phase 78: Publication Apply Reopen Packet — layer=`reopen packet`, gate=`recommended_default=A_NO_REOPEN_KEEP_PRIVATE; apply disabled`
 
 ## Next ladder
-- Phase 77: Private Export Retention Watch — track=`PRIVATE_EXPORT_RETENTION_WATCH`, authority=`read-only retention/drift watch over private export artifact`
-- Phase 78: Publication Apply Reopen Packet — track=`PUBLICATION_APPLY_REOPEN_PACKET`, authority=`packet only; no apply unless exact target/payload is supplied`
+- Phase 79: Publication Closure Health Report — track=`PUBLICATION_CLOSURE_HEALTH_REPORT`, authority=`read-only health report over publication/no-apply invariants`
+- Phase 80: Publication Governance Archive Update — track=`PUBLICATION_GOVERNANCE_ARCHIVE_UPDATE`, authority=`read-only archive update; no publication`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence

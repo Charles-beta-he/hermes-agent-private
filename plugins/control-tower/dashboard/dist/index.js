@@ -285,6 +285,8 @@
     const authorizationPacket = kernel.publication_apply_authorization_packet || {};
     const privateExport = kernel.private_export_artifact_compiler || {};
     const implementationChoice = kernel.publication_apply_implementation_choice || {};
+    const exportRetention = kernel.private_export_retention_watch || {};
+    const reopenApplyPacket = kernel.publication_apply_reopen_packet || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -316,6 +318,8 @@
         <span>Authorization packet: <strong>${escapeHtml(authorizationPacket.status || 'not_ready')}</strong></span>
         <span>Private export: <strong>${escapeHtml(privateExport.status || 'not_ready')}</strong></span>
         <span>Apply choice: <strong>${escapeHtml(implementationChoice.status || 'not_ready')}</strong></span>
+        <span>Export retention: <strong>${escapeHtml(exportRetention.status || 'not_ready')}</strong></span>
+        <span>Apply reopen packet: <strong>${escapeHtml(reopenApplyPacket.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -344,6 +348,8 @@
           <tr><th>Publication authorization packet</th><td>${escapeHtml(authorizationPacket.status || '—')} default=<code>${escapeHtml(authorizationPacket.recommended_default || '—')}</code> selected=<code>${escapeHtml(authorizationPacket.selected_option || '—')}</code> apply=<strong>${authorizationPacket.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Private export artifact</th><td>${escapeHtml(privateExport.status || '—')} ready=<strong>${privateExport.private_export_ready ? 'true' : 'false'}</strong> apply=<strong>${privateExport.publication_apply_enabled ? 'true' : 'false'}</strong> external=<strong>${privateExport.external_publication_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication apply choice</th><td>${escapeHtml(implementationChoice.status || '—')} choice=<code>${escapeHtml(implementationChoice.choice || '—')}</code> record_only=<strong>${implementationChoice.record_only ? 'true' : 'false'}</strong> apply=<strong>${implementationChoice.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Private export retention</th><td>${escapeHtml(exportRetention.status || '—')} drift=<code>${escapeHtml(String((exportRetention.drift || []).length))}</code> read_only=<strong>${exportRetention.read_only ? 'true' : 'false'}</strong> apply=<strong>${exportRetention.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication apply reopen packet</th><td>${escapeHtml(reopenApplyPacket.status || '—')} default=<code>${escapeHtml(reopenApplyPacket.recommended_default || '—')}</code> selected=<code>${escapeHtml(reopenApplyPacket.selected_option || '—')}</code> apply=<strong>${reopenApplyPacket.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>
