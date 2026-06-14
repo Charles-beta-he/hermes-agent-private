@@ -1,0 +1,35 @@
+{
+  "checks": {
+    "closure_external_false": true,
+    "closure_ready": true,
+    "closure_unattended_disabled": true,
+    "decision_keep_manual_only": true,
+    "dry_run_cron_artifact_no_send": true,
+    "dry_run_job_local_delivery": true,
+    "dry_run_job_no_agent": true,
+    "dry_run_job_present": true,
+    "dry_run_job_script_is_runner": true,
+    "one_shot_history_present": true
+  },
+  "closure_digest": "90f676ee8c5a21186f1de3d11f89bff767d249b806e5ce24b5b22b1f2e661841",
+  "created_at": "2026-06-14T08:29:12Z",
+  "cron_state_mutated": false,
+  "drift": [],
+  "external_side_effects_executed": false,
+  "last_known_one_shot_message_id": "4310",
+  "message_sent": false,
+  "monitor_digest": "0c3996bfe2492887cd956b7a5a4a2223b5b1071ee8202b40fdddca7250a68bfc",
+  "next_boundary": "Phase66 future unattended apply reopen packet",
+  "observed_job": {
+    "deliver": "local",
+    "job_id": "wk57dryrun01",
+    "no_agent": true,
+    "present": true,
+    "script": "workflow-kernel-unattended-dry-run-runner.py"
+  },
+  "phase": 65,
+  "read_only": true,
+  "schema": "workflow_kernel_manual_only_monitoring_v1",
+  "status": "MANUAL_ONLY_MONITORING_CLEAR",
+  "unattended_dispatch_enabled": false
+}

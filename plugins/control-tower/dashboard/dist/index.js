@@ -273,6 +273,8 @@
     const enablement = kernel.unattended_dispatch_enablement_packet || {};
     const decisionRecord = kernel.unattended_decision_record || {};
     const manualClosure = kernel.manual_only_closure || {};
+    const manualMonitoring = kernel.manual_only_monitoring || {};
+    const reopenPacket = kernel.future_unattended_reopen_packet || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -292,6 +294,8 @@
         <span>Enablement: <strong>${escapeHtml(enablement.status || 'not_ready')}</strong></span>
         <span>Decision: <strong>${escapeHtml(decisionRecord.status || 'not_ready')}</strong></span>
         <span>Closure: <strong>${escapeHtml(manualClosure.status || 'not_ready')}</strong></span>
+        <span>Monitoring: <strong>${escapeHtml(manualMonitoring.status || 'not_ready')}</strong></span>
+        <span>Reopen packet: <strong>${escapeHtml(reopenPacket.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -308,6 +312,8 @@
           <tr><th>Enablement packet</th><td>${escapeHtml(enablement.status || '—')} default=<code>${escapeHtml(enablement.recommended_default || '—')}</code> selected=<code>${escapeHtml(enablement.selected_option || '—')}</code> unattended=<strong>${enablement.unattended_dispatch_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Decision record</th><td>${escapeHtml(decisionRecord.status || '—')} decision=<code>${escapeHtml(decisionRecord.decision || '—')}</code> selected=<code>${escapeHtml(decisionRecord.selected_option || '—')}</code> record_only=<strong>${decisionRecord.record_only ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Manual-only closure</th><td>${escapeHtml(manualClosure.status || '—')} mode=<code>${escapeHtml(manualClosure.final_mode || '—')}</code> unattended=<strong>${manualClosure.unattended_dispatch_enabled ? 'true' : 'false'}</strong> external=<strong>${manualClosure.external_side_effects_executed ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Manual-only monitoring</th><td>${escapeHtml(manualMonitoring.status || '—')} drift=<code>${escapeHtml(String((manualMonitoring.drift || []).length))}</code> read_only=<strong>${manualMonitoring.read_only ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Future reopen packet</th><td>${escapeHtml(reopenPacket.status || '—')} default=<code>${escapeHtml(reopenPacket.recommended_default || '—')}</code> apply=<strong>${reopenPacket.reopen_apply_enabled ? 'true' : 'false'}</strong> packet_only=<strong>${reopenPacket.packet_only ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

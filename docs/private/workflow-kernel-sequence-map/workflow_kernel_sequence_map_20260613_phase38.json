@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T08:13:58Z",
-  "current_boundary": "Phase64 has closed the Workflow Kernel external-dispatch ladder on manual-only safe default. Future unattended/repeated dispatch requires a new explicit reopen/apply phase.",
+  "created_at": "2026-06-14T08:34:07Z",
+  "current_boundary": "Phase66 has produced a packet-only future reopen design while keeping reopen_apply_enabled=false. Future divergence should be evaluated only when there are alternative schemes for one concrete implementation point.",
   "next_ladder": [
     {
-      "authority_needed": "read-only monitoring of manual-only closure invariants",
-      "name": "Manual-only Closure Monitoring Projection",
-      "phase": 65,
-      "track": "MANUAL_ONLY_MONITORING",
-      "why_next": "detect drift from the closed safe-default state without enabling sends"
+      "authority_needed": "choose one concrete implementation point only if reopening is requested",
+      "name": "Single-point Reopen Implementation Choice",
+      "phase": 67,
+      "track": "SINGLE_POINT_REOPEN_CHOICE",
+      "why_next": "honor the rule that divergence is only between alternatives for the same implementation point"
     },
     {
-      "authority_needed": "new explicit authorization to reopen unattended apply design",
-      "name": "Future Unattended Apply Reopen Packet",
-      "phase": 66,
-      "track": "FUTURE_UNATTENDED_REOPEN_PACKET",
-      "why_next": "document what would be required if the user later reopens repeated dispatch"
+      "authority_needed": "read-only archive/index of the closed ladder",
+      "name": "Manual-only Governance Archive",
+      "phase": 68,
+      "track": "MANUAL_ONLY_ARCHIVE",
+      "why_next": "make the closed state easier to audit without reopening applies"
     }
   ],
-  "objective": "梳理 Phase17-64 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase63 已记录 keep_manual_only 决策，Phase64 已关闭为 manual-only safe default，unattended/repeated dispatch 仍关闭、无新外发。",
-  "phase_count": 48,
+  "objective": "梳理 Phase17-66 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase65 已完成 manual-only closure monitoring projection，Phase66 已生成 future unattended apply reopen packet，但 reopen/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+  "phase_count": 50,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -698,14 +698,41 @@
       "layer": "closure",
       "name": "Safe-default Manual-only Closure",
       "next_unlocked": [
-        65,
-        66
+        65
       ],
       "phase": 64,
       "status": "manual_only_closure_ready"
+    },
+    {
+      "authority": "read-only monitoring",
+      "depends_on": [
+        64
+      ],
+      "gate": "no send; no cron mutation; no apply",
+      "layer": "closure monitoring",
+      "name": "Manual-only Closure Monitoring Projection",
+      "next_unlocked": [
+        66
+      ],
+      "phase": 65,
+      "status": "manual_only_monitoring_clear"
+    },
+    {
+      "authority": "packet only",
+      "depends_on": [
+        65
+      ],
+      "gate": "reopen_apply_enabled=false; selected_option=null",
+      "layer": "future reopen packet",
+      "name": "Future Unattended Apply Reopen Packet",
+      "next_unlocked": [
+        67
+      ],
+      "phase": 66,
+      "status": "future_reopen_packet_ready_disabled"
     }
   ],
-  "recommended_next": "Human choice required: Phase65 manual-only closure monitoring projection vs Phase66 future unattended apply reopen packet",
+  "recommended_next": "Human choice required only for a single implementation point with competing schemes: Phase67 single-point reopen implementation choice vs Phase68 manual-only governance archive",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

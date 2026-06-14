@@ -161,6 +161,8 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["unattended_dispatch_enablement_packet"]["status"] in {"UNATTENDED_DISPATCH_ENABLEMENT_PACKET_READY", "not_ready"}
     assert kernel["unattended_decision_record"]["status"] in {"UNATTENDED_DECISION_RECORD_READY", "not_ready"}
     assert kernel["manual_only_closure"]["status"] in {"MANUAL_ONLY_CLOSURE_READY", "not_ready"}
+    assert kernel["manual_only_monitoring"]["status"] in {"MANUAL_ONLY_MONITORING_CLEAR", "MANUAL_ONLY_MONITORING_DRIFT_DETECTED", "not_ready"}
+    assert kernel["future_unattended_reopen_packet"]["status"] in {"FUTURE_UNATTENDED_REOPEN_PACKET_READY", "not_ready"}
     assert kernel["external_side_effects_enabled"] is False
 
 

@@ -6138,6 +6138,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase62_path = root / "docs/private/workflow-kernel-unattended-dispatch-enablement-packet/workflow_kernel_unattended_dispatch_enablement_packet_20260613_phase62.json"
     phase63_path = root / "docs/private/workflow-kernel-unattended-decision-record/workflow_kernel_unattended_decision_record_20260613_phase63.json"
     phase64_path = root / "docs/private/workflow-kernel-manual-only-closure/workflow_kernel_manual_only_closure_20260613_phase64.json"
+    phase65_path = root / "docs/private/workflow-kernel-manual-only-monitoring/workflow_kernel_manual_only_monitoring_20260613_phase65.json"
+    phase66_path = root / "docs/private/workflow-kernel-future-unattended-reopen-packet/workflow_kernel_future_unattended_reopen_packet_20260613_phase66.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6166,6 +6168,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         unattended_enablement_packet = json.loads(phase62_path.read_text()) if phase62_path.exists() else None
         unattended_decision_record = json.loads(phase63_path.read_text()) if phase63_path.exists() else None
         manual_only_closure = json.loads(phase64_path.read_text()) if phase64_path.exists() else None
+        manual_only_monitoring = json.loads(phase65_path.read_text()) if phase65_path.exists() else None
+        future_reopen_packet = json.loads(phase66_path.read_text()) if phase66_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6274,10 +6278,27 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "unattended_dispatch_enabled": (manual_only_closure or {}).get("unattended_dispatch_enabled"),
             "external_side_effects_executed": (manual_only_closure or {}).get("external_side_effects_executed"),
         },
+        "manual_only_monitoring": {
+            "status": (manual_only_monitoring or {}).get("status", "not_ready"),
+            "monitor_digest": (manual_only_monitoring or {}).get("monitor_digest"),
+            "drift": (manual_only_monitoring or {}).get("drift", []),
+            "observed_job": (manual_only_monitoring or {}).get("observed_job"),
+            "unattended_dispatch_enabled": (manual_only_monitoring or {}).get("unattended_dispatch_enabled"),
+            "read_only": (manual_only_monitoring or {}).get("read_only"),
+        },
+        "future_unattended_reopen_packet": {
+            "status": (future_reopen_packet or {}).get("status", "not_ready"),
+            "packet_digest": (future_reopen_packet or {}).get("packet_digest"),
+            "recommended_default": (future_reopen_packet or {}).get("recommended_default"),
+            "selected_option": (future_reopen_packet or {}).get("selected_option"),
+            "reopen_apply_enabled": (future_reopen_packet or {}).get("reopen_apply_enabled"),
+            "unattended_dispatch_enabled": (future_reopen_packet or {}).get("unattended_dispatch_enabled"),
+            "packet_only": (future_reopen_packet or {}).get("packet_only"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase64 closure: manual-only safe default is closed; future unattended enablement requires a new explicit apply phase",
+        "next_boundary": "post-Phase66 boundary: continue only on a single implementation point; future unattended apply remains disabled",
     }
 
 

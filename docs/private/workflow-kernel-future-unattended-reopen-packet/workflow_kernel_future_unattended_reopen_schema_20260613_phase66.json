@@ -1,0 +1,22 @@
+{
+  "allowed_decisions": [
+    "keep_closed",
+    "design_dry_run_only_reopen",
+    "design_limited_unattended_send_reopen",
+    "reject",
+    "request_changes"
+  ],
+  "apply_allowed_by_this_schema": false,
+  "packet_digest": "edd8c74ce4d649e76d5e7be997fbf12a545ba38d8eca0a922ccab9a5d425906c",
+  "phase": 66,
+  "required_fields_for_future_apply": [
+    "decision",
+    "operator_reason",
+    "target_adapter",
+    "target_identifier",
+    "payload_contract",
+    "rate_limit",
+    "rollback_plan"
+  ],
+  "schema": "workflow_kernel_future_unattended_reopen_decision_schema_v1"
+}
