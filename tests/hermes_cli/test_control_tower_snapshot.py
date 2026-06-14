@@ -175,6 +175,8 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["publication_apply_implementation_choice"]["status"] in {"PUBLICATION_APPLY_IMPLEMENTATION_CHOICE_RECORDED", "PUBLICATION_APPLY_IMPLEMENTATION_CHOICE_BLOCKED", "not_ready"}
     assert kernel["private_export_retention_watch"]["status"] in {"PRIVATE_EXPORT_RETENTION_WATCH_CLEAR", "PRIVATE_EXPORT_RETENTION_WATCH_DRIFT", "not_ready"}
     assert kernel["publication_apply_reopen_packet"]["status"] in {"PUBLICATION_APPLY_REOPEN_PACKET_READY", "PUBLICATION_APPLY_REOPEN_PACKET_BLOCKED", "not_ready"}
+    assert kernel["publication_closure_health_report"]["status"] in {"PUBLICATION_CLOSURE_HEALTH_REPORT_CLEAR", "PUBLICATION_CLOSURE_HEALTH_REPORT_DEGRADED", "not_ready"}
+    assert kernel["publication_governance_archive"]["status"] in {"PUBLICATION_GOVERNANCE_ARCHIVE_READY", "PUBLICATION_GOVERNANCE_ARCHIVE_DEGRADED", "not_ready"}
     assert kernel["external_side_effects_enabled"] is False
 
 

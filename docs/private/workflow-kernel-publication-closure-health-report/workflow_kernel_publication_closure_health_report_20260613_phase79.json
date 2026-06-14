@@ -1,0 +1,53 @@
+{
+  "checks": {
+    "all_apply_disabled": true,
+    "all_external_publication_disabled": true,
+    "authorization_packet_ready": true,
+    "choice_keep_private": true,
+    "exact_target_gate_ready": true,
+    "reopen_packet_ready": true
+  },
+  "created_at": "2026-06-14T16:01:32Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "health": "clear",
+  "health_digest": "82daa4efea5643686f1b69aa10c13c5407106d468e619259b153b3bcdc1dcc53",
+  "input_refs": [
+    {
+      "name": "phase72_gate",
+      "path": "docs/private/workflow-kernel-publication-exact-target-gate/workflow_kernel_publication_exact_target_gate_20260613_phase72.json",
+      "sha256": "70d3dd3534926b65cd95eb2b2b23c6b57a88734ddf9f06d9f57421a3f0e38fc7",
+      "status": "PUBLICATION_EXACT_TARGET_GATE_READY"
+    },
+    {
+      "name": "phase74_authorization",
+      "path": "docs/private/workflow-kernel-publication-apply-authorization-packet/workflow_kernel_publication_apply_authorization_packet_20260613_phase74.json",
+      "sha256": "410ca125a58462312407284270ef7c0898c0e5fdea4a1eb24b89748cc1380779",
+      "status": "PUBLICATION_APPLY_AUTHORIZATION_PACKET_READY"
+    },
+    {
+      "name": "phase76_choice",
+      "path": "docs/private/workflow-kernel-publication-apply-implementation-choice/workflow_kernel_publication_apply_implementation_choice_20260613_phase76.json",
+      "sha256": "0237d7413f8f4a2cb555468fc3f34189dc079a01b677faad47eade19a1a6db86",
+      "status": "PUBLICATION_APPLY_IMPLEMENTATION_CHOICE_RECORDED"
+    },
+    {
+      "name": "phase78_reopen",
+      "path": "docs/private/workflow-kernel-publication-apply-reopen-packet/workflow_kernel_publication_apply_reopen_packet_20260613_phase78.json",
+      "sha256": "a816774b48ad699b3f27031c0a827ed07569535fd98478ea594f28cb76aa6412",
+      "status": "PUBLICATION_APPLY_REOPEN_PACKET_READY"
+    }
+  ],
+  "message_sent": false,
+  "next_boundary": "Phase80 may update governance archive as read-only index",
+  "phase": 79,
+  "publication_apply_enabled": false,
+  "read_only": true,
+  "schema": "workflow_kernel_publication_closure_health_report_v1",
+  "stage_report_only": true,
+  "status": "PUBLICATION_CLOSURE_HEALTH_REPORT_CLEAR",
+  "unattended_dispatch_enabled": false,
+  "unhealthy_checks": []
+}

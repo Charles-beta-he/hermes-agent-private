@@ -6152,6 +6152,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase76_path = root / "docs/private/workflow-kernel-publication-apply-implementation-choice/workflow_kernel_publication_apply_implementation_choice_20260613_phase76.json"
     phase77_path = root / "docs/private/workflow-kernel-private-export-retention-watch/workflow_kernel_private_export_retention_watch_20260613_phase77.json"
     phase78_path = root / "docs/private/workflow-kernel-publication-apply-reopen-packet/workflow_kernel_publication_apply_reopen_packet_20260613_phase78.json"
+    phase79_path = root / "docs/private/workflow-kernel-publication-closure-health-report/workflow_kernel_publication_closure_health_report_20260613_phase79.json"
+    phase80_path = root / "docs/private/workflow-kernel-publication-governance-archive/workflow_kernel_publication_governance_archive_20260613_phase80.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6194,6 +6196,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         publication_apply_implementation_choice = json.loads(phase76_path.read_text()) if phase76_path.exists() else None
         private_export_retention_watch = json.loads(phase77_path.read_text()) if phase77_path.exists() else None
         publication_apply_reopen_packet = json.loads(phase78_path.read_text()) if phase78_path.exists() else None
+        publication_closure_health_report = json.loads(phase79_path.read_text()) if phase79_path.exists() else None
+        publication_governance_archive = json.loads(phase80_path.read_text()) if phase80_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6418,10 +6422,26 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "reopen_apply_enabled": (publication_apply_reopen_packet or {}).get("reopen_apply_enabled"),
             "publication_apply_enabled": (publication_apply_reopen_packet or {}).get("publication_apply_enabled"),
         },
+        "publication_closure_health_report": {
+            "status": (publication_closure_health_report or {}).get("status", "not_ready"),
+            "health_digest": (publication_closure_health_report or {}).get("health_digest"),
+            "health": (publication_closure_health_report or {}).get("health"),
+            "unhealthy_checks": (publication_closure_health_report or {}).get("unhealthy_checks", []),
+            "read_only": (publication_closure_health_report or {}).get("read_only"),
+            "publication_apply_enabled": (publication_closure_health_report or {}).get("publication_apply_enabled"),
+        },
+        "publication_governance_archive": {
+            "status": (publication_governance_archive or {}).get("status", "not_ready"),
+            "archive_digest": (publication_governance_archive or {}).get("archive_digest"),
+            "archive_policy": (publication_governance_archive or {}).get("archive_policy"),
+            "item_count": (publication_governance_archive or {}).get("item_count"),
+            "read_only": (publication_governance_archive or {}).get("read_only"),
+            "publication_apply_enabled": (publication_governance_archive or {}).get("publication_apply_enabled"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": "post-Phase78 packet: publication apply remains closed; continue read-only/private unless exact apply target is supplied",
+        "next_boundary": "post-Phase80 archive: publication governance remains read-only; continue retention/export review unless exact apply target is supplied",
     }
 
 

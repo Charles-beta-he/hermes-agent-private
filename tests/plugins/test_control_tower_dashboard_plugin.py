@@ -167,6 +167,10 @@ def test_control_tower_dashboard_renders_workflow_kernel_projection_panel():
     assert "publication_apply_reopen_packet" in script
     assert "Private export retention" in script
     assert "Publication apply reopen packet" in script
+    assert "publication_closure_health_report" in script
+    assert "publication_governance_archive" in script
+    assert "Publication closure health" in script
+    assert "Publication governance archive" in script
     assert "Pack, guarded send, and dispatch policy" in script
     assert "Latest guarded send" not in script  # keep wording in static Phase52 page only
     assert "control-tower-workflow-kernel-card" in style

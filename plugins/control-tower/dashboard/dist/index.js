@@ -287,6 +287,8 @@
     const implementationChoice = kernel.publication_apply_implementation_choice || {};
     const exportRetention = kernel.private_export_retention_watch || {};
     const reopenApplyPacket = kernel.publication_apply_reopen_packet || {};
+    const publicationHealth = kernel.publication_closure_health_report || {};
+    const publicationArchive = kernel.publication_governance_archive || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -320,6 +322,8 @@
         <span>Apply choice: <strong>${escapeHtml(implementationChoice.status || 'not_ready')}</strong></span>
         <span>Export retention: <strong>${escapeHtml(exportRetention.status || 'not_ready')}</strong></span>
         <span>Apply reopen packet: <strong>${escapeHtml(reopenApplyPacket.status || 'not_ready')}</strong></span>
+        <span>Publication health: <strong>${escapeHtml(publicationHealth.status || 'not_ready')}</strong></span>
+        <span>Publication archive: <strong>${escapeHtml(publicationArchive.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -350,6 +354,8 @@
           <tr><th>Publication apply choice</th><td>${escapeHtml(implementationChoice.status || '—')} choice=<code>${escapeHtml(implementationChoice.choice || '—')}</code> record_only=<strong>${implementationChoice.record_only ? 'true' : 'false'}</strong> apply=<strong>${implementationChoice.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Private export retention</th><td>${escapeHtml(exportRetention.status || '—')} drift=<code>${escapeHtml(String((exportRetention.drift || []).length))}</code> read_only=<strong>${exportRetention.read_only ? 'true' : 'false'}</strong> apply=<strong>${exportRetention.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication apply reopen packet</th><td>${escapeHtml(reopenApplyPacket.status || '—')} default=<code>${escapeHtml(reopenApplyPacket.recommended_default || '—')}</code> selected=<code>${escapeHtml(reopenApplyPacket.selected_option || '—')}</code> apply=<strong>${reopenApplyPacket.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication closure health</th><td>${escapeHtml(publicationHealth.status || '—')} health=<code>${escapeHtml(publicationHealth.health || '—')}</code> unhealthy=<code>${escapeHtml(String((publicationHealth.unhealthy_checks || []).length))}</code> apply=<strong>${publicationHealth.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication governance archive</th><td>${escapeHtml(publicationArchive.status || '—')} items=<code>${escapeHtml(String(publicationArchive.item_count ?? '—'))}</code> read_only=<strong>${publicationArchive.read_only ? 'true' : 'false'}</strong> apply=<strong>${publicationArchive.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

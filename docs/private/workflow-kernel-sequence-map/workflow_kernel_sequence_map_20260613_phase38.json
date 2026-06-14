@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T15:50:42Z",
-  "current_boundary": "Phase78 has produced a packet-only reopen design while keeping publication_apply_enabled=false and selected_option=null.",
+  "created_at": "2026-06-14T16:03:49Z",
+  "current_boundary": "Phase80 has updated the read-only publication governance archive while keeping publication_apply_enabled=false.",
   "next_ladder": [
     {
-      "authority_needed": "read-only health report over publication/no-apply invariants",
-      "name": "Publication Closure Health Report",
-      "phase": 79,
-      "track": "PUBLICATION_CLOSURE_HEALTH_REPORT",
-      "why_next": "continue stage-report cadence"
+      "authority_needed": "read-only retention/drift watch over publication archive",
+      "name": "Publication Archive Retention Watch",
+      "phase": 81,
+      "track": "PUBLICATION_ARCHIVE_RETENTION_WATCH",
+      "why_next": "verify archive remains private/read-only"
     },
     {
-      "authority_needed": "read-only archive update; no publication",
-      "name": "Publication Governance Archive Update",
-      "phase": 80,
-      "track": "PUBLICATION_GOVERNANCE_ARCHIVE_UPDATE",
-      "why_next": "archive latest packet evidence"
+      "authority_needed": "packet only; no export or publication apply",
+      "name": "Publication Export Review Packet",
+      "phase": 82,
+      "track": "PUBLICATION_EXPORT_REVIEW_PACKET",
+      "why_next": "compile future review packet without external side effects"
     }
   ],
-  "objective": "梳理 Phase17-78 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase77 已完成 private export retention watch，Phase78 已生成 publication apply reopen packet；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
-  "phase_count": 62,
+  "objective": "梳理 Phase17-80 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase79 已完成 publication closure health report，Phase80 已更新 publication governance archive；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+  "phase_count": 64,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -898,9 +898,37 @@
       ],
       "phase": 78,
       "status": "publication_apply_reopen_packet_ready"
+    },
+    {
+      "authority": "read-only report",
+      "depends_on": [
+        78
+      ],
+      "gate": "health=clear; apply disabled",
+      "layer": "publication health",
+      "name": "Publication Closure Health Report",
+      "next_unlocked": [
+        80
+      ],
+      "phase": 79,
+      "status": "publication_closure_health_clear"
+    },
+    {
+      "authority": "read-only archive",
+      "depends_on": [
+        79
+      ],
+      "gate": "read_only=true; publication apply disabled",
+      "layer": "governance archive",
+      "name": "Publication Governance Archive Update",
+      "next_unlocked": [
+        81
+      ],
+      "phase": 80,
+      "status": "publication_governance_archive_ready"
     }
   ],
-  "recommended_next": "Stage-report cadence: Phase79 publication closure health report; Phase80 governance archive update remains read-only",
+  "recommended_next": "Stage-report cadence: Phase81 publication archive retention watch; Phase82 publication export review packet remains packet-only",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

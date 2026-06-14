@@ -85,11 +85,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 76, "name": "Publication Apply Implementation Choice", "layer": "implementation choice", "status": "keep_private_no_apply_choice_recorded", "depends_on": [75], "authority": "record-only safe default", "gate": "choice=A_KEEP_PRIVATE_NO_APPLY; no exact target", "next_unlocked": [77]},
     {"phase": 77, "name": "Private Export Retention Watch", "layer": "export retention watch", "status": "private_export_retention_clear", "depends_on": [76], "authority": "read-only watch", "gate": "drift=[]; publication apply disabled", "next_unlocked": [78]},
     {"phase": 78, "name": "Publication Apply Reopen Packet", "layer": "reopen packet", "status": "publication_apply_reopen_packet_ready", "depends_on": [77], "authority": "packet only", "gate": "recommended_default=A_NO_REOPEN_KEEP_PRIVATE; apply disabled", "next_unlocked": [79]},
+    {"phase": 79, "name": "Publication Closure Health Report", "layer": "publication health", "status": "publication_closure_health_clear", "depends_on": [78], "authority": "read-only report", "gate": "health=clear; apply disabled", "next_unlocked": [80]},
+    {"phase": 80, "name": "Publication Governance Archive Update", "layer": "governance archive", "status": "publication_governance_archive_ready", "depends_on": [79], "authority": "read-only archive", "gate": "read_only=true; publication apply disabled", "next_unlocked": [81]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 79, "name": "Publication Closure Health Report", "track": "PUBLICATION_CLOSURE_HEALTH_REPORT", "authority_needed": "read-only health report over publication/no-apply invariants", "why_next": "continue stage-report cadence"},
-    {"phase": 80, "name": "Publication Governance Archive Update", "track": "PUBLICATION_GOVERNANCE_ARCHIVE_UPDATE", "authority_needed": "read-only archive update; no publication", "why_next": "archive latest packet evidence"},
+    {"phase": 81, "name": "Publication Archive Retention Watch", "track": "PUBLICATION_ARCHIVE_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over publication archive", "why_next": "verify archive remains private/read-only"},
+    {"phase": 82, "name": "Publication Export Review Packet", "track": "PUBLICATION_EXPORT_REVIEW_PACKET", "authority_needed": "packet only; no export or publication apply", "why_next": "compile future review packet without external side effects"},
 ]
 
 
@@ -131,15 +133,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-78 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase77 已完成 private export retention watch，Phase78 已生成 publication apply reopen packet；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-80 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase79 已完成 publication closure health report，Phase80 已更新 publication governance archive；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase78 has produced a packet-only reopen design while keeping publication_apply_enabled=false and selected_option=null.",
+        "current_boundary": "Phase80 has updated the read-only publication governance archive while keeping publication_apply_enabled=false.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Stage-report cadence: Phase79 publication closure health report; Phase80 governance archive update remains read-only",
+        "recommended_next": "Stage-report cadence: Phase81 publication archive retention watch; Phase82 publication export review packet remains packet-only",
     }
 
 
