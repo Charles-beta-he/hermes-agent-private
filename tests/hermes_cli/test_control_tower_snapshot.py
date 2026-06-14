@@ -213,6 +213,18 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     if kernel["phase_g_optimization_backlog"]["status"] == "PHASE_G_OPTIMIZATION_BACKLOG_READY":
         assert kernel["phase_g_optimization_backlog"]["candidate_count"] >= 4
         assert "optimization_backlog" in kernel["phase_g_optimization_backlog"]["candidate_classes"]
+    assert kernel["fail_closed_posture"]["status"] in {"FAIL_CLOSED_POSTURE_ENABLED", "FAIL_CLOSED_POSTURE_DEGRADED", "not_ready"}
+    assert kernel["fail_closed_posture"]["read_only"] is True
+    if kernel["fail_closed_posture"]["status"] == "FAIL_CLOSED_POSTURE_ENABLED":
+        assert kernel["fail_closed_posture"]["fail_closed_enabled"] is True
+        assert kernel["fail_closed_posture"]["forbidden_enabled_observations"] == []
+        safe_defaults = kernel["fail_closed_posture"]["observed_safe_defaults"]
+        assert safe_defaults["external_side_effects_enabled"] is False
+        assert safe_defaults["unattended_dispatch_enabled"] is False
+        assert safe_defaults["publication_apply_enabled"] is False
+        assert safe_defaults["generic_adapter_write_through_enabled"] is False
+        assert safe_defaults["taskpool_enqueue_enabled"] is False
+        assert safe_defaults["executor_enabled"] is False
     assert kernel["external_side_effects_enabled"] is False
 
 

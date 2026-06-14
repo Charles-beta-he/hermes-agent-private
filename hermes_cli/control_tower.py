@@ -6293,6 +6293,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     broader_adapter_contract_path = root / "docs/private/workflow-kernel-broader-adapter-operation-contract/workflow_kernel_broader_adapter_operation_contract_20260615.json"
     remaining_gates_terminal_index_path = root / "docs/private/workflow-kernel-remaining-gates-terminal-index/workflow_kernel_remaining_gates_terminal_index_20260615.json"
     phase_g_optimization_backlog_path = root / "docs/private/workflow-kernel-phase-g-optimization-backlog/workflow_kernel_phase_g_optimization_backlog_20260615.json"
+    fail_closed_posture_path = root / "docs/private/workflow-kernel-fail-closed-posture/workflow_kernel_fail_closed_posture_20260615.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6357,6 +6358,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         broader_adapter_contract = json.loads(broader_adapter_contract_path.read_text()) if broader_adapter_contract_path.exists() else None
         remaining_gates_terminal_index = json.loads(remaining_gates_terminal_index_path.read_text()) if remaining_gates_terminal_index_path.exists() else None
         phase_g_optimization_backlog = json.loads(phase_g_optimization_backlog_path.read_text()) if phase_g_optimization_backlog_path.exists() else None
+        fail_closed_posture = json.loads(fail_closed_posture_path.read_text()) if fail_closed_posture_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6743,6 +6745,17 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "mission_mutated": (phase_g_optimization_backlog or {}).get("mission_mutated", False),
             "executor_enabled": (phase_g_optimization_backlog or {}).get("executor_enabled", False),
             "external_side_effects_executed": (phase_g_optimization_backlog or {}).get("external_side_effects_executed", False),
+        },
+        "fail_closed_posture": {
+            "status": (fail_closed_posture or {}).get("status", "not_ready"),
+            "posture_policy": (fail_closed_posture or {}).get("posture_policy"),
+            "fail_closed_enabled": (fail_closed_posture or {}).get("fail_closed_enabled", False),
+            "posture_digest": (fail_closed_posture or {}).get("posture_digest"),
+            "checks": (fail_closed_posture or {}).get("checks", {}),
+            "forbidden_enabled_observations": (fail_closed_posture or {}).get("forbidden_enabled_observations", []),
+            "observed_safe_defaults": (fail_closed_posture or {}).get("observed_safe_defaults", {}),
+            "read_only": (fail_closed_posture or {}).get("read_only", True),
+            "next_boundary": (fail_closed_posture or {}).get("next_boundary"),
         },
         "blockers": blockers,
         "external_side_effects_enabled": False,
