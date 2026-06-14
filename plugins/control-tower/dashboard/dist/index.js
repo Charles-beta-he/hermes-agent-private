@@ -281,6 +281,8 @@
     const publicationPacket = kernel.archive_publication_packet || {};
     const retentionWatch = kernel.private_archive_retention_watch || {};
     const exactTargetGate = kernel.publication_exact_target_gate || {};
+    const dryRunCompiler = kernel.exact_target_apply_dry_run_compiler || {};
+    const authorizationPacket = kernel.publication_apply_authorization_packet || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -308,6 +310,8 @@
         <span>Publication packet: <strong>${escapeHtml(publicationPacket.status || 'not_ready')}</strong></span>
         <span>Retention: <strong>${escapeHtml(retentionWatch.status || 'not_ready')}</strong></span>
         <span>Exact-target gate: <strong>${escapeHtml(exactTargetGate.status || 'not_ready')}</strong></span>
+        <span>Dry-run compiler: <strong>${escapeHtml(dryRunCompiler.status || 'not_ready')}</strong></span>
+        <span>Authorization packet: <strong>${escapeHtml(authorizationPacket.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -332,6 +336,8 @@
           <tr><th>Archive publication packet</th><td>${escapeHtml(publicationPacket.status || '—')} default=<code>${escapeHtml(publicationPacket.recommended_default || '—')}</code> apply=<strong>${publicationPacket.publication_apply_enabled ? 'true' : 'false'}</strong> packet_only=<strong>${publicationPacket.packet_only ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Private archive retention</th><td>${escapeHtml(retentionWatch.status || '—')} drift=<code>${escapeHtml(String((retentionWatch.drift || []).length))}</code> read_only=<strong>${retentionWatch.read_only ? 'true' : 'false'}</strong> apply=<strong>${retentionWatch.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication exact-target gate</th><td>${escapeHtml(exactTargetGate.status || '—')} gate_only=<strong>${exactTargetGate.gate_only ? 'true' : 'false'}</strong> apply=<strong>${exactTargetGate.publication_apply_enabled ? 'true' : 'false'}</strong> target=<code>${escapeHtml(exactTargetGate.selected_target || '—')}</code></td></tr>
+          <tr><th>Exact-target dry-run compiler</th><td>${escapeHtml(dryRunCompiler.status || '—')} dry_run_only=<strong>${dryRunCompiler.dry_run_only ? 'true' : 'false'}</strong> would_publish=<strong>${dryRunCompiler.would_publish ? 'true' : 'false'}</strong> apply=<strong>${dryRunCompiler.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication authorization packet</th><td>${escapeHtml(authorizationPacket.status || '—')} default=<code>${escapeHtml(authorizationPacket.recommended_default || '—')}</code> selected=<code>${escapeHtml(authorizationPacket.selected_option || '—')}</code> apply=<strong>${authorizationPacket.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

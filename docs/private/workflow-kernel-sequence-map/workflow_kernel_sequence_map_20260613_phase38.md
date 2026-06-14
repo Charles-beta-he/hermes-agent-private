@@ -60,10 +60,12 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 70: Governance Archive Index Publication Packet — layer=`publication packet`, gate=`publication_apply_enabled=false; private default`
 - Phase 71: Private Archive Retention Watch — layer=`retention watch`, gate=`private archive retained; publication apply disabled`
 - Phase 72: Publication Apply Exact-target Gate — layer=`exact-target gate`, gate=`exact target/payload required; apply disabled`
+- Phase 73: Exact-target Apply Dry-run Compiler — layer=`dry-run compiler`, gate=`would_publish=false; publication apply disabled`
+- Phase 74: Publication Apply Authorization Packet — layer=`authorization packet`, gate=`recommended_default=A_KEEP_PRIVATE_NO_PUBLICATION; apply disabled`
 
 ## Next ladder
-- Phase 73: Exact-target Apply Dry-run Compiler — track=`EXACT_TARGET_APPLY_DRY_RUN_COMPILER`, authority=`exact target/payload dry-run only; no external publication`
-- Phase 74: Publication Apply Authorization Packet — track=`PUBLICATION_APPLY_AUTHORIZATION_PACKET`, authority=`fresh explicit authorization before any external publication apply`
+- Phase 75: Private Export Artifact Compiler — track=`PRIVATE_EXPORT_ARTIFACT_COMPILER`, authority=`local private export artifact only; no external publication`
+- Phase 76: Publication Apply Implementation Choice — track=`PUBLICATION_APPLY_IMPLEMENTATION_CHOICE`, authority=`human choice only if competing exact apply implementations exist`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence

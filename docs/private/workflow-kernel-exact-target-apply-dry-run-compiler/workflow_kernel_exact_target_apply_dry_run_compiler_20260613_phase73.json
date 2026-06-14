@@ -1,0 +1,36 @@
+{
+  "blockers": [],
+  "checks": {
+    "archive_private_read_only": true,
+    "archive_ready": true,
+    "gate_apply_disabled": true,
+    "gate_only": true,
+    "gate_ready": true
+  },
+  "compile_mode": "no_target_no_payload_preview_only",
+  "compiled_from_gate_digest": "27f90bb8f8e0019f9e823f4703196ba63737b35fb9a2977b764682fa26e97954",
+  "compiler_digest": "f3bca3405c395b3a6eeedf181faf44b7c08bbd40c8624b0df673ec0889670df6",
+  "created_at": "2026-06-14T15:26:58Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "dry_run_only": true,
+  "dry_run_preview": {
+    "operator_reason": null,
+    "payload_hash": null,
+    "rollback_plan_required": true,
+    "target_adapter": null,
+    "target_id": null,
+    "validation_mode": "schema_and_gate_only",
+    "would_publish": false,
+    "would_send": false
+  },
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "message_sent": false,
+  "next_boundary": "Phase74 authorization packet; still no publication apply",
+  "phase": 73,
+  "publication_apply_enabled": false,
+  "schema": "workflow_kernel_exact_target_apply_dry_run_compiler_v1",
+  "status": "EXACT_TARGET_APPLY_DRY_RUN_COMPILER_READY",
+  "unattended_dispatch_enabled": false
+}

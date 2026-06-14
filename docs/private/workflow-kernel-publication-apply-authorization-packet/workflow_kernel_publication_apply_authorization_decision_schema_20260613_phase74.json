@@ -1,0 +1,26 @@
+{
+  "properties": {
+    "decision": {
+      "enum": [
+        "A_KEEP_PRIVATE_NO_PUBLICATION",
+        "B_AUTHORIZE_FILE_EXPORT_DRY_RUN_ONLY",
+        "C_AUTHORIZE_EXACT_TARGET_PUBLICATION_APPLY_FUTURE"
+      ]
+    },
+    "exact_target_packet_ref": {
+      "type": "string"
+    },
+    "operator_reason": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "rollback_acknowledged": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "decision",
+    "operator_reason"
+  ],
+  "type": "object"
+}

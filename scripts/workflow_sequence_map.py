@@ -79,11 +79,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 70, "name": "Governance Archive Index Publication Packet", "layer": "publication packet", "status": "archive_publication_packet_ready", "depends_on": [69], "authority": "packet only", "gate": "publication_apply_enabled=false; private default", "next_unlocked": [71]},
     {"phase": 71, "name": "Private Archive Retention Watch", "layer": "retention watch", "status": "private_archive_retention_clear", "depends_on": [70], "authority": "read-only watch", "gate": "private archive retained; publication apply disabled", "next_unlocked": [72]},
     {"phase": 72, "name": "Publication Apply Exact-target Gate", "layer": "exact-target gate", "status": "publication_exact_target_gate_ready", "depends_on": [71], "authority": "gate only", "gate": "exact target/payload required; apply disabled", "next_unlocked": [73]},
+    {"phase": 73, "name": "Exact-target Apply Dry-run Compiler", "layer": "dry-run compiler", "status": "exact_target_apply_dry_run_compiler_ready", "depends_on": [72], "authority": "dry-run only", "gate": "would_publish=false; publication apply disabled", "next_unlocked": [74]},
+    {"phase": 74, "name": "Publication Apply Authorization Packet", "layer": "authorization packet", "status": "publication_apply_authorization_packet_ready", "depends_on": [73], "authority": "packet only", "gate": "recommended_default=A_KEEP_PRIVATE_NO_PUBLICATION; apply disabled", "next_unlocked": [75]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 73, "name": "Exact-target Apply Dry-run Compiler", "track": "EXACT_TARGET_APPLY_DRY_RUN_COMPILER", "authority_needed": "exact target/payload dry-run only; no external publication", "why_next": "prepare validation without sending"},
-    {"phase": 74, "name": "Publication Apply Authorization Packet", "track": "PUBLICATION_APPLY_AUTHORIZATION_PACKET", "authority_needed": "fresh explicit authorization before any external publication apply", "why_next": "external publication remains separate and disabled"},
+    {"phase": 75, "name": "Private Export Artifact Compiler", "track": "PRIVATE_EXPORT_ARTIFACT_COMPILER", "authority_needed": "local private export artifact only; no external publication", "why_next": "continue safe productization without publishing"},
+    {"phase": 76, "name": "Publication Apply Implementation Choice", "track": "PUBLICATION_APPLY_IMPLEMENTATION_CHOICE", "authority_needed": "human choice only if competing exact apply implementations exist", "why_next": "single implementation point choice boundary"},
 ]
 
 
@@ -125,15 +127,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-72 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase71 已完成 private archive retention watch，Phase72 已生成 publication exact-target gate；archive 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-74 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase73 已生成 exact-target apply dry-run compiler，Phase74 已生成 publication apply authorization packet；archive 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase72 has produced an exact-target publication gate while keeping publication_apply_enabled=false and selected_target=null.",
+        "current_boundary": "Phase74 has produced an authorization packet while keeping publication_apply_enabled=false and selected_option=null.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Stage-report cadence: Phase73 exact-target apply dry-run compiler; Phase74 remains explicit authorization packet before any publication",
+        "recommended_next": "Stage-report cadence: Phase75 private export artifact compiler; Phase76 implementation choice only if competing exact apply schemes exist",
     }
 
 

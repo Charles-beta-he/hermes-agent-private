@@ -169,6 +169,8 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["archive_publication_packet"]["status"] in {"ARCHIVE_PUBLICATION_PACKET_READY", "ARCHIVE_PUBLICATION_PACKET_BLOCKED", "not_ready"}
     assert kernel["private_archive_retention_watch"]["status"] in {"PRIVATE_ARCHIVE_RETENTION_WATCH_CLEAR", "PRIVATE_ARCHIVE_RETENTION_WATCH_DRIFT", "not_ready"}
     assert kernel["publication_exact_target_gate"]["status"] in {"PUBLICATION_EXACT_TARGET_GATE_READY", "PUBLICATION_EXACT_TARGET_GATE_BLOCKED", "not_ready"}
+    assert kernel["exact_target_apply_dry_run_compiler"]["status"] in {"EXACT_TARGET_APPLY_DRY_RUN_COMPILER_READY", "EXACT_TARGET_APPLY_DRY_RUN_COMPILER_BLOCKED", "not_ready"}
+    assert kernel["publication_apply_authorization_packet"]["status"] in {"PUBLICATION_APPLY_AUTHORIZATION_PACKET_READY", "PUBLICATION_APPLY_AUTHORIZATION_PACKET_BLOCKED", "not_ready"}
     assert kernel["external_side_effects_enabled"] is False
 
 
