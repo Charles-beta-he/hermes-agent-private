@@ -24,9 +24,9 @@ def test_cron_wrapper_silent_on_expected_daily_duplicate(monkeypatch, capsys):
             args=args[0],
             returncode=2,
             stdout=json.dumps({
-                "status": "LIMITED_UNATTENDED_SEND_BLOCKED",
-                "blockers": ["duplicate_idempotency_key", "daily_limit_exhausted"],
-                "rate_limit": {"allowed": False},
+                "status": "LIMITED_UNATTENDED_DISPATCH_BLOCKED",
+                "blockers": [],
+                "target_receipts": [{"target_id": "telegram_home", "blockers": ["duplicate_idempotency_key", "daily_limit_exhausted"]}],
             }),
             stderr="",
         )
@@ -44,12 +44,10 @@ def test_cron_wrapper_outputs_compact_receipt_on_execution(monkeypatch, capsys):
             args=args[0],
             returncode=0,
             stdout=json.dumps({
-                "status": "LIMITED_UNATTENDED_SEND_EXECUTED",
-                "target": "telegram",
-                "purpose": "workflow_kernel_status_smoke",
-                "send_result": {"message_id": "unit", "chat_id": "chat"},
-                "idempotency_key": "idem",
+                "status": "LIMITED_UNATTENDED_DISPATCH_EXECUTED",
+                "executed_count": 1,
                 "day_bucket": "20260615",
+                "target_receipts": [{"target_id": "telegram_home", "executed": True, "send_result": {"message_id": "unit", "chat_id": "chat"}}],
             }),
             stderr="",
         )
@@ -57,8 +55,8 @@ def test_cron_wrapper_outputs_compact_receipt_on_execution(monkeypatch, capsys):
     monkeypatch.setattr(mod.subprocess, "run", fake_run)
     assert mod.main() == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["status"] == "LIMITED_UNATTENDED_SEND_EXECUTED"
-    assert out["message_id"] == "unit"
+    assert out["status"] == "LIMITED_UNATTENDED_DISPATCH_EXECUTED"
+    assert out["message_ids"] == ["unit"]
 
 
 def test_cron_wrapper_alerts_on_unexpected_blocker(monkeypatch, capsys):
@@ -69,9 +67,9 @@ def test_cron_wrapper_alerts_on_unexpected_blocker(monkeypatch, capsys):
             args=args[0],
             returncode=2,
             stdout=json.dumps({
-                "status": "LIMITED_UNATTENDED_SEND_BLOCKED",
+                "status": "LIMITED_UNATTENDED_DISPATCH_BLOCKED",
                 "blockers": ["manifest_not_opened"],
-                "rate_limit": {"allowed": False},
+                "target_receipts": [],
             }),
             stderr="",
         )

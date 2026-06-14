@@ -52,7 +52,7 @@ def test_limited_unattended_sender_dry_run_requires_open_manifest(tmp_path) -> N
 
     receipt = sender.build_or_execute(manifest_path, tmp_path / "ledger.jsonl", execute=False)
 
-    assert receipt["status"] == "LIMITED_UNATTENDED_SEND_BLOCKED"
+    assert receipt["status"] == "LIMITED_UNATTENDED_DISPATCH_BLOCKED"
     assert "manifest_not_opened" in receipt["blockers"]
 
 
@@ -70,7 +70,8 @@ def test_limited_unattended_sender_executes_once_and_blocks_duplicate(tmp_path, 
     first = sender.build_or_execute(manifest_path, ledger_path, execute=True)
     second = sender.build_or_execute(manifest_path, ledger_path, execute=True)
 
-    assert first["status"] == "LIMITED_UNATTENDED_SEND_EXECUTED"
+    assert first["status"] == "LIMITED_UNATTENDED_DISPATCH_EXECUTED"
     assert first["external_side_effects_executed"] is True
-    assert second["status"] == "LIMITED_UNATTENDED_SEND_BLOCKED"
-    assert "duplicate_idempotency_key" in second["blockers"]
+    assert first["executed_count"] == 1
+    assert second["status"] == "LIMITED_UNATTENDED_DISPATCH_BLOCKED"
+    assert "duplicate_idempotency_key" in second["target_receipts"][0]["blockers"]

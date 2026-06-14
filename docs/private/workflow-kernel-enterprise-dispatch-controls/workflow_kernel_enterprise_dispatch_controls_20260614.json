@@ -1,0 +1,70 @@
+{
+  "cron_job_id": "eca187c1632f",
+  "cron_schedule": "10 9 * * *",
+  "enabled_target_ids": [
+    "telegram_home"
+  ],
+  "opened_controls": {
+    "arbitrary_target_discovery_enabled": false,
+    "cross_adapter_enabled": false,
+    "dynamic_payload_guard_enabled": true,
+    "multi_target_registry_enabled": true,
+    "per_target_rate_limit_enabled": true,
+    "production_cron_enabled": true
+  },
+  "payload_guard_sample": {
+    "dynamic_payload_allowed": true,
+    "errors": [],
+    "length": 92,
+    "payload_sha256": "0ecb213a92b6a886ee2e3081474401d2a15811bf4fdcaec20a28d346cbe95220",
+    "purpose": "workflow_kernel_enterprise_heartbeat",
+    "schema": "workflow_kernel_enterprise_payload_guard_v1",
+    "status": "PASS",
+    "warnings": []
+  },
+  "schema": "workflow_kernel_enterprise_dispatch_controls_report_v1",
+  "status": "ENTERPRISE_CONTROLS_READY",
+  "target_registry": {
+    "arbitrary_target_discovery_enabled": false,
+    "cross_adapter_enabled": false,
+    "default_target_id": "telegram_home",
+    "global_controls": {
+      "requires_compensation_path": true,
+      "requires_enabled_target": true,
+      "requires_idempotency_key": true,
+      "requires_payload_guard": true,
+      "requires_per_target_rate_limit": true,
+      "requires_purpose_allowlist": true,
+      "requires_receipt_ledger": true
+    },
+    "multi_target_enabled": true,
+    "registry_digest": "5095605d7c6bbde6a53240e67020d287695be01a45276527dcb392314cfee851",
+    "schema": "workflow_kernel_target_registry_v1",
+    "targets": [
+      {
+        "adapter": "telegram",
+        "burst_limit": 1,
+        "compensation_path": "Send correction only after explicit operator approval.",
+        "daily_limit": 1,
+        "enabled": true,
+        "hourly_limit": 1,
+        "kill_switch_enabled": false,
+        "owner": "he-cheng",
+        "payload_policy": "workflow_kernel_enterprise_payload_guard_v1",
+        "purpose_allowlist": [
+          "workflow_kernel_status_smoke",
+          "workflow_kernel_enterprise_heartbeat"
+        ],
+        "quiet_hours_local": [],
+        "send_target": "telegram",
+        "target_id": "telegram_home",
+        "target_type": "home_channel"
+      }
+    ]
+  },
+  "target_registry_validation": {
+    "errors": [],
+    "schema": "workflow_kernel_target_registry_validation_v1",
+    "status": "PASS"
+  }
+}

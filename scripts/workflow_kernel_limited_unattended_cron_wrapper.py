@@ -41,30 +41,33 @@ def main() -> int:
 
     status = receipt.get("status")
     blockers = set(receipt.get("blockers") or [])
-    if status == "LIMITED_UNATTENDED_SEND_EXECUTED":
-        send = receipt.get("send_result") or {}
+    target_receipts = receipt.get("target_receipts") or []
+    flattened_blockers = set(blockers)
+    for target_receipt in target_receipts:
+        flattened_blockers.update(target_receipt.get("blockers") or [])
+
+    if status == "LIMITED_UNATTENDED_DISPATCH_EXECUTED":
+        sent = [r for r in target_receipts if r.get("executed") is True]
         print(json.dumps({
             "status": status,
-            "target": receipt.get("target"),
-            "purpose": receipt.get("purpose"),
-            "message_id": send.get("message_id"),
-            "chat_id": send.get("chat_id"),
-            "idempotency_key": receipt.get("idempotency_key"),
+            "executed_count": receipt.get("executed_count"),
+            "targets": [r.get("target_id") for r in sent],
+            "message_ids": [(r.get("send_result") or {}).get("message_id") for r in sent],
             "day_bucket": receipt.get("day_bucket"),
         }, ensure_ascii=False, sort_keys=True))
         return 0
 
-    if status == "LIMITED_UNATTENDED_SEND_BLOCKED" and blockers and blockers.issubset(EXPECTED_SILENT_BLOCKERS):
+    if status == "LIMITED_UNATTENDED_DISPATCH_BLOCKED" and flattened_blockers and flattened_blockers.issubset(EXPECTED_SILENT_BLOCKERS):
         # Already sent today or duplicate run in same day; production steady-state should be silent.
         return 0
 
-    if proc.returncode != 0 or status != "LIMITED_UNATTENDED_SEND_READY":
+    if proc.returncode != 0 or status != "LIMITED_UNATTENDED_DISPATCH_READY":
         print(json.dumps({
             "status": "WORKFLOW_KERNEL_LIMITED_UNATTENDED_ALERT",
             "runner_status": status,
             "returncode": proc.returncode,
-            "blockers": sorted(blockers),
-            "rate_limit": receipt.get("rate_limit"),
+            "blockers": sorted(flattened_blockers),
+            "target_statuses": [{"target_id": r.get("target_id"), "status": r.get("status"), "blockers": r.get("blockers")} for r in target_receipts],
         }, ensure_ascii=False, sort_keys=True))
         return 2
 
