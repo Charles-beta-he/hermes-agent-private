@@ -1,0 +1,64 @@
+{
+  "schema": "hermes_local_brain_rag_retrieval_benchmark_v0",
+  "created_at": "2026-06-14T07:45:00+08:00",
+  "source_task": "2026-06-14-douyin-mhe-生产级raghermes本地证据检索与数据库治理评估",
+  "source_evidence": "/Users/charles/.hermes/docs/private/2026-06-14-douyin-mhe-production-rag-intake.md",
+  "evaluation_report": "/Users/charles/.hermes/docs/private/2026-06-14-douyin-mhe-production-rag-hermes-evaluation.md",
+  "red_lines": [
+    "candidate retrieval is not taskpool/proof/lifecycle authority",
+    "no hosted embedding/rerank upload for private brain/session/task data",
+    "no daemon/vector-db/app install in this benchmark",
+    "all answers must cite original source path/session/message/line provenance"
+  ],
+  "metrics": {
+    "ranking": ["MRR@10", "Recall@5", "Recall@10", "ContextPrecision@5"],
+    "governance": ["AuthorityViolationRate", "ProvenanceCompleteness"],
+    "report_only_thresholds": {
+      "MRR@10": 0.65,
+      "Recall@5": 0.75,
+      "ContextPrecision@5": 0.60,
+      "AuthorityViolationRate": 0.0,
+      "ProvenanceCompleteness": 1.0
+    }
+  },
+  "retriever_candidates": [
+    "sqlite_fts5_bm25_messages",
+    "sqlite_fts5_trigram_cjk_messages",
+    "markdown_section_lexical_baseline",
+    "bm25_plus_rrf_optional",
+    "local_vector_optional_after_authorization",
+    "rerank_optional_after_baseline"
+  ],
+  "cases": [
+    {"id":"lb-rag-001","domain":"session_recall","query":"Find the conversation where Gemini OAuth was wired as a Hermes fallback provider.","expected_source_classes":["session","config"],"expected_terms":["google-gemini-cli","fallback_providers","OAuth"],"authority_expectation":"retrieval_context_only"},
+    {"id":"lb-rag-002","domain":"session_recall","query":"Locate the session that discussed background review false failure summaries from inherited tool messages.","expected_source_classes":["session","skill_reference"],"expected_terms":["bg-review","messages_snapshot","tool_call_id"],"authority_expectation":"retrieval_context_only"},
+    {"id":"lb-rag-003","domain":"session_recall","query":"Find evidence about MCP server args using tilde paths causing launcher failures.","expected_source_classes":["skill_reference","config"],"expected_terms":["mcp_servers","tilde","absolute paths"],"authority_expectation":"retrieval_context_only"},
+    {"id":"lb-rag-004","domain":"session_recall","query":"Retrieve the discussion about taskpool dynamic runner autorun_skipped_reason values.","expected_source_classes":["skill_reference","taskpool"],"expected_terms":["autorun_skipped_reason","human_escape_active_preclaim","no_additional_boundary_safe_slots"],"authority_expectation":"retrieval_context_only"},
+    {"id":"lb-rag-005","domain":"session_recall","query":"Find previous notes about using event-driven auto-execution instead of polling for pending tasks.","expected_source_classes":["skill_reference","taskpool"],"expected_terms":["event-driven","task.created","auto-claim"],"authority_expectation":"retrieval_context_only"},
+    {"id":"lb-rag-006","domain":"taskpool_lifecycle","query":"Which task says PASS_ADVISORY_ONLY is not completion evidence and must be requeued?","expected_source_classes":["task_note"],"expected_terms":["PASS_ADVISORY_ONLY","requeue","requires_test-build-browser-curl-commit-verification"],"authority_expectation":"must_read_original_task_note"},
+    {"id":"lb-rag-007","domain":"taskpool_lifecycle","query":"Find blocked task guidance for missing historical discussion_result.json artifacts.","expected_source_classes":["skill_reference","task_note"],"expected_terms":["missing historical discussion artifacts","taxonomy_warning","blocked-resolve-step"],"authority_expectation":"must_read_original_reference"},
+    {"id":"lb-rag-008","domain":"taskpool_lifecycle","query":"Retrieve the lifecycle rule that running must transition to review before done.","expected_source_classes":["skill_reference"],"expected_terms":["running → review","illegal lifecycle transition","task-lifecycle-transition-chain"],"authority_expectation":"must_read_original_reference"},
+    {"id":"lb-rag-009","domain":"taskpool_lifecycle","query":"Find proof-check debt warnings that are terminal or unrelated backlog, not live blockers.","expected_source_classes":["selfcheck_output","proof_check_output"],"expected_terms":["terminal_or_unrelated_backlog","mission envelope debt","proof-check"],"authority_expectation":"must_read_live_command_output"},
+    {"id":"lb-rag-010","domain":"taskpool_lifecycle","query":"Locate the manual anti-idle rule for claiming one highest-priority P1 task.","expected_source_classes":["skill_reference"],"expected_terms":["Manual anti-idle rule","claimed","dispatchable P1"],"authority_expectation":"must_read_original_reference"},
+    {"id":"lb-rag-011","domain":"hermes_code","query":"Where does Hermes implement SQLite FTS5 session search and WAL fallback?","expected_source_classes":["code"],"expected_terms":["hermes_state.py","FTS5","apply_wal_with_fallback"],"authority_expectation":"must_read_code"},
+    {"id":"lb-rag-012","domain":"hermes_code","query":"Where is the single-shape session_search tool defined?","expected_source_classes":["code","test"],"expected_terms":["tools/session_search_tool.py","DISCOVERY","SCROLL","BROWSE"],"authority_expectation":"must_read_code"},
+    {"id":"lb-rag-013","domain":"hermes_code","query":"Find tests that verify session_search excludes tool-source sessions by default.","expected_source_classes":["test"],"expected_terms":["test_session_search.py","_HIDDEN_SESSION_SOURCES","tool"],"authority_expectation":"must_read_test"},
+    {"id":"lb-rag-014","domain":"hermes_code","query":"Find current code comments describing CJK trigram FTS5 search.","expected_source_classes":["code"],"expected_terms":["trigram","CJK","messages_fts_trigram"],"authority_expectation":"must_read_code"},
+    {"id":"lb-rag-015","domain":"hermes_code","query":"Which command validates this local-brain RAG benchmark fixture?","expected_source_classes":["code","artifact"],"expected_terms":["validate_local_brain_rag_eval.py","case_count","fts5_probe"],"authority_expectation":"must_run_validation"},
+    {"id":"lb-rag-016","domain":"source_review","query":"What visible Douyin metrics were captured for mHe's production RAG note?","expected_source_classes":["source_evidence"],"expected_terms":["likes 1239","comments 111","2026-06-07 22:09:53"],"authority_expectation":"must_read_source_evidence"},
+    {"id":"lb-rag-017","domain":"source_review","query":"What is the canonical GitHub mapping for the LLM Wiki phrase and what is uncertain?","expected_source_classes":["source_evidence","repo"],"expected_terms":["nashsu/llm_wiki","not authorship proof","canonical related artifact"],"authority_expectation":"must_preserve_uncertainty"},
+    {"id":"lb-rag-018","domain":"source_review","query":"Which LLM Wiki features are relevant but forbidden to run during intake?","expected_source_classes":["source_evidence","repo"],"expected_terms":["LanceDB","MCP server","Tauri","MinerU"],"authority_expectation":"must_preserve_red_lines"},
+    {"id":"lb-rag-019","domain":"source_review","query":"Summarize the seven production-RAG principles from the social source.","expected_source_classes":["source_evidence"],"expected_terms":["evaluation first","BM25","RRF","rerank","experiment"],"authority_expectation":"must_read_source_evidence"},
+    {"id":"lb-rag-020","domain":"source_review","query":"What boundary separates social claims from repo facts in the intake note?","expected_source_classes":["source_evidence"],"expected_terms":["Douyin post does not directly provide a repo link","search did not prove","authorship proof"],"authority_expectation":"must_preserve_uncertainty"},
+    {"id":"lb-rag-021","domain":"governance","query":"Find the rule that vector DB is candidate context, not taskpool ledger authority.","expected_source_classes":["task_note","source_evidence","evaluation_report"],"expected_terms":["candidate context","taskpool SSOT","proof gate"],"authority_expectation":"must_preserve_red_lines"},
+    {"id":"lb-rag-022","domain":"governance","query":"Retrieve the red line against uploading private brain data to hosted embedding APIs.","expected_source_classes":["task_note","evaluation_report"],"expected_terms":["private brain","hosted embedding","upload"],"authority_expectation":"must_preserve_red_lines"},
+    {"id":"lb-rag-023","domain":"governance","query":"Find Hermes SSOT self-optimization prerequisite guidance.","expected_source_classes":["skill_reference","private_doc"],"expected_terms":["SSOT","ReferenceReview","task-local SSOT"],"authority_expectation":"must_read_original_reference"},
+    {"id":"lb-rag-024","domain":"governance","query":"Find taskpool evidence prefixes accepted for structured evidence.","expected_source_classes":["skill_reference","task_note"],"expected_terms":["command:","artifact:","proof:","file:"],"authority_expectation":"must_read_original_reference"},
+    {"id":"lb-rag-025","domain":"governance","query":"What closeout rule prevents implementation-class evolution tasks from closing with py_compile only?","expected_source_classes":["skill_reference"],"expected_terms":["manual_review_final_landed","implementation artifact","feature-specific verification"],"authority_expectation":"must_read_original_reference"},
+    {"id":"lb-rag-026","domain":"data_model","query":"What fields should a document section carry for structure-aware retrieval?","expected_source_classes":["evaluation_report"],"expected_terms":["heading_path","breadcrumb","parent_section_id","raw_source_id"],"authority_expectation":"retrieval_context_only"},
+    {"id":"lb-rag-027","domain":"data_model","query":"What fields should a retrieval experiment ledger carry?","expected_source_classes":["evaluation_report"],"expected_terms":["config_hash","fixture_path","metrics_json","side_effects=false"],"authority_expectation":"retrieval_context_only"},
+    {"id":"lb-rag-028","domain":"data_model","query":"How should raw sources distinguish session, task, doc, repo review, and social evidence?","expected_source_classes":["evaluation_report"],"expected_terms":["raw_source","kind","authority_rank","content_hash"],"authority_expectation":"retrieval_context_only"},
+    {"id":"lb-rag-029","domain":"metrics","query":"Which metrics measure ranking quality and context noise for Hermes retrieval?","expected_source_classes":["benchmark_fixture","evaluation_report"],"expected_terms":["MRR@10","Recall@5","ContextPrecision@5","ProvenanceCompleteness"],"authority_expectation":"must_read_benchmark"},
+    {"id":"lb-rag-030","domain":"metrics","query":"What is the report-only threshold for authority violations in the benchmark?","expected_source_classes":["benchmark_fixture"],"expected_terms":["AuthorityViolationRate","0.0","report_only_thresholds"],"authority_expectation":"must_read_benchmark"}
+  ]
+}
