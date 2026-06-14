@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T04:40:16Z",
-  "current_boundary": "Phase58 has produced an activation packet/contract while keeping the guarded send runner inactive. The next larger boundary is implementing the manual-send runner versus executing one packet-approved external send.",
+  "created_at": "2026-06-14T05:03:42Z",
+  "current_boundary": "Phase60 has executed exactly one packet-approved Telegram guarded send and recorded the receipt. The next boundary is post-send correlation/compensation watch versus any repeated/unattended dispatch enablement packet.",
   "next_ladder": [
     {
-      "authority_needed": "implement runner but keep execution behind exact manual gate",
-      "name": "Guarded Manual-send Runner Implementation",
-      "phase": 59,
-      "track": "GUARDED_MANUAL_SEND_RUNNER",
-      "why_next": "turn the activation packet into a non-auto runner that can preview and wait for explicit send approval"
+      "authority_needed": "read back receipts, dashboard state, and compensation readiness without sending",
+      "name": "Post-send Correlation and Compensation Watch",
+      "phase": 61,
+      "track": "POST_SEND_CORRELATION",
+      "why_next": "prove the one-shot external side effect is fully correlated and auditable"
     },
     {
-      "authority_needed": "execute exactly one packet-approved manual send with target/payload/idempotency",
-      "name": "One-shot Guarded Send Activation",
-      "phase": 60,
-      "track": "ONE_SHOT_GUARDED_SEND_ACTIVATION",
-      "why_next": "cross from runner contract into a single external side effect with receipt"
+      "authority_needed": "decide whether repeated/automated sends can ever be enabled",
+      "name": "Unattended Dispatch Enablement Packet",
+      "phase": 62,
+      "track": "UNATTENDED_ENABLEMENT_PACKET",
+      "why_next": "cross from one-shot guarded send into repeated automation authority"
     }
   ],
-  "objective": "梳理 Phase17-58 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase57 已安装 no-agent/local dry-run cron job，Phase58 已生成 guarded send runner activation packet 但 runner 未激活、未外发。",
-  "phase_count": 42,
+  "objective": "梳理 Phase17-60 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase59 guarded manual-send runner 已实现并默认 preview/no-send，Phase60 已执行一次 Telegram home one-shot guarded send，unattended dispatch 仍关闭。",
+  "phase_count": 44,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -614,14 +614,42 @@
       "layer": "send runner activation boundary",
       "name": "Guarded Send Runner Activation Packet",
       "next_unlocked": [
-        59,
-        60
+        59
       ],
       "phase": 58,
       "status": "activation_packet_ready"
+    },
+    {
+      "authority": "preview by default; execute only with explicit flag",
+      "depends_on": [
+        58
+      ],
+      "gate": "no send unless --execute and packet validation pass",
+      "layer": "manual send runner",
+      "name": "Guarded Manual-send Runner Implementation",
+      "next_unlocked": [
+        60
+      ],
+      "phase": 59,
+      "status": "manual_send_runner_ready"
+    },
+    {
+      "authority": "single Telegram home guarded send",
+      "depends_on": [
+        59
+      ],
+      "gate": "unattended dispatch remains disabled; future sends require fresh packet/manual gate",
+      "layer": "external dispatch execution",
+      "name": "One-shot Guarded Send Activation",
+      "next_unlocked": [
+        61,
+        62
+      ],
+      "phase": 60,
+      "status": "one_shot_guarded_send_verified"
     }
   ],
-  "recommended_next": "Human choice required: Phase59 guarded manual-send runner implementation vs Phase60 one-shot guarded send activation",
+  "recommended_next": "Human choice required: Phase61 post-send correlation/compensation watch vs Phase62 unattended dispatch enablement packet",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

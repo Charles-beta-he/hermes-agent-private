@@ -267,6 +267,8 @@
     const editor = kernel.policy_editor || {};
     const cronRollout = kernel.dry_run_cron_rollout || {};
     const activation = kernel.guarded_send_runner_activation || {};
+    const manualRunner = kernel.guarded_manual_send_runner || {};
+    const oneShot = kernel.one_shot_guarded_send || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -280,6 +282,8 @@
         <span>Editor: <strong>${escapeHtml(editor.status || 'not_ready')}</strong></span>
         <span>Cron: <strong>${escapeHtml(cronRollout.status || 'not_applied')}</strong></span>
         <span>Activation: <strong>${escapeHtml(activation.status || 'not_ready')}</strong></span>
+        <span>Runner: <strong>${escapeHtml(manualRunner.status || 'not_ready')}</strong></span>
+        <span>One-shot: <strong>${escapeHtml(oneShot.status || 'not_executed')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -290,6 +294,8 @@
           <tr><th>Policy editor</th><td>${escapeHtml(editor.editor_mode || '—')} pending=${escapeHtml(String(editor.pending_decisions ?? '—'))} latest=${escapeHtml(editor.latest_decision?.decision || '—')}</td></tr>
           <tr><th>Dry-run cron rollout</th><td>${escapeHtml(cronRollout.status || '—')} job=<code>${escapeHtml(cronRollout.job_id || '—')}</code> script=<code>${escapeHtml(cronRollout.script || '—')}</code> would_send=<strong>${cronRollout.would_send === false ? 'false' : escapeHtml(cronRollout.would_send || '—')}</strong></td></tr>
           <tr><th>Guarded send activation</th><td>${escapeHtml(activation.status || '—')} active=<strong>${activation.manual_send_runner_is_active_now ? 'true' : 'false'}</strong> external=<strong>${activation.external_side_effects_executed ? 'true' : 'false'}</strong> digest=<code>${escapeHtml(activation.contract_digest || '—')}</code></td></tr>
+          <tr><th>Manual-send runner</th><td>${escapeHtml(manualRunner.status || '—')} target=<code>${escapeHtml(manualRunner.target || '—')}</code> external=<strong>${manualRunner.external_side_effects_executed ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>One-shot guarded send</th><td>${escapeHtml(oneShot.status || '—')} message_id=<code>${escapeHtml(oneShot.message_id || '—')}</code> external=<strong>${oneShot.external_side_effects_executed ? 'true' : 'false'}</strong> unattended=<strong>${oneShot.unattended_dispatch_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

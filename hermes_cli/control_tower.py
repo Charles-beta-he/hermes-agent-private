@@ -6132,6 +6132,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase55_path = root / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
     phase57_path = root / "docs/private/workflow-kernel-dry-run-cron-rollout/workflow_kernel_dry_run_cron_rollout_20260613_phase57.json"
     phase58_path = root / "docs/private/workflow-kernel-guarded-send-runner-activation/workflow_kernel_guarded_send_runner_activation_20260613_phase58.json"
+    phase59_path = root / "docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_guarded_manual_send_runner_20260613_phase59.json"
+    phase60_path = root / "docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_one_shot_guarded_send_20260613_phase60.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6154,6 +6156,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         dry_run_scheduler = json.loads(phase55_path.read_text()) if phase55_path.exists() else None
         dry_run_cron_rollout = json.loads(phase57_path.read_text()) if phase57_path.exists() else None
         guarded_send_activation = json.loads(phase58_path.read_text()) if phase58_path.exists() else None
+        guarded_manual_runner = json.loads(phase59_path.read_text()) if phase59_path.exists() else None
+        one_shot_guarded_send = json.loads(phase60_path.read_text()) if phase60_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6218,10 +6222,24 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "external_side_effects_executed": ((guarded_send_activation or {}).get("execution_boundary") or {}).get("external_side_effects_executed"),
             "next_boundary": ((guarded_send_activation or {}).get("execution_boundary") or {}).get("next_boundary"),
         },
+        "guarded_manual_send_runner": {
+            "status": (guarded_manual_runner or {}).get("status", "not_ready"),
+            "target": (guarded_manual_runner or {}).get("target"),
+            "idempotency_key": (guarded_manual_runner or {}).get("idempotency_key"),
+            "external_side_effects_executed": (guarded_manual_runner or {}).get("external_side_effects_executed"),
+        },
+        "one_shot_guarded_send": {
+            "status": (one_shot_guarded_send or {}).get("status", "not_executed"),
+            "message_id": ((one_shot_guarded_send or {}).get("send_result") or {}).get("message_id"),
+            "chat_id": ((one_shot_guarded_send or {}).get("send_result") or {}).get("chat_id"),
+            "idempotency_key": (one_shot_guarded_send or {}).get("idempotency_key"),
+            "external_side_effects_executed": (one_shot_guarded_send or {}).get("external_side_effects_executed"),
+            "unattended_dispatch_enabled": (one_shot_guarded_send or {}).get("unattended_dispatch_enabled"),
+        },
         "blockers": blockers,
         "external_side_effects_enabled": False,
         "unattended_dispatch_enabled": unattended_enabled,
-        "next_boundary": (((guarded_send_activation or {}).get("execution_boundary") or {}).get("next_boundary") or "Phase59 guarded manual-send runner implementation"),
+        "next_boundary": "post-Phase60 boundary: unattended dispatch remains disabled; future sends require fresh packet/manual gate",
     }
 
 

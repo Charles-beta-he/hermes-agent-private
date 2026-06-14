@@ -155,6 +155,8 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["policy_editor"]["status"] == "POLICY_EDITOR_APPROVAL_UI_READY"
     assert kernel["dry_run_cron_rollout"]["status"] in {"DRY_RUN_CRON_ROLLOUT_APPLIED", "not_applied"}
     assert kernel["guarded_send_runner_activation"]["status"] in {"GUARDED_SEND_RUNNER_ACTIVATION_PACKET_READY", "not_ready"}
+    assert kernel["guarded_manual_send_runner"]["status"] in {"GUARDED_MANUAL_SEND_RUNNER_READY", "not_ready"}
+    assert kernel["one_shot_guarded_send"]["status"] in {"ONE_SHOT_GUARDED_SEND_VERIFIED", "not_executed"}
     assert kernel["external_side_effects_enabled"] is False
 
 

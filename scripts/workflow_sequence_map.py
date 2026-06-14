@@ -64,12 +64,14 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 55, "name": "Unattended Dry-run Scheduler", "layer": "dry-run scheduler", "status": "dry_run_scheduler_ready", "depends_on": [54], "authority": "dry-run receipt only", "gate": "no cron mutation; no external send", "next_unlocked": [56]},
     {"phase": 56, "name": "Control Tower Policy Editor / Approval UI", "layer": "policy editor", "status": "approval_ui_ready", "depends_on": [55], "authority": "approval ledger only", "gate": "no policy activation; no unattended send", "next_unlocked": [57]},
     {"phase": 57, "name": "Dry-run Cron Rollout", "layer": "scheduler rollout", "status": "dry_run_cron_rollout_applied", "depends_on": [56], "authority": "single no-agent local cron job", "gate": "no external send; rollback backup required", "next_unlocked": [58]},
-    {"phase": 58, "name": "Guarded Send Runner Activation Packet", "layer": "send runner activation boundary", "status": "activation_packet_ready", "depends_on": [57], "authority": "activation packet only", "gate": "manual runner not active; no send executed", "next_unlocked": [59, 60]},
+    {"phase": 58, "name": "Guarded Send Runner Activation Packet", "layer": "send runner activation boundary", "status": "activation_packet_ready", "depends_on": [57], "authority": "activation packet only", "gate": "manual runner not active; no send executed", "next_unlocked": [59]},
+    {"phase": 59, "name": "Guarded Manual-send Runner Implementation", "layer": "manual send runner", "status": "manual_send_runner_ready", "depends_on": [58], "authority": "preview by default; execute only with explicit flag", "gate": "no send unless --execute and packet validation pass", "next_unlocked": [60]},
+    {"phase": 60, "name": "One-shot Guarded Send Activation", "layer": "external dispatch execution", "status": "one_shot_guarded_send_verified", "depends_on": [59], "authority": "single Telegram home guarded send", "gate": "unattended dispatch remains disabled; future sends require fresh packet/manual gate", "next_unlocked": [61, 62]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 59, "name": "Guarded Manual-send Runner Implementation", "track": "GUARDED_MANUAL_SEND_RUNNER", "authority_needed": "implement runner but keep execution behind exact manual gate", "why_next": "turn the activation packet into a non-auto runner that can preview and wait for explicit send approval"},
-    {"phase": 60, "name": "One-shot Guarded Send Activation", "track": "ONE_SHOT_GUARDED_SEND_ACTIVATION", "authority_needed": "execute exactly one packet-approved manual send with target/payload/idempotency", "why_next": "cross from runner contract into a single external side effect with receipt"},
+    {"phase": 61, "name": "Post-send Correlation and Compensation Watch", "track": "POST_SEND_CORRELATION", "authority_needed": "read back receipts, dashboard state, and compensation readiness without sending", "why_next": "prove the one-shot external side effect is fully correlated and auditable"},
+    {"phase": 62, "name": "Unattended Dispatch Enablement Packet", "track": "UNATTENDED_ENABLEMENT_PACKET", "authority_needed": "decide whether repeated/automated sends can ever be enabled", "why_next": "cross from one-shot guarded send into repeated automation authority"},
 ]
 
 
@@ -111,15 +113,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-58 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase57 已安装 no-agent/local dry-run cron job，Phase58 已生成 guarded send runner activation packet 但 runner 未激活、未外发。",
+        "objective": "梳理 Phase17-60 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase59 guarded manual-send runner 已实现并默认 preview/no-send，Phase60 已执行一次 Telegram home one-shot guarded send，unattended dispatch 仍关闭。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase58 has produced an activation packet/contract while keeping the guarded send runner inactive. The next larger boundary is implementing the manual-send runner versus executing one packet-approved external send.",
+        "current_boundary": "Phase60 has executed exactly one packet-approved Telegram guarded send and recorded the receipt. The next boundary is post-send correlation/compensation watch versus any repeated/unattended dispatch enablement packet.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Human choice required: Phase59 guarded manual-send runner implementation vs Phase60 one-shot guarded send activation",
+        "recommended_next": "Human choice required: Phase61 post-send correlation/compensation watch vs Phase62 unattended dispatch enablement packet",
     }
 
 

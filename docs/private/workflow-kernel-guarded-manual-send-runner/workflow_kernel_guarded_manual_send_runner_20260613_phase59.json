@@ -1,0 +1,63 @@
+{
+  "created_at": "2026-06-14T04:59:08Z",
+  "execute_command_shape": "hermes send --to telegram --json <payload>",
+  "external_side_effects_executed": false,
+  "idempotency_key": "0472b057f0a4fc3c700a1354a664773a5a16889afd1ae40393648fcf6c06041c",
+  "operator_reason": "Phase60 one-shot guarded send activation under explicit full authorization",
+  "payload": "Workflow Kernel Phase60 guarded manual-send activation: one-shot external dispatch verified.",
+  "payload_sha256": "b7779a4c27d211e075f94f55f41efc66a678b8dd31c9b0a8ad7d5b6adfc2bcff",
+  "phase": 59,
+  "schema": "workflow_kernel_guarded_manual_send_preview_v1",
+  "send_runner_active": false,
+  "status": "GUARDED_MANUAL_SEND_RUNNER_READY",
+  "target": "telegram",
+  "validation": {
+    "activation_status": "GUARDED_SEND_RUNNER_ACTIVATION_PACKET_READY",
+    "contract": {
+      "activation_status": "packet_ready_not_activated",
+      "allowed_adapter": "telegram_home",
+      "correction_path": "send compensating correction message only after explicit operator approval",
+      "idempotency_fields": [
+        "adapter",
+        "target",
+        "payload_sha256",
+        "policy_digest",
+        "operator_reason"
+      ],
+      "phase": 58,
+      "rate_limit": {
+        "telegram_home": "manual only"
+      },
+      "receipt_required_fields": [
+        "platform",
+        "target",
+        "message_id",
+        "payload_sha256",
+        "sent_at",
+        "operator_reason",
+        "policy_digest"
+      ],
+      "required_manual_gate": {
+        "requires_exact_payload": true,
+        "requires_exact_target": true,
+        "requires_idempotency_key": true,
+        "requires_operator_reason": true,
+        "requires_policy_digest_match": true,
+        "requires_pre_send_preview": true
+      },
+      "rollback_path": "no automatic rollback for external messages; record correction/compensation receipt",
+      "runner_mode": "manual_guarded_send_only",
+      "safe_defaults": {
+        "automatic_send_allowed": false,
+        "external_side_effects_executed": false,
+        "send_runner_activated": false,
+        "unattended_dispatch_enabled": false
+      },
+      "schema": "workflow_kernel_guarded_send_runner_contract_v1"
+    },
+    "contract_digest": "900189e72a8de75b68c0b5f1dcf25f9f8d079e70330aaa5d5ec38e024a5a6e99",
+    "errors": [],
+    "expected_idempotency_key": "0472b057f0a4fc3c700a1354a664773a5a16889afd1ae40393648fcf6c06041c",
+    "ok": true
+  }
+}

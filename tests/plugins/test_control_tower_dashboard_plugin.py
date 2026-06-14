@@ -127,6 +127,10 @@ def test_control_tower_dashboard_renders_workflow_kernel_projection_panel():
     assert "guarded_send_runner_activation" in script
     assert "Dry-run cron rollout" in script
     assert "Guarded send activation" in script
+    assert "guarded_manual_send_runner" in script
+    assert "one_shot_guarded_send" in script
+    assert "Manual-send runner" in script
+    assert "One-shot guarded send" in script
     assert "Pack, guarded send, and dispatch policy" in script
     assert "Latest guarded send" not in script  # keep wording in static Phase52 page only
     assert "control-tower-workflow-kernel-card" in style

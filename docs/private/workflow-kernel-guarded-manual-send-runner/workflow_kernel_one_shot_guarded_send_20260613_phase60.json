@@ -1,0 +1,43 @@
+{
+  "compensation_path": "Send a correction/compensating message only after explicit operator approval.",
+  "created_at": "2026-06-14T04:59:33Z",
+  "external_side_effects_executed": true,
+  "idempotency_key": "0472b057f0a4fc3c700a1354a664773a5a16889afd1ae40393648fcf6c06041c",
+  "operator_reason": "Phase60 one-shot guarded send activation under explicit full authorization",
+  "payload_sha256": "b7779a4c27d211e075f94f55f41efc66a678b8dd31c9b0a8ad7d5b6adfc2bcff",
+  "phase": 60,
+  "policy_digest": "900189e72a8de75b68c0b5f1dcf25f9f8d079e70330aaa5d5ec38e024a5a6e99",
+  "raw_send_result": {
+    "command": [
+      "hermes",
+      "send",
+      "--to",
+      "telegram",
+      "--json",
+      "Workflow Kernel Phase60 guarded manual-send activation: one-shot external dispatch verified."
+    ],
+    "parsed": {
+      "chat_id": "5524172309",
+      "message_id": "4310",
+      "mirrored": true,
+      "note": "Sent to telegram home channel (chat_id: 5524172309)",
+      "platform": "telegram",
+      "success": true
+    },
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "{\n  \"success\": true,\n  \"platform\": \"telegram\",\n  \"chat_id\": \"5524172309\",\n  \"message_id\": \"4310\",\n  \"note\": \"Sent to telegram home channel (chat_id: 5524172309)\",\n  \"mirrored\": true\n}\n"
+  },
+  "schema": "workflow_kernel_one_shot_guarded_send_v1",
+  "send_result": {
+    "chat_id": "5524172309",
+    "message_id": "4310",
+    "mirrored": true,
+    "note": "Sent to telegram home channel (chat_id: 5524172309)",
+    "platform": "telegram",
+    "success": true
+  },
+  "status": "ONE_SHOT_GUARDED_SEND_VERIFIED",
+  "target": "telegram",
+  "unattended_dispatch_enabled": false
+}
