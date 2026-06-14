@@ -1,0 +1,117 @@
+{
+  "contract_packet": {
+    "created_at": "2026-06-14T12:38:50Z",
+    "evidence_refs": [
+      "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-static-registry-validator/workflow_kernel_static_registry_validation_20260614.json",
+      "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-local-runtime-gate/workflow_kernel_local_runtime_dry_run_plan_20260614.json",
+      "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json",
+      "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json",
+      "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_one_shot_guarded_send_20260613_phase60.json",
+      "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dispatch-enablement-packet/workflow_kernel_unattended_dispatch_enablement_packet_20260613_phase62.json"
+    ],
+    "packet_type": "workflow_kernel_open_gate_manifest",
+    "payload": {
+      "created_at": "2026-06-14T12:38:50Z",
+      "daily_limit": 1,
+      "errors": [],
+      "external_side_effects_allowed_by_manifest": true,
+      "kill_switch_enabled": false,
+      "manifest_digest": "896f08cd7b4ffebd921aa488fd65deee94476c55d5a3d20cb1d47c2eabd15685",
+      "opened": true,
+      "operator": "he-cheng",
+      "payload_digest": "3528b49fd4ed052810b579ac4c70d96a077597dd2d4dd41b18e2c647e0c7ca06",
+      "payload_template": "Workflow Kernel opened limited unattended dispatch: governed one-target smoke.",
+      "purpose": "workflow_kernel_status_smoke",
+      "readiness": {
+        "artifact_digests": {
+          "dry_run_scheduler": "19ddfedc47eebd32aa1e4295de29453589f6cb2c175e093f495bd5915ecc14a9",
+          "enablement_packet": "9883b1dbcb64f650dec9a763b894c9b73acfa931d94b782f317c99ccb00085b3",
+          "guarded_one_shot": "f3fb274c809a69861f8e37fbe17d29ceca156f1e76d15d8a0e743224001f1d44",
+          "local_runtime_plan": "71cb1129041e25a95a29491f7a1f7a203e7c7d0f3d5deaa09f3224ffbd768424",
+          "policy": "bc9b305feab273aaa5a52756dd73be76980f9bfda03ba6995bbc72f77b1ca274",
+          "static_registry_validation": "4f51f5eebb35afbc6a0ee89e37e130d73fdd2f8b1e864b448159ad3563fbc544"
+        },
+        "artifact_paths": {
+          "dry_run_scheduler": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json",
+          "enablement_packet": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dispatch-enablement-packet/workflow_kernel_unattended_dispatch_enablement_packet_20260613_phase62.json",
+          "guarded_one_shot": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_one_shot_guarded_send_20260613_phase60.json",
+          "local_runtime_plan": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-local-runtime-gate/workflow_kernel_local_runtime_dry_run_plan_20260614.json",
+          "policy": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json",
+          "static_registry_validation": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-static-registry-validator/workflow_kernel_static_registry_validation_20260614.json"
+        },
+        "blockers": [],
+        "checks": {
+          "dry_run_scheduler_ready": true,
+          "enablement_packet_ready": true,
+          "local_runtime_no_adapter_writes": true,
+          "local_runtime_no_external_side_effects": true,
+          "local_runtime_no_model_calls": true,
+          "local_runtime_plan_ready": true,
+          "one_shot_guarded_send_verified": true,
+          "policy_gate_ready": true,
+          "static_registry_pass": true
+        },
+        "created_at": "2026-06-14T12:38:50Z",
+        "schema": "workflow_kernel_open_readiness_v1",
+        "status": "OPEN_READY"
+      },
+      "requires_compensation_path": true,
+      "requires_idempotency_key": "[REDACTED]",
+      "requires_receipt_ledger": true,
+      "schema": "workflow_kernel_open_gate_v1",
+      "status": "OPENED_LIMITED_UNATTENDED",
+      "target": "telegram"
+    },
+    "payload_digest": "fd921a7e7767d29074d8ad1d33e515c7664377eb0d9acc9069b2c42874897308"
+  },
+  "created_at": "2026-06-14T12:38:50Z",
+  "daily_limit": 1,
+  "errors": [],
+  "external_side_effects_allowed_by_manifest": true,
+  "kill_switch_enabled": false,
+  "manifest_digest": "896f08cd7b4ffebd921aa488fd65deee94476c55d5a3d20cb1d47c2eabd15685",
+  "opened": true,
+  "operator": "he-cheng",
+  "payload_digest": "3528b49fd4ed052810b579ac4c70d96a077597dd2d4dd41b18e2c647e0c7ca06",
+  "payload_template": "Workflow Kernel opened limited unattended dispatch: governed one-target smoke.",
+  "purpose": "workflow_kernel_status_smoke",
+  "readiness": {
+    "artifact_digests": {
+      "dry_run_scheduler": "19ddfedc47eebd32aa1e4295de29453589f6cb2c175e093f495bd5915ecc14a9",
+      "enablement_packet": "9883b1dbcb64f650dec9a763b894c9b73acfa931d94b782f317c99ccb00085b3",
+      "guarded_one_shot": "f3fb274c809a69861f8e37fbe17d29ceca156f1e76d15d8a0e743224001f1d44",
+      "local_runtime_plan": "71cb1129041e25a95a29491f7a1f7a203e7c7d0f3d5deaa09f3224ffbd768424",
+      "policy": "bc9b305feab273aaa5a52756dd73be76980f9bfda03ba6995bbc72f77b1ca274",
+      "static_registry_validation": "4f51f5eebb35afbc6a0ee89e37e130d73fdd2f8b1e864b448159ad3563fbc544"
+    },
+    "artifact_paths": {
+      "dry_run_scheduler": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json",
+      "enablement_packet": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dispatch-enablement-packet/workflow_kernel_unattended_dispatch_enablement_packet_20260613_phase62.json",
+      "guarded_one_shot": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_one_shot_guarded_send_20260613_phase60.json",
+      "local_runtime_plan": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-local-runtime-gate/workflow_kernel_local_runtime_dry_run_plan_20260614.json",
+      "policy": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json",
+      "static_registry_validation": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-static-registry-validator/workflow_kernel_static_registry_validation_20260614.json"
+    },
+    "blockers": [],
+    "checks": {
+      "dry_run_scheduler_ready": true,
+      "enablement_packet_ready": true,
+      "local_runtime_no_adapter_writes": true,
+      "local_runtime_no_external_side_effects": true,
+      "local_runtime_no_model_calls": true,
+      "local_runtime_plan_ready": true,
+      "one_shot_guarded_send_verified": true,
+      "policy_gate_ready": true,
+      "static_registry_pass": true
+    },
+    "created_at": "2026-06-14T12:38:50Z",
+    "schema": "workflow_kernel_open_readiness_v1",
+    "status": "OPEN_READY"
+  },
+  "requires_compensation_path": true,
+  "requires_idempotency_key": true,
+  "requires_receipt_ledger": true,
+  "schema": "workflow_kernel_open_gate_v1",
+  "status": "OPENED_LIMITED_UNATTENDED",
+  "target": "telegram"
+}
