@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T16:57:20Z",
-  "current_boundary": "Phase88 has produced a packet-only human gate for any future publication apply reopen while keeping publication_apply_enabled=false.",
+  "created_at": "2026-06-14T17:05:40Z",
+  "current_boundary": "Phase90 has produced a read-only final publication governance index while keeping publication_apply_enabled=false.",
   "next_ladder": [
     {
-      "authority_needed": "read-only retention/drift watch over human gate packet",
-      "name": "Publication Human Gate Retention Watch",
-      "phase": 89,
-      "track": "PUBLICATION_HUMAN_GATE_RETENTION_WATCH",
-      "why_next": "verify reopen gate remains fail-closed"
+      "authority_needed": "read-only retention/drift watch over final index",
+      "name": "Publication Final Index Retention Watch",
+      "phase": 91,
+      "track": "PUBLICATION_FINAL_INDEX_RETENTION_WATCH",
+      "why_next": "verify final index remains closed"
     },
     {
-      "authority_needed": "read-only final index",
-      "name": "Publication Governance Final Index",
-      "phase": 90,
-      "track": "PUBLICATION_GOVERNANCE_FINAL_INDEX",
-      "why_next": "index complete publication governance chain"
+      "authority_needed": "read-only terminal summary",
+      "name": "Publication Governance Terminal Summary",
+      "phase": 92,
+      "track": "PUBLICATION_GOVERNANCE_TERMINAL_SUMMARY",
+      "why_next": "summarize terminal governance state"
     }
   ],
-  "objective": "梳理 Phase17-88 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase87 已完成 closure retention watch，Phase88 已生成 reopen human-gate packet；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
-  "phase_count": 72,
+  "objective": "梳理 Phase17-90 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase89 已完成 human gate retention watch，Phase90 已生成 governance final index；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+  "phase_count": 74,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -1038,9 +1038,37 @@
       ],
       "phase": 88,
       "status": "publication_apply_reopen_human_gate_packet_ready"
+    },
+    {
+      "authority": "read-only watch",
+      "depends_on": [
+        88
+      ],
+      "gate": "drift=[]; apply disabled",
+      "layer": "human gate retention",
+      "name": "Publication Human Gate Retention Watch",
+      "next_unlocked": [
+        90
+      ],
+      "phase": 89,
+      "status": "publication_human_gate_retention_clear"
+    },
+    {
+      "authority": "read-only index",
+      "depends_on": [
+        89
+      ],
+      "gate": "final_index_only=true; apply disabled",
+      "layer": "governance final index",
+      "name": "Publication Governance Final Index",
+      "next_unlocked": [
+        91
+      ],
+      "phase": 90,
+      "status": "publication_governance_final_index_ready"
     }
   ],
-  "recommended_next": "Stage-report cadence: Phase89 human gate retention watch; Phase90 governance final index remains read-only",
+  "recommended_next": "Stage-report cadence: Phase91 final index retention watch; Phase92 terminal summary remains read-only",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

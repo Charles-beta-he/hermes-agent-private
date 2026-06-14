@@ -1,0 +1,79 @@
+{
+  "apply_drift": [],
+  "created_at": "2026-06-14T17:03:22Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "final_index_only": true,
+  "index_digest": "a695f8cbe15e0f5aac69e4815c6e7154a4c39985e64913498bdf37944cca9e35",
+  "index_policy": "read_only_final_index_closed_no_apply",
+  "item_count": 8,
+  "items": [
+    {
+      "name": "phase70_archive_publication_packet",
+      "path": "docs/private/workflow-kernel-archive-publication-packet/workflow_kernel_archive_publication_packet_20260613_phase70.json",
+      "publication_apply_enabled": false,
+      "sha256": "5416c24cd53c2e45af412fca94023aa68807811fb70ce141bccaa28505b16e02",
+      "status": "ARCHIVE_PUBLICATION_PACKET_READY"
+    },
+    {
+      "name": "phase74_apply_authorization_packet",
+      "path": "docs/private/workflow-kernel-publication-apply-authorization-packet/workflow_kernel_publication_apply_authorization_packet_20260613_phase74.json",
+      "publication_apply_enabled": false,
+      "sha256": "410ca125a58462312407284270ef7c0898c0e5fdea4a1eb24b89748cc1380779",
+      "status": "PUBLICATION_APPLY_AUTHORIZATION_PACKET_READY"
+    },
+    {
+      "name": "phase78_reopen_packet",
+      "path": "docs/private/workflow-kernel-publication-apply-reopen-packet/workflow_kernel_publication_apply_reopen_packet_20260613_phase78.json",
+      "publication_apply_enabled": false,
+      "sha256": "a816774b48ad699b3f27031c0a827ed07569535fd98478ea594f28cb76aa6412",
+      "status": "PUBLICATION_APPLY_REOPEN_PACKET_READY"
+    },
+    {
+      "name": "phase82_export_review_packet",
+      "path": "docs/private/workflow-kernel-publication-export-review-packet/workflow_kernel_publication_export_review_packet_20260613_phase82.json",
+      "publication_apply_enabled": false,
+      "sha256": "5887a9687146caaa32e2dff70918d42a963c7575f2bfd8a5c7564122acc2d2da",
+      "status": "PUBLICATION_EXPORT_REVIEW_PACKET_READY"
+    },
+    {
+      "name": "phase84_final_boundary_packet",
+      "path": "docs/private/workflow-kernel-publication-apply-final-boundary-packet/workflow_kernel_publication_apply_final_boundary_packet_20260613_phase84.json",
+      "publication_apply_enabled": false,
+      "sha256": "af1fe80868f3c0571ea4794d0da294f6a341e789e6e4545b2fcd4ddec6d7d832",
+      "status": "PUBLICATION_APPLY_FINAL_BOUNDARY_PACKET_READY"
+    },
+    {
+      "name": "phase86_governance_closure_summary",
+      "path": "docs/private/workflow-kernel-publication-governance-closure-summary/workflow_kernel_publication_governance_closure_summary_20260613_phase86.json",
+      "publication_apply_enabled": false,
+      "sha256": "d27f028ff81e1a8a1b5a6f4fee2e3dd742bee41564b01c16a9ae963fe1b27389",
+      "status": "PUBLICATION_GOVERNANCE_CLOSURE_SUMMARY_READY"
+    },
+    {
+      "name": "phase88_reopen_human_gate_packet",
+      "path": "docs/private/workflow-kernel-publication-apply-reopen-human-gate-packet/workflow_kernel_publication_apply_reopen_human_gate_packet_20260613_phase88.json",
+      "publication_apply_enabled": false,
+      "sha256": "174fff3442ec38849cf5c1301885ffd702543043f8abf42cf1cd1917181fbf82",
+      "status": "PUBLICATION_APPLY_REOPEN_HUMAN_GATE_PACKET_READY"
+    },
+    {
+      "name": "phase89_human_gate_retention_watch",
+      "path": "docs/private/workflow-kernel-publication-human-gate-retention-watch/workflow_kernel_publication_human_gate_retention_watch_20260613_phase89.json",
+      "publication_apply_enabled": false,
+      "sha256": "56ab2960edf4c70d0f4cba48934a7eb870922089f7430ee4a535ecce00888ec1",
+      "status": "PUBLICATION_HUMAN_GATE_RETENTION_WATCH_CLEAR"
+    }
+  ],
+  "message_sent": false,
+  "missing": [],
+  "next_boundary": "Phase91+ may continue read-only final-index retention; real reopen remains human-gated",
+  "phase": 90,
+  "publication_apply_enabled": false,
+  "read_only": true,
+  "schema": "workflow_kernel_publication_governance_final_index_v1",
+  "status": "PUBLICATION_GOVERNANCE_FINAL_INDEX_READY",
+  "unattended_dispatch_enabled": false
+}

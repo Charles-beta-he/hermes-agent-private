@@ -1,0 +1,35 @@
+{
+  "checks": {
+    "apply_disabled": true,
+    "default_keep_closed": true,
+    "gate_ready": true,
+    "human_gate_required": true,
+    "packet_only": true,
+    "selected_option_null": true
+  },
+  "created_at": "2026-06-14T17:03:22Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "drift": [],
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "input_refs": [
+    {
+      "name": "phase88_reopen_human_gate",
+      "path": "docs/private/workflow-kernel-publication-apply-reopen-human-gate-packet/workflow_kernel_publication_apply_reopen_human_gate_packet_20260613_phase88.json",
+      "sha256": "174fff3442ec38849cf5c1301885ffd702543043f8abf42cf1cd1917181fbf82",
+      "status": "PUBLICATION_APPLY_REOPEN_HUMAN_GATE_PACKET_READY"
+    }
+  ],
+  "message_sent": false,
+  "next_boundary": "Phase90 may compile read-only final index",
+  "packet_only": true,
+  "phase": 89,
+  "publication_apply_enabled": false,
+  "read_only": true,
+  "retention_digest": "c045dcd7930db76c21fc83781fd046513292915c4cbc0af94414e890b80bfa38",
+  "retention_policy": "human_gate_packet_retained_fail_closed_no_apply",
+  "schema": "workflow_kernel_publication_human_gate_retention_watch_v1",
+  "status": "PUBLICATION_HUMAN_GATE_RETENTION_WATCH_CLEAR",
+  "unattended_dispatch_enabled": false
+}

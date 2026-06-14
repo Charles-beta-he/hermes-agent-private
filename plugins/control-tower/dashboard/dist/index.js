@@ -297,6 +297,8 @@
     const governanceClosure = kernel.publication_governance_closure_summary || {};
     const closureRetention = kernel.publication_closure_retention_watch || {};
     const reopenHumanGate = kernel.publication_apply_reopen_human_gate_packet || {};
+    const humanGateRetention = kernel.publication_human_gate_retention_watch || {};
+    const governanceFinalIndex = kernel.publication_governance_final_index || {};
     const projection = kernel.control_tower_projection || {};
     const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
     workflowKernelEl.innerHTML = `
@@ -340,6 +342,8 @@
         <span>Governance closure: <strong>${escapeHtml(governanceClosure.status || 'not_ready')}</strong></span>
         <span>Closure retention: <strong>${escapeHtml(closureRetention.status || 'not_ready')}</strong></span>
         <span>Reopen human gate: <strong>${escapeHtml(reopenHumanGate.status || 'not_ready')}</strong></span>
+        <span>Human gate retention: <strong>${escapeHtml(humanGateRetention.status || 'not_ready')}</strong></span>
+        <span>Governance final index: <strong>${escapeHtml(governanceFinalIndex.status || 'not_ready')}</strong></span>
       </div>
       <table class="control-tower-missions-table control-tower-workflow-kernel-table">
         <tbody>
@@ -380,6 +384,8 @@
           <tr><th>Publication governance closure</th><td>${escapeHtml(governanceClosure.status || '—')} items=<code>${escapeHtml(String(governanceClosure.item_count ?? '—'))}</code> read_only=<strong>${governanceClosure.read_only ? 'true' : 'false'}</strong> apply=<strong>${governanceClosure.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication closure retention</th><td>${escapeHtml(closureRetention.status || '—')} drift=<code>${escapeHtml(String((closureRetention.drift || []).length))}</code> read_only=<strong>${closureRetention.read_only ? 'true' : 'false'}</strong> apply=<strong>${closureRetention.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Publication reopen human gate</th><td>${escapeHtml(reopenHumanGate.status || '—')} default=<code>${escapeHtml(reopenHumanGate.recommended_default || '—')}</code> selected=<code>${escapeHtml(reopenHumanGate.selected_option || '—')}</code> apply=<strong>${reopenHumanGate.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication human gate retention</th><td>${escapeHtml(humanGateRetention.status || '—')} drift=<code>${escapeHtml(String((humanGateRetention.drift || []).length))}</code> packet_only=<strong>${humanGateRetention.packet_only ? 'true' : 'false'}</strong> apply=<strong>${humanGateRetention.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
+          <tr><th>Publication governance final index</th><td>${escapeHtml(governanceFinalIndex.status || '—')} items=<code>${escapeHtml(String(governanceFinalIndex.item_count ?? '—'))}</code> read_only=<strong>${governanceFinalIndex.read_only ? 'true' : 'false'}</strong> apply=<strong>${governanceFinalIndex.publication_apply_enabled ? 'true' : 'false'}</strong></td></tr>
           <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
         </tbody>
       </table>

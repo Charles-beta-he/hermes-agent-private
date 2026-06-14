@@ -95,11 +95,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 86, "name": "Publication Governance Closure Summary", "layer": "governance closure", "status": "publication_governance_closure_summary_ready", "depends_on": [85], "authority": "read-only summary", "gate": "summary_only=true; apply disabled", "next_unlocked": [87]},
     {"phase": 87, "name": "Publication Closure Retention Watch", "layer": "closure retention", "status": "publication_closure_retention_clear", "depends_on": [86], "authority": "read-only watch", "gate": "drift=[]; apply disabled", "next_unlocked": [88]},
     {"phase": 88, "name": "Publication Apply Reopen Human Gate Packet", "layer": "human gate packet", "status": "publication_apply_reopen_human_gate_packet_ready", "depends_on": [87], "authority": "packet only", "gate": "recommended_default=A_KEEP_CLOSED_NO_REOPEN; apply disabled", "next_unlocked": [89]},
+    {"phase": 89, "name": "Publication Human Gate Retention Watch", "layer": "human gate retention", "status": "publication_human_gate_retention_clear", "depends_on": [88], "authority": "read-only watch", "gate": "drift=[]; apply disabled", "next_unlocked": [90]},
+    {"phase": 90, "name": "Publication Governance Final Index", "layer": "governance final index", "status": "publication_governance_final_index_ready", "depends_on": [89], "authority": "read-only index", "gate": "final_index_only=true; apply disabled", "next_unlocked": [91]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 89, "name": "Publication Human Gate Retention Watch", "track": "PUBLICATION_HUMAN_GATE_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over human gate packet", "why_next": "verify reopen gate remains fail-closed"},
-    {"phase": 90, "name": "Publication Governance Final Index", "track": "PUBLICATION_GOVERNANCE_FINAL_INDEX", "authority_needed": "read-only final index", "why_next": "index complete publication governance chain"},
+    {"phase": 91, "name": "Publication Final Index Retention Watch", "track": "PUBLICATION_FINAL_INDEX_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over final index", "why_next": "verify final index remains closed"},
+    {"phase": 92, "name": "Publication Governance Terminal Summary", "track": "PUBLICATION_GOVERNANCE_TERMINAL_SUMMARY", "authority_needed": "read-only terminal summary", "why_next": "summarize terminal governance state"},
 ]
 
 
@@ -141,15 +143,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-88 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase87 已完成 closure retention watch，Phase88 已生成 reopen human-gate packet；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-90 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase89 已完成 human gate retention watch，Phase90 已生成 governance final index；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase88 has produced a packet-only human gate for any future publication apply reopen while keeping publication_apply_enabled=false.",
+        "current_boundary": "Phase90 has produced a read-only final publication governance index while keeping publication_apply_enabled=false.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Stage-report cadence: Phase89 human gate retention watch; Phase90 governance final index remains read-only",
+        "recommended_next": "Stage-report cadence: Phase91 final index retention watch; Phase92 terminal summary remains read-only",
     }
 
 
