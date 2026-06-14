@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T15:31:07Z",
-  "current_boundary": "Phase74 has produced an authorization packet while keeping publication_apply_enabled=false and selected_option=null.",
+  "created_at": "2026-06-14T15:40:16Z",
+  "current_boundary": "Phase76 has recorded safe default keep-private/no-apply choice; no exact target/payload apply scheme is open.",
   "next_ladder": [
     {
-      "authority_needed": "local private export artifact only; no external publication",
-      "name": "Private Export Artifact Compiler",
-      "phase": 75,
-      "track": "PRIVATE_EXPORT_ARTIFACT_COMPILER",
-      "why_next": "continue safe productization without publishing"
+      "authority_needed": "read-only retention/drift watch over private export artifact",
+      "name": "Private Export Retention Watch",
+      "phase": 77,
+      "track": "PRIVATE_EXPORT_RETENTION_WATCH",
+      "why_next": "continue no-apply maintenance"
     },
     {
-      "authority_needed": "human choice only if competing exact apply implementations exist",
-      "name": "Publication Apply Implementation Choice",
-      "phase": 76,
-      "track": "PUBLICATION_APPLY_IMPLEMENTATION_CHOICE",
-      "why_next": "single implementation point choice boundary"
+      "authority_needed": "packet only; no apply unless exact target/payload is supplied",
+      "name": "Publication Apply Reopen Packet",
+      "phase": 78,
+      "track": "PUBLICATION_APPLY_REOPEN_PACKET",
+      "why_next": "future reopen remains separate"
     }
   ],
-  "objective": "梳理 Phase17-74 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase73 已生成 exact-target apply dry-run compiler，Phase74 已生成 publication apply authorization packet；archive 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
-  "phase_count": 58,
+  "objective": "梳理 Phase17-76 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase75 已生成 private export artifact compiler，Phase76 已记录 keep-private/no-apply implementation choice；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+  "phase_count": 60,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -842,9 +842,37 @@
       ],
       "phase": 74,
       "status": "publication_apply_authorization_packet_ready"
+    },
+    {
+      "authority": "local artifact only",
+      "depends_on": [
+        74
+      ],
+      "gate": "private local only; public_share_ready=false",
+      "layer": "private export",
+      "name": "Private Export Artifact Compiler",
+      "next_unlocked": [
+        76
+      ],
+      "phase": 75,
+      "status": "private_export_artifact_compiler_ready"
+    },
+    {
+      "authority": "record-only safe default",
+      "depends_on": [
+        75
+      ],
+      "gate": "choice=A_KEEP_PRIVATE_NO_APPLY; no exact target",
+      "layer": "implementation choice",
+      "name": "Publication Apply Implementation Choice",
+      "next_unlocked": [
+        77
+      ],
+      "phase": 76,
+      "status": "keep_private_no_apply_choice_recorded"
     }
   ],
-  "recommended_next": "Stage-report cadence: Phase75 private export artifact compiler; Phase76 implementation choice only if competing exact apply schemes exist",
+  "recommended_next": "Stage-report cadence: Phase77 private export retention watch; Phase78 publication apply reopen packet remains packet-only",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

@@ -81,11 +81,13 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 72, "name": "Publication Apply Exact-target Gate", "layer": "exact-target gate", "status": "publication_exact_target_gate_ready", "depends_on": [71], "authority": "gate only", "gate": "exact target/payload required; apply disabled", "next_unlocked": [73]},
     {"phase": 73, "name": "Exact-target Apply Dry-run Compiler", "layer": "dry-run compiler", "status": "exact_target_apply_dry_run_compiler_ready", "depends_on": [72], "authority": "dry-run only", "gate": "would_publish=false; publication apply disabled", "next_unlocked": [74]},
     {"phase": 74, "name": "Publication Apply Authorization Packet", "layer": "authorization packet", "status": "publication_apply_authorization_packet_ready", "depends_on": [73], "authority": "packet only", "gate": "recommended_default=A_KEEP_PRIVATE_NO_PUBLICATION; apply disabled", "next_unlocked": [75]},
+    {"phase": 75, "name": "Private Export Artifact Compiler", "layer": "private export", "status": "private_export_artifact_compiler_ready", "depends_on": [74], "authority": "local artifact only", "gate": "private local only; public_share_ready=false", "next_unlocked": [76]},
+    {"phase": 76, "name": "Publication Apply Implementation Choice", "layer": "implementation choice", "status": "keep_private_no_apply_choice_recorded", "depends_on": [75], "authority": "record-only safe default", "gate": "choice=A_KEEP_PRIVATE_NO_APPLY; no exact target", "next_unlocked": [77]},
 ]
 
 NEXT_LADDER = [
-    {"phase": 75, "name": "Private Export Artifact Compiler", "track": "PRIVATE_EXPORT_ARTIFACT_COMPILER", "authority_needed": "local private export artifact only; no external publication", "why_next": "continue safe productization without publishing"},
-    {"phase": 76, "name": "Publication Apply Implementation Choice", "track": "PUBLICATION_APPLY_IMPLEMENTATION_CHOICE", "authority_needed": "human choice only if competing exact apply implementations exist", "why_next": "single implementation point choice boundary"},
+    {"phase": 77, "name": "Private Export Retention Watch", "track": "PRIVATE_EXPORT_RETENTION_WATCH", "authority_needed": "read-only retention/drift watch over private export artifact", "why_next": "continue no-apply maintenance"},
+    {"phase": 78, "name": "Publication Apply Reopen Packet", "track": "PUBLICATION_APPLY_REOPEN_PACKET", "authority_needed": "packet only; no apply unless exact target/payload is supplied", "why_next": "future reopen remains separate"},
 ]
 
 
@@ -127,15 +129,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-74 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase73 已生成 exact-target apply dry-run compiler，Phase74 已生成 publication apply authorization packet；archive 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-76 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase75 已生成 private export artifact compiler，Phase76 已记录 keep-private/no-apply implementation choice；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase74 has produced an authorization packet while keeping publication_apply_enabled=false and selected_option=null.",
+        "current_boundary": "Phase76 has recorded safe default keep-private/no-apply choice; no exact target/payload apply scheme is open.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Stage-report cadence: Phase75 private export artifact compiler; Phase76 implementation choice only if competing exact apply schemes exist",
+        "recommended_next": "Stage-report cadence: Phase77 private export retention watch; Phase78 publication apply reopen packet remains packet-only",
     }
 
 

@@ -159,6 +159,10 @@ def test_control_tower_dashboard_renders_workflow_kernel_projection_panel():
     assert "publication_apply_authorization_packet" in script
     assert "Exact-target dry-run compiler" in script
     assert "Publication authorization packet" in script
+    assert "private_export_artifact_compiler" in script
+    assert "publication_apply_implementation_choice" in script
+    assert "Private export artifact" in script
+    assert "Publication apply choice" in script
     assert "Pack, guarded send, and dispatch policy" in script
     assert "Latest guarded send" not in script  # keep wording in static Phase52 page only
     assert "control-tower-workflow-kernel-card" in style

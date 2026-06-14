@@ -1,0 +1,26 @@
+{
+  "available_choices": {
+    "A_KEEP_PRIVATE_NO_APPLY": "Keep private; do not open publication apply",
+    "B_PREPARE_LOCAL_FILE_EXPORT_ONLY": "Future local file export only; still no external publish",
+    "C_OPEN_EXACT_TARGET_PUBLICATION_APPLY": "Requires explicit target/payload; not selected by default"
+  },
+  "blockers": [],
+  "choice": "A_KEEP_PRIVATE_NO_APPLY",
+  "choice_digest": "513ac2f9443b3bd2fbdf08970fac0477f5769ebbc01363038d9d5f4dcc6a49e6",
+  "choice_label": "Keep private; do not open publication apply",
+  "created_at": "2026-06-14T15:36:33Z",
+  "credential_accessed": false,
+  "cron_state_mutated": false,
+  "exact_target_present": false,
+  "external_publication_enabled": false,
+  "external_side_effects_executed": false,
+  "message_sent": false,
+  "next_boundary": "No large divergence opened; continue private/no-apply maintenance unless exact target/payload is supplied",
+  "phase": 76,
+  "publication_apply_enabled": false,
+  "record_only": true,
+  "schema": "workflow_kernel_publication_apply_implementation_choice_v1",
+  "selected_apply_scheme": null,
+  "status": "PUBLICATION_APPLY_IMPLEMENTATION_CHOICE_RECORDED",
+  "unattended_dispatch_enabled": false
+}
