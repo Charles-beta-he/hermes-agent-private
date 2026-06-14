@@ -152,6 +152,37 @@ def test_emit_turn_sidecar_for_kanban_run_records_proof_artifact(monkeypatch):
     assert any(str(proof_path) in ref for ref in sc.evidence_refs)
 
 
+def test_emit_turn_sidecar_for_acp_run_records_adapter_metadata(monkeypatch):
+    _ensure_patched()
+    monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
+    monkeypatch.delenv("HERMES_KANBAN_WORKSPACE", raising=False)
+
+    from session_sidecar import read_sidecar
+    from session_sidecar.runtime import emit_turn_sidecar
+
+    agent = DummyAgent(session_id="sess-acp")
+    setattr(agent, "_session_sidecar_client_name", "zed")
+    setattr(agent, "_session_sidecar_command", "copilot --acp --stdio")
+    run_id = emit_turn_sidecar(
+        agent,
+        task_id="acp-session-1",
+        turn_id="turn-acp",
+        completed=True,
+        interrupted=False,
+        model="gpt-test",
+        platform="acp",
+    )
+
+    assert run_id
+    sc = read_sidecar(run_id)
+    assert sc is not None
+    assert sc.entrypoint == "acp_adapter"
+    assert sc.extra["client_name"] == "zed"
+    assert sc.extra["command"] == "copilot --acp --stdio"
+    assert f"proof:session-sidecar:run:{run_id}" in sc.evidence_refs
+    assert "session:sess-acp" in sc.evidence_refs
+
+
 def test_emit_turn_sidecar_skips_cron_agent_runs(monkeypatch):
     _ensure_patched()
     monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)

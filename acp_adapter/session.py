@@ -617,6 +617,15 @@ class SessionManager:
 
         _register_task_cwd(session_id, cwd)
         agent = AIAgent(**kwargs)
+        runtime_meta = locals().get("runtime") if "runtime" in locals() else None
+        setattr(agent, "_session_sidecar_client_name", "acp")
+        command_bits: list[str] = []
+        if isinstance(runtime_meta, dict):
+            command = str(runtime_meta.get("command") or "").strip()
+            if command:
+                command_bits.append(command)
+            command_bits.extend(str(arg) for arg in (runtime_meta.get("args") or []) if str(arg).strip())
+        setattr(agent, "_session_sidecar_command", " ".join(command_bits))
         # ACP stdio transport requires stdout to remain protocol-only JSON-RPC.
         # Route any incidental human-readable agent output to stderr instead.
         agent._print_fn = _acp_stderr_print

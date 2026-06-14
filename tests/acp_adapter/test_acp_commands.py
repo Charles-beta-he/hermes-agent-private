@@ -18,6 +18,9 @@ class FakeAgent:
         self.valid_tool_names = set()
         self.steers = []
         self.runs = []
+        self.session_id = "fake-acp-session"
+        self._session_sidecar_client_name = "acp"
+        self._session_sidecar_command = "copilot --acp --stdio"
 
     def steer(self, text):
         self.steers.append(text)
@@ -196,3 +199,49 @@ async def test_acp_prompt_drains_queued_turns_after_current_run():
     assert state.queued_prompts == []
     agent_messages = [u for _sid, u in conn.updates if getattr(u, "session_update", None) == "agent_message_chunk"]
     assert len(agent_messages) >= 2
+
+
+@pytest.mark.asyncio
+async def test_acp_prompt_emits_sidecar_entry(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_PROOF_LOG", "1")
+
+    acp_agent, state, fake, _conn = make_agent_and_state()
+    fake.session_id = state.session_id
+
+    response = await acp_agent.prompt(
+        session_id=state.session_id,
+        prompt=[TextContentBlock(type="text", text="summarize the README")],
+    )
+
+    assert response.stop_reason == "end_turn"
+
+    from session_sidecar import query_sidecars
+
+    rows = query_sidecars(date_prefix="", entrypoint="acp_adapter", limit=10)
+    matching = [row for row in rows if row.session_id == state.session_id]
+    assert matching
+    sc = matching[0]
+    assert sc.entrypoint == "acp_adapter"
+    assert sc.extra["client_name"] == "acp"
+    assert sc.extra["command"] == "copilot --acp --stdio"
+    assert f"proof:session-sidecar:run:{sc.run_id}" in sc.evidence_refs
+    assert f"session:{state.session_id}" in sc.evidence_refs
+
+    import json
+    import sqlite3
+    from proof_log import default_db_path
+
+    proof_db = default_db_path()
+    with sqlite3.connect(proof_db) as con:
+        row = con.execute(
+            "SELECT entry_json FROM proof_logs WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+            (state.session_id,),
+        ).fetchone()
+    assert row is not None
+    proof_entry = json.loads(row[0])
+    assert proof_entry["link_type"] == "script"
+    assert proof_entry["payload"]["kind"] == "acp_session"
+    assert proof_entry["payload"]["data"]["client_name"] == "acp"

@@ -1509,7 +1509,13 @@ class HermesACPAgent(acp.Agent):
                 return result
             except Exception as e:
                 logger.exception("Agent error in session %s", session_id)
-                return {"final_response": f"Error: {e}", "messages": state.history}
+                return {
+                    "final_response": f"Error: {e}",
+                    "messages": state.history,
+                    "_session_sidecar_status": "failed",
+                    "_session_sidecar_error_class": e.__class__.__name__,
+                    "_session_sidecar_error_message": str(e),
+                }
             finally:
                 # Restore HERMES_INTERACTIVE.
                 if previous_interactive is None:
@@ -1631,6 +1637,26 @@ class HermesACPAgent(acp.Agent):
             # rewritten text never reaches the client.
             update = acp.update_agent_message_text(final_response)
             await conn.session_update(session_id, update)
+
+        try:
+            from session_sidecar.runtime import emit_turn_sidecar
+
+            sidecar_status = str(result.get("_session_sidecar_status") or "").strip().lower()
+            emit_turn_sidecar(
+                state.agent,
+                task_id=session_id,
+                turn_id=getattr(state.agent, "_current_turn_id", "") or session_id,
+                completed=bool(final_response) and not interrupted and sidecar_status != "failed",
+                interrupted=interrupted,
+                model=getattr(state.agent, "model", None),
+                platform="acp",
+                reason="cancelled" if cancelled else "",
+                status_override=sidecar_status,
+                error_class_override=str(result.get("_session_sidecar_error_class") or ""),
+                error_message_override=str(result.get("_session_sidecar_error_message") or ""),
+            )
+        except Exception:
+            logger.debug("Failed to emit ACP session sidecar for %s", session_id, exc_info=True)
 
         # Mark this turn idle before draining queued work so recursive prompt()
         # calls can acquire the session. Queued turns are intentionally run as
