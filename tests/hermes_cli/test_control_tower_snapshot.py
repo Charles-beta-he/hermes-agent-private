@@ -139,6 +139,21 @@ def test_control_tower_snapshot_is_read_only_and_labels_adapters(tmp_path, monke
     }
 
 
+def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifacts_exist(monkeypatch):
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+
+    snapshot = control_tower.build_snapshot()
+    kernel = snapshot["workflow_kernel_control_tower"]
+
+    assert kernel["status"] == "ready"
+    assert kernel["workflow_pack_id"] == "workflow_kernel_external_dispatch_governance"
+    assert kernel["agent_pack_id"] == "agent.workflow_kernel_operator"
+    assert kernel["latest_guarded_send"]["message_id"] == "4261"
+    assert kernel["control_tower_projection"]["status"] == "CONTROL_TOWER_UI_API_PROJECTION_READY"
+    assert kernel["unattended_dispatch_policy"]["unattended_dispatch_enabled"] is False
+    assert kernel["external_side_effects_enabled"] is False
+
+
 def test_snapshot_projects_pending_and_stale_mission_flow_signals(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))

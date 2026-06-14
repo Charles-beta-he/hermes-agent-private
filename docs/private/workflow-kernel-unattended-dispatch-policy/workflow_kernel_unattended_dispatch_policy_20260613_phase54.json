@@ -1,0 +1,72 @@
+{
+  "blockers": [],
+  "created_at": "2026-06-14T03:49:08Z",
+  "default_mode": "dry_run_preview",
+  "external_side_effects_executed": false,
+  "next_boundary": "larger divergence: enable a single unattended dry-run scheduler or integrate policy editor/approval UI",
+  "phase": 54,
+  "policy": {
+    "correction_path": "send compensating correction message to the same target; destructive rollback is unavailable for delivered messages",
+    "dry_run_preview_required": true,
+    "duplicate_policy": {
+      "same_idempotency_key": "suppress_and_record_duplicate_receipt",
+      "same_payload_same_target_within_24h": "require_human_review"
+    },
+    "idempotency_key_fields": [
+      "adapter",
+      "target_type",
+      "chat_id",
+      "purpose",
+      "payload_digest",
+      "policy_version",
+      "time_bucket_utc_hour"
+    ],
+    "kill_switches": [
+      "unattended_dispatch_enabled=false",
+      "HERMES_WORKFLOW_KERNEL_UNATTENDED_DISPATCH=0",
+      "target allowlist empty or target disabled"
+    ],
+    "monitoring": [
+      "Control Tower workflow_kernel_control_tower.unattended_dispatch_policy",
+      "receipt ledger append result",
+      "proof-check accepted evidence marker"
+    ],
+    "rate_limits": {
+      "burst": 1,
+      "per_target_per_day": 3,
+      "per_target_per_hour": 1
+    },
+    "receipt_ledger": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-unattended-dispatch-policy/unattended_dispatch_receipts.jsonl",
+    "schema": "workflow_kernel_unattended_dispatch_policy_v1",
+    "target_allowlist": [
+      {
+        "adapter": "telegram",
+        "allowed_purposes": [
+          "workflow_kernel_status_smoke",
+          "operator_control_tower_status"
+        ],
+        "chat_id": "5524172309",
+        "human_review_required_for_payloads": true,
+        "target_type": "telegram_home_channel"
+      }
+    ]
+  },
+  "policy_digest": "ec5d9f01f2b75d0bea722445ecd2250afd60142e26448c9b21a84edd2d5f052f",
+  "policy_version": "20260613.phase54.v1",
+  "preconditions": {
+    "latest_guarded_message_id": "4261",
+    "phase50_status": "GUARDED_EXTERNAL_SEND_VERIFIED",
+    "phase52_status": "CONTROL_TOWER_UI_API_PROJECTION_READY"
+  },
+  "report_id": "workflow_kernel_unattended_dispatch_policy_20260613_phase54",
+  "safe_boundaries": [
+    "policy compiler only",
+    "default dry-run preview",
+    "unattended dispatch disabled",
+    "no external send",
+    "no credential read/write",
+    "no scheduler mutation"
+  ],
+  "status": "UNATTENDED_DISPATCH_POLICY_GATE_READY",
+  "unattended_dispatch_enabled": false
+}

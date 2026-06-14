@@ -6027,6 +6027,83 @@ def _operator_overview_snapshot(
     }
 
 
+def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
+    """Return the Workflow Kernel Control Tower projection artifacts.
+
+    This is a read-only bridge from the modular workflow-kernel evidence files
+    into the live Control Tower snapshot. It never sends messages, mutates cron,
+    enables unattended dispatch, or changes task lifecycle state.
+    """
+    root = Path(__file__).resolve().parents[1]
+    registry_path = root / "docs/private/workflow-kernel-pack-registry/workflow_kernel_pack_registry_20260613_phase51.json"
+    phase50_path = root / "docs/private/workflow-kernel-guarded-external-send/workflow_kernel_guarded_external_send_20260613_phase50.json"
+    phase52_path = root / "docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.json"
+    policy_path = root / "docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json"
+    paths = {
+        "registry": registry_path,
+        "guarded_send": phase50_path,
+        "control_tower_projection": phase52_path,
+    }
+    missing = [name for name, path in paths.items() if not path.exists()]
+    if missing:
+        return {
+            "status": "missing_artifacts",
+            "role": "read_only_workflow_kernel_projection",
+            "missing": missing,
+            "external_side_effects_enabled": False,
+            "unattended_dispatch_enabled": False,
+        }
+    try:
+        registry = json.loads(registry_path.read_text())
+        guarded_send = json.loads(phase50_path.read_text())
+        control_tower_projection = json.loads(phase52_path.read_text())
+        policy = json.loads(policy_path.read_text()) if policy_path.exists() else None
+    except Exception as exc:
+        return {
+            "status": "error",
+            "role": "read_only_workflow_kernel_projection",
+            "reason": str(exc),
+            "external_side_effects_enabled": False,
+            "unattended_dispatch_enabled": False,
+        }
+    blockers: list[str] = []
+    if registry.get("status") != "PACK_REGISTRY_PROJECTION_READY":
+        blockers.append("registry_not_ready")
+    if guarded_send.get("status") != "GUARDED_EXTERNAL_SEND_VERIFIED":
+        blockers.append("guarded_send_not_verified")
+    if control_tower_projection.get("status") != "CONTROL_TOWER_UI_API_PROJECTION_READY":
+        blockers.append("control_tower_projection_not_ready")
+    unattended_enabled = bool((policy or {}).get("unattended_dispatch_enabled"))
+    return {
+        "status": "ready" if not blockers else "degraded",
+        "role": "read_only_workflow_kernel_projection",
+        "workflow_pack_id": registry.get("workflow_pack_id"),
+        "agent_pack_id": registry.get("agent_pack_id"),
+        "latest_guarded_send": {
+            "status": guarded_send.get("status"),
+            "adapter": guarded_send.get("adapter"),
+            "chat_id": (guarded_send.get("send_result") or {}).get("chat_id"),
+            "message_id": (guarded_send.get("send_result") or {}).get("message_id"),
+            "external_side_effect_executed": guarded_send.get("external_side_effect_executed"),
+        },
+        "control_tower_projection": {
+            "status": control_tower_projection.get("status"),
+            "api_version": control_tower_projection.get("api_version"),
+            "html_artifact": str(root / "docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.html"),
+        },
+        "unattended_dispatch_policy": {
+            "status": (policy or {}).get("status", "not_compiled"),
+            "default_mode": (policy or {}).get("default_mode", "dry_run_preview"),
+            "unattended_dispatch_enabled": unattended_enabled,
+            "policy_artifact": str(policy_path) if policy_path.exists() else None,
+        },
+        "blockers": blockers,
+        "external_side_effects_enabled": False,
+        "unattended_dispatch_enabled": unattended_enabled,
+        "next_boundary": "Phase54 unattended dispatch policy gate" if policy is None else "post-Phase54 larger product/policy boundary",
+    }
+
+
 def build_snapshot() -> dict[str, Any]:
     """Build the Control Tower snapshot."""
     ledger = init_ledger()
@@ -6079,6 +6156,7 @@ def build_snapshot() -> dict[str, Any]:
     source_drift = _source_drift_snapshot()
     taskpool_runtime = _taskpool_runtime_probe()
     projection_governance = _kanban_coverage_probe()
+    workflow_kernel_control_tower = _workflow_kernel_control_tower_snapshot()
     operator_overview = _operator_overview_snapshot(
         taskpool_health=taskpool_health,
         next_dispatchable=next_dispatchable,
@@ -6132,6 +6210,7 @@ def build_snapshot() -> dict[str, Any]:
         "mission_flow_signals": mission_flow_signals,
         "mission_taskpool_bridge": mission_taskpool_bridge,
         "projection_governance": projection_governance,
+        "workflow_kernel_control_tower": workflow_kernel_control_tower,
         "operator_overview": operator_overview,
         "taskpool_health": taskpool_health,
         "next_dispatchable": next_dispatchable,

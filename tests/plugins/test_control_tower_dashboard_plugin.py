@@ -106,6 +106,23 @@ def test_control_tower_dashboard_renders_operator_overview_as_first_screen():
     assert "control-tower-operator-overview-card" in style
 
 
+def test_control_tower_dashboard_renders_workflow_kernel_projection_panel():
+    repo_root = Path(__file__).resolve().parents[2]
+    index_js = repo_root / "plugins" / "control-tower" / "dashboard" / "dist" / "index.js"
+    style_css = repo_root / "plugins" / "control-tower" / "dashboard" / "dist" / "style.css"
+
+    script = index_js.read_text(encoding="utf-8")
+    style = style_css.read_text(encoding="utf-8")
+
+    assert "control-tower-workflow-kernel" in script
+    assert "Workflow Kernel" in script
+    assert "renderWorkflowKernel(data)" in script
+    assert "workflow_kernel_control_tower" in script
+    assert "Pack, guarded send, and dispatch policy" in script
+    assert "Latest guarded send" not in script  # keep wording in static Phase52 page only
+    assert "control-tower-workflow-kernel-card" in style
+
+
 def test_control_tower_dashboard_keeps_debug_actions_and_raw_snapshot_collapsed():
     repo_root = Path(__file__).resolve().parents[2]
     index_js = repo_root / "plugins" / "control-tower" / "dashboard" / "dist" / "index.js"

@@ -40,10 +40,12 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 50: Guarded Single External Send — layer=`external dispatch smoke`, gate=`single send only; no unattended dispatch`
 - Phase 51: Pack Registry / Control Tower Projection — layer=`operator registry`, gate=`UI/API adoption remains separate gate`
 - Phase 52: Control Tower UI/API Projection — layer=`control tower productization`, gate=`durable runtime API and unattended dispatch remain separate gates`
+- Phase 53: Durable Control Tower Runtime/API Integration — layer=`live control tower snapshot`, gate=`operator projection only; no lifecycle mutation`
+- Phase 54: Unattended Dispatch Policy Gate — layer=`dispatch policy`, gate=`unattended_dispatch_enabled=false; dry-run preview only`
 
 ## Next ladder
-- Phase 53: Durable Control Tower Runtime/API Integration — track=`CONTROL_TOWER_RUNTIME_API`, authority=`choose server/API integration path and persistence boundary`
-- Phase 54: Unattended Dispatch Policy Gate — track=`UNATTENDED_DISPATCH_POLICY`, authority=`target allowlist/rate-limit/duplicate policy/correction path`
+- Phase 55: Unattended Dry-run Scheduler — track=`UNATTENDED_DRY_RUN_SCHEDULER`, authority=`choose cadence, target allowlist, and receipt ledger retention`
+- Phase 56: Control Tower Policy Editor / Approval UI — track=`CONTROL_TOWER_POLICY_EDITOR`, authority=`choose UI edit authority, approval roles, and persistence semantics`
 
 ## Closed boundaries
 - trigger cron jobs solely to create evidence

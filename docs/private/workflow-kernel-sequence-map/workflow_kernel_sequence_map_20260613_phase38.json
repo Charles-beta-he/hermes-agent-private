@@ -7,26 +7,26 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T03:30:08Z",
-  "current_boundary": "Phase52 has produced a static Control Tower UI/API projection after the single guarded external send. The next step is a larger divergence: durable live Control Tower runtime/API integration versus unattended dispatch policy gate.",
+  "created_at": "2026-06-14T03:51:25Z",
+  "current_boundary": "Phase54 has compiled a fail-closed unattended dispatch policy gate and Control Tower live snapshot now exposes workflow-kernel status. The next larger divergence is dry-run scheduler automation versus Control Tower policy editor/approval UI.",
   "next_ladder": [
     {
-      "authority_needed": "choose server/API integration path and persistence boundary",
-      "name": "Durable Control Tower Runtime/API Integration",
-      "phase": 53,
-      "track": "CONTROL_TOWER_RUNTIME_API",
-      "why_next": "turn the static projection into a live operator surface"
+      "authority_needed": "choose cadence, target allowlist, and receipt ledger retention",
+      "name": "Unattended Dry-run Scheduler",
+      "phase": 55,
+      "track": "UNATTENDED_DRY_RUN_SCHEDULER",
+      "why_next": "exercise policy without sending by scheduling dry-run previews only"
     },
     {
-      "authority_needed": "target allowlist/rate-limit/duplicate policy/correction path",
-      "name": "Unattended Dispatch Policy Gate",
-      "phase": 54,
-      "track": "UNATTENDED_DISPATCH_POLICY",
-      "why_next": "move from one guarded send to policy-governed unattended dispatch"
+      "authority_needed": "choose UI edit authority, approval roles, and persistence semantics",
+      "name": "Control Tower Policy Editor / Approval UI",
+      "phase": 56,
+      "track": "CONTROL_TOWER_POLICY_EDITOR",
+      "why_next": "let operators review/approve dispatch policy changes from Control Tower"
     }
   ],
-  "objective": "梳理 Phase17-52 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase50 单次 Telegram guarded send 已验证，Phase51 pack registry 已就绪，Phase52 Control Tower 静态 UI/API projection 已就绪。",
-  "phase_count": 36,
+  "objective": "梳理 Phase17-54 的顺序、依赖、门禁和后续扩展路径；runtime switch 已自动开启，Phase50 单次 Telegram guarded send 已验证，Phase53 live Control Tower snapshot/API 已接入，Phase54 unattended dispatch policy gate 已就绪但保持 disabled/dry-run。",
+  "phase_count": 38,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -532,9 +532,39 @@
       ],
       "phase": 52,
       "status": "ui_api_projection_ready"
+    },
+    {
+      "authority": "read-only dashboard plugin/API integration",
+      "depends_on": [
+        52
+      ],
+      "gate": "operator projection only; no lifecycle mutation",
+      "layer": "live control tower snapshot",
+      "name": "Durable Control Tower Runtime/API Integration",
+      "next_unlocked": [
+        54
+      ],
+      "phase": 53,
+      "status": "live_snapshot_integration_ready"
+    },
+    {
+      "authority": "policy compiler only",
+      "depends_on": [
+        50,
+        53
+      ],
+      "gate": "unattended_dispatch_enabled=false; dry-run preview only",
+      "layer": "dispatch policy",
+      "name": "Unattended Dispatch Policy Gate",
+      "next_unlocked": [
+        55,
+        56
+      ],
+      "phase": 54,
+      "status": "policy_gate_ready_disabled"
     }
   ],
-  "recommended_next": "Human choice required: Phase53 live Control Tower runtime/API integration vs Phase54 unattended dispatch policy gate",
+  "recommended_next": "Human choice required: Phase55 unattended dry-run scheduler vs Phase56 Control Tower policy editor/approval UI",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",

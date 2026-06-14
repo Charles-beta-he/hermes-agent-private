@@ -1,0 +1,13 @@
+{
+  "adapter": "telegram",
+  "chat_id": "5524172309",
+  "idempotency_key": "f0f97e2c642c0ccd9bbeae923a65e83e0214598799dcb73bf6bc86b49a4e1364",
+  "mode": "dry_run_preview",
+  "payload_digest": "81c8a4bf16abd4b243527d9c0c414a7c803a6073857b10fb2921ffed2cb1d05f",
+  "policy_digest": "ec5d9f01f2b75d0bea722445ecd2250afd60142e26448c9b21a84edd2d5f052f",
+  "purpose": "operator_control_tower_status",
+  "requires_human_review_before_apply": true,
+  "schema": "workflow_kernel_unattended_dispatch_dry_run_instruction_v1",
+  "target_type": "telegram_home_channel",
+  "would_send": false
+}

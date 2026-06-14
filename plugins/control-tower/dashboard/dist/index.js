@@ -105,6 +105,12 @@
         <p>Read-only operator projection for event-driven Mission wakeups, consumed latency, stale signals, and taskpool bridge status.</p>
         <div id="control-tower-mission-flow">Loading mission flow…</div>
       </section>
+      <section class="control-tower-card control-tower-workflow-kernel-card">
+        <p class="control-tower-eyebrow">Workflow Kernel</p>
+        <h2>Pack, guarded send, and dispatch policy</h2>
+        <p>Live read-only projection of the modular workflow-kernel evidence chain, latest guarded external send, and unattended dispatch policy gate.</p>
+        <div id="control-tower-workflow-kernel">Loading workflow kernel projection…</div>
+      </section>
       <details class="control-tower-debug-snapshot">
         <summary>Raw snapshot JSON</summary>
         <pre id="control-tower-snapshot">Loading snapshot…</pre>
@@ -120,6 +126,7 @@
   const operatorOverviewEl = document.getElementById('control-tower-operator-overview');
   const missionsEl = document.getElementById('control-tower-missions');
   const missionFlowEl = document.getElementById('control-tower-mission-flow');
+  const workflowKernelEl = document.getElementById('control-tower-workflow-kernel');
   let latestSnapshot = null;
 
   const authFetch = (url, options) => {
@@ -244,6 +251,37 @@
           <tbody>${bridgeRows}</tbody>
         </table>
       ` : '<p>No recent taskpool bridge events.</p>'}
+    `;
+  };
+
+  const renderWorkflowKernel = (data) => {
+    if (!workflowKernelEl) return;
+    const kernel = data?.workflow_kernel_control_tower;
+    if (!kernel) {
+      workflowKernelEl.textContent = 'Workflow kernel projection unavailable: snapshot missing workflow_kernel_control_tower.';
+      return;
+    }
+    const send = kernel.latest_guarded_send || {};
+    const policy = kernel.unattended_dispatch_policy || {};
+    const projection = kernel.control_tower_projection || {};
+    const blockers = (kernel.blockers || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+    workflowKernelEl.innerHTML = `
+      <div class="control-tower-summary control-tower-workflow-kernel-summary">
+        <span>Status: <strong>${escapeHtml(kernel.status)}</strong></span>
+        <span>Workflow: <strong>${escapeHtml(kernel.workflow_pack_id || '—')}</strong></span>
+        <span>Agent: <strong>${escapeHtml(kernel.agent_pack_id || '—')}</strong></span>
+        <span>Last send: <strong>${escapeHtml(send.message_id || '—')}</strong></span>
+        <span>Policy: <strong>${escapeHtml(policy.status || 'not_compiled')}</strong></span>
+      </div>
+      <table class="control-tower-missions-table control-tower-workflow-kernel-table">
+        <tbody>
+          <tr><th>Guarded send</th><td>${escapeHtml(send.status || '—')} via ${escapeHtml(send.adapter || '—')} message_id=<code>${escapeHtml(send.message_id || '—')}</code></td></tr>
+          <tr><th>Control Tower projection</th><td>${escapeHtml(projection.status || '—')} api=<code>${escapeHtml(projection.api_version || '—')}</code></td></tr>
+          <tr><th>Unattended dispatch</th><td>enabled=<strong>${policy.unattended_dispatch_enabled ? 'true' : 'false'}</strong>, mode=<code>${escapeHtml(policy.default_mode || 'dry_run_preview')}</code></td></tr>
+          <tr><th>Next boundary</th><td>${escapeHtml(kernel.next_boundary || '—')}</td></tr>
+        </tbody>
+      </table>
+      ${blockers ? `<h3>Blockers</h3><ul>${blockers}</ul>` : '<p>No Workflow Kernel projection blockers.</p>'}
     `;
   };
 
@@ -393,6 +431,7 @@
         renderSummary(data);
         renderOperatorOverview(data);
         renderMissionFlow(data);
+        renderWorkflowKernel(data);
         if (snapshotEl) snapshotEl.textContent = JSON.stringify(data, null, 2);
       })
       .catch((error) => {

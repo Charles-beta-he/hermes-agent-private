@@ -32,8 +32,8 @@ def test_build_map_has_current_boundary_and_safe_default():
 def test_next_ladder_requires_authority_for_future_expansion():
     mod = load()
     by_track = {item["track"]: item for item in mod.NEXT_LADDER}
-    assert by_track["CONTROL_TOWER_RUNTIME_API"]["phase"] == 53
-    assert by_track["UNATTENDED_DISPATCH_POLICY"]["phase"] == 54
+    assert by_track["UNATTENDED_DRY_RUN_SCHEDULER"]["phase"] == 55
+    assert by_track["CONTROL_TOWER_POLICY_EDITOR"]["phase"] == 56
 
 
 def test_write_report_creates_artifacts(tmp_path):
