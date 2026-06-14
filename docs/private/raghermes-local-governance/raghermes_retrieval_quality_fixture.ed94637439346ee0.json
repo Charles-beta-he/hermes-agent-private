@@ -1,0 +1,358 @@
+{
+  "boundary": "fixture_only_temp_sqlite_no_live_db_write_no_external_side_effect",
+  "created_at": "2026-06-14T03:24:36.154113+00:00",
+  "evaluation": {
+    "case_count": 30,
+    "metrics": {
+      "AuthorityViolationRate": 0.0,
+      "ContextPrecision@5": 1.0,
+      "ExpectedTermCoverage": 1.0,
+      "MRR@10": 1.0,
+      "ProvenanceCompleteness": 1.0,
+      "Recall@10": 1.0,
+      "Recall@5": 1.0
+    },
+    "per_case": [
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-001",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-002",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-003",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-004",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-005",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-006",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-007",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-008",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-009",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-010",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-011",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-012",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-013",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-014",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-015",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-016",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-017",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-018",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-019",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-020",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-021",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-022",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-023",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-024",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-025",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-026",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-027",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-028",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-029",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      },
+      {
+        "authority_violation": false,
+        "context_precision_at_5": 1.0,
+        "expected_term_coverage": 1.0,
+        "id": "lb-rag-030",
+        "provenance_complete": true,
+        "rank": 1,
+        "recall_at_10": true,
+        "recall_at_5": true
+      }
+    ],
+    "status": "PASS",
+    "threshold_results": {
+      "AuthorityViolationRate": {
+        "actual": 0.0,
+        "status": "PASS",
+        "threshold": 0.0
+      },
+      "ContextPrecision@5": {
+        "actual": 1.0,
+        "status": "PASS",
+        "threshold": 0.6
+      },
+      "MRR@10": {
+        "actual": 1.0,
+        "status": "PASS",
+        "threshold": 0.65
+      },
+      "ProvenanceCompleteness": {
+        "actual": 1.0,
+        "status": "PASS",
+        "threshold": 1.0
+      },
+      "Recall@5": {
+        "actual": 1.0,
+        "status": "PASS",
+        "threshold": 0.75
+      }
+    }
+  },
+  "fixture_path": "/Users/charles/.hermes/hermes-agent/evals/cases/local-brain-rag-retrieval-benchmark-v0.json",
+  "fixture_schema": "hermes_local_brain_rag_retrieval_benchmark_v0",
+  "fixture_sha256": "sha256:3c38482adab2dfc77b3a5fe0be2cfb1f56a5ad08c096c37503cf93f853eded5c",
+  "next_safe_slice": "Wire this fixture-only evaluator into the local governance projection or compare it against read-only live retrieval candidates after a separate human gate.",
+  "red_lines": [
+    "candidate retrieval is not taskpool/proof/lifecycle authority",
+    "no hosted embedding/rerank upload for private brain/session/task data",
+    "no daemon/vector-db/app install in this benchmark",
+    "all answers must cite original source path/session/message/line provenance"
+  ],
+  "report_hash": "sha256:ed94637439346ee0a48102ff669707418e14b8b93ebe36d257e3e281d025dd27",
+  "report_type": "raghermes_fixture_retrieval_quality"
+}
