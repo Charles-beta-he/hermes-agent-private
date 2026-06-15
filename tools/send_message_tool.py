@@ -1094,7 +1094,16 @@ async def _send_telegram(token, chat_id, message, media_files=None, thread_id=No
         if warnings:
             result["warnings"] = warnings
         return result
-    except ImportError:
+    except ImportError as e:
+        # Only the initial Telegram SDK import should produce the dependency
+        # guidance.  ImportError can also be raised later by formatting/proxy/
+        # send helpers after the SDK import has already succeeded; collapsing
+        # those into "python-telegram-bot not installed" hides the real root
+        # cause from cron delivery diagnostics.
+        import sys as _sys
+
+        if "telegram" in _sys.modules and "telegram.constants" in _sys.modules:
+            return _error(f"Telegram send failed: {e}")
         return {"error": "python-telegram-bot not installed. Run: pip install python-telegram-bot"}
     except Exception as e:
         return _error(f"Telegram send failed: {e}")

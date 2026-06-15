@@ -155,3 +155,50 @@ class TestSendTelegramStandaloneProxy:
         assert "get_updates_request" not in call_kwargs
         httpx_request_factory.assert_not_called()
         bot.send_message.assert_awaited_once()
+
+    def test_downstream_importerror_is_reported_as_send_failure_not_missing_sdk(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An ImportError raised after the Telegram SDK import succeeds should
+        not be collapsed into the misleading "python-telegram-bot not installed"
+        dependency message.
+        """
+        from tools import send_message_tool
+
+        for var in (
+            "TELEGRAM_PROXY",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("gateway.run._gateway_runner_ref", lambda: None)
+
+        bot = _make_bot()
+        bot_factory = MagicMock(return_value=bot)
+        httpx_request_factory = MagicMock(side_effect=lambda **kw: MagicMock(_kw=kw))
+        _install_telegram_mock_with_request(monkeypatch, bot_factory, httpx_request_factory)
+
+        async def _raise_importerror(*_args: Any, **_kwargs: Any) -> None:
+            raise ImportError("formatter exploded")
+
+        monkeypatch.setattr(
+            send_message_tool,
+            "_send_telegram_message_with_retry",
+            _raise_importerror,
+        )
+
+        result: dict[str, Any] = asyncio.run(
+            send_message_tool._send_telegram("tok", "123", "hello world")
+        )
+
+        assert "error" in result
+        assert "Telegram send failed" in result["error"]
+        assert "formatter exploded" in result["error"]
+        assert "python-telegram-bot not installed" not in result["error"]
