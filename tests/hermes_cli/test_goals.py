@@ -328,6 +328,30 @@ class TestGoalManager:
         )
         assert any("custody" in node["permission_boundary"] for node in stablecoin_plan["nodes"])
 
+    def test_agent_role_topology_fixture_compiles_to_dag_without_deploy_execution(self):
+        from hermes_cli.goals import (
+            build_goal_spec,
+            compile_workflow_plan_v1,
+            get_agent_role_topology_fixture,
+        )
+
+        fixture = get_agent_role_topology_fixture("openclaw_video_v1")
+        spec = build_goal_spec("self-refactor Hermes workflow kernel with evidence", max_turns=20)
+        plan = compile_workflow_plan_v1(spec, role_topology=fixture)
+
+        assert plan["schema"] == "workflow_plan_v1"
+        assert plan["execution_enabled"] is False
+        role_nodes = [node for node in plan["nodes"] if node["kind"] == "agent_role"]
+        assert [node["role"] for node in role_nodes] == ["planner", "coder", "tester", "reviewer", "deploy"]
+        deploy = role_nodes[-1]
+        assert deploy["execute"] is False
+        assert deploy["human_gate_required"] is True
+        assert deploy["permission_boundary"] == "external_side_effect_human_gate"
+        assert "role:reviewer" in deploy["depends_on"]
+        assert all(node["evidence_required"] for node in role_nodes)
+        assert fixture["source_verification"]["openclaw_repo_verified"] is True
+        assert fixture["source_verification"]["niuma_public_source"] == "not_verified"
+
     def test_set_rejects_empty(self, hermes_home):
         from hermes_cli.goals import GoalManager
 

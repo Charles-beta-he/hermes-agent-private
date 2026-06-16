@@ -513,10 +513,83 @@ def get_social_pain_insight_fixture(category: str) -> Dict[str, Any]:
         raise ValueError(f"unknown social pain fixture category: {category!r}; known: {known}") from exc
 
 
+_AGENT_ROLE_TOPOLOGIES: Dict[str, Dict[str, Any]] = {
+    "openclaw_video_v1": {
+        "schema": "agent_role_topology_v1",
+        "id": "openclaw_video_v1",
+        "source_report": "artifact:/Users/charles/.hermes/docs/private/wechat-video-niuma-openclaw-multi-agent-analysis-20260616.md",
+        "source_verification": {
+            "openclaw_repo_verified": True,
+            "openclaw_repo": "https://github.com/openclaw/openclaw",
+            "openclaw_api_checked_at": "2026-06-16T13:55:00+08:00",
+            "niuma_public_source": "not_verified",
+            "media_claim_metrics": "video_only_not_accepted_as_fact",
+        },
+        "roles": [
+            {
+                "role": "planner",
+                "title": "Planner",
+                "inputs": ["goal_spec", "constraints", "source_evidence"],
+                "outputs": ["implementation_plan", "role_dag"],
+                "evidence_contract": ["plan references success criteria", "permission boundaries listed"],
+                "depends_on": [],
+                "permission_boundary": "evidence_only",
+            },
+            {
+                "role": "coder",
+                "title": "Coder",
+                "inputs": ["implementation_plan", "repo_context"],
+                "outputs": ["patch_proposal", "changed_files"],
+                "evidence_contract": ["diff artifact", "scope summary"],
+                "depends_on": ["planner"],
+                "permission_boundary": "local_patch_only",
+            },
+            {
+                "role": "tester",
+                "title": "Tester",
+                "inputs": ["patch_proposal", "test_plan"],
+                "outputs": ["test_results", "failure_taxonomy"],
+                "evidence_contract": ["test command output", "failure classification"],
+                "depends_on": ["coder"],
+                "permission_boundary": "local_test_only",
+            },
+            {
+                "role": "reviewer",
+                "title": "Reviewer",
+                "inputs": ["patch_proposal", "test_results", "source_evidence"],
+                "outputs": ["review_decision", "risk_notes"],
+                "evidence_contract": ["claim-level evidence", "regression risk assessment"],
+                "depends_on": ["tester"],
+                "permission_boundary": "review_only",
+            },
+            {
+                "role": "deploy",
+                "title": "Deploy",
+                "inputs": ["approved_review", "rollback_plan"],
+                "outputs": ["deployment_receipt", "readback_evidence"],
+                "evidence_contract": ["explicit authority", "rollback/readback proof"],
+                "depends_on": ["reviewer"],
+                "permission_boundary": "external_side_effect_human_gate",
+            },
+        ],
+    }
+}
+
+
+def get_agent_role_topology_fixture(name: str) -> Dict[str, Any]:
+    key = (name or "").strip().lower().replace("-", "_")
+    try:
+        return json.loads(json.dumps(_AGENT_ROLE_TOPOLOGIES[key]))
+    except KeyError as exc:
+        known = ", ".join(sorted(_AGENT_ROLE_TOPOLOGIES))
+        raise ValueError(f"unknown agent role topology fixture: {name!r}; known: {known}") from exc
+
+
 def compile_workflow_plan_v1(
     goal_spec: Dict[str, Any],
     *,
     pain_clusters: Optional[List[Dict[str, Any]]] = None,
+    role_topology: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Compile a GoalSpec into an inspectable, non-executing workflow plan.
 
@@ -551,6 +624,32 @@ def compile_workflow_plan_v1(
                 "rollback_boundary": "not_applicable_dry_run_only",
             }
         )
+
+    if role_topology:
+        if role_topology.get("schema") != "agent_role_topology_v1":
+            raise ValueError("agent_role_topology_v1 dict required")
+        for role in role_topology.get("roles") or []:
+            role_name = str(role.get("role") or "unnamed")
+            boundary = str(role.get("permission_boundary") or "evidence_only")
+            nodes.append(
+                {
+                    "id": _stable_node_id(role_name, prefix="role"),
+                    "title": str(role.get("title") or role_name),
+                    "kind": "agent_role",
+                    "role": role_name,
+                    "depends_on": [_stable_node_id(dep, prefix="role") for dep in role.get("depends_on") or []],
+                    "inputs": list(role.get("inputs") or []),
+                    "outputs": list(role.get("outputs") or []),
+                    "evidence_contract": list(role.get("evidence_contract") or []),
+                    "permission_boundary": boundary,
+                    "human_gate_required": _requires_human_gate(boundary),
+                    "source_evidence": [role_topology.get("source_report")],
+                    "source_verification": role_topology.get("source_verification") or {},
+                    "evidence_required": True,
+                    "execute": False,
+                    "rollback_boundary": "not_applicable_dry_run_only",
+                }
+            )
 
     return {
         "schema": "workflow_plan_v1",
