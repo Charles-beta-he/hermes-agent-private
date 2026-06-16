@@ -354,6 +354,218 @@ def build_goal_spec(
     }
 
 
+def _stable_node_id(value: str, *, prefix: str = "node") -> str:
+    text = re.sub(r"[^a-zA-Z0-9_-]+", "-", (value or "").strip().lower()).strip("-")
+    return f"{prefix}:{text or 'unnamed'}"
+
+
+def _requires_human_gate(boundary: str) -> bool:
+    text = (boundary or "").lower()
+    gate_terms = [
+        "human_gate", "no_bypass", "external", "payment", "deploy", "signing",
+        "custody", "login", "2fa", "write", "secret", "anti_bot", "captcha", "cloudflare",
+    ]
+    return any(term in text for term in gate_terms)
+
+
+_SOCIAL_PAIN_FIXTURES: Dict[str, Dict[str, Any]] = {
+    "developer_agent": {
+        "category": "developer_agent",
+        "source_report": "artifact:/Users/charles/Desktop/folder/developer_agent_ai_coding_pain_insights_public_dry_run.md",
+        "pain_clusters": [
+            {
+                "id": "developer-cost-control",
+                "title": "成本不可预测、token/配额消耗过快",
+                "state_object": "agent_task_budget",
+                "failure_mode": "unbounded_retry_or_context_bloat",
+                "permission_boundary": "budget_hard_stop",
+                "source_evidence": [
+                    {"url": "https://news.ycombinator.com/item?id=47623434", "excerpt": "quota is finished"},
+                    {"url": "https://github.com/cline/cline/pull/10329", "excerpt": "spend limits"},
+                ],
+                "opportunity_score": 90,
+            },
+            {
+                "id": "developer-context-lifecycle",
+                "title": "上下文窗口/生命周期管理差",
+                "state_object": "conversation_context",
+                "failure_mode": "stale_or_bloated_context",
+                "permission_boundary": "evidence_only",
+                "source_evidence": [
+                    {"url": "https://github.com/Aider-AI/aider/issues/5071", "excerpt": "manually calls /drop"},
+                    {"url": "https://github.com/cline/cline/pull/11365", "excerpt": "terminal output context bloat"},
+                ],
+                "opportunity_score": 90,
+            },
+            {
+                "id": "developer-permission-security",
+                "title": "安全、隐私、权限边界阻碍采用",
+                "state_object": "tool_permission_boundary",
+                "failure_mode": "prompt_injection_or_secret_exfiltration",
+                "permission_boundary": "secret_network_shell_human_gate",
+                "source_evidence": [
+                    {"url": "https://www.anthropic.com/engineering/claude-code-sandboxing", "excerpt": "filesystem and network isolation"},
+                    {"url": "https://cursor.com/security", "excerpt": "Privacy Mode"},
+                ],
+                "opportunity_score": 80,
+            },
+        ],
+    },
+    "browser_automation": {
+        "category": "browser_automation",
+        "source_report": "artifact:/Users/charles/Desktop/folder/browser_automation_public_pain_insight_dryrun.md",
+        "pain_clusters": [
+            {
+                "id": "browser-anti-bot-boundary",
+                "title": "CAPTCHA / Cloudflare / 反爬阻断",
+                "state_object": "browser_session",
+                "failure_mode": "access_control_block",
+                "permission_boundary": "human_gate_no_bypass_captcha_cloudflare",
+                "source_evidence": [
+                    {"url": "https://github.com/browser-use/browser-use/issues/4209", "excerpt": "CAPTCHA solving only works"},
+                    {"url": "https://github.com/microsoft/playwright/issues/38704", "excerpt": "bypass the Cloudflare security check"},
+                ],
+                "opportunity_score": 88,
+            },
+            {
+                "id": "browser-flaky-timeout-locator",
+                "title": "等待、超时、locator/DOM 变化导致 flaky",
+                "state_object": "browser_trace",
+                "failure_mode": "flaky_wait_or_locator_drift",
+                "permission_boundary": "rate_limit_safe_retry",
+                "source_evidence": [
+                    {"url": "https://github.com/microsoft/playwright/issues/40681", "excerpt": "close to their timeout limit"},
+                    {"url": "https://github.com/SeleniumHQ/selenium/issues/15314", "excerpt": "custom sleep interval"},
+                ],
+                "opportunity_score": 82,
+            },
+            {
+                "id": "browser-login-write-risk",
+                "title": "登录态、2FA、写操作风险",
+                "state_object": "authenticated_browser_profile",
+                "failure_mode": "credential_or_write_action_risk",
+                "permission_boundary": "login_2fa_write_human_gate",
+                "source_evidence": [
+                    {"url": "https://raw.githubusercontent.com/microsoft/playwright/main/docs/src/auth.md", "excerpt": "sensitive cookies and headers"},
+                    {"url": "https://developers.openai.com/api/docs/guides/tools-computer-use", "excerpt": "confirm before typing or submitting"},
+                ],
+                "opportunity_score": 90,
+            },
+        ],
+    },
+    "stablecoin_payment": {
+        "category": "stablecoin_payment",
+        "source_report": "artifact:/Users/charles/Desktop/folder/stablecoin_wallet_payment_public_pain_dryrun.md",
+        "pain_clusters": [
+            {
+                "id": "stablecoin-withdrawal-hold",
+                "title": "入金/买币后可买不可提、提现冻结",
+                "state_object": "withdrawable_balance",
+                "failure_mode": "payment_sla_hold",
+                "permission_boundary": "read_only_no_hold_bypass",
+                "source_evidence": [
+                    {"url": "https://support.kraken.com/articles/360000380966-why-is-my-deposit-or-withdrawal-on-hold-", "excerpt": "temporary (72 hour) withdrawal hold"},
+                    {"url": "https://support.kraken.com/articles/360000381966-unable-to-withdraw-funds", "excerpt": "Unable to withdraw funds"},
+                ],
+                "opportunity_score": 82,
+            },
+            {
+                "id": "stablecoin-gas-pending-failed",
+                "title": "pending / failed / gas 不足导致付款失败",
+                "state_object": "wallet_transaction_state",
+                "failure_mode": "pending_or_insufficient_native_token",
+                "permission_boundary": "read_only_no_signing_no_custody",
+                "source_evidence": [
+                    {"url": "https://support.metamask.io/manage-crypto/transactions/how-to-speed-up-or-cancel-a-pending-transaction/", "excerpt": "speed up or cancel a pending transaction"},
+                    {"url": "https://support.metamask.io/configure/transactions/how-to-fix-insufficient-funds-error-or-greyed-out-confirm-button/", "excerpt": "insufficient amount of the native token"},
+                ],
+                "opportunity_score": 88,
+            },
+            {
+                "id": "stablecoin-custody-scam-risk",
+                "title": "助记词泄露、假客服、钱包被 drain",
+                "state_object": "self_custody_wallet_security",
+                "failure_mode": "seed_phrase_social_engineering",
+                "permission_boundary": "custody_signing_secret_human_gate",
+                "source_evidence": [
+                    {"url": "https://support.metamask.io/stay-safe/protect-yourself/ive-been-hacked-scammed-unauthorized-transactions-on-my-account/", "excerpt": "Never give it to anyone"},
+                    {"url": "https://support.metamask.io/stay-safe/protect-yourself/social-engineering/spoofing-scams/", "excerpt": "drain your wallet of funds"},
+                ],
+                "opportunity_score": 84,
+            },
+        ],
+    },
+}
+
+
+def get_social_pain_insight_fixture(category: str) -> Dict[str, Any]:
+    """Return a built-in public-source pain-insight fixture by category.
+
+    Fixtures are intentionally small, static, and evidence-referenced. They are
+    suitable for workflow compiler tests and dry-run planning, not for market
+    sizing or live scraping.
+    """
+    key = (category or "").strip().lower().replace("-", "_")
+    try:
+        return json.loads(json.dumps(_SOCIAL_PAIN_FIXTURES[key]))
+    except KeyError as exc:
+        known = ", ".join(sorted(_SOCIAL_PAIN_FIXTURES))
+        raise ValueError(f"unknown social pain fixture category: {category!r}; known: {known}") from exc
+
+
+def compile_workflow_plan_v1(
+    goal_spec: Dict[str, Any],
+    *,
+    pain_clusters: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Compile a GoalSpec into an inspectable, non-executing workflow plan.
+
+    The compiler is deliberately dry-run only: it creates DAG-like nodes that
+    preserve evidence and permission boundaries, but it never dispatches
+    workers, mutates taskpool/mission/cron state, or opens external side
+    effects. ``pain_clusters`` is the first consumer: public-source research
+    fixtures become evidence-bound plan nodes.
+    """
+    if not isinstance(goal_spec, dict) or goal_spec.get("schema") != "goal_spec_v1":
+        raise ValueError("goal_spec_v1 dict required")
+
+    nodes: List[Dict[str, Any]] = []
+    for idx, cluster in enumerate(pain_clusters or [], start=1):
+        cluster_id = str(cluster.get("id") or f"pain-{idx}")
+        evidence = cluster.get("source_evidence") or []
+        boundary = str(cluster.get("permission_boundary") or "")
+        nodes.append(
+            {
+                "id": _stable_node_id(cluster_id, prefix="pain"),
+                "title": str(cluster.get("title") or cluster_id),
+                "kind": "pain_cluster_fixture",
+                "depends_on": [],
+                "state_object": str(cluster.get("state_object") or "unknown"),
+                "failure_mode": str(cluster.get("failure_mode") or "unknown"),
+                "permission_boundary": boundary or "evidence_only",
+                "human_gate_required": _requires_human_gate(boundary),
+                "opportunity_score": cluster.get("opportunity_score"),
+                "source_evidence": evidence,
+                "evidence_required": True,
+                "execute": False,
+                "rollback_boundary": "not_applicable_dry_run_only",
+            }
+        )
+
+    return {
+        "schema": "workflow_plan_v1",
+        "dry_run": True,
+        "execution_enabled": False,
+        "goal_spec": goal_spec,
+        "target_layer": goal_spec.get("target_layer") or "session",
+        "nodes": nodes,
+        "safety_boundary": (
+            "Dry-run plan only; no external side effects, no worker dispatch, "
+            "no lifecycle mutation, no taskpool/mission/cron writes."
+        ),
+    }
+
+
 def clear_goal(session_id: str) -> None:
     """Mark a goal cleared in the DB (preserved for audit, status=cleared)."""
     state = load_goal(session_id)

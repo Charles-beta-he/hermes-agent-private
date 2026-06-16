@@ -244,6 +244,90 @@ class TestGoalManager:
         assert goal_route_decision("每天早上 9 点发日报").target_layer == "cron"
         assert goal_route_decision("部署到生产并付款购买服务").target_layer == "human_gate"
 
+    def test_compile_workflow_plan_v1_keeps_social_pain_fixtures_dry_run_and_evidence_bound(self):
+        from hermes_cli.goals import build_goal_spec, compile_workflow_plan_v1
+
+        spec = build_goal_spec(
+            "把 developer Agent 工具痛点接入 workflow_plan_v1",
+            max_turns=20,
+            success_criteria=["cost/context/reliability fixtures are inspectable"],
+        )
+        clusters = [
+            {
+                "id": "developer-cost-control",
+                "title": "成本不可预测、token/配额消耗过快",
+                "state_object": "agent_task_budget",
+                "failure_mode": "unbounded_retry_or_context_bloat",
+                "permission_boundary": "budget_hard_stop",
+                "source_evidence": [
+                    {"url": "https://news.ycombinator.com/item?id=47623434", "excerpt": "quota is finished"},
+                    {"url": "https://github.com/cline/cline/pull/10329", "excerpt": "spend limits"},
+                ],
+                "opportunity_score": 90,
+            },
+            {
+                "id": "browser-anti-bot-boundary",
+                "title": "CAPTCHA / Cloudflare 阻断",
+                "state_object": "browser_session",
+                "failure_mode": "access_control_block",
+                "permission_boundary": "human_gate_no_bypass",
+                "source_evidence": [
+                    {"url": "https://github.com/browser-use/browser-use/issues/4209", "excerpt": "CAPTCHA solving only works"},
+                ],
+                "opportunity_score": 88,
+            },
+        ]
+
+        plan = compile_workflow_plan_v1(spec, pain_clusters=clusters)
+
+        assert plan["schema"] == "workflow_plan_v1"
+        assert plan["dry_run"] is True
+        assert plan["execution_enabled"] is False
+        assert plan["target_layer"] == "taskpool"
+        assert [node["id"] for node in plan["nodes"]] == [
+            "pain:developer-cost-control",
+            "pain:browser-anti-bot-boundary",
+        ]
+        for node in plan["nodes"]:
+            assert node["evidence_required"] is True
+            assert node["execute"] is False
+            assert node["source_evidence"]
+        assert plan["nodes"][1]["human_gate_required"] is True
+        assert "no external side effects" in plan["safety_boundary"].lower()
+
+    def test_builtin_social_pain_fixtures_compile_for_developer_browser_and_stablecoin(self):
+        from hermes_cli.goals import (
+            build_goal_spec,
+            compile_workflow_plan_v1,
+            get_social_pain_insight_fixture,
+        )
+
+        categories = ["developer_agent", "browser_automation", "stablecoin_payment"]
+        for category in categories:
+            fixture = get_social_pain_insight_fixture(category)
+            assert fixture["category"] == category
+            assert fixture["source_report"].startswith("artifact:")
+            assert len(fixture["pain_clusters"]) >= 3
+            assert all(cluster["source_evidence"] for cluster in fixture["pain_clusters"])
+
+            spec = build_goal_spec(f"compile {category} fixture", max_turns=20)
+            plan = compile_workflow_plan_v1(spec, pain_clusters=fixture["pain_clusters"])
+            assert plan["schema"] == "workflow_plan_v1"
+            assert plan["execution_enabled"] is False
+            assert len(plan["nodes"]) == len(fixture["pain_clusters"])
+
+        browser_plan = compile_workflow_plan_v1(
+            build_goal_spec("browser harness safety fixture", max_turns=20),
+            pain_clusters=get_social_pain_insight_fixture("browser_automation")["pain_clusters"],
+        )
+        assert any(node["human_gate_required"] for node in browser_plan["nodes"])
+
+        stablecoin_plan = compile_workflow_plan_v1(
+            build_goal_spec("stablecoin preflight fixture", max_turns=20),
+            pain_clusters=get_social_pain_insight_fixture("stablecoin_payment")["pain_clusters"],
+        )
+        assert any("custody" in node["permission_boundary"] for node in stablecoin_plan["nodes"])
+
     def test_set_rejects_empty(self, hermes_home):
         from hermes_cli.goals import GoalManager
 
