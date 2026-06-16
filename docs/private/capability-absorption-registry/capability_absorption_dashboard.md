@@ -1,19 +1,50 @@
 # Capability Absorption progress
 
-Generated: `2026-06-16T06:22:45.368418+00:00`
+Generated: `2026-06-16T07:42:24.852513+00:00`
 
 ## Summary
 
-- Records: **189**
-- Open: **2**
-- Status: `{"active": 1, "archived": 35, "done": 151, "pending": 1, "ready": 1}`
-- Layers: `{"module": 166, "workflow_pattern": 23}`
-- Target surfaces: `{"core": 2, "local-brain": 112, "provider-quota": 2, "skill": 1, "skill-graph": 28, "taskpool": 44}`
+- Records: **220**
+- Open: **33**
+- Status: `{"active": 1, "archived": 35, "candidate": 31, "done": 151, "pending": 1, "ready": 1}`
+- Layers: `{"module": 197, "workflow_pattern": 23}`
+- Target surfaces: `{"core": 11, "local-brain": 116, "provider-quota": 2, "sidecar": 1, "skill": 1, "skill-graph": 33, "taskpool": 56}`
 
 ## Open absorption tasks
 
+- `candidate` `P1` **antigravity-artifact-bundle** — Complex tasks should emit reviewable artifacts: plan, diff, tests, screenshots/video, evidence, risks.
+- `candidate` `P1` **antigravity-browser-loop** — User-facing web/UI work should validate through browser DOM/screenshot/console evidence, not text-only claims.
+- `candidate` `P1` **antigravity-sandbox-terminal** — Risky shell execution should run in bounded workspace/sandbox mode with file/network damage limits.
+- `candidate` `P1` **antigravity-unified-permissions** — Agent actions should pass a single permission model for files, shell, network, browser, git, cron, and subagents.
+- `candidate` `P1` **google-cloud-context-engineering** — Context should be assembled from docs, preferences, links, history, and constraints with scoping/compression rules.
+- `candidate` `P1` **google-secure-agent-controller** — Every high-power agent/module should declare its human controller and approval boundary.
+- `candidate` `P1` **google-secure-agent-limited-powers** — Agent powers must be carefully limited through deterministic controls plus dynamic reasoning defenses.
+- `candidate` `P1` **google-secure-agent-observability** — Agent planning and actions must be observable through logs, traces, artifacts, and evidence contracts.
+- `candidate` `P1` **kiro-agent-hooks** — Pre/post tool, file, prompt, and task hooks should support quality/security checks without uncontrolled side effects.
+- `candidate` `P1` **kiro-hook-risk-policy** — Hooks need allow/deny/dry-run policy by event type, command class, workspace, and permission lease.
+- `candidate` `P1` **kiro-spec-triplet** — Complex Hermes tasks should materialize requirements.md/design.md/tasks.md equivalents before implementation.
+- `candidate` `P1` **kiro-steering-hierarchy** — Hermes project rules should distinguish global/workspace/task/manual/auto inclusion with workspace overriding global ...
+- `candidate` `P1` **openspec-proposal-delta** — Hermes should review intent deltas, not only code diffs, for complex capability changes.
+- `candidate` `P1` **superpowers-root-cause-debugging** — Bug work should prove root cause before fixes; mitigation-only changes must be labeled as such.
+- `candidate` `P1` **superpowers-skill-router** — Tasks should load relevant skills before response/execution, but bounded to avoid recursion and system-safety override.
+- `candidate` `P1` **superpowers-tdd-enforcer** — Behavior changes should prefer failing-test-first verification and delete/rework code that bypasses the test gate.
+- `candidate` `P1` **superpowers-verification-before-completion** — No completion claim without fresh verification command/output in the same work slice.
 - `ready` `P2` **2026-05-18-分析-sakana-ai-多模型指挥官理念并提炼-hermes-conductor-融入方案** — 让多模型编排从静态 tier/quorum 升级为证据化、角色化、模型画像驱动的 conductor 层：按模型强弱项分配 planner/critic/verifier/arbiter，并为每个模型注入短小稳定的 model-spe...
+- `candidate` `P2` **antigravity-agent-manager** — Manage multiple local agents by project/workspace with isolated context, permissions, outputs, and synthesis.
+- `candidate` `P2` **antigravity-visual-comments** — Screenshots/artifacts should accept targeted user feedback and map it back to task deltas.
+- `candidate` `P2` **google-adk-fanout-gather** — Parallel specialist agents should write to unique keys and aggregate through a synthesizer.
+- `candidate` `P2` **google-pair-explainability** — Hermes progress/explanations should give the user enough decision evidence without dumping internal reasoning.
+- `candidate` `P2` **kiro-agents-md-compat** — Project AGENTS.md rules should feed Hermes project context as scoped, untrusted workspace guidance, not global memory.
+- `candidate` `P2` **kiro-bug-analysis-spec** — Costly regressions should start from bug analysis, reproduction, design, and task artifact before code changes.
+- `candidate` `P2` **openspec-capability-spec-store** — Long-lived specs should live by capability next to code/docs so context survives chat/session boundaries.
+- `candidate` `P2` **openspec-opsx-actions** — Spec work should support propose/apply/update/archive as fluid actions rather than rigid waterfall phases.
+- `candidate` `P2` **openspec-project-config** — Project context/rules should be injected by artifact type and matching rules instead of global prompt dumping.
+- `candidate` `P2` **speckit-constitution** — Projects should have governing principles that constrain later specs/plans/tasks.
+- `candidate` `P2` **speckit-executable-spec** — Specs should become executable implementation inputs with traceable plan/tasks/implementation lineage.
+- `candidate` `P2` **superpowers-brainstorming-gate** — Creative/feature work should clarify intent and present design before implementation unless low-risk direct action is...
+- `candidate` `P2` **superpowers-fresh-subagent-per-task** — Independent plan tasks can use fresh subagents plus spec-compliance and code-quality review before merge.
 - `pending` `P2` **2026-06-16-评估-computer-use-agent-沙箱-基准设施对-hermes-浏览器自动化主链的可维护接入门** — 若通过验收，Hermes 可在浏览器/桌面自动化任务上获得更好的隔离实验、标准化评测与失败归因能力；若不通过，也能沉淀明确的拒绝依据和回退门。
+- `candidate` `P3` **antigravity-scheduled-agent-messages** — Scheduled messages can drive routine agent work if tied to evidence ledgers and human gates.
 
 ## Recent done
 

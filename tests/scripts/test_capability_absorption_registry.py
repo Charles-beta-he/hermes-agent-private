@@ -67,7 +67,7 @@ evidence_refs: ["url:https://github.com/browser-use/browser-use"]
 """,
     )
 
-    registry = mod.build_registry(tasks_dir=tasks)
+    registry = mod.build_registry(tasks_dir=tasks, supplemental_dir=None)
 
     assert registry["schema"] == "capability_absorption_registry_v1"
     assert registry["summary"]["record_count"] == 2
@@ -116,7 +116,7 @@ evidence_refs: ["url:https://github.com/niuma/openclaw"]
 # Task - OpenClaw absorption
 """,
     )
-    registry = mod.build_registry(tasks_dir=tasks)
+    registry = mod.build_registry(tasks_dir=tasks, supplemental_dir=None)
     artifacts = mod.write_artifacts(registry, tmp_path / "out")
 
     md = Path(artifacts["dashboard_md"]).read_text(encoding="utf-8")
@@ -127,3 +127,34 @@ evidence_refs: ["url:https://github.com/niuma/openclaw"]
     assert Path(artifacts["registry_json"]).exists()
     loaded = json.loads(Path(artifacts["registry_json"]).read_text(encoding="utf-8"))
     assert loaded["summary"]["open_count"] == 1
+
+
+def test_registry_loads_supplemental_module_candidates(tmp_path):
+    mod = load()
+    tasks = tmp_path / "tasks"
+    supp = tmp_path / "supplemental"
+    tasks.mkdir()
+    supp.mkdir()
+    (supp / "external.json").write_text(json.dumps({
+        "records": [
+            {
+                "id": "antigravity-artifact-verification",
+                "title": "Antigravity-style artifact verification bundle",
+                "status": "candidate",
+                "capability_claim": "Artifacts plus browser/video verification should become governed Hermes evidence bundles.",
+                "target_surface": "taskpool",
+                "integration_level": "evaluate",
+                "absorption_layer": "module",
+                "source_refs": ["url:https://antigravity.google/"],
+            }
+        ]
+    }), encoding="utf-8")
+
+    registry = mod.build_registry(tasks_dir=tasks, supplemental_dir=supp)
+
+    assert registry["summary"]["record_count"] == 1
+    assert registry["summary"]["open_count"] == 1
+    record = registry["records"][0]
+    assert record["task_id"] == "antigravity-artifact-verification"
+    assert record["supplemental"] is True
+    assert record["source_refs"] == ["url:https://antigravity.google/"]

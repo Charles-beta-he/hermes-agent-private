@@ -1,28 +1,30 @@
 {
   "schema": "capability_absorption_registry_v1",
-  "generated_at": "2026-06-16T06:22:45.368418+00:00",
+  "generated_at": "2026-06-16T07:42:24.852513+00:00",
   "tasks_dir": "/Users/charles/Documents/brain/05-实践与项目/tasks",
   "summary": {
-    "record_count": 189,
-    "open_count": 2,
+    "record_count": 220,
+    "open_count": 33,
     "by_status": {
       "active": 1,
       "archived": 35,
+      "candidate": 31,
       "done": 151,
       "pending": 1,
       "ready": 1
     },
     "by_absorption_layer": {
-      "module": 166,
+      "module": 197,
       "workflow_pattern": 23
     },
     "by_target_surface": {
-      "core": 2,
-      "local-brain": 112,
+      "core": 11,
+      "local-brain": 116,
       "provider-quota": 2,
+      "sidecar": 1,
       "skill": 1,
-      "skill-graph": 28,
-      "taskpool": 44
+      "skill-graph": 33,
+      "taskpool": 56
     }
   },
   "records": [
@@ -6675,7 +6677,7 @@
       "priority": "P2",
       "project": "hermes-agent",
       "architecture_target": "taskpool",
-      "updated": "2026-06-16T13:43:18+08:00",
+      "updated": "2026-06-16T15:08:03+08:00",
       "capability_claim": "若通过验收，Hermes 可在浏览器/桌面自动化任务上获得更好的隔离实验、标准化评测与失败归因能力；若不通过，也能沉淀明确的拒绝依据和回退门。",
       "target_surface": "taskpool",
       "integration_level": "evaluate",
@@ -6684,13 +6686,21 @@
         "proof:task-add-boundary",
         "artifact:/Users/charles/.hermes/tick-20260616-032957-457476-p21149-eaf8cb5e-8503f129/discussion_result.json",
         "proof:multimodel-writeback-boundary",
-        "artifact:/Users/charles/.hermes/tick-20260616-044259-678343-p48584-a4593aea-0e6b3d18/discussion_result.json"
+        "artifact:/Users/charles/.hermes/tick-20260616-044259-678343-p48584-a4593aea-0e6b3d18/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-063017-373060-p94030-4629be58-57ceffd4/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-063058-907627-p94634-591e938f-712bc7a8/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-064313-638877-p1679-86e71dc2-21ba343e/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-070011-398863-p7687-7e4cdd6e-4e9bce79/discussion_result.json"
       ],
       "evidence_refs": [
         "proof:task-add-boundary",
         "artifact:/Users/charles/.hermes/tick-20260616-032957-457476-p21149-eaf8cb5e-8503f129/discussion_result.json",
         "proof:multimodel-writeback-boundary",
-        "artifact:/Users/charles/.hermes/tick-20260616-044259-678343-p48584-a4593aea-0e6b3d18/discussion_result.json"
+        "artifact:/Users/charles/.hermes/tick-20260616-044259-678343-p48584-a4593aea-0e6b3d18/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-063017-373060-p94030-4629be58-57ceffd4/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-063058-907627-p94634-591e938f-712bc7a8/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-064313-638877-p1679-86e71dc2-21ba343e/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-070011-398863-p7687-7e4cdd6e-4e9bce79/discussion_result.json"
       ],
       "acceptance_criteria": [
         "Observable result is recorded in Proof Log.",
@@ -6754,9 +6764,992 @@
       "source_refs": [],
       "evidence_refs": [],
       "acceptance_criteria": []
+    },
+    {
+      "task_id": "antigravity-agent-manager",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Antigravity-style Agent Manager",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Manage multiple local agents by project/workspace with isolated context, permissions, outputs, and synthesis.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/",
+        "url:https://docs.cloud.google.com/architecture/choose-design-pattern-agentic-ai-system"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [
+        "agent identity ledger",
+        "per-agent permission scope",
+        "isolated output keys"
+      ],
+      "supplemental": true
+    },
+    {
+      "task_id": "antigravity-artifact-bundle",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Artifact + verification bundle",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Complex tasks should emit reviewable artifacts: plan, diff, tests, screenshots/video, evidence, risks.",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/",
+        "url:https://ai.google/responsibility/principles/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "antigravity-browser-loop",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Browser-in-the-loop validation",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "User-facing web/UI work should validate through browser DOM/screenshot/console evidence, not text-only claims.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [
+        "DOM readback",
+        "screenshot evidence",
+        "console/error capture"
+      ],
+      "supplemental": true
+    },
+    {
+      "task_id": "antigravity-visual-comments",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Visual artifact feedback loop",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "local-brain",
+      "updated": "",
+      "capability_claim": "Screenshots/artifacts should accept targeted user feedback and map it back to task deltas.",
+      "target_surface": "local-brain",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/",
+        "url:https://pair.withgoogle.com/guidebook/chapters/feedback-and-controls"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "antigravity-unified-permissions",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Unified permission model",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Agent actions should pass a single permission model for files, shell, network, browser, git, cron, and subagents.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/docs/agent-permissions",
+        "url:https://research.google/pubs/an-introduction-to-googles-approach-for-secure-ai-agents/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "antigravity-sandbox-terminal",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Sandboxed terminal executor",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "sidecar",
+      "updated": "",
+      "capability_claim": "Risky shell execution should run in bounded workspace/sandbox mode with file/network damage limits.",
+      "target_surface": "sidecar",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/docs/sandbox-mode"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "antigravity-scheduled-agent-messages",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Scheduled agent message workflows",
+      "status": "candidate",
+      "priority": "P3",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Scheduled messages can drive routine agent work if tied to evidence ledgers and human gates.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/product/antigravity-2"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-spec-triplet",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Kiro requirements-design-tasks triplet",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Complex Hermes tasks should materialize requirements.md/design.md/tasks.md equivalents before implementation.",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/specs/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-bug-analysis-spec",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Bug-analysis spec artifact",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Costly regressions should start from bug analysis, reproduction, design, and task artifact before code changes.",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/specs/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-steering-hierarchy",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Steering hierarchy and inclusion modes",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "skill-graph",
+      "updated": "",
+      "capability_claim": "Hermes project rules should distinguish global/workspace/task/manual/auto inclusion with workspace overriding global only in scope.",
+      "target_surface": "skill-graph",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/steering/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-agents-md-compat",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "AGENTS.md compatibility bridge",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "skill-graph",
+      "updated": "",
+      "capability_claim": "Project AGENTS.md rules should feed Hermes project context as scoped, untrusted workspace guidance, not global memory.",
+      "target_surface": "skill-graph",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/steering/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-agent-hooks",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Agent hooks governance",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Pre/post tool, file, prompt, and task hooks should support quality/security checks without uncontrolled side effects.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/hooks/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-hook-risk-policy",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Hook risk policy matrix",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Hooks need allow/deny/dry-run policy by event type, command class, workspace, and permission lease.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/hooks/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "openspec-proposal-delta",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "OpenSpec proposal/spec delta",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Hermes should review intent deltas, not only code diffs, for complex capability changes.",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/Fission-AI/OpenSpec",
+        "url:https://openspec.dev/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "openspec-capability-spec-store",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Capability-organized spec store",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "local-brain",
+      "updated": "",
+      "capability_claim": "Long-lived specs should live by capability next to code/docs so context survives chat/session boundaries.",
+      "target_surface": "local-brain",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://openspec.dev/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "openspec-opsx-actions",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "OPSX action workflow",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Spec work should support propose/apply/update/archive as fluid actions rather than rigid waterfall phases.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/opsx.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "openspec-project-config",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "OpenSpec-style project config injection",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "skill-graph",
+      "updated": "",
+      "capability_claim": "Project context/rules should be injected by artifact type and matching rules instead of global prompt dumping.",
+      "target_surface": "skill-graph",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/opsx.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "speckit-constitution",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Spec Kit constitution gate",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "local-brain",
+      "updated": "",
+      "capability_claim": "Projects should have governing principles that constrain later specs/plans/tasks.",
+      "target_surface": "local-brain",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/github/spec-kit"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "speckit-executable-spec",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Executable spec pipeline",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Specs should become executable implementation inputs with traceable plan/tasks/implementation lineage.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://raw.githubusercontent.com/github/spec-kit/main/spec-driven.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-skill-router",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Mandatory skill routing gate",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "skill-graph",
+      "updated": "",
+      "capability_claim": "Tasks should load relevant skills before response/execution, but bounded to avoid recursion and system-safety override.",
+      "target_surface": "skill-graph",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers",
+        "url:https://github.com/obra/superpowers/blob/main/skills/using-superpowers/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-brainstorming-gate",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Brainstorming/design approval gate",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Creative/feature work should clarify intent and present design before implementation unless low-risk direct action is clearly intended.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers/blob/main/skills/brainstorming/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-tdd-enforcer",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "RED-GREEN-REFACTOR enforcement",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Behavior changes should prefer failing-test-first verification and delete/rework code that bypasses the test gate.",
+      "target_surface": "core",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers/blob/main/skills/test-driven-development/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-root-cause-debugging",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Systematic root-cause debugging",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Bug work should prove root cause before fixes; mitigation-only changes must be labeled as such.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers/blob/main/skills/systematic-debugging/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-fresh-subagent-per-task",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Fresh subagent per task with two-stage review",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Independent plan tasks can use fresh subagents plus spec-compliance and code-quality review before merge.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers/blob/main/skills/subagent-driven-development/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-verification-before-completion",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Completion evidence gate",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "No completion claim without fresh verification command/output in the same work slice.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-secure-agent-controller",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Human controller invariant",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Every high-power agent/module should declare its human controller and approval boundary.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://research.google/pubs/an-introduction-to-googles-approach-for-secure-ai-agents/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-secure-agent-limited-powers",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Limited powers invariant",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Agent powers must be carefully limited through deterministic controls plus dynamic reasoning defenses.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://research.google/pubs/an-introduction-to-googles-approach-for-secure-ai-agents/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-secure-agent-observability",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Plan/action observability invariant",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Agent planning and actions must be observable through logs, traces, artifacts, and evidence contracts.",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://research.google/pubs/an-introduction-to-googles-approach-for-secure-ai-agents/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-cloud-context-engineering",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Context engineering layer",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "skill-graph",
+      "updated": "",
+      "capability_claim": "Context should be assembled from docs, preferences, links, history, and constraints with scoping/compression rules.",
+      "target_surface": "skill-graph",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://docs.cloud.google.com/architecture/choose-design-pattern-agentic-ai-system"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-adk-fanout-gather",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Parallel fan-out/gather pattern",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Parallel specialist agents should write to unique keys and aggregate through a synthesizer.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://developers.googleblog.com/developers-guide-to-multi-agent-patterns-in-adk/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-pair-explainability",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Explain-for-understanding progress UI",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "local-brain",
+      "updated": "",
+      "capability_claim": "Hermes progress/explanations should give the user enough decision evidence without dumping internal reasoning.",
+      "target_surface": "local-brain",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://pair.withgoogle.com/guidebook/chapters/trust-and-explanations",
+        "url:https://pair.withgoogle.com/guidebook/chapters/feedback-and-controls"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
     }
   ],
   "open_records": [
+    {
+      "task_id": "antigravity-artifact-bundle",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Artifact + verification bundle",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Complex tasks should emit reviewable artifacts: plan, diff, tests, screenshots/video, evidence, risks.",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/",
+        "url:https://ai.google/responsibility/principles/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "antigravity-browser-loop",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Browser-in-the-loop validation",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "User-facing web/UI work should validate through browser DOM/screenshot/console evidence, not text-only claims.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [
+        "DOM readback",
+        "screenshot evidence",
+        "console/error capture"
+      ],
+      "supplemental": true
+    },
+    {
+      "task_id": "antigravity-sandbox-terminal",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Sandboxed terminal executor",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "sidecar",
+      "updated": "",
+      "capability_claim": "Risky shell execution should run in bounded workspace/sandbox mode with file/network damage limits.",
+      "target_surface": "sidecar",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/docs/sandbox-mode"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "antigravity-unified-permissions",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Unified permission model",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Agent actions should pass a single permission model for files, shell, network, browser, git, cron, and subagents.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/docs/agent-permissions",
+        "url:https://research.google/pubs/an-introduction-to-googles-approach-for-secure-ai-agents/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-cloud-context-engineering",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Context engineering layer",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "skill-graph",
+      "updated": "",
+      "capability_claim": "Context should be assembled from docs, preferences, links, history, and constraints with scoping/compression rules.",
+      "target_surface": "skill-graph",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://docs.cloud.google.com/architecture/choose-design-pattern-agentic-ai-system"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-secure-agent-controller",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Human controller invariant",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Every high-power agent/module should declare its human controller and approval boundary.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://research.google/pubs/an-introduction-to-googles-approach-for-secure-ai-agents/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-secure-agent-limited-powers",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Limited powers invariant",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Agent powers must be carefully limited through deterministic controls plus dynamic reasoning defenses.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://research.google/pubs/an-introduction-to-googles-approach-for-secure-ai-agents/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-secure-agent-observability",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Plan/action observability invariant",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Agent planning and actions must be observable through logs, traces, artifacts, and evidence contracts.",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://research.google/pubs/an-introduction-to-googles-approach-for-secure-ai-agents/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-agent-hooks",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Agent hooks governance",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Pre/post tool, file, prompt, and task hooks should support quality/security checks without uncontrolled side effects.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/hooks/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-hook-risk-policy",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Hook risk policy matrix",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Hooks need allow/deny/dry-run policy by event type, command class, workspace, and permission lease.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/hooks/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-spec-triplet",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Kiro requirements-design-tasks triplet",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Complex Hermes tasks should materialize requirements.md/design.md/tasks.md equivalents before implementation.",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/specs/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-steering-hierarchy",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Steering hierarchy and inclusion modes",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "skill-graph",
+      "updated": "",
+      "capability_claim": "Hermes project rules should distinguish global/workspace/task/manual/auto inclusion with workspace overriding global only in scope.",
+      "target_surface": "skill-graph",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/steering/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "openspec-proposal-delta",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "OpenSpec proposal/spec delta",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Hermes should review intent deltas, not only code diffs, for complex capability changes.",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/Fission-AI/OpenSpec",
+        "url:https://openspec.dev/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-root-cause-debugging",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Systematic root-cause debugging",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Bug work should prove root cause before fixes; mitigation-only changes must be labeled as such.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers/blob/main/skills/systematic-debugging/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-skill-router",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Mandatory skill routing gate",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "skill-graph",
+      "updated": "",
+      "capability_claim": "Tasks should load relevant skills before response/execution, but bounded to avoid recursion and system-safety override.",
+      "target_surface": "skill-graph",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers",
+        "url:https://github.com/obra/superpowers/blob/main/skills/using-superpowers/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-tdd-enforcer",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "RED-GREEN-REFACTOR enforcement",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "Behavior changes should prefer failing-test-first verification and delete/rework code that bypasses the test gate.",
+      "target_surface": "core",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers/blob/main/skills/test-driven-development/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-verification-before-completion",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Completion evidence gate",
+      "status": "candidate",
+      "priority": "P1",
+      "project": "hermes-agent",
+      "architecture_target": "core",
+      "updated": "",
+      "capability_claim": "No completion claim without fresh verification command/output in the same work slice.",
+      "target_surface": "core",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
     {
       "task_id": "2026-05-18-分析-sakana-ai-多模型指挥官理念并提炼-hermes-conductor-融入方案",
       "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-05-18-分析-sakana-ai-多模型指挥官理念并提炼-hermes-conductor-融入方案.md",
@@ -6782,6 +7775,273 @@
       ]
     },
     {
+      "task_id": "antigravity-agent-manager",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Antigravity-style Agent Manager",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Manage multiple local agents by project/workspace with isolated context, permissions, outputs, and synthesis.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/",
+        "url:https://docs.cloud.google.com/architecture/choose-design-pattern-agentic-ai-system"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [
+        "agent identity ledger",
+        "per-agent permission scope",
+        "isolated output keys"
+      ],
+      "supplemental": true
+    },
+    {
+      "task_id": "antigravity-visual-comments",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Visual artifact feedback loop",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "local-brain",
+      "updated": "",
+      "capability_claim": "Screenshots/artifacts should accept targeted user feedback and map it back to task deltas.",
+      "target_surface": "local-brain",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/",
+        "url:https://pair.withgoogle.com/guidebook/chapters/feedback-and-controls"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-adk-fanout-gather",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Parallel fan-out/gather pattern",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Parallel specialist agents should write to unique keys and aggregate through a synthesizer.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://developers.googleblog.com/developers-guide-to-multi-agent-patterns-in-adk/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "google-pair-explainability",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Explain-for-understanding progress UI",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "local-brain",
+      "updated": "",
+      "capability_claim": "Hermes progress/explanations should give the user enough decision evidence without dumping internal reasoning.",
+      "target_surface": "local-brain",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://pair.withgoogle.com/guidebook/chapters/trust-and-explanations",
+        "url:https://pair.withgoogle.com/guidebook/chapters/feedback-and-controls"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-agents-md-compat",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "AGENTS.md compatibility bridge",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "skill-graph",
+      "updated": "",
+      "capability_claim": "Project AGENTS.md rules should feed Hermes project context as scoped, untrusted workspace guidance, not global memory.",
+      "target_surface": "skill-graph",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/steering/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "kiro-bug-analysis-spec",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Bug-analysis spec artifact",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Costly regressions should start from bug analysis, reproduction, design, and task artifact before code changes.",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://kiro.dev/docs/specs/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "openspec-capability-spec-store",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Capability-organized spec store",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "local-brain",
+      "updated": "",
+      "capability_claim": "Long-lived specs should live by capability next to code/docs so context survives chat/session boundaries.",
+      "target_surface": "local-brain",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://openspec.dev/"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "openspec-opsx-actions",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "OPSX action workflow",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Spec work should support propose/apply/update/archive as fluid actions rather than rigid waterfall phases.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/opsx.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "openspec-project-config",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "OpenSpec-style project config injection",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "skill-graph",
+      "updated": "",
+      "capability_claim": "Project context/rules should be injected by artifact type and matching rules instead of global prompt dumping.",
+      "target_surface": "skill-graph",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/opsx.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "speckit-constitution",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Spec Kit constitution gate",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "local-brain",
+      "updated": "",
+      "capability_claim": "Projects should have governing principles that constrain later specs/plans/tasks.",
+      "target_surface": "local-brain",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/github/spec-kit"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "speckit-executable-spec",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Executable spec pipeline",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Specs should become executable implementation inputs with traceable plan/tasks/implementation lineage.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://raw.githubusercontent.com/github/spec-kit/main/spec-driven.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-brainstorming-gate",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Brainstorming/design approval gate",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Creative/feature work should clarify intent and present design before implementation unless low-risk direct action is clearly intended.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers/blob/main/skills/brainstorming/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
+      "task_id": "superpowers-fresh-subagent-per-task",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Fresh subagent per task with two-stage review",
+      "status": "candidate",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Independent plan tasks can use fresh subagents plus spec-compliance and code-quality review before merge.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://github.com/obra/superpowers/blob/main/skills/subagent-driven-development/SKILL.md"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
+    },
+    {
       "task_id": "2026-06-16-评估-computer-use-agent-沙箱-基准设施对-hermes-浏览器自动化主链的可维护接入门",
       "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-16-评估-computer-use-agent-沙箱-基准设施对-hermes-浏览器自动化主链的可维护接入门.md",
       "title": "Task - 评估 computer-use agent 沙箱/基准设施对 Hermes 浏览器自动化主链的可维护接入门",
@@ -6789,7 +8049,7 @@
       "priority": "P2",
       "project": "hermes-agent",
       "architecture_target": "taskpool",
-      "updated": "2026-06-16T13:43:18+08:00",
+      "updated": "2026-06-16T15:08:03+08:00",
       "capability_claim": "若通过验收，Hermes 可在浏览器/桌面自动化任务上获得更好的隔离实验、标准化评测与失败归因能力；若不通过，也能沉淀明确的拒绝依据和回退门。",
       "target_surface": "taskpool",
       "integration_level": "evaluate",
@@ -6798,18 +8058,46 @@
         "proof:task-add-boundary",
         "artifact:/Users/charles/.hermes/tick-20260616-032957-457476-p21149-eaf8cb5e-8503f129/discussion_result.json",
         "proof:multimodel-writeback-boundary",
-        "artifact:/Users/charles/.hermes/tick-20260616-044259-678343-p48584-a4593aea-0e6b3d18/discussion_result.json"
+        "artifact:/Users/charles/.hermes/tick-20260616-044259-678343-p48584-a4593aea-0e6b3d18/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-063017-373060-p94030-4629be58-57ceffd4/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-063058-907627-p94634-591e938f-712bc7a8/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-064313-638877-p1679-86e71dc2-21ba343e/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-070011-398863-p7687-7e4cdd6e-4e9bce79/discussion_result.json"
       ],
       "evidence_refs": [
         "proof:task-add-boundary",
         "artifact:/Users/charles/.hermes/tick-20260616-032957-457476-p21149-eaf8cb5e-8503f129/discussion_result.json",
         "proof:multimodel-writeback-boundary",
-        "artifact:/Users/charles/.hermes/tick-20260616-044259-678343-p48584-a4593aea-0e6b3d18/discussion_result.json"
+        "artifact:/Users/charles/.hermes/tick-20260616-044259-678343-p48584-a4593aea-0e6b3d18/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-063017-373060-p94030-4629be58-57ceffd4/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-063058-907627-p94634-591e938f-712bc7a8/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-064313-638877-p1679-86e71dc2-21ba343e/discussion_result.json",
+        "artifact:/Users/charles/.hermes/tick-20260616-070011-398863-p7687-7e4cdd6e-4e9bce79/discussion_result.json"
       ],
       "acceptance_criteria": [
         "Observable result is recorded in Proof Log.",
         "提交 1 份评估记录，至少包含 3 个真实 Hermes 自动化案例、现有 browser 工具链 vs 候选 sandbox/benchmark 的证据增益与维护成本对比、失败模式、权限边界、回退设计以及 go/no-go 决策。"
       ]
+    },
+    {
+      "task_id": "antigravity-scheduled-agent-messages",
+      "task_path": "/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry/supplemental/open-agent-design-module-candidates-20260616.json",
+      "title": "Scheduled agent message workflows",
+      "status": "candidate",
+      "priority": "P3",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "",
+      "capability_claim": "Scheduled messages can drive routine agent work if tied to evidence ledgers and human gates.",
+      "target_surface": "taskpool",
+      "integration_level": "evaluate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "url:https://antigravity.google/product/antigravity-2"
+      ],
+      "evidence_refs": [],
+      "acceptance_criteria": [],
+      "supplemental": true
     }
   ],
   "recent_done": [

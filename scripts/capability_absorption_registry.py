@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 DEFAULT_TASKS_DIR = Path("/Users/charles/Documents/brain/05-实践与项目/tasks")
 DEFAULT_OUT_DIR = Path("/Users/charles/.hermes/hermes-agent/docs/private/capability-absorption-registry")
+DEFAULT_SUPPLEMENTAL_DIR = DEFAULT_OUT_DIR / "supplemental"
 
 ABSORPTION_MARKERS = (
     "repo_capability_absorption",
@@ -198,17 +199,64 @@ def _record_from_task(path: Path) -> Dict[str, Any] | None:
     }
 
 
-def build_registry(*, tasks_dir: Path | str = DEFAULT_TASKS_DIR) -> Dict[str, Any]:
+def _normalize_supplemental_record(raw: Dict[str, Any], source_path: Path, index: int) -> Dict[str, Any]:
+    task_id = str(raw.get("task_id") or raw.get("id") or f"supplemental-{source_path.stem}-{index}")
+    title = str(raw.get("title") or task_id)
+    capability = str(raw.get("capability_claim") or raw.get("capability_delta") or title)
+    status = str(raw.get("status") or "candidate")
+    target_surface = str(raw.get("target_surface") or "unknown")
+    absorption_layer = str(raw.get("absorption_layer") or "module")
+    integration_level = str(raw.get("integration_level") or "evaluate")
+    return {
+        "task_id": task_id,
+        "task_path": str(source_path),
+        "title": title,
+        "status": status,
+        "priority": str(raw.get("priority") or "P3"),
+        "project": str(raw.get("project") or "hermes-agent"),
+        "architecture_target": str(raw.get("architecture_target") or target_surface),
+        "updated": str(raw.get("updated") or raw.get("created") or ""),
+        "capability_claim": capability,
+        "target_surface": target_surface,
+        "integration_level": integration_level,
+        "absorption_layer": absorption_layer,
+        "source_refs": _as_list(raw.get("source_refs")),
+        "evidence_refs": _as_list(raw.get("evidence_refs")),
+        "acceptance_criteria": _as_list(raw.get("acceptance_criteria")),
+        "supplemental": True,
+    }
+
+
+def _load_supplemental_records(supplemental_dir: Path | str | None) -> List[Dict[str, Any]]:
+    if supplemental_dir is None:
+        return []
+    directory = Path(supplemental_dir)
+    if not directory.exists():
+        return []
+    records: List[Dict[str, Any]] = []
+    for path in sorted(directory.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        raw_records = data.get("records", data if isinstance(data, list) else [])
+        if not isinstance(raw_records, list):
+            continue
+        for idx, raw in enumerate(raw_records, start=1):
+            if isinstance(raw, dict):
+                records.append(_normalize_supplemental_record(raw, path, idx))
+    return records
+
+
+def build_registry(*, tasks_dir: Path | str = DEFAULT_TASKS_DIR, supplemental_dir: Path | str | None = DEFAULT_SUPPLEMENTAL_DIR) -> Dict[str, Any]:
     tasks_dir = Path(tasks_dir)
     records = []
     for path in sorted(tasks_dir.glob("*.md")):
         record = _record_from_task(path)
         if record:
             records.append(record)
+    records.extend(_load_supplemental_records(supplemental_dir))
     by_status = Counter(record["status"] for record in records)
     by_layer = Counter(record["absorption_layer"] for record in records)
     by_target = Counter(record["target_surface"] for record in records)
-    open_statuses = {"pending", "ready", "claimed", "running", "review", "blocked", "retry"}
+    open_statuses = {"candidate", "pending", "ready", "claimed", "running", "review", "blocked", "retry"}
     open_records = [r for r in records if r["status"] in open_statuses]
     return {
         "schema": "capability_absorption_registry_v1",
