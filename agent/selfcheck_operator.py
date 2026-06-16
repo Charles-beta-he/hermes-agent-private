@@ -513,6 +513,27 @@ def _status_for_rank(rank: int) -> str:
     return "green"
 
 
+def _open_waiting_plans(plans: Sequence[Mapping[str, Any]], closed_plan_ids: set[str]) -> list[Mapping[str, Any]]:
+    """Return unique open waiting plans by plan id.
+
+    The repair plan ledger is append-only and a repeated runtime fingerprint may
+    append the same deterministic plan id many times. Projection surfaces should
+    count that as one judgement item, not as hundreds of duplicated decisions.
+    """
+    latest_by_id: dict[str, Mapping[str, Any]] = {}
+    order: list[str] = []
+    for plan in plans:
+        if plan.get("status") != "waiting_for_judgement":
+            continue
+        plan_id = str(plan.get("id") or "")
+        if not plan_id or plan_id in closed_plan_ids:
+            continue
+        if plan_id not in latest_by_id:
+            order.append(plan_id)
+        latest_by_id[plan_id] = plan
+    return [latest_by_id[plan_id] for plan_id in order]
+
+
 def _rebuild_projections(root: Path, *, now_epoch: float | None = None) -> None:
     """Maintain read-optimized projections from the append-only ledger.
 
@@ -532,10 +553,7 @@ def _rebuild_projections(root: Path, *, now_epoch: float | None = None) -> None:
         for a in attempts
         if a.get("status") in {"dry_run_verified", "authorized_readback_verified", "applied_verified", "superseded"}
     }
-    waiting_plans = [
-        p for p in plans
-        if p.get("status") == "waiting_for_judgement" and str(p.get("id")) not in closed_plan_ids
-    ]
+    waiting_plans = _open_waiting_plans(plans, closed_plan_ids)
     active_authorizations = [
         a for a in authorizations
         if a.get("decision") == "approved" and float(a.get("expires_at_epoch") or 0) >= ts
@@ -696,7 +714,7 @@ def _build_sentinel_wakeups(root: Path, *, source: str, now_epoch: float) -> lis
         str(a.get("plan_id")) for a in attempts
         if a.get("status") in {"dry_run_verified", "authorized_readback_verified", "applied_verified", "superseded"}
     }
-    waiting = [p for p in plans if p.get("status") == "waiting_for_judgement" and str(p.get("id")) not in closed_plan_ids]
+    waiting = _open_waiting_plans(plans, closed_plan_ids)
     wakeups: list[SentinelWakeup] = []
     status = str(summary.get("overall_status") or "green")
     if status in {"red", "yellow"}:

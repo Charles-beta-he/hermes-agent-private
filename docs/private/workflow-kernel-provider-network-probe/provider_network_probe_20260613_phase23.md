@@ -5,12 +5,12 @@ Probe count: **6**
 Class counts: `{"reachable": 6}`
 
 ## Results
-- **github** `reachable` status=200 host=github.com duration=1401ms
-- **openai** `reachable` status=421 host=api.openai.com duration=1494ms
-- **deepseek** `reachable` status=401 host=api.deepseek.com duration=166ms
-- **xiaomi** `reachable` status=401 host=token-plan-cn.xiaomimimo.com duration=199ms
-- **google_gemini** `reachable` status=404 host=generativelanguage.googleapis.com duration=1019ms
-- **telegram** `reachable` status=200 host=api.telegram.org duration=6569ms
+- **github** `reachable` status=200 host=github.com duration=1387ms
+- **openai** `reachable` status=421 host=api.openai.com duration=1340ms
+- **deepseek** `reachable` status=401 host=api.deepseek.com duration=185ms
+- **xiaomi** `reachable` status=401 host=token-plan-cn.xiaomimimo.com duration=175ms
+- **google_gemini** `reachable` status=404 host=generativelanguage.googleapis.com duration=858ms
+- **telegram** `reachable` status=200 host=api.telegram.org duration=3164ms
 
 ## Safe Boundaries
 - no LLM generation call

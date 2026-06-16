@@ -139,6 +139,34 @@ def test_projections_are_rebuilt_after_findings(tmp_path, monkeypatch):
     assert read_health_summary()["overall_status"] == "yellow"
 
 
+def test_projection_dedupes_repeated_waiting_plan_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    event = {
+        "event_type": "cron.job_failed",
+        "trigger": "cron_scheduler",
+        "component": "cron",
+        "job_id": "job-1",
+        "job_name": "Daily",
+        "success": False,
+        "summary": "RuntimeError: Connection error.",
+        "error": "RuntimeError: Connection error.",
+        "evidence_refs": ["cron_job:job-1", "file:/tmp/out.md"],
+    }
+    for _ in range(3):
+        observe_event(event, debounce_seconds=0)
+
+    root = tmp_path / "state" / "selfcheck"
+    plans = _jsonl(root / "repair_plans.jsonl")
+    assert len(plans) >= 3
+    assert len({p["id"] for p in plans}) == 1
+    assert read_health_summary()["waiting_for_judgement"] == 1
+    emitted = run_sentinel_tick(source="test", debounce_seconds=0)
+    judgement = [w for w in emitted if w.kind == "judgement_required"]
+    assert judgement
+    assert "1 repair plan" in judgement[-1].reason
+
+
 def test_provider_error_creates_provider_projection(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 

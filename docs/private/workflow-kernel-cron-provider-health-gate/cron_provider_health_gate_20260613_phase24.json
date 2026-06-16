@@ -1,9 +1,55 @@
 {
-  "created_at": "2026-06-14T17:37:46Z",
-  "decision_counts": {},
-  "decisions": [],
+  "created_at": "2026-06-16T03:15:09Z",
+  "decision_counts": {
+    "manual_investigation_required": 2,
+    "retry_allowed_by_provider_health_manual_only": 1
+  },
+  "decisions": [
+    {
+      "decision": "manual_investigation_required",
+      "deliver": "local",
+      "endpoint_classification": null,
+      "job_id": "861b14d4d887",
+      "last_status": "error",
+      "model": null,
+      "name": "local-brain-taskpool-auto-completer",
+      "provider": null,
+      "reason": "no endpoint inference available",
+      "script": "taskpool_dynamic_runner.py",
+      "target_endpoint": null,
+      "triage_class": null
+    },
+    {
+      "decision": "retry_allowed_by_provider_health_manual_only",
+      "deliver": "telegram:he cheng (dm)",
+      "endpoint_classification": "reachable",
+      "job_id": "c01e3574e31c",
+      "last_status": "error",
+      "model": "gpt-5.4",
+      "name": "aihot-daily-report",
+      "provider": "openai-codex",
+      "reason": "telegram endpoint reachable; retry must still go through governed notification ledger",
+      "script": null,
+      "target_endpoint": "telegram",
+      "triage_class": "telegram_delivery"
+    },
+    {
+      "decision": "manual_investigation_required",
+      "deliver": "local",
+      "endpoint_classification": null,
+      "job_id": "aa8f66ecbe10",
+      "last_status": "error",
+      "model": null,
+      "name": "taskpool-follow-through-agent",
+      "provider": null,
+      "reason": "no endpoint inference available",
+      "script": null,
+      "target_endpoint": null,
+      "triage_class": null
+    }
+  ],
   "degraded_endpoints": [],
-  "failed_job_count": 0,
+  "failed_job_count": 3,
   "jobs_path": "/Users/charles/.hermes/cron/jobs.json",
   "next_actions": [
     "wire cron wrappers to read this gate before provider generation in a later opt-in phase",
@@ -20,6 +66,6 @@
     "no provider credential check"
   ],
   "scope": "read-only provider health gate decisions for failed cron jobs",
-  "status": "PASS",
+  "status": "GATE_COMPILED_NO_MUTATION",
   "triage_path": "docs/private/workflow-kernel-cron-provider-triage/cron_provider_triage_20260613_phase22.json"
 }
