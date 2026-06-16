@@ -33,6 +33,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -97,11 +98,13 @@ JUDGE_SYSTEM_PROMPT = (
     "achieved a user's stated goal. You receive the goal text and the "
     "agent's most recent response. Your only job is to decide whether "
     "the goal is fully satisfied based on that response.\n\n"
-    "A goal is DONE only when:\n"
-    "- The response explicitly confirms the goal was completed, OR\n"
-    "- The response clearly shows the final deliverable was produced, OR\n"
-    "- The response explains the goal is unachievable / blocked / needs "
-    "user input (treat this as DONE with reason describing the block).\n\n"
+    "A goal is DONE only when the response includes concrete evidence "
+    "that the final deliverable was produced. A bare completion claim is "
+    "not enough: look for command output, file/artifact paths, test output, "
+    "or proof-log/evidence references.\n\n"
+    "If the response says the agent is blocked, needs human input, lacks "
+    "permission/credentials, or requires approval, do NOT treat that as "
+    "DONE; classify it as not done and explain the human/input boundary.\n\n"
     "Otherwise the goal is NOT done — CONTINUE.\n\n"
     "Reply ONLY with a single JSON object on one line:\n"
     '{\"done\": <true|false>, \"reason\": \"<one-sentence rationale>\"}'
@@ -158,10 +161,31 @@ class GoalRouteDecision:
 
 
 @dataclass
+class GoalEvidenceBundle:
+    """Deterministic evidence extracted from the agent's latest response.
+
+    The auxiliary judge is intentionally cheap and can be over-trusting.  This
+    local bundle is the fail-closed contract: DONE verdicts require at least one
+    concrete proof reference, while human/input blockers are represented as a
+    separate class rather than as verified completion.
+    """
+
+    command_refs: List[str] = field(default_factory=list)
+    file_refs: List[str] = field(default_factory=list)
+    proof_refs: List[str] = field(default_factory=list)
+    needs_human: bool = False
+
+    @property
+    def has_proof(self) -> bool:
+        return bool(self.command_refs or self.file_refs or self.proof_refs)
+
+
+@dataclass
 class GoalState:
     """Serializable goal state stored per session."""
 
     goal: str
+    goal_id: str = ""
     status: str = "active"          # active | paused | done | cleared
     turns_used: int = 0
     max_turns: int = DEFAULT_MAX_TURNS
@@ -181,6 +205,14 @@ class GoalState:
     # them into the verdict. Backwards-compatible: defaults to empty so
     # old state_meta rows load unchanged.
     subgoals: List[str] = field(default_factory=list)
+    # Durable proof/plan context mirrored into the checkpoint sidecar so a
+    # restart or compression rollover can recover more than the raw goal text.
+    proof_refs: List[str] = field(default_factory=list)
+    remaining_plan: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.goal_id:
+            self.goal_id = f"goal_{uuid.uuid4().hex[:12]}"
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -192,10 +224,19 @@ class GoalState:
         subgoals: List[str] = []
         if isinstance(raw_subgoals, list):
             subgoals = [str(s).strip() for s in raw_subgoals if str(s).strip()]
+        raw_proof_refs = data.get("proof_refs") or []
+        proof_refs: List[str] = []
+        if isinstance(raw_proof_refs, list):
+            proof_refs = [str(s).strip() for s in raw_proof_refs if str(s).strip()]
+        raw_remaining_plan = data.get("remaining_plan") or []
+        remaining_plan: List[str] = []
+        if isinstance(raw_remaining_plan, list):
+            remaining_plan = [str(s).strip() for s in raw_remaining_plan if str(s).strip()]
         raw_spec = data.get("spec") if isinstance(data.get("spec"), dict) else None
         raw_route = data.get("route") if isinstance(data.get("route"), dict) else None
         return cls(
             goal=data.get("goal", ""),
+            goal_id=str(data.get("goal_id") or ""),
             status=data.get("status", "active"),
             turns_used=int(data.get("turns_used", 0) or 0),
             max_turns=int(data.get("max_turns", DEFAULT_MAX_TURNS) or DEFAULT_MAX_TURNS),
@@ -208,6 +249,8 @@ class GoalState:
             spec=raw_spec,
             route=raw_route,
             subgoals=subgoals,
+            proof_refs=proof_refs,
+            remaining_plan=remaining_plan,
         )
 
     # --- subgoals helpers -------------------------------------------------
@@ -227,6 +270,66 @@ class GoalState:
 
 def _meta_key(session_id: str) -> str:
     return f"goal:{session_id}"
+
+
+def _checkpoint_meta_key(session_id: str) -> str:
+    return f"goal_checkpoint:{session_id}"
+
+
+def _clean_str_list(values: Any) -> List[str]:
+    if not isinstance(values, list):
+        return []
+    return [str(v).strip() for v in values if str(v).strip()]
+
+
+def _build_goal_checkpoint(session_id: str, state: GoalState, *, reason: str = "checkpoint") -> Dict[str, Any]:
+    """Build the recovery sidecar for one /goal session.
+
+    The sidecar duplicates the workflow-shaped state that matters after a
+    restart or compression rollover. It is intentionally local/state_meta only:
+    no taskpool, mission, cron, or external lifecycle mutation happens here.
+    """
+    return {
+        "schema": "goal_checkpoint_v1",
+        "session_id": session_id,
+        "goal_id": state.goal_id,
+        "goal": state.goal,
+        "status": state.status,
+        "goal_spec": state.spec,
+        "route": state.route,
+        "subgoals": list(state.subgoals or []),
+        "last_verdict": state.last_verdict,
+        "last_reason": state.last_reason,
+        "proof_refs": list(state.proof_refs or []),
+        "remaining_plan": list(state.remaining_plan or []),
+        "reason": reason,
+        "updated_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
+def _apply_goal_checkpoint(state: GoalState, checkpoint: Optional[Dict[str, Any]]) -> GoalState:
+    if not isinstance(checkpoint, dict) or checkpoint.get("schema") != "goal_checkpoint_v1":
+        return state
+    goal_id = str(checkpoint.get("goal_id") or "").strip()
+    if goal_id:
+        state.goal_id = goal_id
+    if isinstance(checkpoint.get("goal_spec"), dict):
+        state.spec = checkpoint.get("goal_spec")
+    if isinstance(checkpoint.get("route"), dict):
+        state.route = checkpoint.get("route")
+    if isinstance(checkpoint.get("subgoals"), list):
+        state.subgoals = _clean_str_list(checkpoint.get("subgoals"))
+    if isinstance(checkpoint.get("proof_refs"), list):
+        state.proof_refs = _clean_str_list(checkpoint.get("proof_refs"))
+    if isinstance(checkpoint.get("remaining_plan"), list):
+        state.remaining_plan = _clean_str_list(checkpoint.get("remaining_plan"))
+    last_verdict = checkpoint.get("last_verdict")
+    if last_verdict and not state.last_verdict:
+        state.last_verdict = str(last_verdict)
+    last_reason = checkpoint.get("last_reason")
+    if last_reason and not state.last_reason:
+        state.last_reason = str(last_reason)
+    return state
 
 
 _DB_CACHE: Dict[str, Any] = {}
@@ -277,10 +380,50 @@ def load_goal(session_id: str) -> Optional[GoalState]:
     if not raw:
         return None
     try:
-        return GoalState.from_json(raw)
+        state = GoalState.from_json(raw)
     except Exception as exc:
         logger.warning("GoalManager: could not parse stored goal for %s: %s", session_id, exc)
         return None
+    checkpoint = load_goal_checkpoint(session_id)
+    return _apply_goal_checkpoint(state, checkpoint)
+
+
+def load_goal_checkpoint(session_id: str) -> Optional[Dict[str, Any]]:
+    """Load the goal checkpoint sidecar for a session, if present."""
+    if not session_id:
+        return None
+    db = _get_session_db()
+    if db is None:
+        return None
+    try:
+        raw = db.get_meta(_checkpoint_meta_key(session_id))
+    except Exception as exc:
+        logger.debug("GoalManager: get checkpoint meta failed: %s", exc)
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except Exception as exc:
+        logger.debug("GoalManager: checkpoint parse failed for %s: %s", session_id, exc)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def save_goal_checkpoint(session_id: str, state: GoalState, *, reason: str = "checkpoint") -> Optional[Dict[str, Any]]:
+    """Persist a goal recovery sidecar under a separate SessionDB meta key."""
+    if not session_id:
+        return None
+    db = _get_session_db()
+    if db is None:
+        return None
+    checkpoint = _build_goal_checkpoint(session_id, state, reason=reason)
+    try:
+        db.set_meta(_checkpoint_meta_key(session_id), json.dumps(checkpoint, ensure_ascii=False))
+    except Exception as exc:
+        logger.debug("GoalManager: set checkpoint meta failed: %s", exc)
+        return None
+    return checkpoint
 
 
 def save_goal(session_id: str, state: GoalState) -> None:
@@ -294,6 +437,24 @@ def save_goal(session_id: str, state: GoalState) -> None:
         db.set_meta(_meta_key(session_id), state.to_json())
     except Exception as exc:
         logger.debug("GoalManager: set_meta failed: %s", exc)
+
+
+def rebind_goal_checkpoint(old_session_id: str, new_session_id: str, *, reason: str = "rebind") -> bool:
+    """Copy active /goal state + checkpoint to a new session id.
+
+    Compression rotates SessionDB rows. This helper is the pre/post-compact
+    binding point: force a checkpoint on the old session, then persist the same
+    recovered state under the new session id so /goal status survives reload.
+    """
+    if not old_session_id or not new_session_id or old_session_id == new_session_id:
+        return False
+    state = load_goal(old_session_id)
+    if state is None:
+        return False
+    save_goal_checkpoint(old_session_id, state, reason=f"pre-{reason}")
+    save_goal(new_session_id, state)
+    checkpoint = save_goal_checkpoint(new_session_id, state, reason=reason)
+    return checkpoint is not None
 
 
 def _clean_text_list(values: Optional[List[str]]) -> List[str]:
@@ -354,9 +515,176 @@ def build_goal_spec(
     }
 
 
+def compile_goal_promotion_dry_run(goal_spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Project a ``goal_spec_v1`` into a governed promotion candidate.
+
+    This is the intentionally non-mutating bridge between the standing-goal
+    loop and longer-lived Hermes control-plane surfaces. It returns the shape a
+    later audited command could use to create a taskpool item, mission, cron
+    job, or human-gate packet, but it never writes those surfaces itself.
+    """
+    if not isinstance(goal_spec, dict) or goal_spec.get("schema") != "goal_spec_v1":
+        raise ValueError("goal_spec_v1 dict required")
+
+    goal = str(goal_spec.get("user_goal") or "").strip()
+    if not goal:
+        raise ValueError("goal_spec_v1.user_goal is required")
+
+    criteria = _clean_text_list(goal_spec.get("success_criteria") or [])
+    route = goal_route_decision(goal, success_criteria=criteria)
+    target = route.target_layer
+    kind_by_layer = {
+        "taskpool": "taskpool_task_candidate",
+        "mission": "mission_candidate",
+        "cron": "cron_candidate",
+        "human_gate": "human_gate_packet_candidate",
+        "session": "session_continuation_candidate",
+    }
+    evidence_by_layer = {
+        "taskpool": [
+            "objective",
+            "acceptance_criteria",
+            "structured_evidence_refs",
+            "deterministic_test_or_dry_run_readback",
+            "before_after_state_diff_when_mutation_is_later_authorized",
+        ],
+        "mission": [
+            "mission_objective",
+            "budget_or_tick_boundary",
+            "human_gate_or_stop_condition",
+            "stage_report_readback",
+        ],
+        "cron": [
+            "schedule_expression",
+            "delivery_target_or_no_agent_mode",
+            "dry_run_output",
+            "duplicate_rate_limit_proof",
+        ],
+        "human_gate": [
+            "explicit_user_authority",
+            "risk_summary",
+            "rollback_or_compensation_plan",
+            "readback_receipt_requirement",
+        ],
+        "session": [
+            "next_concrete_step",
+            "goal_judge_verdict",
+            "response_evidence_snippet",
+        ],
+    }
+    permission_by_layer = {
+        "taskpool": "governed_taskpool_lifecycle_required",
+        "mission": "mission_budget_and_handoff_required",
+        "cron": "cron_install_or_update_requires_explicit_authority",
+        "human_gate": "human_approval_required_before_side_effect",
+        "session": "current_session_only",
+    }
+
+    candidate = {
+        "kind": kind_by_layer.get(target, "session_continuation_candidate"),
+        "title": goal[:120],
+        "target_layer": target,
+        "reason": route.reason,
+        "evidence_requirements": evidence_by_layer.get(target, evidence_by_layer["session"]),
+        "permission_boundary": permission_by_layer.get(target, "current_session_only"),
+        "acceptance_criteria": criteria,
+        "non_goals": _clean_text_list(goal_spec.get("non_goals") or []),
+        "execute": False,
+    }
+    return {
+        "schema": "goal_promotion_dry_run_v1",
+        "dry_run": True,
+        "execution_enabled": False,
+        "mutation_allowed": False,
+        "state_mutations": [],
+        "candidate": candidate,
+        "route": route.to_dict(),
+        "goal_spec": goal_spec,
+        "safety_boundary": (
+            "Dry-run projection only; no taskpool, mission, cron, lifecycle, "
+            "or external state is mutated."
+        ),
+    }
+
+
 def _stable_node_id(value: str, *, prefix: str = "node") -> str:
     text = re.sub(r"[^a-zA-Z0-9_-]+", "-", (value or "").strip().lower()).strip("-")
     return f"{prefix}:{text or 'unnamed'}"
+
+
+def _topological_order_or_raise(nodes: List[Dict[str, Any]]) -> Tuple[List[str], List[Dict[str, str]]]:
+    """Return DAG order and edge list for compiled dry-run nodes.
+
+    The compiler is a safety boundary, so malformed dependencies fail closed
+    instead of being hidden in an apparently executable plan.
+    """
+    node_ids = [str(node["id"]) for node in nodes]
+    if len(node_ids) != len(set(node_ids)):
+        raise ValueError("workflow_plan_v1 DAG requires unique node ids")
+    known = set(node_ids)
+    edges: List[Dict[str, str]] = []
+    outgoing: Dict[str, List[str]] = {node_id: [] for node_id in node_ids}
+    indegree: Dict[str, int] = {node_id: 0 for node_id in node_ids}
+    for node in nodes:
+        node_id = str(node["id"])
+        for dep in node.get("depends_on") or []:
+            dep_id = str(dep)
+            if dep_id not in known:
+                raise ValueError(f"workflow_plan_v1 DAG has unknown dependency {dep_id!r} for {node_id!r}")
+            edges.append({"from": dep_id, "to": node_id})
+            outgoing[dep_id].append(node_id)
+            indegree[node_id] += 1
+
+    ready = [node_id for node_id in node_ids if indegree[node_id] == 0]
+    order: List[str] = []
+    while ready:
+        current = ready.pop(0)
+        order.append(current)
+        for child in outgoing[current]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+    if len(order) != len(node_ids):
+        raise ValueError("workflow_plan_v1 DAG must be acyclic")
+    return order, edges
+
+
+def _compile_goal_spec_step_nodes(goal_spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    steps = goal_spec.get("workflow_steps") or goal_spec.get("steps") or []
+    nodes: List[Dict[str, Any]] = []
+    for idx, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            raise ValueError("workflow_steps entries must be dicts")
+        raw_id = str(step.get("id") or step.get("name") or f"step-{idx}")
+        node_id = _stable_node_id(raw_id, prefix="goal")
+        depends_on = [_stable_node_id(str(dep), prefix="goal") for dep in step.get("depends_on") or []]
+        boundary = str(step.get("permission_boundary") or "local_dry_run_only")
+        evidence_contract = _clean_text_list(
+            step.get("evidence_contract") or step.get("evidence_requirements") or goal_spec.get("success_criteria") or []
+        )
+        if not evidence_contract:
+            evidence_contract = ["dry_run_readback"]
+        executor_ref = {
+            key: step[key]
+            for key in ("command", "tool", "action", "handler")
+            if key in step and step.get(key) is not None
+        }
+        node = {
+            "id": node_id,
+            "title": str(step.get("title") or raw_id),
+            "kind": "goal_spec_step",
+            "depends_on": depends_on,
+            "evidence_required": True,
+            "evidence_contract": evidence_contract,
+            "permission_boundary": boundary,
+            "human_gate_required": _requires_human_gate(boundary),
+            "execute": False,
+            "rollback_boundary": str(step.get("rollback_boundary") or "not_applicable_dry_run_only"),
+        }
+        if executor_ref:
+            node["executor_ref"] = executor_ref
+        nodes.append(node)
+    return nodes
 
 
 def _requires_human_gate(boundary: str) -> bool:
@@ -602,7 +930,7 @@ def compile_workflow_plan_v1(
     if not isinstance(goal_spec, dict) or goal_spec.get("schema") != "goal_spec_v1":
         raise ValueError("goal_spec_v1 dict required")
 
-    nodes: List[Dict[str, Any]] = []
+    nodes: List[Dict[str, Any]] = _compile_goal_spec_step_nodes(goal_spec)
     for idx, cluster in enumerate(pain_clusters or [], start=1):
         cluster_id = str(cluster.get("id") or f"pain-{idx}")
         evidence = cluster.get("source_evidence") or []
@@ -651,6 +979,8 @@ def compile_workflow_plan_v1(
                 }
             )
 
+    topological_order, edges = _topological_order_or_raise(nodes)
+
     return {
         "schema": "workflow_plan_v1",
         "dry_run": True,
@@ -658,6 +988,11 @@ def compile_workflow_plan_v1(
         "goal_spec": goal_spec,
         "target_layer": goal_spec.get("target_layer") or "session",
         "nodes": nodes,
+        "edges": edges,
+        "graph": {
+            "acyclic": True,
+            "topological_order": topological_order,
+        },
         "safety_boundary": (
             "Dry-run plan only; no external side effects, no worker dispatch, "
             "no lifecycle mutation, no taskpool/mission/cron writes."
@@ -688,6 +1023,78 @@ def _truncate(text: str, limit: int) -> str:
 
 
 _JSON_OBJECT_RE = re.compile(r"\{.*?\}", re.DOTALL)
+_COMMAND_EVIDENCE_RE = re.compile(
+    r"(?im)\b(?:command|cmd|test(?:s| command)?|ran|run|执行|运行)\s*[:：].{0,240}?"
+    r"(?:pytest|unittest|npm|pnpm|yarn|mvn|gradle|go test|cargo test|python(?:3)? -m|hermes|curl|git|passed|exit[_ -]?code|0 failed)"
+)
+_FILE_EVIDENCE_RE = re.compile(
+    r"(?im)(?:\b(?:file|files|changed files?|artifact|path|diff_path|log_path)\s*[:：]\s*)"
+    r"([^\n`]+(?:/[^\s,;`]+|\.(?:py|js|ts|tsx|jsx|md|json|yaml|yml|toml|txt|log|db)\b)[^\n`]*)"
+)
+_ABSOLUTE_FILE_RE = re.compile(
+    r"(?m)(?:/Users/[^\s,;`]+|/tmp/[^\s,;`]+|~/[^\s,;`]+|\./[^\s,;`]+)"
+)
+_PROOF_EVIDENCE_RE = re.compile(
+    r"(?im)\b(?:proof[_ -]?log|proof|evidence|receipt)\s*[:：]\s*[^\n`]+"
+)
+_NEEDS_HUMAN_RE = re.compile(
+    r"(?im)\b(?:blocked|need(?:s)?\s+(?:human|user|operator)\s+(?:input|approval|decision)|"
+    r"requires?\s+(?:human|user|operator)\s+(?:input|approval|decision)|"
+    r"permission|credentials?|secret|captcha|2fa|approval)\b|"
+    r"需要(?:人工|用户).{0,12}(?:输入|确认|审批|授权|决定)|人工介入|缺少(?:权限|凭证|密钥)"
+)
+
+
+def _unique_snippets(matches: List[str], *, limit: int = 5) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for match in matches:
+        item = " ".join(str(match).strip().split())
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(_truncate(item, 240))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def extract_goal_evidence_bundle(response: str) -> GoalEvidenceBundle:
+    """Extract concrete proof refs from a goal-turn response.
+
+    This is intentionally deterministic and conservative.  The LLM judge may
+    provide a semantic done/continue opinion, but verified DONE requires this
+    bundle to carry at least one command, file/artifact, or proof/evidence ref.
+    """
+    text = response or ""
+    command_refs = _unique_snippets([m.group(0) for m in _COMMAND_EVIDENCE_RE.finditer(text)])
+    file_refs = _unique_snippets(
+        [m.group(1) for m in _FILE_EVIDENCE_RE.finditer(text)]
+        + [m.group(0) for m in _ABSOLUTE_FILE_RE.finditer(text)]
+    )
+    proof_refs = _unique_snippets([m.group(0) for m in _PROOF_EVIDENCE_RE.finditer(text)])
+    return GoalEvidenceBundle(
+        command_refs=command_refs,
+        file_refs=file_refs,
+        proof_refs=proof_refs,
+        needs_human=bool(_NEEDS_HUMAN_RE.search(text)),
+    )
+
+
+def _apply_goal_evidence_contract(
+    verdict: str,
+    reason: str,
+    bundle: GoalEvidenceBundle,
+) -> Tuple[str, str]:
+    if bundle.needs_human:
+        return "blocked", f"needs_human: {_truncate(reason, 220)}"
+    if verdict == "done" and not bundle.has_proof:
+        return (
+            "continue",
+            "needs_evidence: judge said done but the response lacks command/file/proof refs; "
+            + _truncate(reason, 180),
+        )
+    return verdict, reason
 
 
 def _goal_judge_max_tokens() -> int:
@@ -854,6 +1261,11 @@ def judge_goal(
 
     done, reason, parse_failed = _parse_judge_response(raw)
     verdict = "done" if done else "continue"
+    verdict, reason = _apply_goal_evidence_contract(
+        verdict,
+        reason,
+        extract_goal_evidence_bundle(last_response),
+    )
     logger.info("goal judge: verdict=%s reason=%s", verdict, _truncate(reason, 120))
     return verdict, reason, parse_failed
 
@@ -904,7 +1316,7 @@ class GoalManager:
         turns = f"{s.turns_used}/{s.max_turns} turns"
         sub = f", {len(s.subgoals)} subgoal{'s' if len(s.subgoals) != 1 else ''}" if s.subgoals else ""
         spec_bits = ""
-        if s.route or s.spec:
+        if s.route or s.spec or s.proof_refs or s.remaining_plan:
             route = (s.route or {}).get("target_layer") or (s.spec or {}).get("target_layer")
             criteria = len((s.spec or {}).get("success_criteria") or [])
             detail = []
@@ -912,6 +1324,10 @@ class GoalManager:
                 detail.append(f"route={route}")
             if criteria:
                 detail.append(f"criteria={criteria}")
+            if s.proof_refs:
+                detail.append(f"proof_refs={len(s.proof_refs)}")
+            if s.remaining_plan:
+                detail.append(f"remaining_plan={len(s.remaining_plan)}")
             if detail:
                 spec_bits = ", " + ", ".join(detail)
         if s.status == "active":
@@ -957,6 +1373,28 @@ class GoalManager:
         self._state = state
         save_goal(self.session_id, state)
         return state
+
+    def promote_dry_run(self) -> Dict[str, Any]:
+        """Return a non-mutating governed promotion candidate for the goal."""
+        if self._state is None or not self.has_goal():
+            raise RuntimeError("no active goal")
+        spec = self._state.spec or build_goal_spec(
+            self._state.goal,
+            max_turns=self._state.max_turns,
+            success_criteria=self._state.subgoals,
+        )
+        return compile_goal_promotion_dry_run(spec)
+
+    def force_checkpoint(self, *, reason: str = "force") -> Dict[str, Any]:
+        """Persist and return the goal checkpoint sidecar for this session."""
+        if self._state is None or not self.has_goal():
+            raise RuntimeError("no active goal")
+        checkpoint = save_goal_checkpoint(self.session_id, self._state, reason=reason)
+        if checkpoint is None:
+            # Keep callers deterministic even if SessionDB is unavailable in a
+            # nonstandard test/runtime harness.
+            checkpoint = _build_goal_checkpoint(self.session_id, self._state, reason=reason)
+        return checkpoint
 
     def pause(self, reason: str = "user-paused") -> Optional[GoalState]:
         if not self._state:
@@ -1056,7 +1494,7 @@ class GoalManager:
           - ``status``: current goal status after update
           - ``should_continue``: bool — caller should fire another turn
           - ``continuation_prompt``: str or None
-          - ``verdict``: "done" | "continue" | "skipped" | "inactive"
+          - ``verdict``: "done" | "continue" | "blocked" | "skipped" | "inactive"
           - ``reason``: str
           - ``message``: user-visible one-liner to print/send
         """
@@ -1099,6 +1537,19 @@ class GoalManager:
                 "verdict": "done",
                 "reason": reason,
                 "message": f"✓ Goal achieved: {reason}",
+            }
+
+        if verdict == "blocked":
+            state.status = "paused"
+            state.paused_reason = reason
+            save_goal(self.session_id, state)
+            return {
+                "status": "paused",
+                "should_continue": False,
+                "continuation_prompt": None,
+                "verdict": "blocked",
+                "reason": reason,
+                "message": f"⏸ Goal paused — human input needed: {reason}",
             }
 
         # Auto-pause when the judge model can't produce the expected JSON
@@ -1235,7 +1686,7 @@ def run_kanban_goal_loop(
 
     Returns a decision dict: ``{"outcome", "turns_used", "reason"}`` where
     outcome is one of ``"completed_by_worker"``, ``"blocked_budget"``,
-    ``"blocked_by_worker"``, or ``"stopped"``.
+    ``"blocked_by_worker"``, ``"blocked_by_judge"``, or ``"stopped"``.
     """
 
     def _log(msg: str) -> None:
@@ -1276,6 +1727,17 @@ def run_kanban_goal_loop(
         # Still open — judge whether the latest response satisfies the card.
         verdict, reason, _parse_failed = judge_goal(goal_text, last_response)
         _log(f"kanban goal loop: turn {turns_used}/{max_turns} verdict={verdict} reason={_truncate(reason, 120)}")
+
+        if verdict == "blocked":
+            _log(f"kanban goal loop: task {task_id} judged blocked/needs-human; blocking")
+            try:
+                block_fn(
+                    f"Goal-mode judge classified the worker response as needing human input: "
+                    f"{_truncate(reason, 300)}"
+                )
+            except Exception as exc:
+                _log(f"kanban goal loop: block_fn failed ({exc})")
+            return {"outcome": "blocked_by_judge", "turns_used": turns_used, "reason": reason}
 
         if verdict == "done":
             if nudged_to_finalize:
@@ -1329,6 +1791,9 @@ __all__ = [
     "DEFAULT_MAX_TURNS",
     "load_goal",
     "save_goal",
+    "load_goal_checkpoint",
+    "save_goal_checkpoint",
+    "rebind_goal_checkpoint",
     "clear_goal",
     "judge_goal",
     "run_kanban_goal_loop",

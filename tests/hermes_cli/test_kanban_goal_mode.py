@@ -287,6 +287,25 @@ def test_loop_blocks_when_judge_done_but_never_finalizes(monkeypatch):
     assert "finalize" in blocked["reason"].lower()
 
 
+def test_loop_blocks_immediately_when_judge_classifies_needs_human(monkeypatch):
+    _patch_judge(monkeypatch, ["blocked"])
+    blocked = {}
+    turns = []
+
+    res = goals.run_kanban_goal_loop(
+        task_id="t-human",
+        goal_text="deploy production change",
+        run_turn=lambda p: turns.append(p) or "should not run",
+        task_status_fn=lambda: "running",
+        block_fn=lambda r: blocked.update(reason=r),
+        max_turns=10,
+        first_response="I am blocked and need human approval.",
+    )
+    assert res["outcome"] == "blocked_by_judge"
+    assert turns == []
+    assert "human" in blocked["reason"].lower()
+
+
 def test_loop_stops_if_task_reclaimed(monkeypatch):
     _patch_judge(monkeypatch, ["continue"])
     res = goals.run_kanban_goal_loop(

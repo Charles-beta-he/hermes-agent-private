@@ -547,6 +547,20 @@ def compress_context(
                 except (ValueError, Exception) as e:
                     logger.debug("Could not propagate title on compression: %s", e)
             agent._session_db.update_system_prompt(agent.session_id, new_system_prompt)
+            # Preserve active /goal workflow context across compression. The
+            # GoalManager is keyed by session_id, so a compression rollover must
+            # copy the checkpoint sidecar to the new session before any later
+            # /goal status/reload tries to recover from SessionDB.
+            try:
+                from hermes_cli.goals import rebind_goal_checkpoint
+
+                rebind_goal_checkpoint(
+                    old_session_id,
+                    agent.session_id,
+                    reason="compression",
+                )
+            except Exception as _goal_err:
+                logger.debug("goal checkpoint rebind after compression failed: %s", _goal_err)
             # Reset flush cursor — new session starts with no messages written
             agent._last_flushed_db_idx = 0
         except Exception as e:

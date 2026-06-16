@@ -7582,7 +7582,98 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         self._goal_manager = mgr
         return mgr
 
+    def _handle_goal_command(self, cmd: str) -> None:
+        """Handle /goal controls in the classic CLI."""
+        mgr = self._get_goal_manager()
+        if mgr is None:
+            _cprint("  /goal unavailable: session state is not initialized")
+            return
 
+        parts = cmd.split(None, 1)
+        args = parts[1].strip() if len(parts) > 1 else ""
+        lower = args.lower()
+
+        if not args or lower == "status":
+            _cprint(f"  {mgr.status_line()}")
+            return
+        if lower in {"promote --dry-run", "promote dry-run", "promote"}:
+            try:
+                result = mgr.promote_dry_run()
+            except RuntimeError as exc:
+                _cprint(f"  /goal promote --dry-run: {exc}")
+                return
+            _cprint(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        if lower == "pause":
+            state = mgr.pause(reason="user-paused")
+            _cprint(f"  ⏸ Goal paused: {state.goal}" if state else "  No active goal to pause.")
+            return
+        if lower == "resume":
+            state = mgr.resume()
+            _cprint(f"  ⊙ Goal resumed: {state.goal}" if state else "  No goal to resume.")
+            return
+        if lower in {"clear", "stop", "done"}:
+            had = mgr.has_goal()
+            mgr.clear()
+            _cprint("  ✓ Goal cleared." if had else "  No active goal.")
+            return
+
+        try:
+            state = mgr.set(args)
+        except ValueError as exc:
+            _cprint(f"  /goal: {exc}")
+            return
+        _cprint(f"  ⊙ Goal set ({state.max_turns} turns): {state.goal}")
+        try:
+            self._pending_input.put(state.goal)
+        except Exception as exc:
+            logging.debug("goal kickoff enqueue failed: %s", exc)
+
+    def _handle_subgoal_command(self, cmd: str) -> None:
+        """Handle /subgoal controls in the classic CLI."""
+        mgr = self._get_goal_manager()
+        if mgr is None:
+            _cprint("  /subgoal unavailable: session state is not initialized")
+            return
+        if not mgr.has_goal():
+            _cprint("  No active goal. Set one with /goal <text>.")
+            return
+
+        parts = cmd.split(None, 1)
+        args = parts[1].strip() if len(parts) > 1 else ""
+        if not args:
+            _cprint(f"  {mgr.status_line()}\n{mgr.render_subgoals()}")
+            return
+
+        tokens = args.split(None, 1)
+        verb = tokens[0].lower()
+        rest = tokens[1].strip() if len(tokens) > 1 else ""
+        if verb == "remove":
+            if not rest:
+                _cprint("  Usage: /subgoal remove <n>")
+                return
+            try:
+                removed = mgr.remove_subgoal(int(rest.split()[0]))
+            except (ValueError, IndexError, RuntimeError) as exc:
+                _cprint(f"  /subgoal remove: {exc}")
+                return
+            _cprint(f"  ✓ Removed subgoal: {removed}")
+            return
+        if verb == "clear":
+            try:
+                prev = mgr.clear_subgoals()
+            except RuntimeError as exc:
+                _cprint(f"  /subgoal clear: {exc}")
+                return
+            _cprint(f"  ✓ Cleared {prev} subgoal{'s' if prev != 1 else ''}." if prev else "  No subgoals to clear.")
+            return
+        try:
+            text = mgr.add_subgoal(args)
+        except (ValueError, RuntimeError) as exc:
+            _cprint(f"  /subgoal: {exc}")
+            return
+        idx = len(mgr.state.subgoals) if mgr.state else 0
+        _cprint(f"  ✓ Added subgoal {idx}: {text}")
 
     def _maybe_continue_goal_after_turn(self) -> None:
         """Hook run after every CLI turn. Judges + maybe re-queues.

@@ -1462,6 +1462,13 @@ class GatewaySlashCommandsMixin:
         if not args or lower == "status":
             return mgr.status_line()
 
+        if lower in {"promote --dry-run", "promote dry-run", "promote"}:
+            try:
+                result = mgr.promote_dry_run()
+            except RuntimeError as exc:
+                return f"/goal promote --dry-run: {exc}"
+            return json.dumps(result, ensure_ascii=False, indent=2)
+
         if lower == "pause":
             state = mgr.pause(reason="user-paused")
             if state is None:

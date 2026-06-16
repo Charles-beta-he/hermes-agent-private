@@ -152,7 +152,10 @@ class TestJudgeGoal:
             "agent.auxiliary_client.get_text_auxiliary_client",
             return_value=(fake_client, "judge-model"),
         ):
-            verdict, reason, _ = goals.judge_goal("goal", "agent response")
+            verdict, reason, _ = goals.judge_goal(
+                "goal",
+                "Done. Tests: command: ./venv/bin/python -m pytest -q -> 1 passed",
+            )
         assert verdict == "done"
         assert reason == "achieved"
 
@@ -174,6 +177,71 @@ class TestJudgeGoal:
             verdict, reason, _ = goals.judge_goal("goal", "agent response")
         assert verdict == "continue"
         assert reason == "not yet"
+
+    def test_done_claim_without_proof_is_downgraded_to_needs_evidence(self):
+        from hermes_cli import goals
+
+        fake_client = MagicMock()
+        fake_client.chat.completions.create.return_value = MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(content='{"done": true, "reason": "agent claimed completion"}')
+                )
+            ]
+        )
+        with patch(
+            "agent.auxiliary_client.get_text_auxiliary_client",
+            return_value=(fake_client, "judge-model"),
+        ):
+            verdict, reason, _ = goals.judge_goal("ship a tested patch", "Done — the patch is finished.")
+        assert verdict == "continue"
+        assert "needs_evidence" in reason
+
+    def test_done_claim_with_command_file_or_proof_refs_can_be_verified(self):
+        from hermes_cli import goals
+
+        fake_client = MagicMock()
+        fake_client.chat.completions.create.return_value = MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(content='{"done": true, "reason": "proof bundle verifies completion"}')
+                )
+            ]
+        )
+        last_response = """
+        Changed files: /Users/charles/.hermes/hermes-agent/hermes_cli/goals.py
+        Tests: command: ./venv/bin/python -m pytest -o addopts= tests/hermes_cli/test_goals.py -q -> 12 passed
+        Proof: proof_log:goal-judge-evidence-bundle
+        """
+        with patch(
+            "agent.auxiliary_client.get_text_auxiliary_client",
+            return_value=(fake_client, "judge-model"),
+        ):
+            verdict, reason, _ = goals.judge_goal("ship a tested patch", last_response)
+        assert verdict == "done"
+        assert reason == "proof bundle verifies completion"
+
+    def test_blocked_or_needs_human_response_is_classified_separately(self):
+        from hermes_cli import goals
+
+        fake_client = MagicMock()
+        fake_client.chat.completions.create.return_value = MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(content='{"done": true, "reason": "blocked by human decision"}')
+                )
+            ]
+        )
+        with patch(
+            "agent.auxiliary_client.get_text_auxiliary_client",
+            return_value=(fake_client, "judge-model"),
+        ):
+            verdict, reason, _ = goals.judge_goal(
+                "deploy the change",
+                "I am blocked and need human input before deploying to production.",
+            )
+        assert verdict == "blocked"
+        assert "needs_human" in reason
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -243,6 +311,81 @@ class TestGoalManager:
         assert goal_route_decision("长期推进 Hermes 自身架构 mission").target_layer == "mission"
         assert goal_route_decision("每天早上 9 点发日报").target_layer == "cron"
         assert goal_route_decision("部署到生产并付款购买服务").target_layer == "human_gate"
+
+    def test_compile_goal_promotion_dry_run_routes_fixtures_to_expected_candidate_layers(self):
+        from hermes_cli.goals import build_goal_spec, compile_goal_promotion_dry_run
+
+        fixtures = [
+            (
+                "修改 Hermes /goal 代码并运行测试",
+                "taskpool",
+                "taskpool_task_candidate",
+                "deterministic_test_or_dry_run_readback",
+            ),
+            (
+                "长期推进 Hermes 自身架构 mission，并设置阶段报告",
+                "mission",
+                "mission_candidate",
+                "stage_report_readback",
+            ),
+            (
+                "每天早上 9 点生成日报",
+                "cron",
+                "cron_candidate",
+                "schedule_expression",
+            ),
+            (
+                "部署到生产并付款购买服务",
+                "human_gate",
+                "human_gate_packet_candidate",
+                "explicit_user_authority",
+            ),
+        ]
+
+        for goal, target_layer, candidate_kind, evidence_requirement in fixtures:
+            spec = build_goal_spec(
+                goal,
+                max_turns=20,
+                success_criteria=["fixture route is inspectable"],
+                non_goals=["do not write taskpool/mission/cron state"],
+            )
+
+            dry_run = compile_goal_promotion_dry_run(spec)
+
+            assert dry_run["schema"] == "goal_promotion_dry_run_v1"
+            assert dry_run["dry_run"] is True
+            assert dry_run["execution_enabled"] is False
+            assert dry_run["mutation_allowed"] is False
+            assert dry_run["state_mutations"] == []
+            assert dry_run["route"]["schema"] == "goal_route_decision_v1"
+            assert dry_run["route"]["target_layer"] == target_layer
+            assert dry_run["candidate"]["kind"] == candidate_kind
+            assert dry_run["candidate"]["target_layer"] == target_layer
+            assert dry_run["candidate"]["execute"] is False
+            assert dry_run["candidate"]["title"] == goal[:120]
+            assert evidence_requirement in dry_run["candidate"]["evidence_requirements"]
+            assert dry_run["candidate"]["acceptance_criteria"] == ["fixture route is inspectable"]
+            assert dry_run["candidate"]["non_goals"] == ["do not write taskpool/mission/cron state"]
+            assert "no taskpool, mission, cron" in dry_run["safety_boundary"]
+
+    def test_goal_manager_promote_dry_run_does_not_mutate_persisted_goal_state(self, hermes_home):
+        from hermes_cli.goals import GoalManager, load_goal
+
+        mgr = GoalManager(session_id="promote-dry-run-sid", default_max_turns=20)
+        state = mgr.set(
+            "修改 Hermes /goal promote dry-run 并运行测试",
+            success_criteria=["candidate JSON includes evidence requirements"],
+        )
+        before = state.to_json()
+
+        dry_run = mgr.promote_dry_run()
+        after = load_goal("promote-dry-run-sid")
+
+        assert dry_run["schema"] == "goal_promotion_dry_run_v1"
+        assert dry_run["candidate"]["kind"] == "taskpool_task_candidate"
+        assert dry_run["mutation_allowed"] is False
+        assert after is not None
+        assert after.to_json() == before
 
     def test_compile_workflow_plan_v1_keeps_social_pain_fixtures_dry_run_and_evidence_bound(self):
         from hermes_cli.goals import build_goal_spec, compile_workflow_plan_v1
@@ -352,6 +495,76 @@ class TestGoalManager:
         assert fixture["source_verification"]["openclaw_repo_verified"] is True
         assert fixture["source_verification"]["niuma_public_source"] == "not_verified"
 
+    def test_compile_workflow_plan_v1_renders_complex_goal_spec_as_acyclic_dry_run_dag(self, tmp_path):
+        from hermes_cli.goals import build_goal_spec, compile_workflow_plan_v1
+
+        marker = tmp_path / "should_not_exist"
+        spec = build_goal_spec(
+            "全盘推进 workflow kernel dry-run DAG",
+            max_turns=20,
+            success_criteria=["planner/code/test/review/deploy boundaries visible"],
+        )
+        spec["workflow_steps"] = [
+            {
+                "id": "plan",
+                "title": "Plan bounded slice",
+                "evidence_contract": ["objective", "acceptance criteria"],
+                "rollback_boundary": "discard generated plan document",
+                "permission_boundary": "read_only_design",
+            },
+            {
+                "id": "implement",
+                "title": "Implement local patch",
+                "depends_on": ["plan"],
+                "evidence_contract": ["diff", "targeted tests"],
+                "rollback_boundary": "revert scoped git diff",
+                "permission_boundary": "local_files_only",
+                "command": f"touch {marker}",
+                "execute": True,
+            },
+            {
+                "id": "review",
+                "title": "Review before external side effects",
+                "depends_on": ["implement"],
+                "evidence_contract": ["risk notes", "human approval"],
+                "rollback_boundary": "do not merge or deploy",
+                "permission_boundary": "external_side_effect_human_gate",
+            },
+        ]
+
+        plan = compile_workflow_plan_v1(spec)
+
+        assert plan["schema"] == "workflow_plan_v1"
+        assert plan["dry_run"] is True
+        assert plan["execution_enabled"] is False
+        assert plan["graph"]["acyclic"] is True
+        assert plan["graph"]["topological_order"] == ["goal:plan", "goal:implement", "goal:review"]
+        assert plan["edges"] == [
+            {"from": "goal:plan", "to": "goal:implement"},
+            {"from": "goal:implement", "to": "goal:review"},
+        ]
+        for node in plan["nodes"]:
+            assert node["kind"] == "goal_spec_step"
+            assert node["evidence_required"] is True
+            assert node["evidence_contract"]
+            assert node["rollback_boundary"]
+            assert node["execute"] is False
+        assert plan["nodes"][1]["executor_ref"]["command"] == f"touch {marker}"
+        assert plan["nodes"][2]["human_gate_required"] is True
+        assert not marker.exists()
+
+    def test_compile_workflow_plan_v1_rejects_cyclic_goal_spec_steps(self):
+        from hermes_cli.goals import build_goal_spec, compile_workflow_plan_v1
+
+        spec = build_goal_spec("cycle should fail closed", max_turns=20)
+        spec["workflow_steps"] = [
+            {"id": "a", "depends_on": ["b"], "evidence_contract": ["a proof"], "rollback_boundary": "a rollback"},
+            {"id": "b", "depends_on": ["a"], "evidence_contract": ["b proof"], "rollback_boundary": "b rollback"},
+        ]
+
+        with pytest.raises(ValueError, match="acyclic"):
+            compile_workflow_plan_v1(spec)
+
     def test_set_rejects_empty(self, hermes_home):
         from hermes_cli.goals import GoalManager
 
@@ -399,6 +612,72 @@ class TestGoalManager:
         assert mgr2.state is not None
         assert mgr2.state.goal == "do the thing"
         assert mgr2.is_active()
+
+    def test_force_checkpoint_restores_route_subgoals_proof_refs_and_plan(self, hermes_home):
+        """Goal checkpoint sidecar survives an in-memory manager reset.
+
+        Acceptance: force checkpoint; clear in-memory manager; reload state;
+        status shows same route/subgoals/proof refs.
+        """
+        from hermes_cli.goals import GoalManager, GoalState, save_goal
+
+        mgr = GoalManager(session_id="checkpoint-sid", default_max_turns=7)
+        state = mgr.set(
+            "修改 Hermes /goal checkpoint sidecar",
+            success_criteria=["checkpoint survives reload"],
+        )
+        goal_id = state.goal_id
+        mgr.add_subgoal("preserve subgoals")
+        mgr.state.proof_refs.append("proof:cmd:pytest-goal-checkpoint")
+        mgr.state.remaining_plan.extend(["write red test", "bind pre-compact reload"])
+        checkpoint = mgr.force_checkpoint(reason="test-force")
+
+        assert checkpoint["schema"] == "goal_checkpoint_v1"
+        assert checkpoint["goal_id"] == goal_id
+        assert checkpoint["proof_refs"] == ["proof:cmd:pytest-goal-checkpoint"]
+        assert checkpoint["remaining_plan"] == ["write red test", "bind pre-compact reload"]
+
+        # Simulate stale/older state_meta that lacks fields now carried by the
+        # checkpoint sidecar; a fresh manager must merge the sidecar back in.
+        save_goal("checkpoint-sid", GoalState(goal="修改 Hermes /goal checkpoint sidecar"))
+        mgr._state = None
+
+        reloaded = GoalManager(session_id="checkpoint-sid")
+        assert reloaded.state is not None
+        assert reloaded.state.goal_id == goal_id
+        assert reloaded.state.route == state.route
+        assert reloaded.state.subgoals == ["preserve subgoals"]
+        assert reloaded.state.proof_refs == ["proof:cmd:pytest-goal-checkpoint"]
+        assert reloaded.state.remaining_plan == ["write red test", "bind pre-compact reload"]
+        status = reloaded.status_line()
+        assert "route=taskpool" in status
+        assert "1 subgoal" in status
+        assert "proof_refs=1" in status
+
+    def test_pre_compact_rebind_copies_goal_checkpoint_to_new_session(self, hermes_home):
+        from hermes_cli.goals import GoalManager, load_goal, rebind_goal_checkpoint
+
+        mgr = GoalManager(session_id="old-compact-sid")
+        mgr.set("长期推进 Hermes /goal checkpoint")
+        mgr.add_subgoal("restore after compact")
+        mgr.state.proof_refs.append("proof:sidecar:old")
+        mgr.state.remaining_plan.append("next slice")
+        mgr.force_checkpoint(reason="pre-compact")
+
+        copied = rebind_goal_checkpoint(
+            "old-compact-sid",
+            "new-compact-sid",
+            reason="compression",
+        )
+
+        assert copied is True
+        rebound = load_goal("new-compact-sid")
+        assert rebound is not None
+        assert rebound.goal == "长期推进 Hermes /goal checkpoint"
+        assert rebound.route == mgr.state.route
+        assert rebound.subgoals == ["restore after compact"]
+        assert rebound.proof_refs == ["proof:sidecar:old"]
+        assert rebound.remaining_plan == ["next slice"]
 
     def test_evaluate_after_turn_done(self, hermes_home):
         """Judge says done → status=done, no continuation."""
@@ -823,7 +1102,7 @@ class TestJudgeGoalWithSubgoals:
                    return_value=None):
             verdict, reason, parse_failed = goals.judge_goal(
                 "ship the feature",
-                "ok shipped",
+                "ok shipped. Tests: command: ./venv/bin/python -m pytest -q -> 1 passed",
                 subgoals=["write tests", "update docs"],
             )
 
