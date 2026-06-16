@@ -240,6 +240,42 @@ class TestMatcher:
 
 
 class TestCallbackSubprocess:
+    def test_observer_hook_error_fails_open(self, tmp_path):
+        spec = shell_hooks.ShellHookSpec(
+            event="post_tool_call",
+            command=str(tmp_path / "missing-observer"),
+            hook_class="observer",
+            fail_policy="fail_open",
+        )
+        cb = shell_hooks._make_callback(spec)
+        assert cb(tool_name="terminal") is None
+
+    def test_gate_hook_error_fails_closed(self, tmp_path):
+        spec = shell_hooks.ShellHookSpec(
+            event="pre_tool_call",
+            command=str(tmp_path / "missing-gate"),
+            hook_class="gate",
+            fail_policy="fail_closed",
+        )
+        cb = shell_hooks._make_callback(spec)
+        assert cb(tool_name="terminal") == {
+            "action": "block",
+            "message": "Hook gate failed closed: command not found",
+        }
+
+    def test_gate_hook_require_human_blocks_on_runtime_error(self, tmp_path):
+        spec = shell_hooks.ShellHookSpec(
+            event="pre_tool_call",
+            command=str(tmp_path / "missing-human-gate"),
+            hook_class="gate",
+            fail_policy="require_human",
+        )
+        cb = shell_hooks._make_callback(spec)
+        assert cb(tool_name="terminal") == {
+            "action": "block",
+            "message": "Hook gate requires human review: command not found",
+        }
+
     def test_timeout_returns_none(self, tmp_path):
         # Script that sleeps forever; we set a 1s timeout.
         script = _write_script(
@@ -441,7 +477,13 @@ class TestParseHooksBlock:
     def test_valid_entry(self):
         specs = shell_hooks._parse_hooks_block({
             "pre_tool_call": [
-                {"matcher": "terminal", "command": "/tmp/hook.sh", "timeout": 30},
+                {
+                    "matcher": "terminal",
+                    "command": "/tmp/hook.sh",
+                    "timeout": 30,
+                    "class": "gate",
+                    "fail_policy": "fail_closed",
+                },
             ],
         })
         assert len(specs) == 1
@@ -449,6 +491,46 @@ class TestParseHooksBlock:
         assert specs[0].matcher == "terminal"
         assert specs[0].command == "/tmp/hook.sh"
         assert specs[0].timeout == 30
+        assert specs[0].hook_class == "gate"
+        assert specs[0].fail_policy == "fail_closed"
+
+    def test_manifest_policy_selfcheck_flags_missing_class_and_fail_policy(self):
+        specs = shell_hooks._parse_hooks_block({
+            "pre_tool_call": [{"command": "/tmp/hook.sh"}],
+        })
+
+        issues = shell_hooks.validate_hook_manifest_policy(specs)
+
+        assert issues == [
+            "hooks.pre_tool_call[0] missing class (observer/advisor/gate/executor)",
+            "hooks.pre_tool_call[0] missing fail_policy (fail_open/fail_closed/require_human)",
+        ]
+
+    def test_manifest_policy_selfcheck_requires_observer_fail_open(self):
+        specs = shell_hooks._parse_hooks_block({
+            "post_tool_call": [
+                {"command": "/tmp/hook.sh", "class": "observer", "fail_policy": "fail_closed"},
+            ],
+        })
+
+        issues = shell_hooks.validate_hook_manifest_policy(specs)
+
+        assert issues == [
+            "hooks.post_tool_call[0] observer hooks must use fail_policy=fail_open",
+        ]
+
+    def test_manifest_policy_selfcheck_requires_gate_fail_closed_or_human(self):
+        specs = shell_hooks._parse_hooks_block({
+            "pre_tool_call": [
+                {"command": "/tmp/hook.sh", "class": "gate", "fail_policy": "fail_open"},
+            ],
+        })
+
+        issues = shell_hooks.validate_hook_manifest_policy(specs)
+
+        assert issues == [
+            "hooks.pre_tool_call[0] gate hooks must use fail_policy=fail_closed or require_human",
+        ]
 
     def test_unknown_event_skipped(self, caplog):
         specs = shell_hooks._parse_hooks_block({

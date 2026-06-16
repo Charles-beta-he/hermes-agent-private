@@ -303,8 +303,18 @@ def _cmd_doctor(_args) -> None:
     print(f"Checking {len(specs)} configured shell hook(s)...\n")
 
     problems = 0
+    manifest_issues = shell_hooks.validate_hook_manifest_policy(specs)
+    if manifest_issues:
+        print("  [manifest policy]")
+        for issue in manifest_issues:
+            problems += 1
+            print(f"      ✗ {issue}")
+        print()
+
     for spec in specs:
-        print(f"  [{spec.event}] {spec.command}")
+        class_part = f" class={spec.hook_class}" if spec.hook_class else " class=<missing>"
+        policy_part = f" fail_policy={spec.fail_policy}" if spec.fail_policy else " fail_policy=<missing>"
+        print(f"  [{spec.event}] {spec.command}{class_part}{policy_part}")
         problems += _doctor_one(spec, shell_hooks)
         print()
 

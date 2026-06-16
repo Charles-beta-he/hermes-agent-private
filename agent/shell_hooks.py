@@ -84,6 +84,8 @@ DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 300
 ALLOWLIST_FILENAME = "shell-hooks-allowlist.json"
 _DEFAULT_BLOCK_MESSAGE = "Blocked by shell hook."
+VALID_HOOK_CLASSES = {"observer", "advisor", "gate", "executor"}
+VALID_FAIL_POLICIES = {"fail_open", "fail_closed", "require_human"}
 
 # (event, matcher, command) triples that have been wired to the plugin
 # manager in the current process.  Matcher is part of the key because
@@ -111,6 +113,8 @@ class ShellHookSpec:
     command: str
     matcher: Optional[str] = None
     timeout: int = DEFAULT_TIMEOUT_SECONDS
+    hook_class: Optional[str] = None
+    fail_policy: Optional[str] = None
     compiled_matcher: Optional[re.Pattern] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -129,6 +133,10 @@ class ShellHookSpec:
                     "literal equality", self.matcher, exc,
                 )
                 self.compiled_matcher = None
+        if isinstance(self.hook_class, str):
+            self.hook_class = self.hook_class.strip().lower().replace("-", "_") or None
+        if isinstance(self.fail_policy, str):
+            self.fail_policy = self.fail_policy.strip().lower().replace("-", "_") or None
 
     def matches_tool(self, tool_name: Optional[str]) -> bool:
         if not self.matcher:
@@ -227,6 +235,46 @@ def iter_configured_hooks(cfg: Optional[Dict[str, Any]]) -> List[ShellHookSpec]:
     if not isinstance(cfg, dict):
         return []
     return _parse_hooks_block(cfg.get("hooks"))
+
+
+def validate_hook_manifest_policy(specs: List[ShellHookSpec]) -> List[str]:
+    """Return selfcheck issues for hook class/fail-policy declarations.
+
+    Runtime registration remains backward-compatible for existing hooks, while
+    selfcheck/doctor fails incomplete manifests before operators rely on them.
+    """
+    issues: List[str] = []
+    seen_by_event: Dict[str, int] = {}
+    for spec in specs:
+        index = seen_by_event.get(spec.event, 0)
+        seen_by_event[spec.event] = index + 1
+        label = f"hooks.{spec.event}[{index}]"
+
+        if spec.hook_class is None:
+            issues.append(f"{label} missing class (observer/advisor/gate/executor)")
+        elif spec.hook_class not in VALID_HOOK_CLASSES:
+            issues.append(
+                f"{label} invalid class={spec.hook_class!r} "
+                "(observer/advisor/gate/executor)"
+            )
+
+        if spec.fail_policy is None:
+            issues.append(
+                f"{label} missing fail_policy (fail_open/fail_closed/require_human)"
+            )
+        elif spec.fail_policy not in VALID_FAIL_POLICIES:
+            issues.append(
+                f"{label} invalid fail_policy={spec.fail_policy!r} "
+                "(fail_open/fail_closed/require_human)"
+            )
+
+        if spec.hook_class == "observer" and spec.fail_policy not in {None, "fail_open"}:
+            issues.append(f"{label} observer hooks must use fail_policy=fail_open")
+        if spec.hook_class == "gate" and spec.fail_policy not in {None, "fail_closed", "require_human"}:
+            issues.append(
+                f"{label} gate hooks must use fail_policy=fail_closed or require_human"
+            )
+    return issues
 
 
 def reset_for_tests() -> None:
@@ -346,11 +394,29 @@ def _parse_single_entry(
         )
         timeout = MAX_TIMEOUT_SECONDS
 
+    hook_class = raw.get("class", raw.get("hook_class"))
+    if hook_class is not None and not isinstance(hook_class, str):
+        logger.warning(
+            "hooks.%s[%d].class must be a string; treating as missing",
+            event, index,
+        )
+        hook_class = None
+
+    fail_policy = raw.get("fail_policy")
+    if fail_policy is not None and not isinstance(fail_policy, str):
+        logger.warning(
+            "hooks.%s[%d].fail_policy must be a string; treating as missing",
+            event, index,
+        )
+        fail_policy = None
+
     return ShellHookSpec(
         event=event,
         command=command.strip(),
         matcher=matcher,
         timeout=timeout,
+        hook_class=hook_class,
+        fail_policy=fail_policy,
     )
 
 
@@ -435,13 +501,13 @@ def _make_callback(spec: ShellHookSpec) -> Callable[..., Optional[Dict[str, Any]
                 "shell hook failed (event=%s command=%s): %s",
                 spec.event, spec.command, r["error"],
             )
-            return None
+            return _failure_result(spec, str(r["error"]))
         if r["timed_out"]:
             logger.warning(
                 "shell hook timed out after %.2fs (event=%s command=%s)",
                 r["elapsed_seconds"], spec.event, spec.command,
             )
-            return None
+            return _failure_result(spec, f"timed out after {r['elapsed_seconds']}s")
 
         stderr = r["stderr"].strip()
         if stderr:
@@ -456,11 +522,39 @@ def _make_callback(spec: ShellHookSpec) -> Callable[..., Optional[Dict[str, Any]
                 "shell hook exited %d (event=%s command=%s); stderr=%s",
                 r["returncode"], spec.event, spec.command, stderr[:400],
             )
-        return _parse_response(spec.event, r["stdout"])
+        parsed = _parse_response(spec.event, r["stdout"])
+        if parsed is not None:
+            return parsed
+        if r["returncode"] != 0:
+            return _failure_result(spec, f"exit {r['returncode']}")
+        if spec.hook_class == "gate" and spec.fail_policy in {"fail_closed", "require_human"}:
+            stdout = (r["stdout"] or "").strip()
+            if stdout and _json_payload_invalid(stdout):
+                return _failure_result(spec, "invalid JSON response")
+        return None
 
     _callback.__name__ = f"shell_hook[{spec.event}:{spec.command}]"
     _callback.__qualname__ = _callback.__name__
     return _callback
+
+
+def _failure_result(spec: ShellHookSpec, reason: str) -> Optional[Dict[str, Any]]:
+    """Apply the declared fail policy for a hook runtime failure."""
+    if spec.hook_class != "gate" or spec.event != "pre_tool_call":
+        return None
+    if spec.fail_policy == "fail_closed":
+        return {"action": "block", "message": f"Hook gate failed closed: {reason}"}
+    if spec.fail_policy == "require_human":
+        return {"action": "block", "message": f"Hook gate requires human review: {reason}"}
+    return None
+
+
+def _json_payload_invalid(stdout: str) -> bool:
+    try:
+        json.loads(stdout)
+    except json.JSONDecodeError:
+        return True
+    return False
 
 
 def _serialize_payload(event: str, kwargs: Dict[str, Any]) -> str:
