@@ -1,15 +1,15 @@
 {
   "schema": "capability_absorption_registry_v1",
-  "generated_at": "2026-06-16T06:16:54.955643+00:00",
+  "generated_at": "2026-06-16T06:22:45.368418+00:00",
   "tasks_dir": "/Users/charles/Documents/brain/05-实践与项目/tasks",
   "summary": {
     "record_count": 189,
-    "open_count": 3,
+    "open_count": 2,
     "by_status": {
       "active": 1,
       "archived": 35,
-      "done": 150,
-      "pending": 2,
+      "done": 151,
+      "pending": 1,
       "ready": 1
     },
     "by_absorption_layer": {
@@ -6641,11 +6641,11 @@
       "task_id": "2026-06-16-从-niuma-openclaw-视频提炼-agent-role-topology-v1-并接入-workflow-plan-v1-设计",
       "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-16-从-niuma-openclaw-视频提炼-agent-role-topology-v1-并接入-workflow-plan-v1-设计.md",
       "title": "Task - 从 Niuma/OpenClaw 视频提炼 agent-role-topology-v1 并接入 workflow_plan_v1 设计",
-      "status": "pending",
+      "status": "done",
       "priority": "P2",
       "project": "hermes-agent",
       "architecture_target": "taskpool",
-      "updated": "2026-06-16T12:56:44+08:00",
+      "updated": "2026-06-16T14:22:38+08:00",
       "capability_claim": "把视频中的 Planner/Coder/Tester/Reviewer/Deploy 拓扑沉淀为可验证 workflow_plan_v1 角色模板",
       "target_surface": "taskpool",
       "integration_level": "integrate",
@@ -6782,36 +6782,6 @@
       ]
     },
     {
-      "task_id": "2026-06-16-从-niuma-openclaw-视频提炼-agent-role-topology-v1-并接入-workflow-plan-v1-设计",
-      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-16-从-niuma-openclaw-视频提炼-agent-role-topology-v1-并接入-workflow-plan-v1-设计.md",
-      "title": "Task - 从 Niuma/OpenClaw 视频提炼 agent-role-topology-v1 并接入 workflow_plan_v1 设计",
-      "status": "pending",
-      "priority": "P2",
-      "project": "hermes-agent",
-      "architecture_target": "taskpool",
-      "updated": "2026-06-16T12:56:44+08:00",
-      "capability_claim": "把视频中的 Planner/Coder/Tester/Reviewer/Deploy 拓扑沉淀为可验证 workflow_plan_v1 角色模板",
-      "target_surface": "taskpool",
-      "integration_level": "integrate",
-      "absorption_layer": "module",
-      "source_refs": [
-        "artifact:/Users/charles/.hermes/docs/private/wechat-video-niuma-openclaw-multi-agent-analysis-20260616.md",
-        "proof:task-add-boundary",
-        "artifact:/Users/charles/.hermes/tick-20260616-045128-892078-p55111-a268ac6c-a7ababbc/discussion_result.json",
-        "proof:multimodel-writeback-boundary"
-      ],
-      "evidence_refs": [
-        "artifact:/Users/charles/.hermes/docs/private/wechat-video-niuma-openclaw-multi-agent-analysis-20260616.md",
-        "proof:task-add-boundary",
-        "artifact:/Users/charles/.hermes/tick-20260616-045128-892078-p55111-a268ac6c-a7ababbc/discussion_result.json",
-        "proof:multimodel-writeback-boundary"
-      ],
-      "acceptance_criteria": [
-        "Verify whether Niuma has public source; extract role topology contract with input/output/evidence per role; map to GoalSpec->workflow_plan_v1; add no-execute deploy fixture",
-        "artifact:wechat-video-niuma-openclaw-analysis; proof:verified OpenClaw repo via GitHub API; proof:role topology fixture compiles to DAG without deploy execution"
-      ]
-    },
-    {
       "task_id": "2026-06-16-评估-computer-use-agent-沙箱-基准设施对-hermes-浏览器自动化主链的可维护接入门",
       "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-16-评估-computer-use-agent-沙箱-基准设施对-hermes-浏览器自动化主链的可维护接入门.md",
       "title": "Task - 评估 computer-use agent 沙箱/基准设施对 Hermes 浏览器自动化主链的可维护接入门",
@@ -6843,6 +6813,36 @@
     }
   ],
   "recent_done": [
+    {
+      "task_id": "2026-06-16-从-niuma-openclaw-视频提炼-agent-role-topology-v1-并接入-workflow-plan-v1-设计",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-16-从-niuma-openclaw-视频提炼-agent-role-topology-v1-并接入-workflow-plan-v1-设计.md",
+      "title": "Task - 从 Niuma/OpenClaw 视频提炼 agent-role-topology-v1 并接入 workflow_plan_v1 设计",
+      "status": "done",
+      "priority": "P2",
+      "project": "hermes-agent",
+      "architecture_target": "taskpool",
+      "updated": "2026-06-16T14:22:38+08:00",
+      "capability_claim": "把视频中的 Planner/Coder/Tester/Reviewer/Deploy 拓扑沉淀为可验证 workflow_plan_v1 角色模板",
+      "target_surface": "taskpool",
+      "integration_level": "integrate",
+      "absorption_layer": "module",
+      "source_refs": [
+        "artifact:/Users/charles/.hermes/docs/private/wechat-video-niuma-openclaw-multi-agent-analysis-20260616.md",
+        "proof:task-add-boundary",
+        "artifact:/Users/charles/.hermes/tick-20260616-045128-892078-p55111-a268ac6c-a7ababbc/discussion_result.json",
+        "proof:multimodel-writeback-boundary"
+      ],
+      "evidence_refs": [
+        "artifact:/Users/charles/.hermes/docs/private/wechat-video-niuma-openclaw-multi-agent-analysis-20260616.md",
+        "proof:task-add-boundary",
+        "artifact:/Users/charles/.hermes/tick-20260616-045128-892078-p55111-a268ac6c-a7ababbc/discussion_result.json",
+        "proof:multimodel-writeback-boundary"
+      ],
+      "acceptance_criteria": [
+        "Verify whether Niuma has public source; extract role topology contract with input/output/evidence per role; map to GoalSpec->workflow_plan_v1; add no-execute deploy fixture",
+        "artifact:wechat-video-niuma-openclaw-analysis; proof:verified OpenClaw repo via GitHub API; proof:role topology fixture compiles to DAG without deploy execution"
+      ]
+    },
     {
       "task_id": "2026-06-16-评估吸收-web-to-design-md-为-hermes-网站风格提取模块",
       "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-16-评估吸收-web-to-design-md-为-hermes-网站风格提取模块.md",
@@ -7710,65 +7710,6 @@
       ],
       "acceptance_criteria": [
         "gap-mapping产出docs/private/feynman-gap-analysis.md; 最少1个bounded slice落地(skill/script/模板); effectiveness benchmark对比现有Hermes工作流"
-      ]
-    },
-    {
-      "task_id": "2026-06-02-评估-moso-毛竹-对-hermes-远程-ai-运维与本地触手架构的参考价值-2",
-      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-02-评估-moso-毛竹-对-hermes-远程-ai-运维与本地触手架构的参考价值-2.md",
-      "title": "Task - 评估 Moso/毛竹 对 Hermes 远程 AI 运维与本地触手架构的参考价值",
-      "status": "done",
-      "priority": "P2",
-      "project": "hermes-agent",
-      "architecture_target": "local-brain",
-      "updated": "2026-06-12T20:50:39+08:00",
-      "capability_claim": "评估 messageloop2025/Moso（毛竹）作为 FastAPI + 原生 JS SPA 的 SSH 远程 AI 运维系统，对 Hermes 本地大脑/远程触手、主机管理、WebSocket/xterm 终端、SSH/SFTP、批量/定时任务、MCP、Agent Skills、OpenClaw/Hermes 集成、eop_ API Token、主机能力画像与 delegate_chain 编排的可迁移价值。",
-      "target_surface": "local-brain",
-      "integration_level": "evaluate",
-      "absorption_layer": "module",
-      "source_refs": [
-        "artifact:https://github.com/messageloop2025/Moso",
-        "proof:GitHub API confirmed messageloop2025/Moso; public repo; description is SSH 远程 AI 运维系统; JavaScript; default_branch main; created 2026-06-01; pushed 2026-06-02; no license detected by GitHub API.",
-        "proof:repo root includes README.md",
-        "proof:README.en.md",
-        "proof:app.py",
-        "proof:config.py",
-        "proof:requirements.txt",
-        "proof:api/",
-        "proof:services/",
-        "proof:docs/",
-        "proof:database/migrations/",
-        "proof:claw-ops/",
-        "proof:claw-skills/",
-        "proof:web/.",
-        "proof:README/docs indicate FastAPI + SQLite WAL + Paramiko + native JS SPA + xterm.js + AI assistant + host/credential management + WebSocket terminal + MCP + per-user Agent Skills + OpenClaw/Hermes integration.",
-        "proof:task-add-boundary",
-        "artifact:/Users/charles/.hermes/tick-20260602-082826-427485-p71199-4b96d839-b41ed21e/discussion_result.json",
-        "proof:multimodel-writeback-boundary",
-        "/Users/charles/.hermes/tick-20260604-111239-276454-p90973-0b06ad86-0d22a4c1/discussion_result.json"
-      ],
-      "evidence_refs": [
-        "artifact:https://github.com/messageloop2025/Moso",
-        "proof:GitHub API confirmed messageloop2025/Moso; public repo; description is SSH 远程 AI 运维系统; JavaScript; default_branch main; created 2026-06-01; pushed 2026-06-02; no license detected by GitHub API.",
-        "proof:repo root includes README.md",
-        "proof:README.en.md",
-        "proof:app.py",
-        "proof:config.py",
-        "proof:requirements.txt",
-        "proof:api/",
-        "proof:services/",
-        "proof:docs/",
-        "proof:database/migrations/",
-        "proof:claw-ops/",
-        "proof:claw-skills/",
-        "proof:web/.",
-        "proof:README/docs indicate FastAPI + SQLite WAL + Paramiko + native JS SPA + xterm.js + AI assistant + host/credential management + WebSocket terminal + MCP + per-user Agent Skills + OpenClaw/Hermes integration.",
-        "proof:task-add-boundary",
-        "artifact:/Users/charles/.hermes/tick-20260602-082826-427485-p71199-4b96d839-b41ed21e/discussion_result.json",
-        "proof:multimodel-writeback-boundary",
-        "/Users/charles/.hermes/tick-20260604-111239-276454-p90973-0b06ad86-0d22a4c1/discussion_result.json"
-      ],
-      "acceptance_criteria": [
-        "artifact:moso-source-review-and-gap-map; proof:确认仓库身份、README/docs/API/功能清单/Docker/AI-Delegation-Cookbook、FastAPI/SQLite/Paramiko/xterm.js/MCP/Skills/OpenClaw-Hermes 集成结构； proof:给出 Hermes primitive mapping（taskpool/browser-harness/edge-worker/MCP/skills/memory/permission gates）与 gap； proof:提出最小安全集成切片，优先为只读架构评估/接口映射/本地触手设计，不落地 SSH 执行或凭证接入。"
       ]
     }
   ],
