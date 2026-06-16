@@ -140,6 +140,24 @@ JUDGE_USER_PROMPT_WITH_SUBGOALS_TEMPLATE = (
 
 
 @dataclass
+class GoalRouteDecision:
+    """Dry-run routing projection for a standing goal.
+
+    This is intentionally advisory: setting a /goal must not enqueue taskpool
+    work, create cron jobs, or mutate mission state. Callers can display/store
+    the route and a later governed path may use it as evidence.
+    """
+
+    target_layer: str
+    reason: str
+    side_effect: str = "dry_run_only"
+    schema: str = "goal_route_decision_v1"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class GoalState:
     """Serializable goal state stored per session."""
 
@@ -153,6 +171,10 @@ class GoalState:
     last_reason: Optional[str] = None
     paused_reason: Optional[str] = None       # why we auto-paused (budget, etc.)
     consecutive_parse_failures: int = 0       # judge-output parse failures in a row
+    # Structured contract + dry-run route projection for production-grade
+    # Goal-Control Plane work. Backwards-compatible: older rows load with None.
+    spec: Optional[Dict[str, Any]] = None
+    route: Optional[Dict[str, Any]] = None
     # User-added criteria appended mid-loop via the /subgoal command.
     # When non-empty the judge prompt and continuation prompt both
     # include them so the agent works toward them and the judge factors
@@ -170,6 +192,8 @@ class GoalState:
         subgoals: List[str] = []
         if isinstance(raw_subgoals, list):
             subgoals = [str(s).strip() for s in raw_subgoals if str(s).strip()]
+        raw_spec = data.get("spec") if isinstance(data.get("spec"), dict) else None
+        raw_route = data.get("route") if isinstance(data.get("route"), dict) else None
         return cls(
             goal=data.get("goal", ""),
             status=data.get("status", "active"),
@@ -181,6 +205,8 @@ class GoalState:
             last_reason=data.get("last_reason"),
             paused_reason=data.get("paused_reason"),
             consecutive_parse_failures=int(data.get("consecutive_parse_failures", 0) or 0),
+            spec=raw_spec,
+            route=raw_route,
             subgoals=subgoals,
         )
 
@@ -268,6 +294,64 @@ def save_goal(session_id: str, state: GoalState) -> None:
         db.set_meta(_meta_key(session_id), state.to_json())
     except Exception as exc:
         logger.debug("GoalManager: set_meta failed: %s", exc)
+
+
+def _clean_text_list(values: Optional[List[str]]) -> List[str]:
+    if not values:
+        return []
+    return [str(v).strip() for v in values if str(v).strip()]
+
+
+def goal_route_decision(goal: str, *, success_criteria: Optional[List[str]] = None) -> GoalRouteDecision:
+    """Classify a /goal into an advisory execution layer.
+
+    This is a dry-run control-plane decision, not an executor. It deliberately
+    returns ``human_gate`` for production/deploy/payment/secret/destructive
+    goals before any lower-risk route so /goal cannot silently escalate
+    authority.
+    """
+    text = f"{goal or ''} {' '.join(_clean_text_list(success_criteria))}".lower()
+    human_terms = [
+        "生产", "deploy", "部署", "付款", "payment", "purchase", "secret",
+        "credential", "密钥", "删除", "destructive", "push", "merge",
+    ]
+    cron_terms = ["每天", "每日", "定时", "schedule", "cron", "every ", "每周", "每小时"]
+    mission_terms = ["长期", "mission", "架构", "自推进", "长期推进", "roadmap"]
+    taskpool_terms = [
+        "代码", "实现", "测试", "修复", "修改", "落地", "全盘推进", "workflow",
+        "hooks", "dynamic", "taskpool", "hermes", "repo", "文件",
+    ]
+    if any(term in text for term in human_terms):
+        return GoalRouteDecision("human_gate", "goal requests high-risk authority or external side effects")
+    if any(term in text for term in cron_terms):
+        return GoalRouteDecision("cron", "goal is recurring or schedule-shaped")
+    if any(term in text for term in mission_terms):
+        return GoalRouteDecision("mission", "goal is long-running architecture or mission-shaped")
+    if any(term in text for term in taskpool_terms):
+        return GoalRouteDecision("taskpool", "goal is multi-step implementation or Hermes control-plane work")
+    return GoalRouteDecision("session", "goal appears bounded to the current interactive session")
+
+
+def build_goal_spec(
+    goal: str,
+    *,
+    max_turns: int,
+    success_criteria: Optional[List[str]] = None,
+    non_goals: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    criteria = _clean_text_list(success_criteria)
+    boundaries = _clean_text_list(non_goals)
+    route = goal_route_decision(goal, success_criteria=criteria)
+    return {
+        "schema": "goal_spec_v1",
+        "user_goal": goal,
+        "success_criteria": criteria,
+        "non_goals": boundaries,
+        "target_layer": route.target_layer,
+        "max_turns": int(max_turns),
+        "requires_evidence": True,
+        "requires_human_gate": route.target_layer == "human_gate",
+    }
 
 
 def clear_goal(session_id: str) -> None:
@@ -508,28 +592,56 @@ class GoalManager:
             return "No active goal. Set one with /goal <text>."
         turns = f"{s.turns_used}/{s.max_turns} turns"
         sub = f", {len(s.subgoals)} subgoal{'s' if len(s.subgoals) != 1 else ''}" if s.subgoals else ""
+        spec_bits = ""
+        if s.route or s.spec:
+            route = (s.route or {}).get("target_layer") or (s.spec or {}).get("target_layer")
+            criteria = len((s.spec or {}).get("success_criteria") or [])
+            detail = []
+            if route:
+                detail.append(f"route={route}")
+            if criteria:
+                detail.append(f"criteria={criteria}")
+            if detail:
+                spec_bits = ", " + ", ".join(detail)
         if s.status == "active":
-            return f"⊙ Goal (active, {turns}{sub}): {s.goal}"
+            return f"⊙ Goal (active, {turns}{sub}{spec_bits}): {s.goal}"
         if s.status == "paused":
             extra = f" — {s.paused_reason}" if s.paused_reason else ""
-            return f"⏸ Goal (paused, {turns}{sub}{extra}): {s.goal}"
+            return f"⏸ Goal (paused, {turns}{sub}{spec_bits}{extra}): {s.goal}"
         if s.status == "done":
-            return f"✓ Goal done ({turns}{sub}): {s.goal}"
-        return f"Goal ({s.status}, {turns}{sub}): {s.goal}"
+            return f"✓ Goal done ({turns}{sub}{spec_bits}): {s.goal}"
+        return f"Goal ({s.status}, {turns}{sub}{spec_bits}): {s.goal}"
 
     # --- mutation -----------------------------------------------------
 
-    def set(self, goal: str, *, max_turns: Optional[int] = None) -> GoalState:
+    def set(
+        self,
+        goal: str,
+        *,
+        max_turns: Optional[int] = None,
+        success_criteria: Optional[List[str]] = None,
+        non_goals: Optional[List[str]] = None,
+    ) -> GoalState:
         goal = (goal or "").strip()
         if not goal:
             raise ValueError("goal text is empty")
+        resolved_max_turns = int(max_turns) if max_turns else self.default_max_turns
+        spec = build_goal_spec(
+            goal,
+            max_turns=resolved_max_turns,
+            success_criteria=success_criteria,
+            non_goals=non_goals,
+        )
+        route = goal_route_decision(goal, success_criteria=spec.get("success_criteria") or [])
         state = GoalState(
             goal=goal,
             status="active",
             turns_used=0,
-            max_turns=int(max_turns) if max_turns else self.default_max_turns,
+            max_turns=resolved_max_turns,
             created_at=time.time(),
             last_turn_at=0.0,
+            spec=spec,
+            route=route.to_dict(),
         )
         self._state = state
         save_goal(self.session_id, state)

@@ -204,6 +204,46 @@ class TestGoalManager:
         assert "active" in mgr.status_line().lower()
         assert "port the thing" in mgr.status_line()
 
+    def test_set_persists_goal_spec_and_route_decision(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        mgr = GoalManager(session_id="goal-spec-sid", default_max_turns=7)
+        state = mgr.set(
+            "全盘推进 Hermes /goal dynamic workflow hooks 落地",
+            success_criteria=["GoalSpec schema exists", "route dry-run is verified"],
+            non_goals=["do not mutate taskpool lifecycle automatically"],
+        )
+
+        assert state.spec is not None
+        assert state.spec["schema"] == "goal_spec_v1"
+        assert state.spec["user_goal"] == state.goal
+        assert state.spec["success_criteria"] == [
+            "GoalSpec schema exists",
+            "route dry-run is verified",
+        ]
+        assert state.spec["non_goals"] == ["do not mutate taskpool lifecycle automatically"]
+        assert state.spec["requires_evidence"] is True
+        assert state.route is not None
+        assert state.route["schema"] == "goal_route_decision_v1"
+        assert state.route["target_layer"] == "taskpool"
+        assert state.route["side_effect"] == "dry_run_only"
+
+        reloaded = GoalManager(session_id="goal-spec-sid")
+        assert reloaded.state.spec == state.spec
+        assert reloaded.state.route == state.route
+        status = reloaded.status_line()
+        assert "route=taskpool" in status
+        assert "criteria=2" in status
+
+    def test_goal_route_decision_classifies_session_taskpool_mission_cron_and_human_gate(self):
+        from hermes_cli.goals import goal_route_decision
+
+        assert goal_route_decision("summarize this paragraph").target_layer == "session"
+        assert goal_route_decision("修改 Hermes 代码并运行测试").target_layer == "taskpool"
+        assert goal_route_decision("长期推进 Hermes 自身架构 mission").target_layer == "mission"
+        assert goal_route_decision("每天早上 9 点发日报").target_layer == "cron"
+        assert goal_route_decision("部署到生产并付款购买服务").target_layer == "human_gate"
+
     def test_set_rejects_empty(self, hermes_home):
         from hermes_cli.goals import GoalManager
 
