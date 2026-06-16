@@ -1,15 +1,15 @@
 {
   "cadence": "daily",
-  "created_at": "2026-06-14T05:34:23Z",
+  "created_at": "2026-06-15T04:45:17Z",
   "cron_state_mutated": false,
   "external_side_effects_executed": false,
   "latest_receipt": {
     "adapter": "telegram",
     "blockers": [],
     "chat_id": "5524172309",
-    "created_at": "2026-06-14T05:34:23Z",
+    "created_at": "2026-06-15T04:45:17Z",
     "external_side_effects_executed": false,
-    "idempotency_key": "30b88fc409f769ece3c15eb2bd02c53b32bb7c86f4c9fc3805b9ccecf9c5421f",
+    "idempotency_key": "6aaed26145da3dabbfb0f9667313612316cd03391b9e1be2be833793c3465135",
     "mode": "dry_run_preview",
     "payload_digest": "b7eafb4d4b19eec8fb42083007eb21a1de1d3b5ccc2daa77f7d1de24ba3d278c",
     "phase": 55,
@@ -31,7 +31,7 @@
     "schema": "workflow_kernel_unattended_dry_run_receipt_v1",
     "status": "UNATTENDED_DRY_RUN_RECEIPT_RECORDED",
     "target_type": "telegram_home_channel",
-    "time_bucket_utc_hour": "20260614T05",
+    "time_bucket_utc_hour": "20260615T04",
     "unattended_dispatch_enabled": false,
     "would_send": false
   },

@@ -1,0 +1,65 @@
+{
+  "boundary": "acceptance_lens_dry_run_only_no_runtime_no_task_lifecycle_mutation",
+  "candidate_id": "agent_native_five_layer_workflow_kernel_acceptance_lens_20260615",
+  "dry_run_only": true,
+  "durable_artifact_ref_present": true,
+  "evidence_refs": [
+    "file:/Users/charles/.hermes/evidence/mission-msn_20260610_120149_27c88cfc/20260615-agent-native-five-layer-acceptance-lens.md sha256=29219b1f238948641baabaaa7a017776c7912546439124a2bd7b85c5a8031a44",
+    "mission-stage-report:event:evt_20260615_213343_34f905f8"
+  ],
+  "external_side_effects_enabled": false,
+  "failures": [],
+  "flag_results": {
+    "destructive_delete_enabled": true,
+    "external_side_effects_enabled": true,
+    "model_call_enabled": true,
+    "production_deploy_enabled": true,
+    "remote_push_enabled": true,
+    "runtime_enabled": true,
+    "secret_write_enabled": true,
+    "task_lifecycle_mutation_enabled": true,
+    "write_through_enabled": true
+  },
+  "generated_at": "2026-06-15T15:32:56Z",
+  "human_intervention_trigger_declared": true,
+  "layer_results": {
+    "agent_runtime": {
+      "declared": true,
+      "evidence_ref_count": 2,
+      "ok": true,
+      "requirement_count": 3
+    },
+    "application_surface": {
+      "declared": true,
+      "evidence_ref_count": 2,
+      "ok": true,
+      "requirement_count": 3
+    },
+    "prompt_capability_stack": {
+      "declared": true,
+      "evidence_ref_count": 2,
+      "ok": true,
+      "requirement_count": 3
+    },
+    "runtime_host": {
+      "declared": true,
+      "evidence_ref_count": 2,
+      "ok": true,
+      "requirement_count": 3
+    },
+    "tool_artifact_loop": {
+      "declared": true,
+      "evidence_ref_count": 2,
+      "ok": true,
+      "requirement_count": 3
+    }
+  },
+  "local_reversible_only": true,
+  "model_call_enabled": false,
+  "result_id": "aclens_729a9cca12a1b820",
+  "runtime_enabled": false,
+  "schema": "workflow_kernel_acceptance_lens_dry_run_v1",
+  "task_lifecycle_mutation_enabled": false,
+  "verdict": "implementation_ready_not_runtime_enabled",
+  "write_through_enabled": false
+}

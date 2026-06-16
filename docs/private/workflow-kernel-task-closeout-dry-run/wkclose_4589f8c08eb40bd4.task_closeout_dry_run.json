@@ -1,0 +1,31 @@
+{
+  "checkbox_count_observed": 7,
+  "dry_run_only": true,
+  "evidence_refs": [
+    "task:/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-15-吸收-agent-native-五层闭环为-hermes-workflow-kernel-架构验收镜头.md sha256=dde4cf7ff99f6bf79adc6b6c9e9d7f8e6a72f65458c2a2f5f2c233ff9108d10d",
+    "receipt:/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-acceptance-lens-dry-run/agent_native_five_layer_workflow_kernel_acceptance_lens_20260615.aclens_729a9cca12a1b820.acceptance_lens_dry_run.json sha256=f61e6fcfa6615997b6690f2420ffd861cb2c2c461b598e100af6e8888e9cf1b2"
+  ],
+  "external_side_effects_enabled": false,
+  "generated_at": "2026-06-15T17:49:43Z",
+  "human_intervention_required_before_write": true,
+  "local_reversible_only": true,
+  "missing_task_snippets": [],
+  "proposed_closeout_lines": [
+    "## Proposed closeout preview (dry-run only)",
+    "- Proposed lifecycle target: keep `review` until human/host-authorized closeout write; do not auto-mark done.",
+    "- Acceptance-lens receipt: `/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-acceptance-lens-dry-run/agent_native_five_layer_workflow_kernel_acceptance_lens_20260615.aclens_729a9cca12a1b820.acceptance_lens_dry_run.json` sha256=f61e6fcfa6615997b6690f2420ffd861cb2c2c461b598e100af6e8888e9cf1b2",
+    "- Task note source: `/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-15-吸收-agent-native-五层闭环为-hermes-workflow-kernel-架构验收镜头.md` sha256=dde4cf7ff99f6bf79adc6b6c9e9d7f8e6a72f65458c2a2f5f2c233ff9108d10d",
+    "- Evidence summary: five-layer mapping, reusable checklist, dry-run receipt, intake/contact-sheet/transcript refs all present.",
+    "- Boundary: preview only; no task note mutation, no taskpool lifecycle mutation, no runtime enablement, no external side effects."
+  ],
+  "receipt_failures": [],
+  "receipt_path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-acceptance-lens-dry-run/agent_native_five_layer_workflow_kernel_acceptance_lens_20260615.aclens_729a9cca12a1b820.acceptance_lens_dry_run.json",
+  "result_id": "wkclose_4589f8c08eb40bd4",
+  "runtime_enabled": false,
+  "schema": "workflow_kernel_task_closeout_dry_run_v1",
+  "task_lifecycle_mutation_enabled": false,
+  "task_note_mutated": false,
+  "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-15-吸收-agent-native-五层闭环为-hermes-workflow-kernel-架构验收镜头.md",
+  "task_status_observed": "review",
+  "verdict": "ready_for_human_gated_lifecycle_update"
+}

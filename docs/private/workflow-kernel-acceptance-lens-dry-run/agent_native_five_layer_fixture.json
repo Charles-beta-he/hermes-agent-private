@@ -1,0 +1,50 @@
+{
+  "schema": "workflow_kernel_acceptance_lens_fixture_v1",
+  "candidate": {
+    "candidate_id": "agent_native_five_layer_workflow_kernel_acceptance_lens_20260615",
+    "durable_artifact_ref": "file:/Users/charles/.hermes/evidence/mission-msn_20260610_120149_27c88cfc/20260615-agent-native-five-layer-acceptance-lens.md",
+    "human_intervention_trigger": "permission/value/budget/cadence/side-effect divergence requires hermes mission handoff",
+    "layers": {
+      "application_surface": {
+        "declared": true,
+        "requirements": ["intent capture only", "result display only", "no privileged write bypass"],
+        "evidence_refs": ["lens:lines:48-50", "lens:lines:60-62"]
+      },
+      "runtime_host": {
+        "declared": true,
+        "requirements": ["host owns governance", "host owns budgets/cadence", "proof debt blocks green status"],
+        "evidence_refs": ["lens:lines:51-51", "lens:lines:63-65"]
+      },
+      "prompt_capability_stack": {
+        "declared": true,
+        "requirements": ["capabilities explicit", "precedence safe", "skills/prompts cannot override constraints"],
+        "evidence_refs": ["lens:lines:52-52", "lens:lines:66-68"]
+      },
+      "agent_runtime": {
+        "declared": true,
+        "requirements": ["runtime behind adapter contract", "runtime does not own final authority", "enablement flags default off"],
+        "evidence_refs": ["lens:lines:53-53", "lens:lines:69-71"]
+      },
+      "tool_artifact_loop": {
+        "declared": true,
+        "requirements": ["durable artifacts", "evidence refs/proof hashes", "read-back after run"],
+        "evidence_refs": ["lens:lines:54-54", "lens:lines:72-74"]
+      }
+    },
+    "safety_flags": {
+      "external_side_effects_enabled": false,
+      "runtime_enabled": false,
+      "write_through_enabled": false,
+      "task_lifecycle_mutation_enabled": false,
+      "model_call_enabled": false,
+      "remote_push_enabled": false,
+      "production_deploy_enabled": false,
+      "secret_write_enabled": false,
+      "destructive_delete_enabled": false
+    }
+  },
+  "evidence_refs": [
+    "file:/Users/charles/.hermes/evidence/mission-msn_20260610_120149_27c88cfc/20260615-agent-native-five-layer-acceptance-lens.md sha256=29219b1f238948641baabaaa7a017776c7912546439124a2bd7b85c5a8031a44",
+    "mission-stage-report:event:evt_20260615_213343_34f905f8"
+  ]
+}
