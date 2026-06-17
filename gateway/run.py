@@ -4903,6 +4903,21 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if connected_count > 0:
             await asyncio.sleep(1.0)
 
+        # Drain pending gateway delivery outbox records before lifecycle
+        # notifications so user-visible replies generated before a send-path
+        # flap are redelivered as soon as adapters are healthy again.
+        try:
+            from gateway.delivery_outbox import DeliveryOutbox, drain_delivery_outbox
+            _delivery_stats = await drain_delivery_outbox(
+                self.adapters,
+                outbox=DeliveryOutbox.default(),
+                limit=int(os.getenv("HERMES_GATEWAY_DELIVERY_OUTBOX_DRAIN_LIMIT", "100") or "100"),
+            )
+            if any(_delivery_stats.values()):
+                logger.info("Delivery outbox startup drain: %s", _delivery_stats)
+        except Exception as exc:
+            logger.warning("Delivery outbox startup drain failed: %s", exc, exc_info=True)
+
         # Notify the chat that initiated /restart that the gateway is back.
         planned_restart_notification_pending = _planned_restart_notification_pending()
         await self._send_restart_notification()
