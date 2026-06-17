@@ -3349,12 +3349,22 @@ class BasePlatformAdapter(ABC):
             return result
 
         if is_network:
+            # send_path_degraded is a recovery-window signal rather than an
+            # ordinary transient connection error: polling may have resumed but
+            # the outbound Bot API path is still being probed. Give that path a
+            # bounded recovery window before notifying the user that delivery
+            # failed.
+            recovery_delays = [10.0, 30.0, 60.0] if error_str == "send_path_degraded" else None
+            retry_count = len(recovery_delays) if recovery_delays else max_retries
             # Retry with exponential backoff for transient errors
-            for attempt in range(1, max_retries + 1):
-                delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
+            for attempt in range(1, retry_count + 1):
+                if recovery_delays:
+                    delay = recovery_delays[attempt - 1]
+                else:
+                    delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
                 logger.warning(
                     "[%s] Send failed (attempt %d/%d, retrying in %.1fs): %s",
-                    self.name, attempt, max_retries, delay, error_str,
+                    self.name, attempt, retry_count, delay, error_str,
                 )
                 await asyncio.sleep(delay)
                 result = await self.send(
@@ -3371,7 +3381,7 @@ class BasePlatformAdapter(ABC):
                     break  # error switched to non-transient — fall through to plain-text fallback
             else:
                 # All retries exhausted (loop completed without break) — notify user
-                logger.error("[%s] Failed to deliver response after %d retries: %s", self.name, max_retries, error_str)
+                logger.error("[%s] Failed to deliver response after %d retries: %s", self.name, retry_count, error_str)
                 notice = (
                     "\u26a0\ufe0f Message delivery failed after multiple attempts. "
                     "Please try again \u2014 your request was processed but the response could not be sent."

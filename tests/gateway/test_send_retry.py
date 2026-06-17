@@ -191,6 +191,36 @@ class TestSendWithRetryNetworkRetry:
         assert len(adapter._send_calls) == 2
 
     @pytest.mark.asyncio
+    async def test_send_path_degraded_uses_recovery_window_before_giving_up(self):
+        """Recovery-window sends should wait longer than ordinary network retries."""
+        adapter = _StubAdapter()
+        degraded = SendResult(success=False, error="send_path_degraded", retryable=True)
+        adapter._send_results = [degraded, degraded, SendResult(success=True, message_id="ok")]
+
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            result = await adapter._send_with_retry("chat1", "hello", max_retries=2, base_delay=0)
+
+        assert result.success
+        assert [call.args[0] for call in mock_sleep.await_args_list] == [10.0, 30.0]
+        assert len(adapter._send_calls) == 3
+
+    @pytest.mark.asyncio
+    async def test_send_path_degraded_exhausts_recovery_window_before_notice(self):
+        """Only notify failure after the longer recovery window is exhausted."""
+        adapter = _StubAdapter()
+        degraded = SendResult(success=False, error="send_path_degraded", retryable=True)
+        adapter._send_results = [degraded, degraded, degraded, degraded, SendResult(success=True)]
+
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            result = await adapter._send_with_retry("chat1", "hello", max_retries=2, base_delay=0)
+
+        assert not result.success
+        assert result.error == "send_path_degraded"
+        assert [call.args[0] for call in mock_sleep.await_args_list] == [10.0, 30.0, 60.0]
+        assert len(adapter._send_calls) == 5  # initial + 3 recovery retries + notice
+        assert "delivery failed" in adapter._send_calls[-1][1].lower()
+
+    @pytest.mark.asyncio
     async def test_network_to_nonnetwork_transition_falls_back_to_plaintext(self):
         """If error switches from network to formatting mid-retry, fall through to plain-text fallback."""
         adapter = _StubAdapter()
