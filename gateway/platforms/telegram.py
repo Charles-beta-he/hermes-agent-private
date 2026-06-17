@@ -982,6 +982,31 @@ class TelegramAdapter(BasePlatformAdapter):
                 self.name, exc_info=True,
             )
 
+    async def _probe_send_path_health(self, *, timeout: float = 10.0, reason: str = "probe") -> bool:
+        """Probe the Bot API and clear degraded sends once the path is healthy.
+
+        Polling recovery and send recovery are separate surfaces: start_polling()
+        can resume while ``_send_path_degraded`` is still set from the outage.
+        A tight getMe() probe lets a recovered Bot API unblock replies without
+        waiting for the slower post-reconnect heartbeat.
+        """
+        app = getattr(self, "_app", None)
+        bot = getattr(app, "bot", None) or getattr(self, "_bot", None)
+        get_me = getattr(bot, "get_me", None)
+        if not get_me:
+            return False
+        try:
+            await asyncio.wait_for(get_me(), timeout)
+            self._send_path_degraded = False
+            logger.info("[%s] Telegram send path recovered after %s", self.name, reason)
+            return True
+        except Exception as probe_err:
+            logger.warning(
+                "[%s] Telegram send path still degraded after %s: %s",
+                self.name, reason, probe_err,
+            )
+            return False
+
     async def _handle_polling_network_error(self, error: Exception) -> None:
         """Reconnect polling after a transient network interruption.
 
@@ -1039,6 +1064,10 @@ class TelegramAdapter(BasePlatformAdapter):
             logger.info(
                 "[%s] Telegram polling resumed after network error (attempt %d)",
                 self.name, attempt,
+            )
+            await self._probe_send_path_health(
+                timeout=10.0,
+                reason="polling reconnect immediate probe",
             )
             self._polling_network_error_count = 0
             # start_polling() returning is necessary but not sufficient:
@@ -1897,9 +1926,18 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._bot:
             return SendResult(success=False, error="Not connected")
 
-        # getattr() — tests build adapters via object.__new__() (no __init__).
+        # getattr() — tests build adapters via object.__new__() (no __init__). A
+        # transient outage marks the PTB send path degraded so cron/live-adapter
+        # callers can fall back, but a recovered Bot API should unblock ordinary
+        # replies immediately instead of waiting for the slower reconnect
+        # heartbeat.
         if getattr(self, "_send_path_degraded", False):
-            return SendResult(success=False, error="send_path_degraded", retryable=True)
+            recovered = await self._probe_send_path_health(
+                timeout=10.0,
+                reason="send preflight",
+            )
+            if not recovered:
+                return SendResult(success=False, error="send_path_degraded", retryable=True)
 
         # Skip whitespace-only text to prevent Telegram 400 empty-text errors.
         if not content or not content.strip():

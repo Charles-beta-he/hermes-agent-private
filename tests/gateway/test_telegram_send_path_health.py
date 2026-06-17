@@ -65,9 +65,43 @@ async def test_send_short_circuits_when_path_degraded():
 
 
 @pytest.mark.asyncio
-async def test_reconnect_storm_sets_and_heartbeat_clears_flag(monkeypatch):
-    """_handle_polling_network_error sets the flag; a successful heartbeat
-    probe in _verify_polling_after_reconnect clears it."""
+async def test_send_recovers_degraded_path_with_bounded_probe():
+    """A transient degraded flag should not drop a reply after bot API recovery."""
+    adapter = _make_adapter()
+    adapter._send_path_degraded = True
+    adapter._app = MagicMock()
+    adapter._app.bot = MagicMock()
+    adapter._app.bot.get_me = AsyncMock(return_value=MagicMock())
+
+    result = await adapter.send("123", "hello")
+
+    assert result.success is True
+    assert adapter._send_path_degraded is False
+    adapter._app.bot.get_me.assert_awaited_once()
+    adapter._bot.send_message.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_keeps_degraded_flag_when_bounded_probe_fails():
+    """If the bot API probe still fails, keep fallback semantics for callers."""
+    adapter = _make_adapter()
+    adapter._send_path_degraded = True
+    adapter._app = MagicMock()
+    adapter._app.bot = MagicMock()
+    adapter._app.bot.get_me = AsyncMock(side_effect=OSError("proxy still down"))
+
+    result = await adapter.send("123", "hello")
+
+    assert result.success is False
+    assert result.error == "send_path_degraded"
+    assert result.retryable is True
+    assert adapter._send_path_degraded is True
+    adapter._bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_storm_clears_degraded_flag_after_immediate_probe(monkeypatch):
+    """Once polling restarts and bot API is reachable, replies may send immediately."""
     adapter = _make_adapter()
     adapter._app = MagicMock()
     adapter._app.updater = MagicMock()
@@ -81,9 +115,47 @@ async def test_reconnect_storm_sets_and_heartbeat_clears_flag(monkeypatch):
         "gateway.platforms.telegram.Update", MagicMock(ALL_TYPES=[])
     )
 
-    await adapter._handle_polling_network_error(OSError("Bad Gateway"))
+    with patch("gateway.platforms.telegram.asyncio.sleep", new_callable=AsyncMock):
+        await adapter._handle_polling_network_error(OSError("Bad Gateway"))
+
+    assert adapter._send_path_degraded is False
+    adapter._app.bot.get_me.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_storm_keeps_degraded_flag_when_immediate_probe_fails(monkeypatch):
+    """A resumed poller with an unhealthy bot API remains protected by heartbeat."""
+    adapter = _make_adapter()
+    adapter._app = MagicMock()
+    adapter._app.updater = MagicMock()
+    adapter._app.updater.running = True
+    adapter._app.updater.stop = AsyncMock()
+    adapter._app.updater.start_polling = AsyncMock()
+    adapter._app.bot = MagicMock()
+    adapter._app.bot.get_me = AsyncMock(side_effect=OSError("proxy still down"))
+    adapter._polling_error_callback_ref = AsyncMock()
+    monkeypatch.setattr(
+        "gateway.platforms.telegram.Update", MagicMock(ALL_TYPES=[])
+    )
+
+    with patch("gateway.platforms.telegram.asyncio.sleep", new_callable=AsyncMock):
+        await adapter._handle_polling_network_error(OSError("Bad Gateway"))
+
     assert adapter._send_path_degraded is True
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_still_clears_degraded_flag_after_late_recovery(monkeypatch):
+    """Keep the existing late heartbeat recovery path for wedged reconnects."""
+    adapter = _make_adapter()
+    adapter._send_path_degraded = True
+    adapter._app = MagicMock()
+    adapter._app.updater = MagicMock()
+    adapter._app.updater.running = True
+    adapter._app.bot = MagicMock()
+    adapter._app.bot.get_me = AsyncMock(return_value=MagicMock())
 
     with patch("gateway.platforms.telegram.asyncio.sleep", new_callable=AsyncMock):
         await adapter._verify_polling_after_reconnect()
+
     assert adapter._send_path_degraded is False
