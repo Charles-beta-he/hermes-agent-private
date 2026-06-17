@@ -3312,6 +3312,46 @@ class BasePlatformAdapter(ABC):
             return response.text, int(ttl or 0)
         return response, 0
 
+    def _delivery_outbox_for_send(self):
+        """Return the metadata-only delivery outbox, unless explicitly disabled."""
+        if os.environ.get("HERMES_GATEWAY_DELIVERY_OUTBOX", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return None
+        existing = getattr(self, "_delivery_outbox", None)
+        if existing is not None:
+            return existing
+        try:
+            from gateway.delivery_outbox import DeliveryOutbox
+            existing = DeliveryOutbox.default()
+            self._delivery_outbox = existing
+            return existing
+        except Exception:
+            logger.debug("[%s] Delivery outbox unavailable", self.name, exc_info=True)
+            return None
+
+    def _mark_delivery_outbox_sent(self, delivery_record, result: "SendResult", attempt_count: int) -> None:
+        try:
+            outbox = self._delivery_outbox_for_send()
+            if outbox is not None:
+                outbox.mark_sent(
+                    delivery_record.delivery_id,
+                    sent_message_id=str(result.message_id) if result.message_id is not None else None,
+                    attempt_count=attempt_count,
+                )
+        except Exception:
+            logger.debug("[%s] Could not record delivery outbox sent state", self.name, exc_info=True)
+
+    def _mark_delivery_outbox_dead_letter(self, delivery_record, error: str | None, attempt_count: int) -> None:
+        try:
+            outbox = self._delivery_outbox_for_send()
+            if outbox is not None:
+                outbox.mark_dead_letter(
+                    delivery_record.delivery_id,
+                    error=error,
+                    attempt_count=attempt_count,
+                )
+        except Exception:
+            logger.debug("[%s] Could not record delivery outbox dead-letter state", self.name, exc_info=True)
+
     async def _send_with_retry(
         self,
         chat_id: str,
@@ -3330,6 +3370,22 @@ class BasePlatformAdapter(ABC):
         know to retry rather than waiting indefinitely.
         """
 
+        delivery_record = None
+        delivery_outbox = self._delivery_outbox_for_send()
+        if delivery_outbox is not None:
+            try:
+                delivery_record = delivery_outbox.create_pending(
+                    platform=self.name.lower(),
+                    chat_id=chat_id,
+                    content=content,
+                    reply_to=reply_to,
+                    metadata=metadata if isinstance(metadata, dict) else None,
+                )
+            except Exception:
+                logger.debug("[%s] Could not record delivery outbox pending state", self.name, exc_info=True)
+                delivery_record = None
+
+        attempt_count = 1
         result = await self.send(
             chat_id=chat_id,
             content=content,
@@ -3338,6 +3394,8 @@ class BasePlatformAdapter(ABC):
         )
 
         if result.success:
+            if delivery_record is not None:
+                self._mark_delivery_outbox_sent(delivery_record, result, attempt_count)
             return result
 
         error_str = result.error or ""
@@ -3373,8 +3431,11 @@ class BasePlatformAdapter(ABC):
                     reply_to=reply_to,
                     metadata=metadata,
                 )
+                attempt_count += 1
                 if result.success:
                     logger.info("[%s] Send succeeded on retry %d", self.name, attempt)
+                    if delivery_record is not None:
+                        self._mark_delivery_outbox_sent(delivery_record, result, attempt_count)
                     return result
                 error_str = result.error or ""
                 if not (result.retryable or self._is_retryable_error(error_str)):
@@ -3382,6 +3443,8 @@ class BasePlatformAdapter(ABC):
             else:
                 # All retries exhausted (loop completed without break) — notify user
                 logger.error("[%s] Failed to deliver response after %d retries: %s", self.name, retry_count, error_str)
+                if delivery_record is not None:
+                    self._mark_delivery_outbox_dead_letter(delivery_record, error_str, attempt_count)
                 notice = (
                     "\u26a0\ufe0f Message delivery failed after multiple attempts. "
                     "Please try again \u2014 your request was processed but the response could not be sent."
@@ -3402,6 +3465,10 @@ class BasePlatformAdapter(ABC):
         )
         if not fallback_result.success:
             logger.error("[%s] Fallback send also failed: %s", self.name, fallback_result.error)
+            if delivery_record is not None:
+                self._mark_delivery_outbox_dead_letter(delivery_record, fallback_result.error, attempt_count + 1)
+        elif delivery_record is not None:
+            self._mark_delivery_outbox_sent(delivery_record, fallback_result, attempt_count + 1)
         return fallback_result
 
     @staticmethod
