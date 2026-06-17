@@ -88,6 +88,27 @@ from gateway.platforms.telegram_network import (
 )
 from utils import atomic_replace
 
+
+@dataclasses.dataclass
+class _LiveLocationState:
+    """Process-local throttle state for one Telegram live location.
+
+    Live-location coordinates are sensitive and high-frequency. This state is
+    deliberately in-memory only: it is used to avoid repeatedly waking the
+    agent for minor edited-location updates and is never persisted.
+    """
+
+    latitude: float
+    longitude: float
+    last_notified_latitude: float
+    last_notified_longitude: float
+    last_notified_at: float
+    expires_at: Optional[float]
+    live_period_seconds: Optional[float]
+    horizontal_accuracy: Optional[float]
+    heading: Optional[int]
+    update_count: int = 1
+
 _TELEGRAM_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _TELEGRAM_IMAGE_MIME_TO_EXT = {
     "image/png": ".png",
@@ -370,6 +391,8 @@ class TelegramAdapter(BasePlatformAdapter):
     _TEXT_BATCH_FAST_DELAY_S = 0.18
     _TEXT_BATCH_SHORT_LEN = 1024
     _TEXT_BATCH_SHORT_DELAY_S = 0.24
+    _LIVE_LOCATION_DEFAULT_MIN_INTERVAL_S = 120.0
+    _LIVE_LOCATION_DEFAULT_MIN_DISTANCE_M = 250.0
 
     @staticmethod
     def _env_float_clamped(
@@ -440,6 +463,20 @@ class TelegramAdapter(BasePlatformAdapter):
         )
         self._pending_text_batches: Dict[str, MessageEvent] = {}
         self._pending_text_batch_tasks: Dict[str, asyncio.Task] = {}
+        self._live_locations: Dict[tuple[str, str], _LiveLocationState] = {}
+        self._live_location_min_interval_seconds = self._env_float_clamped(
+            "HERMES_TELEGRAM_LIVE_LOCATION_MIN_INTERVAL_SECONDS",
+            self._LIVE_LOCATION_DEFAULT_MIN_INTERVAL_S,
+            min_value=10.0,
+            max_value=3600.0,
+        )
+        self._live_location_min_distance_meters = self._env_float_clamped(
+            "HERMES_TELEGRAM_LIVE_LOCATION_MIN_DISTANCE_METERS",
+            self._LIVE_LOCATION_DEFAULT_MIN_DISTANCE_M,
+            min_value=10.0,
+            max_value=10_000.0,
+        )
+        self._live_location_now = lambda: datetime.now(timezone.utc).timestamp()
         self._polling_error_task: Optional[asyncio.Task] = None
         self._polling_conflict_count: int = 0
         self._polling_network_error_count: int = 0
@@ -5230,8 +5267,182 @@ class TelegramAdapter(BasePlatformAdapter):
         event = self._apply_telegram_group_observe_attribution(event)
         await self.handle_message(event)
 
+    @staticmethod
+    def _live_location_period_seconds(value: Any) -> Optional[float]:
+        """Normalize Telegram Location.live_period to seconds."""
+        if value is None:
+            return None
+        total_seconds = getattr(value, "total_seconds", None)
+        if callable(total_seconds):
+            try:
+                return float(total_seconds())
+            except (TypeError, ValueError):
+                return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _distance_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Approximate great-circle distance in meters between two points."""
+        import math
+
+        radius_m = 6_371_000.0
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        d_phi = math.radians(lat2 - lat1)
+        d_lambda = math.radians(lon2 - lon1)
+        a = (
+            math.sin(d_phi / 2) ** 2
+            + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+        )
+        return radius_m * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    def _purge_expired_live_locations(self, now: float) -> None:
+        """Bound live-location state without a background task."""
+        live_locations = getattr(self, "_live_locations", None)
+        if not live_locations:
+            return
+        expired_keys = [
+            key for key, state in live_locations.items()
+            if state.expires_at is not None and state.expires_at <= now
+        ]
+        for key in expired_keys:
+            live_locations.pop(key, None)
+
+    def _format_live_location_text(
+        self,
+        *,
+        prefix: str,
+        lat: float,
+        lon: float,
+        live_period_seconds: Optional[float],
+        horizontal_accuracy: Optional[float],
+        heading: Optional[int],
+        moved_meters: Optional[float] = None,
+        update_count: Optional[int] = None,
+    ) -> str:
+        parts = [prefix]
+        parts.append(f"latitude: {lat}")
+        parts.append(f"longitude: {lon}")
+        if live_period_seconds is not None:
+            live_period_display: float | int
+            if live_period_seconds.is_integer():
+                live_period_display = int(live_period_seconds)
+            else:
+                live_period_display = live_period_seconds
+            parts.append(f"live_period_seconds: {live_period_display}")
+        if horizontal_accuracy is not None:
+            parts.append(f"horizontal_accuracy_m: {horizontal_accuracy}")
+        if heading is not None:
+            parts.append(f"heading_degrees: {heading}")
+        if moved_meters is not None:
+            parts.append(f"moved_since_last_notification_m: {round(moved_meters, 1)}")
+        if update_count is not None:
+            parts.append(f"update_count: {update_count}")
+        parts.append(f"Map: https://www.google.com/maps/search/?api=1&query={lat},{lon}")
+        return "\n".join(parts)
+
+    async def _handle_live_location_message(
+        self,
+        update: Update,
+        msg: Message,
+        location: Any,
+        lat: float,
+        lon: float,
+    ) -> None:
+        """Handle Telegram live-location start/update with in-memory throttling."""
+        now_fn = getattr(self, "_live_location_now", None)
+        now = float(now_fn() if callable(now_fn) else datetime.now(timezone.utc).timestamp())
+        self._purge_expired_live_locations(now)
+
+        chat_id = str(msg.chat.id)
+        message_id = str(msg.message_id)
+        key = (chat_id, message_id)
+        live_period_seconds = self._live_location_period_seconds(getattr(location, "live_period", None))
+        expires_at = (now + live_period_seconds) if live_period_seconds is not None else None
+        horizontal_accuracy = getattr(location, "horizontal_accuracy", None)
+        heading = getattr(location, "heading", None)
+
+        live_locations = getattr(self, "_live_locations", None)
+        if live_locations is None:
+            live_locations = self._live_locations = {}
+        state = live_locations.get(key)
+
+        if state is None:
+            live_locations[key] = _LiveLocationState(
+                latitude=lat,
+                longitude=lon,
+                last_notified_latitude=lat,
+                last_notified_longitude=lon,
+                last_notified_at=now,
+                expires_at=expires_at,
+                live_period_seconds=live_period_seconds,
+                horizontal_accuracy=horizontal_accuracy,
+                heading=heading,
+            )
+            event = self._build_message_event(msg, MessageType.LOCATION, update_id=update.update_id)
+            event.text = self._format_live_location_text(
+                prefix="[The user started sharing a live location.]",
+                lat=lat,
+                lon=lon,
+                live_period_seconds=live_period_seconds,
+                horizontal_accuracy=horizontal_accuracy,
+                heading=heading,
+                update_count=1,
+            )
+            event = self._apply_telegram_group_observe_attribution(event)
+            await self.handle_message(event)
+            return
+
+        state.update_count += 1
+        moved_meters = self._distance_meters(
+            state.last_notified_latitude,
+            state.last_notified_longitude,
+            lat,
+            lon,
+        )
+        elapsed = now - state.last_notified_at
+        state.latitude = lat
+        state.longitude = lon
+        state.expires_at = expires_at
+        state.live_period_seconds = live_period_seconds
+        state.horizontal_accuracy = horizontal_accuracy
+        state.heading = heading
+
+        min_interval = getattr(
+            self,
+            "_live_location_min_interval_seconds",
+            self._LIVE_LOCATION_DEFAULT_MIN_INTERVAL_S,
+        )
+        min_distance = getattr(
+            self,
+            "_live_location_min_distance_meters",
+            self._LIVE_LOCATION_DEFAULT_MIN_DISTANCE_M,
+        )
+        if elapsed < min_interval and moved_meters < min_distance:
+            return
+
+        state.last_notified_at = now
+        state.last_notified_latitude = lat
+        state.last_notified_longitude = lon
+        event = self._build_message_event(msg, MessageType.LOCATION, update_id=update.update_id)
+        event.text = self._format_live_location_text(
+            prefix="[Live location update.]",
+            lat=lat,
+            lon=lon,
+            live_period_seconds=live_period_seconds,
+            horizontal_accuracy=horizontal_accuracy,
+            heading=heading,
+            moved_meters=moved_meters,
+            update_count=state.update_count,
+        )
+        event = self._apply_telegram_group_observe_attribution(event)
+        await self.handle_message(event)
+
     async def _handle_location_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle incoming location/venue pin messages."""
+        """Handle incoming location/venue pin and live-location messages."""
         msg = self._effective_update_message(update)
         if not msg:
             return
@@ -5249,6 +5460,11 @@ class TelegramAdapter(BasePlatformAdapter):
         lat = getattr(location, "latitude", None)
         lon = getattr(location, "longitude", None)
         if lat is None or lon is None:
+            return
+
+        live_period = getattr(location, "live_period", None)
+        if venue is None and live_period is not None:
+            await self._handle_live_location_message(update, msg, location, float(lat), float(lon))
             return
 
         # Build a text message with coordinates and context
