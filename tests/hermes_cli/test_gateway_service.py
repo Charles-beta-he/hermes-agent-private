@@ -495,7 +495,8 @@ class TestLaunchdServiceRecovery:
         label = gateway_cli.get_launchd_label()
         domain = gateway_cli._launchd_domain()
         assert "--replace" in plist_path.read_text(encoding="utf-8")
-        assert calls[:2] == [
+        control_calls = [cmd for cmd in calls if cmd[1] != "print"]
+        assert control_calls[:2] == [
             ["launchctl", "bootout", f"{domain}/{label}"],
             ["launchctl", "bootstrap", domain, str(plist_path)],
         ]
@@ -521,7 +522,8 @@ class TestLaunchdServiceRecovery:
 
         gateway_cli.launchd_start()
 
-        assert calls == [
+        control_calls = [cmd for cmd in calls if cmd[1] != "print"]
+        assert control_calls == [
             ["launchctl", "kickstart", target],
             ["launchctl", "bootstrap", domain, str(plist_path)],
             ["launchctl", "kickstart", target],
@@ -549,7 +551,8 @@ class TestLaunchdServiceRecovery:
 
         gateway_cli.launchd_start()
 
-        assert calls == [
+        control_calls = [cmd for cmd in calls if cmd[1] != "print"]
+        assert control_calls == [
             ["launchctl", "kickstart", target],
             ["launchctl", "bootstrap", domain, str(plist_path)],
             ["launchctl", "kickstart", target],
@@ -576,7 +579,10 @@ class TestLaunchdServiceRecovery:
 
         gateway_cli.launchd_restart()
 
-        assert calls == [
+        control_calls = [
+            cmd for cmd in calls if not (isinstance(cmd, list) and cmd[1] == "print")
+        ]
+        assert control_calls == [
             ("term", 321, False),
             ["launchctl", "kickstart", "-k", target],
         ]
@@ -621,7 +627,7 @@ class TestLaunchdServiceRecovery:
 
         gateway_cli.launchd_stop()
 
-        assert calls == [["launchctl", "bootout", target]]
+        assert ["launchctl", "bootout", target] in calls
 
     def test_launchd_stop_tolerates_already_unloaded(self, monkeypatch, capsys):
         """launchd_stop silently handles exit codes 3/113 (job not loaded)."""
@@ -684,6 +690,219 @@ class TestLaunchdServiceRecovery:
         # non-Aqua/background sessions on macOS 26+ (issue #23387).
         assert gateway_cli._launchd_domain() == f"user/{os.getuid()}"
 
+    def test_launchd_control_domain_prefers_loaded_gui_service(self, monkeypatch):
+        label = gateway_cli.get_launchd_label()
+        user_domain = f"user/{os.getuid()}"
+        gui_domain = f"gui/{os.getuid()}"
+
+        def fake_run(cmd, check=False, **kwargs):
+            if cmd == ["launchctl", "print", f"{user_domain}/{label}"]:
+                return SimpleNamespace(
+                    returncode=113,
+                    stdout="",
+                    stderr='Could not find service "ai.hermes.gateway"',
+                )
+            if cmd == ["launchctl", "print", f"{gui_domain}/{label}"]:
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=f"{gui_domain}/{label} = {{\n\tstate = running\n}}",
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected command: {cmd}")
+
+        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+
+        assert gateway_cli._launchd_control_domain(label) == gui_domain
+
+    def test_launchd_start_uses_loaded_gui_domain_instead_of_bootstrapping_user(
+        self, tmp_path, monkeypatch
+    ):
+        plist_path = tmp_path / "ai.hermes.gateway.plist"
+        plist_path.write_text(gateway_cli.generate_launchd_plist(), encoding="utf-8")
+        label = gateway_cli.get_launchd_label()
+        user_domain = f"user/{os.getuid()}"
+        gui_domain = f"gui/{os.getuid()}"
+        gui_target = f"{gui_domain}/{label}"
+
+        calls = []
+
+        def fake_run(cmd, check=False, **kwargs):
+            if cmd and cmd[0] == "launchctl":
+                calls.append(cmd)
+            if cmd == ["launchctl", "print", f"{user_domain}/{label}"]:
+                return SimpleNamespace(returncode=113, stdout="", stderr="not found")
+            if cmd == ["launchctl", "print", gui_target]:
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=f"{gui_target} = {{\n\tstate = running\n}}",
+                    stderr="",
+                )
+            if cmd == ["launchctl", "kickstart", gui_target]:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            raise AssertionError(f"unexpected command: {cmd}")
+
+        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(gateway_cli, "refresh_launchd_plist_if_needed", lambda: False)
+        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(
+            gateway_cli,
+            "_spawn_detached_gateway",
+            lambda: (_ for _ in ()).throw(AssertionError("must not detach")),
+        )
+
+        gateway_cli.launchd_start()
+
+        assert ["launchctl", "kickstart", gui_target] in calls
+        assert ["launchctl", "bootstrap", user_domain, str(plist_path)] not in calls
+
+    def test_launchd_start_retries_transient_bootstrap_5_before_detached(
+        self, tmp_path, monkeypatch
+    ):
+        plist_path = tmp_path / "ai.hermes.gateway.plist"
+        plist_path.write_text(gateway_cli.generate_launchd_plist(), encoding="utf-8")
+        label = gateway_cli.get_launchd_label()
+        domain = gateway_cli._launchd_domain()
+        target = f"{domain}/{label}"
+        calls = []
+
+        def fake_run(cmd, check=False, **kwargs):
+            if cmd and cmd[0] == "launchctl":
+                calls.append(cmd)
+            if cmd == ["launchctl", "print", target]:
+                return SimpleNamespace(returncode=113, stdout="", stderr="not found")
+            if cmd[:2] == ["launchctl", "print"]:
+                return SimpleNamespace(returncode=113, stdout="", stderr="not found")
+            if cmd == ["launchctl", "kickstart", target]:
+                if calls.count(cmd) == 1:
+                    raise gateway_cli.subprocess.CalledProcessError(
+                        113, cmd, stderr="Could not find service"
+                    )
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if cmd == ["launchctl", "bootstrap", domain, str(plist_path)]:
+                if calls.count(cmd) == 1:
+                    raise gateway_cli.subprocess.CalledProcessError(
+                        5,
+                        cmd,
+                        stderr="Bootstrap failed: 5: Input/output error\nOperation already in progress",
+                    )
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            raise AssertionError(f"unexpected command: {cmd}")
+
+        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(gateway_cli, "refresh_launchd_plist_if_needed", lambda: False)
+        monkeypatch.setattr(gateway_cli.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(
+            gateway_cli,
+            "_spawn_detached_gateway",
+            lambda: (_ for _ in ()).throw(AssertionError("must not detach")),
+        )
+
+        gateway_cli.launchd_start()
+
+        assert calls.count(["launchctl", "bootstrap", domain, str(plist_path)]) == 2
+        assert ["launchctl", "kickstart", target] in calls
+
+    def test_launchd_start_recovers_from_initial_kickstart_5(self, tmp_path, monkeypatch):
+        plist_path = tmp_path / "ai.hermes.gateway.plist"
+        plist_path.write_text(gateway_cli.generate_launchd_plist(), encoding="utf-8")
+        label = gateway_cli.get_launchd_label()
+        domain = gateway_cli._launchd_domain()
+        target = f"{domain}/{label}"
+        calls = []
+
+        def fake_run(cmd, check=False, **kwargs):
+            if cmd and cmd[0] == "launchctl":
+                calls.append(cmd)
+            if cmd[:2] == ["launchctl", "print"]:
+                return SimpleNamespace(returncode=113, stdout="", stderr="not found")
+            if cmd == ["launchctl", "kickstart", target]:
+                if calls.count(cmd) == 1:
+                    raise gateway_cli.subprocess.CalledProcessError(
+                        5, cmd, stderr="Input/output error"
+                    )
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if cmd == ["launchctl", "bootstrap", domain, str(plist_path)]:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            raise AssertionError(f"unexpected command: {cmd}")
+
+        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(gateway_cli, "refresh_launchd_plist_if_needed", lambda: False)
+        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(
+            gateway_cli,
+            "_spawn_detached_gateway",
+            lambda: (_ for _ in ()).throw(AssertionError("must not detach")),
+        )
+
+        gateway_cli.launchd_start()
+
+        control_calls = [cmd for cmd in calls if cmd[1] != "print"]
+        assert control_calls == [
+            ["launchctl", "kickstart", target],
+            ["launchctl", "bootstrap", domain, str(plist_path)],
+            ["launchctl", "kickstart", target],
+        ]
+
+    def test_refresh_launchd_plist_uses_loaded_gui_domain(self, tmp_path, monkeypatch):
+        plist_path = tmp_path / "ai.hermes.gateway.plist"
+        plist_path.write_text("<plist>old content</plist>", encoding="utf-8")
+        label = gateway_cli.get_launchd_label()
+        user_domain = f"user/{os.getuid()}"
+        gui_domain = f"gui/{os.getuid()}"
+        gui_target = f"{gui_domain}/{label}"
+        calls = []
+
+        def fake_run(cmd, check=False, **kwargs):
+            if cmd and cmd[0] == "launchctl":
+                calls.append(cmd)
+            if cmd == ["launchctl", "print", f"{user_domain}/{label}"]:
+                return SimpleNamespace(returncode=113, stdout="", stderr="not found")
+            if cmd == ["launchctl", "print", gui_target]:
+                return SimpleNamespace(returncode=0, stdout=f"{gui_target} = {{}}", stderr="")
+            if cmd == ["launchctl", "bootout", gui_target]:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if cmd == ["launchctl", "bootstrap", gui_domain, str(plist_path)]:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            raise AssertionError(f"unexpected command: {cmd}")
+
+        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+
+        assert gateway_cli.refresh_launchd_plist_if_needed() is True
+        assert ["launchctl", "bootout", gui_target] in calls
+        assert ["launchctl", "bootstrap", gui_domain, str(plist_path)] in calls
+        assert ["launchctl", "bootstrap", user_domain, str(plist_path)] not in calls
+
+    def test_launchd_uninstall_boots_out_loaded_gui_domain(self, tmp_path, monkeypatch):
+        plist_path = tmp_path / "ai.hermes.gateway.plist"
+        plist_path.write_text(gateway_cli.generate_launchd_plist(), encoding="utf-8")
+        label = gateway_cli.get_launchd_label()
+        user_domain = f"user/{os.getuid()}"
+        gui_domain = f"gui/{os.getuid()}"
+        gui_target = f"{gui_domain}/{label}"
+        calls = []
+
+        def fake_run(cmd, check=False, **kwargs):
+            if cmd and cmd[0] == "launchctl":
+                calls.append(cmd)
+            if cmd == ["launchctl", "print", f"{user_domain}/{label}"]:
+                return SimpleNamespace(returncode=113, stdout="", stderr="not found")
+            if cmd == ["launchctl", "print", gui_target]:
+                return SimpleNamespace(returncode=0, stdout=f"{gui_target} = {{}}", stderr="")
+            if cmd == ["launchctl", "bootout", gui_target]:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            raise AssertionError(f"unexpected command: {cmd}")
+
+        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+
+        gateway_cli.launchd_uninstall()
+
+        assert ["launchctl", "bootout", gui_target] in calls
+        assert ["launchctl", "bootout", f"{user_domain}/{label}"] not in calls
+        assert not plist_path.exists()
+
     def test_launchctl_domain_unsupported_recognizes_macos26_codes(self):
         # Codes that persist after a fresh bootstrap → launchd truly unavailable.
         assert gateway_cli._launchctl_domain_unsupported(5) is True
@@ -716,7 +935,8 @@ class TestLaunchdServiceRecovery:
 
         gateway_cli.launchd_start()
 
-        assert calls == [
+        control_calls = [cmd for cmd in calls if cmd[1] != "print"]
+        assert control_calls == [
             ["launchctl", "kickstart", target],
             ["launchctl", "bootstrap", domain, str(plist_path)],
             ["launchctl", "kickstart", target],
@@ -793,6 +1013,12 @@ class TestLaunchdServiceRecovery:
 
         def fake_run(cmd, check=False, **kwargs):
             if cmd == ["launchctl", "kickstart", "-k", target]:
+                raise gateway_cli.subprocess.CalledProcessError(
+                    5, cmd, stderr="Input/output error"
+                )
+            if cmd[:2] == ["launchctl", "print"]:
+                return SimpleNamespace(returncode=113, stdout="", stderr="not found")
+            if cmd[:2] == ["launchctl", "bootstrap"]:
                 raise gateway_cli.subprocess.CalledProcessError(
                     5, cmd, stderr="Input/output error"
                 )
