@@ -1174,7 +1174,7 @@ def check_voice_requirements() -> Dict[str, Any]:
     for notice in env_check.get("notices", []):
         details_parts.append(f"Environment: {notice}")
 
-    return {
+    requirements = {
         "available": available,
         "audio_available": has_audio,
         "stt_available": stt_available,
@@ -1182,6 +1182,29 @@ def check_voice_requirements() -> Dict[str, Any]:
         "details": "\n".join(details_parts),
         "environment": env_check,
     }
+
+    # Production/Jarvis-like readiness is a derived, read-only profile: it
+    # audits whether the existing voice interaction can be operated as an
+    # enterprise-grade local assistant without enabling wake words or changing
+    # the /voice command flow.
+    try:
+        from hermes_cli.config import load_config
+        from tools.voice_enterprise_profile import build_enterprise_voice_readiness
+
+        requirements["enterprise_profile"] = build_enterprise_voice_readiness(
+            load_config(), requirements, platform=platform.system()
+        )
+    except Exception as e:  # noqa: BLE001 - diagnostics must not break /voice status
+        requirements["enterprise_profile"] = {
+            "status": "unknown",
+            "ready": False,
+            "interaction_logic": "unchanged:/voice on + record_key + VAD continuous loop",
+            "blockers": [f"enterprise_profile_error:{type(e).__name__}"],
+            "warnings": [],
+            "notices": [],
+        }
+
+    return requirements
 
 
 # ============================================================================
