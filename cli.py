@@ -9228,6 +9228,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
 
     def _show_voice_status(self):
         """Show current voice mode status."""
+        from tools.voice_enterprise_profile import render_enterprise_voice_readiness
         from tools.voice_mode import check_voice_requirements
 
         reqs = check_voice_requirements()
@@ -9244,6 +9245,12 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         _cprint(f"\n  {_BOLD}Requirements:{_RST}")
         for line in reqs["details"].split("\n"):
             _cprint(f"    {line}")
+
+        enterprise_profile = reqs.get("enterprise_profile")
+        if enterprise_profile:
+            _cprint(f"\n  {_BOLD}Enterprise voice profile:{_RST}")
+            for line in render_enterprise_voice_readiness(enterprise_profile).split("\n"):
+                _cprint(f"    {line}")
 
     def _clarify_callback(self, question, choices):
         """

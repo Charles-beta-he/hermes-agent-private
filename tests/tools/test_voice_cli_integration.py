@@ -647,6 +647,27 @@ class TestVoiceStatusUsesConfigKey:
             "_show_voice_status should read record_key from config"
         )
 
+    def test_show_voice_status_renders_enterprise_profile(self):
+        """/voice status should expose the Holo/Jarvis enterprise readiness overlay."""
+        with open("cli.py") as f:
+            source = f.read()
+
+        lines = source.split("\n")
+        in_method = False
+        method_lines = []
+        for line in lines:
+            if "def _show_voice_status" in line:
+                in_method = True
+            elif in_method and line.strip().startswith("def "):
+                break
+            elif in_method:
+                method_lines.append(line)
+
+        method_body = "\n".join(method_lines)
+        assert "enterprise_profile" in method_body
+        assert "render_enterprise_voice_readiness" in method_body
+        assert "Enterprise voice profile" in method_body
+
 
 class TestChatTTSCleanupOnException:
     """Bug #2: chat() must clean up streaming TTS resources on exception."""

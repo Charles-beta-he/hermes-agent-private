@@ -82,6 +82,7 @@ Additional landing:
 
 - Taskpool item created from the video URL: `2026-06-19-全盘落地-holojarvis-1-1-语音交互体验到-hermes`.
 - Desktop composer voice-conversation mode now renders a Jarvis/Holo-style cyan reactor console while voice conversation is active.
+- `/voice status` now includes the read-only Enterprise voice profile so terminal/TUI operators can see whether the local loop is production-ready and which safety blockers remain.
 - The console is read-only UI and does not change the existing interaction control path: user still starts/stops via the existing desktop voice button, and voice turns still use the existing VAD/listen → transcribe → submit → speak → re-arm loop.
 - The copy explicitly states that tool actions still use Hermes safety gates.
 
@@ -91,6 +92,9 @@ Verification:
 cd /Users/charles/.hermes/hermes-agent/apps/desktop
 npm run type-check
 npm run test:ui -- src/app/chat/composer/voice-activity.test.tsx src/i18n/runtime.test.ts
+cd /Users/charles/.hermes/hermes-agent
+./venv/bin/python -m py_compile cli.py tests/tools/test_voice_cli_integration.py
+./venv/bin/python -m pytest -o addopts='' tests/tools/test_voice_cli_integration.py::TestVoiceStatusUsesConfigKey tests/tools/test_voice_enterprise_profile.py -q
 ```
 
 ## Boundaries
