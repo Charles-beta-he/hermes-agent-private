@@ -1316,6 +1316,20 @@ export const zh: Translations = {
     thinking: '思考中',
     muted: '已静音',
     listening: '聆听中',
+    jarvisConsole: {
+      title: 'JARVIS 模式',
+      online: '反应堆在线',
+      instruction: '自然说话即可。Hermes 会聆听、思考、语音回答，然后自动重新开麦。',
+      governed: '工具动作仍走 Hermes 安全门禁。',
+      states: {
+        idle: '待命中',
+        listening: '聆听中',
+        transcribing: '转写中',
+        thinking: '思考中',
+        speaking: '讲话中',
+        muted: '麦克风静音'
+      }
+    },
     muteMic: '麦克风静音',
     unmuteMic: '取消麦克风静音',
     stopListening: '停止聆听并发送',

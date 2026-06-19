@@ -868,6 +868,13 @@ export interface Translations {
     thinking: string
     muted: string
     listening: string
+    jarvisConsole: {
+      title: string
+      online: string
+      instruction: string
+      governed: string
+      states: Record<'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking' | 'muted', string>
+    }
     muteMic: string
     unmuteMic: string
     stopListening: string

@@ -1129,7 +1129,21 @@ export const en: Translations = {
     thinking: 'Thinking',
     muted: 'Muted',
     listening: 'Listening',
-    muteMic: 'Mute microphone',
+    jarvisConsole: {
+      title: 'JARVIS MODE',
+      online: 'Reactor online',
+      instruction: 'Speak naturally. Hermes will listen, think, answer aloud, then re-arm the mic.',
+      governed: 'Tool actions still use Hermes safety gates.',
+      states: {
+        idle: 'Standing by',
+        listening: 'Listening',
+        transcribing: 'Transcribing',
+        thinking: 'Thinking',
+        speaking: 'Speaking',
+        muted: 'Mic muted'
+      }
+    },
+    muteMic: 'Mute mic',
     unmuteMic: 'Unmute microphone',
     stopListening: 'Stop listening and send',
     stopShort: 'Stop',

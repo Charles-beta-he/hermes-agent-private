@@ -81,7 +81,7 @@ import { detectTrigger, extractClipboardImageBlobs, textBeforeCaret, type Trigge
 import { ComposerTriggerPopover } from './trigger-popover'
 import type { ChatBarProps } from './types'
 import { UrlDialog } from './url-dialog'
-import { VoiceActivity, VoicePlaybackActivity } from './voice-activity'
+import { HoloVoiceConsole, VoiceActivity, VoicePlaybackActivity } from './voice-activity'
 
 const COMPOSER_STACK_BREAKPOINT_PX = 320
 
@@ -1526,6 +1526,13 @@ export function ChatBar({
                 )}
                 data-slot="composer-fade"
               >
+                {voiceConversationActive && (
+                  <HoloVoiceConsole
+                    level={conversation.level}
+                    muted={conversation.muted}
+                    status={conversation.status}
+                  />
+                )}
                 <VoiceActivity state={voiceActivityState} />
                 <VoicePlaybackActivity />
                 {queueEdit && editingQueuedPrompt && (

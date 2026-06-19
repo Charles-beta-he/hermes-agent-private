@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { stopVoicePlayback } from '@/lib/voice-playback'
 import { $voicePlayback } from '@/store/voice-playback'
 
+import type { ConversationStatus } from './hooks/use-voice-conversation'
 import type { VoiceActivityState } from './types'
 
 type BrowserAudioContext = typeof AudioContext
@@ -67,6 +68,72 @@ function VoiceLevelBars({ level, active }: { active: boolean; level: number }) {
     </div>
   )
 }
+
+export function HoloVoiceConsole({
+  level,
+  muted,
+  status
+}: {
+  level: number
+  muted: boolean
+  status: ConversationStatus
+}) {
+  const { t } = useI18n()
+  const copy = t.composer.jarvisConsole
+  const effectiveStatus = muted ? 'muted' : status
+  const listening = effectiveStatus === 'listening'
+  const speaking = effectiveStatus === 'speaking'
+  const thinking = effectiveStatus === 'thinking' || effectiveStatus === 'transcribing'
+  const normalized = Math.max(0, Math.min(level, 1))
+  const ringScale = 0.82 + normalized * 0.28
+
+  return (
+    <div
+      aria-label={`${copy.title}: ${copy.states[effectiveStatus]}`}
+      className={cn(
+        'relative isolate overflow-hidden rounded-2xl border px-3 py-2 text-[0.72rem]',
+        'border-cyan-300/35 bg-[radial-gradient(circle_at_18%_28%,rgba(34,211,238,0.18),transparent_34%),linear-gradient(135deg,rgba(6,182,212,0.12),rgba(15,23,42,0.22))]',
+        'text-cyan-50 shadow-[0_0_22px_rgba(34,211,238,0.16),inset_0_1px_0_rgba(255,255,255,0.16)] backdrop-blur-xl'
+      )}
+      data-slot="holo-voice-console"
+      role="status"
+    >
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 opacity-70 [background-image:linear-gradient(rgba(103,232,249,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(103,232,249,0.08)_1px,transparent_1px)] [background-size:18px_18px]" />
+      <div className="flex items-center gap-3">
+        <div className="relative flex size-12 shrink-0 items-center justify-center rounded-full border border-cyan-200/45 bg-cyan-300/10 shadow-[0_0_26px_rgba(34,211,238,0.34)]">
+          <span
+            aria-hidden="true"
+            className={cn(
+              'absolute size-8 rounded-full border border-cyan-100/70 transition-transform duration-100 ease-out',
+              listening && 'animate-pulse',
+              speaking && 'border-emerald-200/80 shadow-[0_0_18px_rgba(110,231,183,0.45)]',
+              thinking && 'border-sky-200/80 shadow-[0_0_18px_rgba(125,211,252,0.45)]'
+            )}
+            style={{ transform: `scale(${ringScale})` }}
+          />
+          <span aria-hidden="true" className="size-3 rounded-full bg-cyan-100 shadow-[0_0_18px_rgba(165,243,252,0.9)]" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono text-[0.68rem] font-semibold tracking-[0.24em] text-cyan-100/90">
+              {copy.title}
+            </span>
+            <span className="rounded-full border border-cyan-200/30 bg-cyan-100/10 px-2 py-0.5 font-mono text-[0.62rem] uppercase tracking-[0.16em] text-cyan-100/85">
+              {copy.states[effectiveStatus]}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-[0.78rem] font-medium text-white">
+            <Volume2 size={13} />
+            <span>{copy.online}</span>
+          </div>
+          <div className="mt-1 text-cyan-50/75">{copy.instruction}</div>
+          <div className="mt-1 text-cyan-100/60">{copy.governed}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 
 function getElementAnalyser(audioElement: HTMLAudioElement): ElementAnalyser | null {
   let entry = elementAnalysers.get(audioElement)

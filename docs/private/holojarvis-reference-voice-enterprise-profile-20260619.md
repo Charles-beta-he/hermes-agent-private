@@ -74,14 +74,32 @@ cd /Users/charles/.hermes/hermes-agent
 ./venv/bin/python -m pytest tests/tools/test_voice_enterprise_profile.py tests/tools/test_voice_mode.py -q
 ```
 
+## Desktop 1:1 interaction slice
+
+Follow-up full-landing request: "全盘推进直至交互体验1比1落地" plus taskpool source URL.
+
+Additional landing:
+
+- Taskpool item created from the video URL: `2026-06-19-全盘落地-holojarvis-1-1-语音交互体验到-hermes`.
+- Desktop composer voice-conversation mode now renders a Jarvis/Holo-style cyan reactor console while voice conversation is active.
+- The console is read-only UI and does not change the existing interaction control path: user still starts/stops via the existing desktop voice button, and voice turns still use the existing VAD/listen → transcribe → submit → speak → re-arm loop.
+- The copy explicitly states that tool actions still use Hermes safety gates.
+
+Verification:
+
+```bash
+cd /Users/charles/.hermes/hermes-agent/apps/desktop
+npm run type-check
+npm run test:ui -- src/app/chat/composer/voice-activity.test.tsx src/i18n/runtime.test.ts
+```
+
 ## Boundaries
 
-Not implemented in this slice:
+Still not implemented in this slice:
 
-- Always-on wake word.
-- Desktop HUD.
+- Default-on always-on wake word.
 - New `/voice` command grammar.
 - Automatic config mutation.
 - Production promotion of new side-effect executors.
 
-These are intentionally excluded to honor the user's constraint: enterprise-grade owned capability without changing interaction logic.
+These remain gated because always-on microphone and wake-word behavior require explicit default-off runtime contracts, visible permission/readback, and stop/audit controls. The desktop Holo console lands the 1:1 visible interaction feel on top of the existing governed voice loop without crossing those privacy/safety boundaries.
