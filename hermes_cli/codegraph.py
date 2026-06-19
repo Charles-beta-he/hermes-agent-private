@@ -9,17 +9,25 @@ backup, and run an end-to-end indexing/query smoke test against a chosen repo.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
+import urllib.request
+import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 DEFAULT_BINARY = "codebase-memory-mcp"
+REPO_API = "https://api.github.com/repos/DeusData/codebase-memory-mcp/releases"
+RELEASE_DOWNLOAD_BASE = "https://github.com/DeusData/codebase-memory-mcp/releases/download"
 
 
 @dataclass
@@ -65,6 +73,149 @@ def version(binary: str) -> tuple[bool, str]:
     if proc.returncode != 0:
         return False, (proc.stderr or proc.stdout).strip()
     return True, proc.stdout.strip().splitlines()[0] if proc.stdout.strip() else "unknown"
+
+
+def _download_text(url: str, timeout: int = 45) -> str:
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        return response.read().decode("utf-8")
+
+
+def _download_file(url: str, dest: Path, timeout: int = 300) -> None:
+    with urllib.request.urlopen(url, timeout=timeout) as response, dest.open("wb") as out:
+        shutil.copyfileobj(response, out)
+
+
+def latest_release_tag() -> str:
+    data = json.loads(_download_text(f"{REPO_API}/latest"))
+    tag = data.get("tag_name")
+    if not isinstance(tag, str) or not tag:
+        raise RuntimeError("latest release response did not include tag_name")
+    return tag
+
+
+def detect_asset_name(include_ui: bool = False) -> str:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    arch = "arm64" if machine in {"arm64", "aarch64"} else "amd64" if machine in {"x86_64", "amd64"} else machine
+    prefix = "codebase-memory-mcp-ui" if include_ui else "codebase-memory-mcp"
+    if system == "darwin":
+        return f"{prefix}-darwin-{arch}.tar.gz"
+    if system == "linux":
+        # Prefer portable Linux bundles so enterprise installs do not depend on
+        # host libgit2/sqlite/mimalloc ABI drift.
+        return f"{prefix}-linux-{arch}-portable.tar.gz"
+    if system == "windows":
+        if arch != "amd64":
+            raise RuntimeError(f"unsupported Windows architecture for release asset: {machine}")
+        return f"{prefix}-windows-amd64.zip"
+    raise RuntimeError(f"unsupported platform for codegraph install: {system}/{machine}")
+
+
+def parse_checksums(text: str) -> dict[str, str]:
+    checksums: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.replace("*", " ").split()
+        if len(parts) >= 2 and len(parts[0]) == 64:
+            checksums[parts[-1]] = parts[0].lower()
+    return checksums
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _safe_extract_archive(archive: Path, dest: Path) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as zf:
+            for member in zf.infolist():
+                target = (dest / member.filename).resolve()
+                if not str(target).startswith(str(dest.resolve())):
+                    raise RuntimeError(f"unsafe zip path: {member.filename}")
+            zf.extractall(dest)
+        return
+    with tarfile.open(archive) as tf:
+        for member in tf.getmembers():
+            target = (dest / member.name).resolve()
+            if not str(target).startswith(str(dest.resolve())):
+                raise RuntimeError(f"unsafe tar path: {member.name}")
+        tf.extractall(dest)
+
+
+def _find_extracted_binary(root: Path) -> Path | None:
+    names = {"codebase-memory-mcp", "codebase-memory-mcp.exe"}
+    for p in root.rglob("*"):
+        if p.is_file() and p.name in names:
+            return p
+    return None
+
+
+def install_binary(home: Path, tag: str | None, asset: str | None, include_ui: bool, dry_run: bool, force: bool) -> Result:
+    checks: list[Check] = []
+    resolved_tag = tag or latest_release_tag()
+    asset_name = asset or detect_asset_name(include_ui=include_ui)
+    asset_url = f"{RELEASE_DOWNLOAD_BASE}/{resolved_tag}/{asset_name}"
+    checks_url = f"{RELEASE_DOWNLOAD_BASE}/{resolved_tag}/checksums.txt"
+    install_dir = home / "bin"
+    binary_path = install_dir / ("codebase-memory-mcp.exe" if asset_name.endswith(".zip") else "codebase-memory-mcp")
+    data = {
+        "tag": resolved_tag,
+        "asset": asset_name,
+        "asset_url": asset_url,
+        "checksums_url": checks_url,
+        "install_path": str(binary_path),
+        "dry_run": dry_run,
+    }
+    if binary_path.exists() and not force:
+        checks.append(Check("target_available", False, f"exists: {binary_path}; use --force to overwrite"))
+        return Result(False, checks, data)
+    try:
+        checksum_text = _download_text(checks_url)
+        checksums = parse_checksums(checksum_text)
+    except Exception as exc:
+        return Result(False, [Check("checksums_fetch", False, str(exc))], data)
+    expected = checksums.get(asset_name)
+    checks.append(Check("checksum_available", bool(expected), asset_name if expected else f"not found in {checks_url}"))
+    if not expected:
+        return Result(False, checks, data)
+    if dry_run:
+        checks.append(Check("download_skipped", True, "dry-run; checksum manifest verified"))
+        return Result(True, checks, data)
+    with tempfile.TemporaryDirectory(prefix="hermes-codegraph-install-") as td:
+        tmp = Path(td)
+        archive = tmp / asset_name
+        try:
+            _download_file(asset_url, archive)
+        except Exception as exc:
+            checks.append(Check("download_asset", False, str(exc)))
+            return Result(False, checks, data)
+        actual = sha256_file(archive)
+        checks.append(Check("sha256", actual == expected, actual))
+        if actual != expected:
+            return Result(False, checks, data | {"expected_sha256": expected, "actual_sha256": actual})
+        extracted = tmp / "extract"
+        try:
+            _safe_extract_archive(archive, extracted)
+        except Exception as exc:
+            checks.append(Check("extract", False, str(exc)))
+            return Result(False, checks, data)
+        src = _find_extracted_binary(extracted)
+        checks.append(Check("binary_in_archive", src is not None, str(src or extracted)))
+        if src is None:
+            return Result(False, checks, data)
+        install_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, binary_path)
+        binary_path.chmod(binary_path.stat().st_mode | 0o755)
+    ok, ver = version(str(binary_path))
+    checks.append(Check("installed_binary_runs", ok, ver))
+    return Result(ok, checks, data | {"version": ver})
 
 
 def mcp_snippet(binary: str, cache_dir: Path) -> str:
@@ -264,6 +415,17 @@ def cmd_codegraph(args) -> int:
         result = list_status(getattr(args, "binary", None), home)
         print_result(result, bool(getattr(args, "json", False)))
         return 0
+    if command == "install":
+        result = install_binary(
+            home,
+            tag=getattr(args, "tag", None),
+            asset=getattr(args, "asset", None),
+            include_ui=bool(getattr(args, "ui", False)),
+            dry_run=bool(getattr(args, "dry_run", False)),
+            force=bool(getattr(args, "force", False)),
+        )
+        print_result(result, bool(getattr(args, "json", False)))
+        return 0 if result.ok else 2
     if command == "doctor":
         result = doctor(getattr(args, "binary", None), home)
         print_result(result, bool(getattr(args, "json", False)))
@@ -301,6 +463,13 @@ def main(argv: list[str] | None = None) -> int:
     for name in ["list", "doctor"]:
         p = sub.add_parser(name)
         p.add_argument("--json", action="store_true")
+    p = sub.add_parser("install")
+    p.add_argument("--tag", help="Release tag (default: latest)")
+    p.add_argument("--asset", help="Exact release asset name (default: detected for OS/arch)")
+    p.add_argument("--ui", action="store_true", help="Install UI bundle instead of stdio-only bundle")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--force", action="store_true")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("enable")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--force", action="store_true")
@@ -320,6 +489,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "doctor":
         result = doctor(args.binary, home)
+        print_result(result, args.json)
+        return 0 if result.ok else 2
+    if args.cmd == "install":
+        result = install_binary(home, tag=args.tag, asset=args.asset, include_ui=args.ui, dry_run=args.dry_run, force=args.force)
         print_result(result, args.json)
         return 0 if result.ok else 2
     if args.cmd == "enable":

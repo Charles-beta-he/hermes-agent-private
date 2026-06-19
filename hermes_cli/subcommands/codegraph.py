@@ -41,6 +41,18 @@ def build_codegraph_parser(subparsers, *, cmd_codegraph: Callable) -> None:
     list_p.add_argument("--json", action="store_true", help="Emit JSON")
     list_p.set_defaults(func=cmd_codegraph)
 
+    install = sub.add_parser(
+        "install",
+        help="Download release binary into $HERMES_HOME/bin after checksum verification",
+    )
+    install.add_argument("--tag", help="Release tag (default: latest)")
+    install.add_argument("--asset", help="Exact release asset name (default: detected for OS/arch)")
+    install.add_argument("--ui", action="store_true", help="Install UI bundle instead of stdio-only bundle")
+    install.add_argument("--dry-run", action="store_true", help="Resolve release/checksum without downloading asset")
+    install.add_argument("--force", action="store_true", help="Overwrite existing binary")
+    install.add_argument("--json", action="store_true", help="Emit JSON")
+    install.set_defaults(func=cmd_codegraph)
+
     doctor = sub.add_parser(
         "doctor",
         help="Check binary, version, Hermes-scoped cache, and activation state",
