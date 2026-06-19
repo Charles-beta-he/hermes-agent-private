@@ -34,6 +34,7 @@ Usage:
     hermes honcho identity                 # Show AI peer identity representation
     hermes honcho identity <file>          # Seed AI peer identity from a file (SOUL.md etc.)
     hermes honcho migrate                  # Step-by-step migration guide: OpenClaw native → Hermes + Honcho
+    hermes codegraph doctor   Check local code knowledge-graph MCP readiness
     hermes version             Show version
     hermes update              Update to latest version
     hermes uninstall           Uninstall Hermes Agent
@@ -300,6 +301,7 @@ from hermes_cli.subcommands.skills import build_skills_parser
 from hermes_cli.subcommands.pairing import build_pairing_parser
 from hermes_cli.subcommands.plugins import build_plugins_parser
 from hermes_cli.subcommands.mcp import build_mcp_parser
+from hermes_cli.subcommands.codegraph import build_codegraph_parser
 from hermes_cli.subcommands.claw import build_claw_parser
 
 
@@ -3986,6 +3988,15 @@ def cmd_status(args):
     from hermes_cli.status import show_status
 
     show_status(args)
+
+
+def cmd_codegraph(args):
+    """Local code knowledge-graph integration commands."""
+    from hermes_cli.codegraph import cmd_codegraph as _cmd_codegraph
+
+    rc = _cmd_codegraph(args)
+    if isinstance(rc, int) and rc != 0:
+        raise SystemExit(rc)
 
 
 def cmd_selfcheck(args):
@@ -10201,7 +10212,7 @@ def cmd_logs(args):
 # to parse.
 _BUILTIN_SUBCOMMANDS = frozenset(
     {
-        "acp", "auth", "backup", "bundles", "checkpoints", "claw", "completion",
+        "acp", "auth", "backup", "bundles", "checkpoints", "claw", "codegraph", "completion",
         "computer-use",
         "config", "cron", "curator", "dashboard", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
@@ -11172,6 +11183,11 @@ def main():
     # mcp command  (parser built in hermes_cli/subcommands/mcp.py)
     # =========================================================================
     build_mcp_parser(subparsers, cmd_mcp=cmd_mcp)
+
+    # =========================================================================
+    # codegraph command  (parser built in hermes_cli/subcommands/codegraph.py)
+    # =========================================================================
+    build_codegraph_parser(subparsers, cmd_codegraph=cmd_codegraph)
 
     # =========================================================================
     # sessions command
