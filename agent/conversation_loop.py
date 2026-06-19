@@ -216,7 +216,13 @@ def _build_auto_relay_prompt(*, relay_index: int, max_relay_count: int, reason: 
         f"[Auto-relay {relay_index}/{max_relay_count}] Previous turn stopped because {reason}.\n"
         f"Summary from the exhausted turn:\n{summary}\n\n"
         "Continue the task from that handoff. Use tools as needed, verify results, "
-        "and only provide a final answer after the work is complete."
+        "and only provide a final answer after the work is complete. If you hit a "
+        "permission, credential, production, destructive, external-publish, payment, "
+        "safety/legal, or value-judgment boundary, do not silently downgrade or treat "
+        "model agreement as authority. Drain any safe reversible work, then produce "
+        "a DecisionPacket-style human gate plus ContinuationPacket-style resume state "
+        "with objective, completed evidence, pending action, requested authority, "
+        "rollback/escape hatch, and post-action verification."
     )
 
 

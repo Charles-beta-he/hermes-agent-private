@@ -3,10 +3,13 @@ import json
 from agent.continuation import (
     MAX_ACTIVE_CONTINUATIONS,
     ContinuationPacket,
+    build_authority_grant,
     build_continuation_packet,
     build_clean_session_handoff,
+    build_decision_packet,
     continuation_status,
     evaluate_continuation_eligibility,
+    evaluate_decision_resume,
     normalize_continuation_reason,
     write_continuation_packet,
     write_legacy_relay_packet,
@@ -193,6 +196,100 @@ def test_legacy_relay_packet_sanitizes_payload_derived_relay_index(tmp_path):
     )
 
     path = write_legacy_relay_packet(packet, legacy_dir=tmp_path)
-
     assert path.resolve().is_relative_to(tmp_path.resolve())
     assert path.name == "relay-session_with_spaces-evil_absolute.json"
+
+
+def test_decision_packet_holds_hard_gate_even_with_model_consensus():
+    continuation = build_continuation_packet(
+        scope="conversation",
+        reason="external_publish_gate",
+        summary="Local verification is complete; publish requires human authority.",
+        remaining_work=[{"id": "publish", "action": "push_release"}],
+        completed_work=[{"id": "test", "result": "passed"}],
+        evidence=[{"id": "E-test", "kind": "pytest", "status": "passed"}],
+        resume={"mode": "after_authority", "executor": "conversation_loop"},
+    )
+    packet = build_decision_packet(
+        objective="Ship the verified local change without bypassing publish authority.",
+        blocker_class="external_publish",
+        question="Authorize publishing the verified local change?",
+        options=[{"id": "A", "action": "publish"}, {"id": "B", "action": "stop"}],
+        recommendation={"option": "A", "reason": "Local evidence is green"},
+        continuation=continuation,
+        required_authority={"actions": ["push_release"], "scope": "current task"},
+        evidence=[{"id": "E-models", "kind": "multi_model_review", "vote": "approve"}],
+        model_reviews=[{"model": "planner", "recommendation": "publish"}],
+    )
+
+    decision = evaluate_decision_resume(packet)
+
+    assert packet["schema"] == "hermes_decision_packet_v1"
+    assert packet["blocker"]["requires_human"] is True
+    assert decision["decision"] == "hold_for_human"
+    assert decision["hard_human_gate"] is True
+    assert "missing_authority_grant" in decision["reasons"]
+    assert decision["model_consensus_authority"] == "advisory_only"
+
+
+def test_decision_packet_resumes_hard_gate_only_with_matching_authority():
+    continuation = build_continuation_packet(
+        scope="conversation",
+        reason="production_gate",
+        summary="Ready to resume after scoped authority.",
+        remaining_work=["create PR"],
+        evidence=[{"id": "E-1", "status": "passed"}],
+    )
+    packet = build_decision_packet(
+        objective="Resume only within granted scope.",
+        blocker_class="production",
+        question="Allow create_pr only?",
+        options=[{"id": "A", "action": "create_pr"}],
+        continuation=continuation,
+        required_authority={"actions": ["create_pr"]},
+        evidence=[{"id": "E-1", "status": "passed"}],
+    )
+    mismatched_grant = build_authority_grant(
+        decision_packet_id="other-packet",
+        scope="current task",
+        allowed_actions=["create_pr"],
+    )
+    assert evaluate_decision_resume(packet, authority_grant=mismatched_grant)["decision"] == "hold_for_human"
+
+    grant = build_authority_grant(
+        decision_packet_id=packet["packet_id"],
+        scope="current task",
+        allowed_actions=["create_pr"],
+        forbidden_actions=["deploy"],
+        evidence=[{"message_id": "human-approval"}],
+    )
+    decision = evaluate_decision_resume(packet, authority_grant=grant)
+
+    assert grant["schema"] == "hermes_authority_grant_v1"
+    assert decision["decision"] == "resume_with_authority"
+    assert decision["reasons"] == []
+
+
+def test_decision_packet_auto_resumes_low_risk_verified_gate():
+    continuation = build_continuation_packet(
+        scope="conversation",
+        reason="verification_followup",
+        summary="Continue local verification.",
+        remaining_work=["run focused pytest"],
+        evidence=[{"id": "E-read", "kind": "readback"}],
+    )
+    packet = build_decision_packet(
+        objective="Finish local reversible verification.",
+        blocker_class="local_reversible",
+        question="Continue local verification?",
+        options=[{"id": "A", "action": "run_pytest"}],
+        continuation=continuation,
+        evidence=[{"id": "E-read", "kind": "readback"}],
+    )
+
+    decision = evaluate_decision_resume(packet)
+
+    assert packet["blocker"]["requires_human"] is False
+    assert decision["decision"] == "auto_resume"
+    assert decision["hard_human_gate"] is False
+

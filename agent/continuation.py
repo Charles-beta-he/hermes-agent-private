@@ -17,8 +17,31 @@ import uuid
 from typing import Any
 
 SCHEMA = "hermes_continuation_packet_v1"
+DECISION_PACKET_SCHEMA = "hermes_decision_packet_v1"
+AUTHORITY_GRANT_SCHEMA = "hermes_authority_grant_v1"
 STATUS_SCHEMA = "hermes_continuation_status_v1"
 STATES = ("active", "completed", "failed", "archived")
+
+# Side-effect / decision classes that must remain human-gated even when a
+# planner, critic, or multi-model panel recommends continuing.  This lets the
+# control plane distinguish "model recommendation" from "authority grant".
+HARD_HUMAN_GATE_CLASSES = frozenset({
+    "authorization",
+    "credential",
+    "destructive",
+    "external_publish",
+    "external_side_effect",
+    "payment",
+    "production",
+    "safety_legal",
+    "value_judgment",
+})
+AUTO_RESUME_ALLOWED_CLASSES = frozenset({
+    "fact",
+    "local_reversible",
+    "read_only",
+    "verification",
+})
 
 # Backpressure: cap live active packets. New packets that would exceed the cap
 # are diverted to archived/ (flagged metadata.overflow_archived) so a burst of
@@ -161,6 +184,149 @@ def build_continuation_packet(
         recurrent_task_state=dict(recurrent_task_state or {}),
         metadata=dict(metadata or {}),
     )
+
+
+def _normalize_gate_class(value: str | None) -> str:
+    text = re.sub(r"[^a-zA-Z0-9]+", "_", str(value or "").lower()).strip("_")
+    return text or "unknown"
+
+
+def build_authority_grant(
+    *,
+    decision_packet_id: str,
+    scope: str,
+    allowed_actions: list[str] | None = None,
+    forbidden_actions: list[str] | None = None,
+    expires_at: str | None = None,
+    granted_by: str = "human",
+    evidence: list[Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the human-granted authority object consumed by resume gates.
+
+    This object is deliberately separate from planner / multi-model output:
+    models may recommend an option, but only an authority grant can unlock a
+    hard human gate.
+    """
+    return {
+        "schema": AUTHORITY_GRANT_SCHEMA,
+        "grant_id": uuid.uuid4().hex,
+        "decision_packet_id": str(decision_packet_id),
+        "scope": str(scope or "unknown"),
+        "granted_by": str(granted_by or "human"),
+        "granted_at": _utc_now(),
+        "expires_at": expires_at,
+        "allowed_actions": [str(action) for action in (allowed_actions or [])],
+        "forbidden_actions": [str(action) for action in (forbidden_actions or [])],
+        "evidence": list(evidence or []),
+        "metadata": dict(metadata or {}),
+    }
+
+
+def build_decision_packet(
+    *,
+    objective: str,
+    blocker_class: str,
+    question: str,
+    options: list[Mapping[str, Any]],
+    recommendation: Mapping[str, Any] | None = None,
+    continuation: ContinuationPacket | Mapping[str, Any] | None = None,
+    current_state: Mapping[str, Any] | None = None,
+    required_authority: Mapping[str, Any] | None = None,
+    evidence: list[Any] | None = None,
+    safe_work_remaining: list[Any] | None = None,
+    model_reviews: list[Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a first-class human intervention packet.
+
+    The packet makes the DECIDE/HOLD state explicit for Loop Engineering:
+    interruption is a recoverable transition, not a natural-language pause.
+    """
+    gate_class = _normalize_gate_class(blocker_class)
+    continuation_payload = _packet_payload(continuation) if continuation is not None else None
+    packet_id = uuid.uuid4().hex
+    payload = {
+        "schema": DECISION_PACKET_SCHEMA,
+        "packet_id": packet_id,
+        "created_at": _utc_now(),
+        "objective": str(objective or ""),
+        "question": str(question or ""),
+        "blocker": {"class": gate_class, "requires_human": gate_class in HARD_HUMAN_GATE_CLASSES},
+        "current_state": dict(current_state or {}),
+        "options": [dict(option) for option in options],
+        "recommendation": dict(recommendation or {}),
+        "required_authority": dict(required_authority or {}),
+        "evidence": list(evidence or []),
+        "safe_work_remaining": list(safe_work_remaining or []),
+        "model_reviews": list(model_reviews or []),
+        "continuation": continuation_payload,
+        "metadata": dict(metadata or {}),
+    }
+    return payload
+
+
+def evaluate_decision_resume(
+    decision_packet: Mapping[str, Any],
+    *,
+    authority_grant: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Fail-closed DECIDE gate for auto-resume vs human-hold.
+
+    Multi-model agreement is advisory. Hard gates continue only when an explicit
+    matching AuthorityGrant is present and the requested action is not forbidden.
+    """
+    payload = dict(decision_packet or {})
+    blocker_obj = payload.get("blocker")
+    blocker: Mapping[str, Any] = blocker_obj if isinstance(blocker_obj, Mapping) else {}
+    gate_class = _normalize_gate_class(blocker.get("class"))
+    reasons: list[str] = []
+    advisory: list[str] = []
+    if payload.get("schema") != DECISION_PACKET_SCHEMA:
+        reasons.append("invalid_decision_packet_schema")
+    if not payload.get("options"):
+        reasons.append("missing_options")
+    if not payload.get("continuation"):
+        advisory.append("missing_continuation_packet")
+    if not payload.get("evidence"):
+        advisory.append("missing_decision_evidence")
+
+    hard_gate = gate_class in HARD_HUMAN_GATE_CLASSES
+    if hard_gate:
+        grant = dict(authority_grant or {})
+        if grant.get("schema") != AUTHORITY_GRANT_SCHEMA:
+            reasons.append("missing_authority_grant")
+        elif grant.get("decision_packet_id") != payload.get("packet_id"):
+            reasons.append("authority_grant_packet_mismatch")
+        else:
+            requested_obj = payload.get("required_authority")
+            requested: Mapping[str, Any] = requested_obj if isinstance(requested_obj, Mapping) else {}
+            requested_actions = {str(action) for action in requested.get("actions", [])}
+            allowed_actions = {str(action) for action in grant.get("allowed_actions", [])}
+            forbidden_actions = {str(action) for action in grant.get("forbidden_actions", [])}
+            if requested_actions and not requested_actions.issubset(allowed_actions):
+                reasons.append("authority_grant_missing_requested_actions")
+            if requested_actions & forbidden_actions:
+                reasons.append("authority_grant_forbids_requested_action")
+    elif gate_class not in AUTO_RESUME_ALLOWED_CLASSES:
+        advisory.append("unknown_gate_class_recommend_only")
+
+    if reasons:
+        decision = "hold_for_human"
+    elif hard_gate:
+        decision = "resume_with_authority"
+    elif advisory:
+        decision = "recommend_only"
+    else:
+        decision = "auto_resume"
+    return {
+        "schema": "hermes_decision_resume_evaluation_v1",
+        "decision": decision,
+        "gate_class": gate_class,
+        "hard_human_gate": hard_gate,
+        "reasons": reasons + advisory,
+        "model_consensus_authority": "advisory_only",
+    }
 
 
 ALLOWED_GOAL_BOUNDARY_TYPES = frozenset({

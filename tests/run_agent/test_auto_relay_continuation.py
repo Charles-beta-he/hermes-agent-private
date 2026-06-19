@@ -126,6 +126,8 @@ def test_write_auto_relay_packet_and_prompt(tmp_path, monkeypatch):
     assert "Auto-relay 1/3" in prompt
     assert "summary text" in prompt
     assert "Continue the task" in prompt
+    assert "DecisionPacket-style human gate" in prompt
+    assert "model agreement as authority" in prompt
 
 
 def test_try_auto_relay_starts_successor_turn_and_annotates_result(tmp_path, monkeypatch):
