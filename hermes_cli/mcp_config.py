@@ -853,6 +853,15 @@ def mcp_command(args):
         if rc:
             _sys.exit(rc)
         return
+    if action == "doctor":
+        from hermes_cli.mcp_doctor import print_mcp_doctor_json
+
+        print_mcp_doctor_json(
+            getattr(args, "name", "") or "",
+            probe=not bool(getattr(args, "no_probe", False)),
+            connect_timeout=float(getattr(args, "timeout", 30.0) or 30.0),
+        )
+        return
 
     handlers = {
         "add": cmd_mcp_add,

@@ -71,6 +71,23 @@ def build_mcp_parser(subparsers, *, cmd_mcp: Callable) -> None:
     mcp_test_p = mcp_sub.add_parser("test", help="Test MCP server connection")
     mcp_test_p.add_argument("name", help="Server name to test")
 
+    mcp_doctor_p = mcp_sub.add_parser(
+        "doctor",
+        help="Emit a JSON health report for a configured or catalog MCP server",
+    )
+    mcp_doctor_p.add_argument("name", help="Server or catalog entry name to inspect")
+    mcp_doctor_p.add_argument(
+        "--no-probe",
+        action="store_true",
+        help="Skip the connect/list_tools probe and only inspect manifest/config state",
+    )
+    mcp_doctor_p.add_argument(
+        "--timeout",
+        type=float,
+        default=30.0,
+        help="Probe timeout in seconds (default: 30)",
+    )
+
     mcp_cfg_p = mcp_sub.add_parser(
         "configure", aliases=["config"], help="Toggle tool selection"
     )
