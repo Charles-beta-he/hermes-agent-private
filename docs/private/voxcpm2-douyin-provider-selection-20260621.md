@@ -175,3 +175,22 @@ Verification:
 Boundary:
 - Default provider remains `hermes_bt_unit`; `hermes_loccent_c` is selectable/configured.
 - No real-person clone, no external media delivery, no push/deploy, no VoxCPM2 model download or heavy core dependency.
+
+## 2026-06-21 LOCCENT C default activation
+
+User approved the LOCCENT C audio and then requested default activation. Hermes config now uses `tts.provider: hermes_loccent_c`.
+
+Artifacts:
+- Default activation readback: `/Users/charles/.hermes/docs/private/douyin-ai-voice-7645194197032553791/c-enabled-loccent/default-provider-activation-20260621/default-activation-readback.md`
+- Receipt: `/Users/charles/.hermes/docs/private/douyin-ai-voice-7645194197032553791/c-enabled-loccent/default-provider-activation-20260621/receipt.json`
+- Official Hermes TTS smoke output: `/Users/charles/.hermes/docs/private/douyin-ai-voice-7645194197032553791/c-enabled-loccent/default-provider-activation-20260621/hermes-loccent-c-default-smoke.ogg`
+- Activation backup: `/Users/charles/.hermes/config.yaml.bak-loccent-c-default-20260621-204507`
+
+Verification:
+- Hermes `text_to_speech` returned success with provider `hermes_loccent_c` and `voice_compatible: true`.
+- `ffprobe` verified output as Opus, 48kHz, mono, duration 9.6265s.
+
+Boundary:
+- Default TTS provider is activated.
+- Generated voice/audio delivery is allowed for normal user-triggered Hermes TTS responses.
+- No real-person clone, no VoxCPM2 model download, no heavy core dependency, no deploy/push.
