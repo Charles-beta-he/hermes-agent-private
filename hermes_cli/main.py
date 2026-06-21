@@ -300,6 +300,7 @@ from hermes_cli.subcommands.insights import build_insights_parser
 from hermes_cli.subcommands.skills import build_skills_parser
 from hermes_cli.subcommands.pairing import build_pairing_parser
 from hermes_cli.subcommands.plugins import build_plugins_parser
+from hermes_cli.subcommands.portfolio import build_portfolio_parser
 from hermes_cli.subcommands.mcp import build_mcp_parser
 from hermes_cli.subcommands.codegraph import build_codegraph_parser
 from hermes_cli.subcommands.claw import build_claw_parser
@@ -10217,7 +10218,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "config", "cron", "curator", "dashboard", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
         "gui", "desktop", "kanban", "login", "logout", "logs", "lsp", "mcp", "memory", "migrate",
-        "model", "mission", "pairing", "plugins", "portal", "postinstall", "profile", "proxy",
+        "model", "mission", "pairing", "plugins", "portfolio", "portal", "postinstall", "profile", "proxy",
         "prompt-size",
         "send", "sessions", "setup",
         "skills", "slack", "status", "tools", "uninstall", "update",
@@ -11023,6 +11024,11 @@ def main():
     from hermes_cli.bundles import register_cli as _bundles_register, bundles_command
     _bundles_register(bundles_parser)
     bundles_parser.set_defaults(func=bundles_command)
+
+    # =========================================================================
+    # portfolio command — project portfolio governance status
+    # =========================================================================
+    build_portfolio_parser(subparsers)
 
     # =========================================================================
     # plugins command  (parser built in hermes_cli/subcommands/plugins.py)
