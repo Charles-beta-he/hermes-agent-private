@@ -71,12 +71,14 @@ Required gates:
 
 ### C. Prototype controllable cloning
 
-Rejected for now.
+Status after 2026-06-21 follow-up: **selectable only after local consent/provenance gate passes**.
 
 Reason:
-- Strong identity/consent risk.
-- Not needed for Hermes default voice identity.
-- Would require explicit reference-audio provenance and user confirmation.
+- Strong identity/consent risk remains, so C is never default-on and never external-send by default.
+- The safe preparation layer is now landed as `agent.voice_clone_policy` plus `scripts/voice_clone_gate.py`.
+- C becomes selectable when a manifest validates with `ok=true` and status `selectable_for_local_clone_prototype`.
+- The manifest must include explicit consent, `tts_voice_clone` scope, a local consent record, regular-file reference audio, output label, purpose, and `allowed_delivery: ["local_file"]`.
+- Telegram/external delivery is intentionally rejected by this gate and requires a separate send gate after a local artifact exists.
 
 ## Proposed Hermes provider contract
 
@@ -116,12 +118,33 @@ Do **not** move this to production/default Hermes voice until all are true:
 
 ## Next safe slice
 
-The next safe implementation step is **not** voice cloning. It is a no-clone provider adapter contract + dry-run config validator:
+The next safe implementation step is **not** immediate synthesis. It is the consent/provenance gate that makes C selectable without running a clone:
+
+1. Validate a local manifest with `scripts/voice_clone_gate.py --json <manifest>`.
+2. Require `allowed_delivery: ["local_file"]` for the first clone attempt.
+3. Reject Telegram/external delivery until a local artifact exists and a separate send gate is granted.
+4. Keep provider disabled by default and keep PyTorch/CUDA/VoxCPM outside Hermes core.
+5. Only after the gate returns `selectable_for_local_clone_prototype`, choose the runtime path for model download/GPU/cloud.
+
+A no-clone provider adapter contract + dry-run config validator remains the safest default before model execution:
 
 1. Add a `voxcpm2` provider schema with `enabled=false`.
 2. Add validator that rejects `voice_clone_allowed=true` unless consent metadata exists.
 3. Add docs/help text and proof fixture.
 4. Stop before model download/audio generation unless runtime boundary is explicitly selected.
+
+## Voice-clone readiness command
+
+```bash
+python scripts/voice_clone_gate.py --template
+python scripts/voice_clone_gate.py --json /path/to/voice-clone-manifest.json
+```
+
+Template artifact:
+
+```text
+/Users/charles/.hermes/docs/private/douyin-ai-voice-7645194197032553791/voice-clone-manifest.template.json
+```
 
 ## Current stop boundary
 
