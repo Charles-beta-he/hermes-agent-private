@@ -154,3 +154,24 @@ Reason:
 - Running VoxCPM2 requires model weight/runtime selection and may require GPU/cloud resources.
 - Voice cloning requires explicit consent/provenance.
 - The safe local work completed here is source verification, evidence bundle, taskpool intake, and provider-selection contract.
+
+## 2026-06-21 LOCCENT C provider rollout slice
+
+User approved the normalized local LOCCENT C audio sample. The safe follow-up was implemented as a selectable Hermes command TTS provider, not as global/default activation.
+
+Artifacts:
+- Provider script: `/Users/charles/.hermes/scripts/mimo_loccent_c_tts_command.py`
+- Config provider key: `tts.providers.hermes_loccent_c`
+- Config backup: `/Users/charles/.hermes/config.yaml.bak-loccent-c-20260621-182755`
+- Consent/provenance manifest: `/Users/charles/.hermes/docs/private/douyin-ai-voice-7645194197032553791/c-enabled-loccent/voice-clone-manifest.json`
+- Integration readback: `/Users/charles/.hermes/docs/private/douyin-ai-voice-7645194197032553791/c-enabled-loccent/provider-integration-readback-20260621.md`
+- Smoke output: `/Users/charles/.hermes/docs/private/douyin-ai-voice-7645194197032553791/c-enabled-loccent/provider-smoke-20260621/hermes-loccent-c-provider-smoke.m4a`
+
+Verification:
+- `py_compile` passed for provider script + voice clone gate.
+- `pytest -o addopts='' tests/agent/test_voice_clone_policy.py -q` → 4 passed.
+- Direct command provider smoke generated decodable AAC M4A, 24kHz mono, duration 10.5s.
+
+Boundary:
+- Default provider remains `hermes_bt_unit`; `hermes_loccent_c` is selectable/configured.
+- No real-person clone, no external media delivery, no push/deploy, no VoxCPM2 model download or heavy core dependency.
