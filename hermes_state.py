@@ -16,6 +16,7 @@ Key design decisions:
 
 import json
 import logging
+import os
 import random
 import re
 import sqlite3
@@ -33,7 +34,7 @@ T = TypeVar("T")
 
 DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # ---------------------------------------------------------------------------
 # WAL-compatibility fallback
@@ -1524,6 +1525,224 @@ class SessionDB:
             raise RuntimeError(f"topic action disappeared after update: {action_id}")
         return action
 
+    @staticmethod
+    def _session_topics_mode() -> str:
+        mode = os.environ.get("HERMES_SESSION_TOPICS", "0").strip().lower()
+        if mode in {"1", "true", "yes"}:
+            return "on"
+        if mode in {"shadow", "on"}:
+            return mode
+        return "0"
+
+    def _shadow_write_topic_projection_txn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        session_id: str,
+        message_id: int,
+        role: str,
+        tool_call_id: Optional[str] = None,
+    ) -> None:
+        """Best-effort topic projection write inside the message transaction.
+
+        The raw ``messages`` row remains the source of truth. This writer only
+        updates rebuildable projection tables when explicitly enabled by
+        ``HERMES_SESSION_TOPICS=shadow|on``.
+        """
+        if self._session_topics_mode() not in {"shadow", "on"}:
+            return
+
+        now = time.time()
+        if role == "tool" and tool_call_id:
+            action = conn.execute(
+                """
+                SELECT action_id, topic_id FROM topic_actions
+                WHERE tool_call_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (tool_call_id,),
+            ).fetchone()
+            if action is not None:
+                conn.execute(
+                    """
+                    UPDATE topic_actions
+                    SET status = 'done', result_message_id = ?, updated_at = ?
+                    WHERE action_id = ?
+                    """,
+                    (message_id, now, action["action_id"]),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO message_topic_links (
+                        message_id, topic_id, relation, confidence, reason, source, created_at
+                    ) VALUES (?, ?, 'tool_result', 1.0, 'tool_call_id action owner', 'shadow', ?)
+                    ON CONFLICT(message_id, topic_id, relation) DO UPDATE SET
+                        confidence = excluded.confidence,
+                        reason = excluded.reason,
+                        source = excluded.source,
+                        created_at = excluded.created_at
+                    """,
+                    (message_id, action["topic_id"], now),
+                )
+                return
+
+        focus = conn.execute(
+            "SELECT active_topic_id FROM session_focus WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if focus is None or not focus["active_topic_id"]:
+            return
+        topic_id = focus["active_topic_id"]
+        topic = conn.execute(
+            "SELECT 1 FROM conversation_topics WHERE topic_id = ? AND session_id = ?",
+            (topic_id, session_id),
+        ).fetchone()
+        if topic is None:
+            return
+
+        conn.execute(
+            """
+            INSERT INTO message_topic_links (
+                message_id, topic_id, relation, confidence, reason, source, created_at
+            ) VALUES (?, ?, 'active', 1.0, 'session_focus active_topic_id', 'shadow', ?)
+            ON CONFLICT(message_id, topic_id, relation) DO UPDATE SET
+                confidence = excluded.confidence,
+                reason = excluded.reason,
+                source = excluded.source,
+                created_at = excluded.created_at
+            """,
+            (message_id, topic_id, now),
+        )
+
+        last_span = conn.execute(
+            """
+            SELECT span_id, end_message_id FROM conversation_topic_spans
+            WHERE topic_id = ? AND session_id = ?
+            ORDER BY end_message_id DESC, start_message_id DESC, created_at DESC
+            LIMIT 1
+            """,
+            (topic_id, session_id),
+        ).fetchone()
+        previous = conn.execute(
+            """
+            SELECT id FROM messages
+            WHERE session_id = ? AND id < ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (session_id, message_id),
+        ).fetchone()
+        previous_id = previous["id"] if previous is not None else None
+        if last_span is not None and last_span["end_message_id"] == previous_id:
+            conn.execute(
+                """
+                UPDATE conversation_topic_spans
+                SET end_message_id = ?, confidence = 1.0, source = 'shadow'
+                WHERE span_id = ?
+                """,
+                (message_id, last_span["span_id"]),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO conversation_topic_spans (
+                    span_id, topic_id, session_id, start_message_id,
+                    end_message_id, confidence, source, reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, 1.0, 'shadow', 'session_focus active_topic_id', ?)
+                """,
+                (
+                    f"shadow:{topic_id}:{message_id}",
+                    topic_id,
+                    session_id,
+                    message_id,
+                    message_id,
+                    now,
+                ),
+            )
+
+    def rebuild_topic_projection_spans(
+        self,
+        session_id: Optional[str] = None,
+        topic_id: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """Rebuild contiguous topic spans from message-topic links.
+
+        This is intentionally an index rebuild, not a reconstruction of topic
+        semantics from raw text. The immutable message log plus persisted topic
+        links remain the evidence source; spans are a rebuildable acceleration
+        projection.
+        """
+        def _do(conn):
+            topic_where = []
+            topic_params: List[Any] = []
+            if session_id is not None:
+                topic_where.append("ct.session_id = ?")
+                topic_params.append(session_id)
+            if topic_id is not None:
+                topic_where.append("ct.topic_id = ?")
+                topic_params.append(topic_id)
+            where_sql = "WHERE " + " AND ".join(topic_where) if topic_where else ""
+            topics = conn.execute(
+                f"""
+                SELECT ct.topic_id, ct.session_id
+                FROM conversation_topics ct
+                {where_sql}
+                ORDER BY ct.session_id, ct.topic_id
+                """,
+                topic_params,
+            ).fetchall()
+
+            span_count = 0
+            for topic in topics:
+                conn.execute(
+                    "DELETE FROM conversation_topic_spans WHERE topic_id = ? AND session_id = ?",
+                    (topic["topic_id"], topic["session_id"]),
+                )
+                rows = conn.execute(
+                    """
+                    SELECT DISTINCT m.id AS message_id
+                    FROM message_topic_links l
+                    JOIN messages m ON m.id = l.message_id
+                    WHERE l.topic_id = ? AND m.session_id = ?
+                    ORDER BY m.id
+                    """,
+                    (topic["topic_id"], topic["session_id"]),
+                ).fetchall()
+                if not rows:
+                    continue
+                start = end = rows[0]["message_id"]
+                ranges: List[Tuple[int, int]] = []
+                for row in rows[1:]:
+                    mid = row["message_id"]
+                    if mid == end + 1:
+                        end = mid
+                    else:
+                        ranges.append((start, end))
+                        start = end = mid
+                ranges.append((start, end))
+                for start_id, end_id in ranges:
+                    conn.execute(
+                        """
+                        INSERT INTO conversation_topic_spans (
+                            span_id, topic_id, session_id, start_message_id,
+                            end_message_id, confidence, source, reason, created_at
+                        ) VALUES (?, ?, ?, ?, ?, 1.0, 'rebuild', 'rebuilt from message_topic_links', ?)
+                        """,
+                        (
+                            f"rebuild:{topic['topic_id']}:{start_id}:{end_id}",
+                            topic["topic_id"],
+                            topic["session_id"],
+                            start_id,
+                            end_id,
+                            time.time(),
+                        ),
+                    )
+                    span_count += 1
+            return {"topics": len(topics), "spans": span_count}
+
+        return self._execute_write(_do)
+
     # =========================================================================
     # Session lifecycle
     # =========================================================================
@@ -2676,6 +2895,13 @@ class SessionDB:
                     "UPDATE sessions SET message_count = message_count + 1 WHERE id = ?",
                     (session_id,),
                 )
+            self._shadow_write_topic_projection_txn(
+                conn,
+                session_id=session_id,
+                message_id=msg_id,
+                role=role,
+                tool_call_id=tool_call_id,
+            )
             return msg_id
 
         return self._execute_write(_do)
@@ -3460,6 +3686,7 @@ class SessionDB:
         offset: int = 0,
         sort: str = None,
         include_inactive: bool = False,
+        topic_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Full-text search across session messages using FTS5.
@@ -3493,6 +3720,9 @@ class SessionDB:
 
         query = self._sanitize_fts5_query(query)
         if not query:
+            return []
+
+        if topic_id is not None and self._session_topics_mode() != "on":
             return []
 
         # Normalise sort. Anything not in the allowed set falls back to None
@@ -3534,6 +3764,12 @@ class SessionDB:
             role_placeholders = ",".join("?" for _ in role_filter)
             where_clauses.append(f"m.role IN ({role_placeholders})")
             params.extend(role_filter)
+        if topic_id is not None:
+            where_clauses.append(
+                "EXISTS (SELECT 1 FROM message_topic_links l "
+                "WHERE l.message_id = m.id AND l.topic_id = ?)"
+            )
+            params.append(topic_id)
 
         where_sql = " AND ".join(where_clauses)
         params.extend([limit, offset])
@@ -3609,6 +3845,12 @@ class SessionDB:
                 if role_filter:
                     tri_where.append(f"m.role IN ({','.join('?' for _ in role_filter)})")
                     tri_params.extend(role_filter)
+                if topic_id is not None:
+                    tri_where.append(
+                        "EXISTS (SELECT 1 FROM message_topic_links l "
+                        "WHERE l.message_id = m.id AND l.topic_id = ?)"
+                    )
+                    tri_params.append(topic_id)
                 tri_sql = f"""
                     SELECT
                         m.id,
@@ -3664,6 +3906,12 @@ class SessionDB:
                 if role_filter:
                     like_where.append(f"m.role IN ({','.join('?' for _ in role_filter)})")
                     like_params.extend(role_filter)
+                if topic_id is not None:
+                    like_where.append(
+                        "EXISTS (SELECT 1 FROM message_topic_links l "
+                        "WHERE l.message_id = m.id AND l.topic_id = ?)"
+                    )
+                    like_params.append(topic_id)
                 like_sql = f"""
                     SELECT m.id, m.session_id, m.role,
                            substr(m.content,

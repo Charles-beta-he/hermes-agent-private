@@ -4118,3 +4118,80 @@ class TestConversationTopicProjection:
         assert routed["topic_id"] == "topic-b"
         assert db.get_session_topic_board("s1")["active_topic_id"] == "topic-a"
         assert db.get_topic_action("action-b")["result_message_id"] == result_id
+
+    def test_shadow_writer_links_active_topic_and_extends_contiguous_span(self, db, monkeypatch):
+        monkeypatch.setenv("HERMES_SESSION_TOPICS", "shadow")
+        db.create_session(session_id="s1", source="cli")
+        db.create_or_update_topic("topic-a", "s1", title="Topic A")
+        db.set_session_focus("s1", active_topic_id="topic-a", focus_stack=["topic-a"])
+
+        first_id = db.append_message("s1", role="user", content="alpha first")
+        second_id = db.append_message("s1", role="assistant", content="alpha second")
+
+        packet = db.get_topic_packet("topic-a")
+        assert [(l["message_id"], l["relation"]) for l in packet["links"]] == [
+            (first_id, "active"),
+            (second_id, "active"),
+        ]
+        assert [(s["start_message_id"], s["end_message_id"]) for s in packet["spans"]] == [
+            (first_id, second_id),
+        ]
+
+    def test_shadow_writer_creates_new_span_after_interruption(self, db, monkeypatch):
+        monkeypatch.setenv("HERMES_SESSION_TOPICS", "shadow")
+        db.create_session(session_id="s1", source="cli")
+        db.create_or_update_topic("topic-a", "s1", title="Topic A")
+        db.create_or_update_topic("topic-b", "s1", title="Topic B")
+
+        db.set_session_focus("s1", active_topic_id="topic-a", focus_stack=["topic-a"])
+        first_a = db.append_message("s1", role="user", content="A start")
+        db.set_session_focus("s1", active_topic_id="topic-b", focus_stack=["topic-b", "topic-a"])
+        db.append_message("s1", role="user", content="B interruption")
+        db.set_session_focus("s1", active_topic_id="topic-a", focus_stack=["topic-a", "topic-b"])
+        second_a = db.append_message("s1", role="user", content="A resumed")
+
+        packet = db.get_topic_packet("topic-a")
+        assert [(s["start_message_id"], s["end_message_id"]) for s in packet["spans"]] == [
+            (first_a, first_a),
+            (second_a, second_a),
+        ]
+
+    def test_rebuild_topic_projection_recreates_spans_from_links_idempotently(self, db):
+        db.create_session(session_id="s1", source="cli")
+        db.create_or_update_topic("topic-a", "s1", title="Topic A")
+        ids = [
+            db.append_message("s1", role="user", content="A one"),
+            db.append_message("s1", role="user", content="B gap"),
+            db.append_message("s1", role="user", content="A two"),
+            db.append_message("s1", role="user", content="A three"),
+        ]
+        for message_id in (ids[0], ids[2], ids[3]):
+            db.link_message_topic(message_id, "topic-a", relation="active", source="shadow")
+        db.record_topic_span("topic-a", "s1", ids[0], ids[0], source="shadow")
+
+        first = db.rebuild_topic_projection_spans("s1")
+        second = db.rebuild_topic_projection_spans("s1")
+
+        assert first == {"topics": 1, "spans": 2}
+        assert second == {"topics": 1, "spans": 2}
+        packet = db.get_topic_packet("topic-a")
+        assert [(s["start_message_id"], s["end_message_id"]) for s in packet["spans"]] == [
+            (ids[0], ids[0]),
+            (ids[2], ids[3]),
+        ]
+
+    def test_topic_search_requires_on_flag_and_filters_to_topic(self, db, monkeypatch):
+        db.create_session(session_id="s1", source="cli")
+        db.create_or_update_topic("topic-a", "s1", title="Topic A")
+        db.create_or_update_topic("topic-b", "s1", title="Topic B")
+        alpha_a = db.append_message("s1", role="user", content="alpha belongs to A")
+        alpha_b = db.append_message("s1", role="user", content="alpha belongs to B")
+        db.link_message_topic(alpha_a, "topic-a", relation="active", source="shadow")
+        db.link_message_topic(alpha_b, "topic-b", relation="active", source="shadow")
+
+        monkeypatch.setenv("HERMES_SESSION_TOPICS", "shadow")
+        assert db.search_messages("alpha", topic_id="topic-a") == []
+
+        monkeypatch.setenv("HERMES_SESSION_TOPICS", "on")
+        results = db.search_messages("alpha", topic_id="topic-a")
+        assert [row["id"] for row in results] == [alpha_a]
