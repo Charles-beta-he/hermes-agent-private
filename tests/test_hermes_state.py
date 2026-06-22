@@ -4195,3 +4195,49 @@ class TestConversationTopicProjection:
         monkeypatch.setenv("HERMES_SESSION_TOPICS", "on")
         results = db.search_messages("alpha", topic_id="topic-a")
         assert [row["id"] for row in results] == [alpha_a]
+
+    def test_topic_reducer_supersedes_plan_and_preserves_conflict_evidence(self, db):
+        db.create_session(session_id="s1", source="cli")
+        first = db.append_message("s1", role="user", content="Use one span")
+        second = db.append_message("s1", role="user", content="Use multiple spans")
+        conflict = db.append_message("s1", role="assistant", content="Need classifier confidence gate")
+        db.create_or_update_topic("topic-a", "s1", title="Topic A")
+        e1 = db.record_topic_event(
+            "topic-a",
+            "set_current_plan",
+            payload={"items": ["one span"]},
+            evidence_message_ids=[first],
+            source="user",
+        )
+        e2 = db.record_topic_event(
+            "topic-a",
+            "supersede",
+            payload={"old": "one span", "new": "multiple spans"},
+            evidence_message_ids=[second],
+            source="user",
+        )
+        e3 = db.record_topic_event(
+            "topic-a",
+            "conflict",
+            payload={
+                "claim": "classifier can write production state",
+                "alternatives": ["shadow only", "manual promote"],
+                "status": "unresolved",
+            },
+            evidence_message_ids=[conflict],
+            source="assistant",
+        )
+
+        snapshot = db.reduce_topic_state("topic-a")
+
+        assert snapshot["version"] == 1
+        assert snapshot["state"]["current_plan"] == ["multiple spans"]
+        assert snapshot["state"]["superseded"] == [
+            {"old": "one span", "new": "multiple spans", "event_id": e2}
+        ]
+        assert snapshot["state"]["conflicts"][0]["claim"] == "classifier can write production state"
+        assert snapshot["source_event_ids"] == [e1, e2, e3]
+        assert snapshot["evidence_message_ids"] == [first, second, conflict]
+
+        latest = db.get_latest_topic_state("topic-a")
+        assert latest["state"] == snapshot["state"]

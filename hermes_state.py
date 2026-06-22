@@ -1319,6 +1319,120 @@ class SessionDB:
 
         return self._execute_write(_do)
 
+    @staticmethod
+    def _topic_unique_append(items: List[Any], value: Any) -> None:
+        if value not in items:
+            items.append(value)
+
+    def reduce_topic_state(
+        self,
+        topic_id: str,
+        *,
+        reducer_version: str = "topic-reducer-v1",
+    ) -> Dict[str, Any]:
+        """Reduce ordered topic events into a versioned current-state snapshot."""
+        def _do(conn):
+            rows = conn.execute(
+                """
+                SELECT * FROM conversation_topic_events
+                WHERE topic_id = ?
+                ORDER BY created_at, event_id
+                """,
+                (topic_id,),
+            ).fetchall()
+            if not rows:
+                raise ValueError(f"no topic events for topic_id: {topic_id}")
+            version_row = conn.execute(
+                """
+                SELECT COALESCE(MAX(version), 0) AS version
+                FROM topic_state_snapshots
+                WHERE topic_id = ?
+                """,
+                (topic_id,),
+            ).fetchone()
+            next_version = int(version_row["version"] or 0) + 1
+            state: Dict[str, Any] = {
+                "current_plan": [],
+                "superseded": [],
+                "conflicts": [],
+                "facts": {},
+            }
+            source_event_ids: List[str] = []
+            evidence_message_ids: List[int] = []
+
+            for row in rows:
+                event_id = row["event_id"]
+                event_type = row["event_type"]
+                payload = self._topic_json_loads(row["payload_json"], {}) or {}
+                source_event_ids.append(event_id)
+                for message_id in self._topic_json_loads(row["evidence_message_ids_json"], []) or []:
+                    self._topic_unique_append(evidence_message_ids, message_id)
+
+                if event_type == "set_current_plan":
+                    items = payload.get("items", [])
+                    if isinstance(items, list):
+                        state["current_plan"] = list(items)
+                    elif items:
+                        state["current_plan"] = [items]
+                elif event_type == "append_current_plan":
+                    item = payload.get("item")
+                    if item is not None:
+                        self._topic_unique_append(state["current_plan"], item)
+                elif event_type == "supersede":
+                    old = payload.get("old")
+                    new = payload.get("new")
+                    if old in state["current_plan"]:
+                        state["current_plan"] = [
+                            item for item in state["current_plan"] if item != old
+                        ]
+                    if new is not None:
+                        self._topic_unique_append(state["current_plan"], new)
+                    state["superseded"].append(
+                        {"old": old, "new": new, "event_id": event_id}
+                    )
+                elif event_type == "conflict":
+                    conflict = dict(payload)
+                    conflict["event_id"] = event_id
+                    state["conflicts"].append(conflict)
+                elif event_type == "set_fact":
+                    key = payload.get("key")
+                    if key:
+                        state["facts"][key] = payload.get("value")
+
+            snapshot_id = f"snapshot:{topic_id}:{next_version}"
+            now = time.time()
+            conn.execute(
+                """
+                INSERT INTO topic_state_snapshots (
+                    snapshot_id, topic_id, version, state_json,
+                    source_event_ids_json, evidence_message_ids_json,
+                    reducer_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    topic_id,
+                    next_version,
+                    json.dumps(state, ensure_ascii=False),
+                    json.dumps(source_event_ids, ensure_ascii=False),
+                    json.dumps(evidence_message_ids, ensure_ascii=False),
+                    reducer_version,
+                    now,
+                ),
+            )
+            return {
+                "snapshot_id": snapshot_id,
+                "topic_id": topic_id,
+                "version": next_version,
+                "state": state,
+                "source_event_ids": source_event_ids,
+                "evidence_message_ids": evidence_message_ids,
+                "reducer_version": reducer_version,
+                "created_at": now,
+            }
+
+        return self._execute_write(_do)
+
     def get_latest_topic_state(self, topic_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             conn = self._conn
