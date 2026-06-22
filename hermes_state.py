@@ -301,12 +301,104 @@ CREATE TABLE IF NOT EXISTS compression_locks (
     expires_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS conversation_topics (
+    topic_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    title TEXT NOT NULL,
+    summary TEXT,
+    intent TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    canonical_terms_json TEXT,
+    metadata_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS conversation_topic_spans (
+    span_id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES conversation_topics(topic_id),
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    start_message_id INTEGER NOT NULL REFERENCES messages(id),
+    end_message_id INTEGER NOT NULL REFERENCES messages(id),
+    confidence REAL NOT NULL DEFAULT 1.0,
+    source TEXT NOT NULL DEFAULT 'system',
+    reason TEXT,
+    created_at REAL NOT NULL,
+    CHECK (start_message_id <= end_message_id)
+);
+
+CREATE TABLE IF NOT EXISTS message_topic_links (
+    message_id INTEGER NOT NULL REFERENCES messages(id),
+    topic_id TEXT NOT NULL REFERENCES conversation_topics(topic_id),
+    relation TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    reason TEXT,
+    source TEXT NOT NULL DEFAULT 'system',
+    created_at REAL NOT NULL,
+    PRIMARY KEY (message_id, topic_id, relation)
+);
+
+CREATE TABLE IF NOT EXISTS conversation_topic_events (
+    event_id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES conversation_topics(topic_id),
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    event_type TEXT NOT NULL,
+    target_path TEXT,
+    payload_json TEXT NOT NULL,
+    evidence_message_ids_json TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    source TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    reducer_version TEXT
+);
+
+CREATE TABLE IF NOT EXISTS topic_state_snapshots (
+    snapshot_id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES conversation_topics(topic_id),
+    version INTEGER NOT NULL,
+    state_json TEXT NOT NULL,
+    source_event_ids_json TEXT NOT NULL,
+    evidence_message_ids_json TEXT NOT NULL,
+    reducer_version TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    UNIQUE(topic_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS topic_actions (
+    action_id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES conversation_topics(topic_id),
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    trigger_message_id INTEGER REFERENCES messages(id),
+    tool_call_id TEXT,
+    type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result_message_id INTEGER REFERENCES messages(id),
+    evidence_json TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_focus (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+    active_topic_id TEXT,
+    focus_stack_json TEXT NOT NULL,
+    open_topics_json TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_source_id ON sessions(source, id);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_compression_locks_expires ON compression_locks(expires_at);
+CREATE INDEX IF NOT EXISTS idx_topics_session_status ON conversation_topics(session_id, status);
+CREATE INDEX IF NOT EXISTS idx_spans_session_range ON conversation_topic_spans(session_id, start_message_id, end_message_id);
+CREATE INDEX IF NOT EXISTS idx_links_message ON message_topic_links(message_id);
+CREATE INDEX IF NOT EXISTS idx_links_topic_relation ON message_topic_links(topic_id, relation);
+CREATE INDEX IF NOT EXISTS idx_events_topic_created ON conversation_topic_events(topic_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_actions_topic_status ON topic_actions(topic_id, status);
+CREATE INDEX IF NOT EXISTS idx_actions_tool_call ON topic_actions(tool_call_id) WHERE tool_call_id IS NOT NULL;
 """
 
 # Indexes that reference columns added in later schema versions must be
@@ -933,6 +1025,504 @@ class SessionDB:
                     self._rebuild_fts_indexes(cursor)
 
         self._conn.commit()
+
+    # =========================================================================
+    # Conversation topic projection (additive, rebuildable)
+    # =========================================================================
+
+    @staticmethod
+    def _topic_json_loads(value: Optional[str], default: Any = None) -> Any:
+        if value is None:
+            return default
+        try:
+            return json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return default
+
+    def create_or_update_topic(
+        self,
+        topic_id: str,
+        session_id: str,
+        *,
+        title: str,
+        summary: Optional[str] = None,
+        intent: Optional[str] = None,
+        status: str = "open",
+        canonical_terms: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Create or update a session-local semantic topic projection.
+
+        Topics are rebuildable overlays over immutable session messages. This
+        method intentionally does not mutate raw messages or current
+        ``session_search`` indexes.
+        """
+        now = time.time()
+        canonical_terms_json = (
+            json.dumps(canonical_terms, ensure_ascii=False)
+            if canonical_terms is not None else None
+        )
+        metadata_json = (
+            json.dumps(metadata, ensure_ascii=False)
+            if metadata is not None else None
+        )
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO conversation_topics (
+                    topic_id, session_id, title, summary, intent, status,
+                    created_at, updated_at, canonical_terms_json, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(topic_id) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    title = excluded.title,
+                    summary = COALESCE(excluded.summary, conversation_topics.summary),
+                    intent = COALESCE(excluded.intent, conversation_topics.intent),
+                    status = excluded.status,
+                    updated_at = excluded.updated_at,
+                    canonical_terms_json = COALESCE(excluded.canonical_terms_json, conversation_topics.canonical_terms_json),
+                    metadata_json = COALESCE(excluded.metadata_json, conversation_topics.metadata_json)
+                """,
+                (
+                    topic_id,
+                    session_id,
+                    title,
+                    summary,
+                    intent,
+                    status,
+                    now,
+                    now,
+                    canonical_terms_json,
+                    metadata_json,
+                ),
+            )
+            return topic_id
+
+        return self._execute_write(_do)
+
+    def record_topic_span(
+        self,
+        topic_id: str,
+        session_id: str,
+        start_message_id: int,
+        end_message_id: int,
+        *,
+        confidence: float = 1.0,
+        source: str = "system",
+        reason: Optional[str] = None,
+        span_id: Optional[str] = None,
+    ) -> str:
+        if start_message_id > end_message_id:
+            raise ValueError("start_message_id must be <= end_message_id")
+        span_id = span_id or f"{topic_id}:{start_message_id}:{end_message_id}:{int(time.time() * 1_000_000)}"
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO conversation_topic_spans (
+                    span_id, topic_id, session_id, start_message_id,
+                    end_message_id, confidence, source, reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    span_id,
+                    topic_id,
+                    session_id,
+                    start_message_id,
+                    end_message_id,
+                    confidence,
+                    source,
+                    reason,
+                    now,
+                ),
+            )
+            return span_id
+
+        return self._execute_write(_do)
+
+    def get_topic_packet(self, topic_id: str) -> Optional[Dict[str, Any]]:
+        """Return a trace packet for one topic with all non-contiguous spans."""
+        with self._lock:
+            conn = self._conn
+            assert conn is not None
+            topic = conn.execute(
+                "SELECT * FROM conversation_topics WHERE topic_id = ?",
+                (topic_id,),
+            ).fetchone()
+            if topic is None:
+                return None
+            spans = conn.execute(
+                """
+                SELECT * FROM conversation_topic_spans
+                WHERE topic_id = ?
+                ORDER BY start_message_id, end_message_id, created_at
+                """,
+                (topic_id,),
+            ).fetchall()
+            links = conn.execute(
+                """
+                SELECT * FROM message_topic_links
+                WHERE topic_id = ?
+                ORDER BY message_id, relation
+                """,
+                (topic_id,),
+            ).fetchall()
+        return {
+            "topic": dict(topic),
+            "spans": [dict(row) for row in spans],
+            "links": [dict(row) for row in links],
+        }
+
+    def link_message_topic(
+        self,
+        message_id: int,
+        topic_id: str,
+        *,
+        relation: str = "primary",
+        confidence: float = 1.0,
+        reason: Optional[str] = None,
+        source: str = "system",
+    ) -> None:
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO message_topic_links (
+                    message_id, topic_id, relation, confidence, reason, source, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(message_id, topic_id, relation) DO UPDATE SET
+                    confidence = excluded.confidence,
+                    reason = excluded.reason,
+                    source = excluded.source,
+                    created_at = excluded.created_at
+                """,
+                (message_id, topic_id, relation, confidence, reason, source, now),
+            )
+
+        self._execute_write(_do)
+
+    def get_message_topic_links(self, message_id: int) -> List[Dict[str, Any]]:
+        with self._lock:
+            conn = self._conn
+            assert conn is not None
+            rows = conn.execute(
+                """
+                SELECT * FROM message_topic_links
+                WHERE message_id = ?
+                ORDER BY message_id, topic_id, relation
+                """,
+                (message_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_topic_event(
+        self,
+        topic_id: str,
+        event_type: str,
+        *,
+        payload: Dict[str, Any],
+        evidence_message_ids: List[int],
+        source: str,
+        session_id: Optional[str] = None,
+        target_path: Optional[str] = None,
+        confidence: float = 1.0,
+        reducer_version: Optional[str] = None,
+        event_id: Optional[str] = None,
+    ) -> str:
+        if session_id is None:
+            with self._lock:
+                conn = self._conn
+                assert conn is not None
+                row = conn.execute(
+                    "SELECT session_id FROM conversation_topics WHERE topic_id = ?",
+                    (topic_id,),
+                ).fetchone()
+            if row is None:
+                raise ValueError(f"unknown topic_id: {topic_id}")
+            session_id = row["session_id"]
+        event_id = event_id or f"event:{topic_id}:{int(time.time() * 1_000_000)}"
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO conversation_topic_events (
+                    event_id, topic_id, session_id, event_type, target_path,
+                    payload_json, evidence_message_ids_json, confidence,
+                    source, created_at, reducer_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    topic_id,
+                    session_id,
+                    event_type,
+                    target_path,
+                    json.dumps(payload, ensure_ascii=False),
+                    json.dumps(evidence_message_ids, ensure_ascii=False),
+                    confidence,
+                    source,
+                    now,
+                    reducer_version,
+                ),
+            )
+            return event_id
+
+        return self._execute_write(_do)
+
+    def save_topic_state_snapshot(
+        self,
+        topic_id: str,
+        *,
+        version: int,
+        state: Dict[str, Any],
+        source_event_ids: List[str],
+        evidence_message_ids: List[int],
+        reducer_version: str,
+        snapshot_id: Optional[str] = None,
+    ) -> str:
+        snapshot_id = snapshot_id or f"snapshot:{topic_id}:{version}"
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO topic_state_snapshots (
+                    snapshot_id, topic_id, version, state_json,
+                    source_event_ids_json, evidence_message_ids_json,
+                    reducer_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(topic_id, version) DO UPDATE SET
+                    snapshot_id = excluded.snapshot_id,
+                    state_json = excluded.state_json,
+                    source_event_ids_json = excluded.source_event_ids_json,
+                    evidence_message_ids_json = excluded.evidence_message_ids_json,
+                    reducer_version = excluded.reducer_version,
+                    created_at = excluded.created_at
+                """,
+                (
+                    snapshot_id,
+                    topic_id,
+                    version,
+                    json.dumps(state, ensure_ascii=False),
+                    json.dumps(source_event_ids, ensure_ascii=False),
+                    json.dumps(evidence_message_ids, ensure_ascii=False),
+                    reducer_version,
+                    now,
+                ),
+            )
+            return snapshot_id
+
+        return self._execute_write(_do)
+
+    def get_latest_topic_state(self, topic_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            conn = self._conn
+            assert conn is not None
+            row = conn.execute(
+                """
+                SELECT * FROM topic_state_snapshots
+                WHERE topic_id = ?
+                ORDER BY version DESC
+                LIMIT 1
+                """,
+                (topic_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["state"] = self._topic_json_loads(result.pop("state_json"), {})
+        result["source_event_ids"] = self._topic_json_loads(
+            result.pop("source_event_ids_json"), []
+        )
+        result["evidence_message_ids"] = self._topic_json_loads(
+            result.pop("evidence_message_ids_json"), []
+        )
+        return result
+
+    def set_session_focus(
+        self,
+        session_id: str,
+        *,
+        active_topic_id: Optional[str] = None,
+        focus_stack: Optional[List[str]] = None,
+        open_topics: Optional[List[str]] = None,
+    ) -> None:
+        now = time.time()
+        focus_stack = focus_stack or ([] if active_topic_id is None else [active_topic_id])
+        if open_topics is None:
+            open_topics = list(dict.fromkeys(focus_stack))
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO session_focus (
+                    session_id, active_topic_id, focus_stack_json, open_topics_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    active_topic_id = excluded.active_topic_id,
+                    focus_stack_json = excluded.focus_stack_json,
+                    open_topics_json = excluded.open_topics_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    session_id,
+                    active_topic_id,
+                    json.dumps(focus_stack, ensure_ascii=False),
+                    json.dumps(open_topics, ensure_ascii=False),
+                    now,
+                ),
+            )
+
+        self._execute_write(_do)
+
+    def get_session_topic_board(self, session_id: str) -> Dict[str, Any]:
+        with self._lock:
+            conn = self._conn
+            assert conn is not None
+            focus = conn.execute(
+                "SELECT * FROM session_focus WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            topics = conn.execute(
+                """
+                SELECT * FROM conversation_topics
+                WHERE session_id = ?
+                ORDER BY updated_at DESC, created_at DESC
+                """,
+                (session_id,),
+            ).fetchall()
+        focus_dict = dict(focus) if focus is not None else {}
+        return {
+            "session_id": session_id,
+            "active_topic_id": focus_dict.get("active_topic_id"),
+            "focus_stack": self._topic_json_loads(
+                focus_dict.get("focus_stack_json"), []
+            ),
+            "open_topics": self._topic_json_loads(
+                focus_dict.get("open_topics_json"), []
+            ),
+            "topics": [dict(row) for row in topics],
+        }
+
+    def record_topic_action(
+        self,
+        action_id: str,
+        topic_id: str,
+        session_id: str,
+        *,
+        type: str,
+        status: str,
+        trigger_message_id: Optional[int] = None,
+        tool_call_id: Optional[str] = None,
+        result_message_id: Optional[int] = None,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        now = time.time()
+        evidence_json = (
+            json.dumps(evidence, ensure_ascii=False) if evidence is not None else None
+        )
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO topic_actions (
+                    action_id, topic_id, session_id, trigger_message_id,
+                    tool_call_id, type, status, result_message_id,
+                    evidence_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(action_id) DO UPDATE SET
+                    topic_id = excluded.topic_id,
+                    session_id = excluded.session_id,
+                    trigger_message_id = excluded.trigger_message_id,
+                    tool_call_id = excluded.tool_call_id,
+                    type = excluded.type,
+                    status = excluded.status,
+                    result_message_id = excluded.result_message_id,
+                    evidence_json = excluded.evidence_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    action_id,
+                    topic_id,
+                    session_id,
+                    trigger_message_id,
+                    tool_call_id,
+                    type,
+                    status,
+                    result_message_id,
+                    evidence_json,
+                    now,
+                    now,
+                ),
+            )
+            return action_id
+
+        return self._execute_write(_do)
+
+    def get_topic_action(self, action_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            conn = self._conn
+            assert conn is not None
+            row = conn.execute(
+                "SELECT * FROM topic_actions WHERE action_id = ?",
+                (action_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["evidence"] = self._topic_json_loads(result.pop("evidence_json"), None)
+        return result
+
+    def complete_topic_action_by_tool_call(
+        self,
+        tool_call_id: str,
+        *,
+        result_message_id: int,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Complete an async/tool action by original tool_call_id ownership.
+
+        This deliberately ignores the current active topic; the action row is
+        the authority for which topic receives the result.
+        """
+        now = time.time()
+        evidence_json = (
+            json.dumps(evidence, ensure_ascii=False) if evidence is not None else None
+        )
+
+        def _do(conn):
+            row = conn.execute(
+                """
+                SELECT * FROM topic_actions
+                WHERE tool_call_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (tool_call_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"no topic action for tool_call_id: {tool_call_id}")
+            action_id = row["action_id"]
+            conn.execute(
+                """
+                UPDATE topic_actions
+                SET status = 'done', result_message_id = ?,
+                    evidence_json = COALESCE(?, evidence_json), updated_at = ?
+                WHERE action_id = ?
+                """,
+                (result_message_id, evidence_json, now, action_id),
+            )
+            return action_id
+
+        action_id = self._execute_write(_do)
+        action = self.get_topic_action(action_id)
+        if action is None:
+            raise RuntimeError(f"topic action disappeared after update: {action_id}")
+        return action
 
     # =========================================================================
     # Session lifecycle
@@ -2000,7 +2590,7 @@ class SessionDB:
         content: str = None,
         tool_name: str = None,
         tool_calls: Any = None,
-        tool_call_id: str = None,
+        tool_call_id: Optional[str] = None,
         token_count: int = None,
         finish_reason: str = None,
         reasoning: str = None,

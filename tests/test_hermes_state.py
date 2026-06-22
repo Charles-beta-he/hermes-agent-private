@@ -4006,3 +4006,115 @@ class TestListCronJobRuns:
         detail = " ".join(row[-1] for row in plan)
         assert "USING INDEX" in detail or "USING COVERING INDEX" in detail, detail
         assert "idx_sessions_source" in detail, detail
+
+
+class TestConversationTopicProjection:
+    def test_topic_schema_is_additive_and_feature_flag_off_preserves_search(self, db):
+        db.create_session(session_id="s1", source="cli")
+        message_id = db.append_message("s1", role="user", content="alpha topic baseline")
+
+        tables = {
+            row["name"]
+            for row in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert {
+            "conversation_topics",
+            "conversation_topic_spans",
+            "message_topic_links",
+            "conversation_topic_events",
+            "topic_state_snapshots",
+            "topic_actions",
+            "session_focus",
+        }.issubset(tables)
+
+        results = db.search_messages("alpha", limit=5)
+        assert [row["id"] for row in results] == [message_id]
+
+    def test_topic_can_have_non_contiguous_spans(self, db):
+        db.create_session(session_id="s1", source="cli")
+        ids = [
+            db.append_message("s1", role="user", content="topic A start"),
+            db.append_message("s1", role="user", content="interrupting topic B"),
+            db.append_message("s1", role="user", content="topic A resumed"),
+        ]
+        db.create_or_update_topic("t-a", "s1", title="Topic A")
+        db.record_topic_span("t-a", "s1", ids[0], ids[0], reason="start")
+        db.record_topic_span("t-a", "s1", ids[2], ids[2], reason="resume")
+
+        packet = db.get_topic_packet("t-a")
+        assert packet["topic"]["topic_id"] == "t-a"
+        assert [(s["start_message_id"], s["end_message_id"]) for s in packet["spans"]] == [
+            (ids[0], ids[0]),
+            (ids[2], ids[2]),
+        ]
+
+    def test_message_can_link_to_multiple_topics_with_relations(self, db):
+        db.create_session(session_id="s1", source="cli")
+        message_id = db.append_message(
+            "s1", role="user", content="event sourcing applies to topic A and taskpool"
+        )
+        db.create_or_update_topic("t-a", "s1", title="Topic A")
+        db.create_or_update_topic("t-b", "s1", title="Taskpool")
+
+        db.link_message_topic(message_id, "t-a", relation="primary", confidence=0.95)
+        db.link_message_topic(message_id, "t-b", relation="secondary", confidence=0.8)
+
+        links = db.get_message_topic_links(message_id)
+        assert [(l["topic_id"], l["relation"]) for l in links] == [
+            ("t-a", "primary"),
+            ("t-b", "secondary"),
+        ]
+
+    def test_topic_event_snapshot_preserves_evidence_ids_and_superseded_items(self, db):
+        db.create_session(session_id="s1", source="cli")
+        old_msg = db.append_message("s1", role="user", content="one span per topic")
+        new_msg = db.append_message("s1", role="user", content="topic can have multiple spans")
+        db.create_or_update_topic("t-a", "s1", title="Topic A")
+        event_id = db.record_topic_event(
+            "t-a",
+            "supersede",
+            payload={"old": "one span", "new": "multiple spans"},
+            evidence_message_ids=[old_msg, new_msg],
+            source="user",
+        )
+        db.save_topic_state_snapshot(
+            "t-a",
+            version=1,
+            state={
+                "current_plan": ["topic can have multiple spans"],
+                "superseded": [{"old": "one span", "replaced_by": "multiple spans"}],
+            },
+            source_event_ids=[event_id],
+            evidence_message_ids=[old_msg, new_msg],
+            reducer_version="test-v1",
+        )
+
+        latest = db.get_latest_topic_state("t-a")
+        assert latest["version"] == 1
+        assert latest["state"]["superseded"][0]["old"] == "one span"
+        assert latest["evidence_message_ids"] == [old_msg, new_msg]
+
+    def test_topic_action_result_routes_by_action_not_active_topic(self, db):
+        db.create_session(session_id="s1", source="cli")
+        trigger_id = db.append_message("s1", role="assistant", content="checking B")
+        result_id = db.append_message("s1", role="tool", content="B result", tool_call_id="call-1")
+        db.create_or_update_topic("topic-a", "s1", title="Active A")
+        db.create_or_update_topic("topic-b", "s1", title="Background B")
+        db.set_session_focus("s1", active_topic_id="topic-a", focus_stack=["topic-a"])
+        db.record_topic_action(
+            "action-b",
+            "topic-b",
+            "s1",
+            trigger_message_id=trigger_id,
+            tool_call_id="call-1",
+            type="tool_call",
+            status="running",
+        )
+
+        routed = db.complete_topic_action_by_tool_call("call-1", result_message_id=result_id)
+
+        assert routed["topic_id"] == "topic-b"
+        assert db.get_session_topic_board("s1")["active_topic_id"] == "topic-a"
+        assert db.get_topic_action("action-b")["result_message_id"] == result_id
