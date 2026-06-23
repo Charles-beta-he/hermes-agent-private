@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 from agent.memory_manager import sanitize_context
+from agent.sensitive_redaction import redact_sensitive_value
 from hermes_constants import get_hermes_home
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
@@ -2946,6 +2947,18 @@ class SessionDB:
         platform-specific flows like yuanbao's recall guard to redact a
         message by its platform-side identifier.
         """
+        # Redact high-confidence secrets before any durable persistence or FTS
+        # trigger sees the payload. This protects raw transcript rows,
+        # tool-call JSON, Codex message item snapshots, and downstream
+        # projections such as ContextCards that read from state.db.
+        content = redact_sensitive_value(content)
+        tool_calls = redact_sensitive_value(tool_calls)
+        reasoning = redact_sensitive_value(reasoning)
+        reasoning_content = redact_sensitive_value(reasoning_content)
+        reasoning_details = redact_sensitive_value(reasoning_details)
+        codex_reasoning_items = redact_sensitive_value(codex_reasoning_items)
+        codex_message_items = redact_sensitive_value(codex_message_items)
+
         # Serialize structured fields to JSON before entering the write txn
         reasoning_details_json = (
             json.dumps(reasoning_details)
@@ -3041,6 +3054,7 @@ class SessionDB:
             total_messages = 0
             total_tool_calls = 0
             for msg in messages:
+                msg = redact_sensitive_value(msg)
                 role = msg.get("role", "unknown")
                 tool_calls = msg.get("tool_calls")
                 reasoning_details = msg.get("reasoning_details") if role == "assistant" else None

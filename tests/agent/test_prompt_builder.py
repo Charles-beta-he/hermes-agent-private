@@ -20,6 +20,7 @@ from agent.prompt_builder import (
     build_context_files_prompt,
     CONTEXT_FILE_MAX_CHARS,
     DEFAULT_AGENT_IDENTITY,
+    TASK_COMPLETION_GUIDANCE,
     TOOL_USE_ENFORCEMENT_GUIDANCE,
     TOOL_USE_ENFORCEMENT_MODELS,
     OPENAI_MODEL_EXECUTION_GUIDANCE,
@@ -1228,6 +1229,26 @@ class TestToolUseEnforcementGuidance:
 
     def test_enforcement_models_is_tuple(self):
         assert isinstance(TOOL_USE_ENFORCEMENT_MODELS, tuple)
+
+
+class TestTaskCompletionGuidance:
+    def test_completion_claim_gate_binds_to_latest_real_request(self):
+        text = TASK_COMPLETION_GUIDANCE.lower()
+        assert "completion-claim gate" in text
+        assert "latest real user request" in text
+        assert "same-slice" in text
+
+    def test_completion_claim_gate_requires_uimax_for_ui_acceptance(self):
+        text = TASK_COMPLETION_GUIDANCE.lower()
+        assert "uimax" in text
+        assert "ui acceptance" in text
+        assert "screenshots" in text
+
+    def test_completion_claim_gate_rechecks_background_watch_notifications(self):
+        text = TASK_COMPLETION_GUIDANCE.lower()
+        assert "background watch" in text
+        assert "re-check" in text
+        assert "ports" in text
 
 
 class TestOpenAIModelExecutionGuidance:

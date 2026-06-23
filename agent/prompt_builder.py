@@ -306,7 +306,16 @@ TASK_COMPLETION_GUIDANCE = (
     "approach, ask the user). NEVER substitute plausible-looking fabricated "
     "output (made-up data, invented file contents, synthesised API responses) "
     "for results you couldn't actually produce. Reporting a blocker honestly "
-    "is always better than inventing a result."
+    "is always better than inventing a result.\n"
+    "Completion-claim gate: before saying done/complete/verified/production-ready, "
+    "bind the claim to the latest real user request and cite fresh same-slice "
+    "evidence. Old handoff/compaction summaries, previous process lists, or "
+    "evidence from a different task do not prove the current request. If a "
+    "background watch notification arrives, re-check process state/ports before "
+    "claiming no residual process. If the user asks for UI/UX extreme, A+, "
+    "uIMax, or UI acceptance, do not claim UI completion from copy, screenshots, "
+    "or smoke tests alone: require a uIMax-style audit/report or explicitly state "
+    "that uIMax acceptance is not complete."
 )
 
 # Universal complex-task planning gate. This is intentionally short and

@@ -2101,37 +2101,23 @@ The user has requested that this compaction PRIORITISE preserving all informatio
             )
 
         _merge_summary_into_tail = False
-        last_head_role = messages[compress_start - 1].get("role", "user") if compress_start > 0 else "user"
-        first_tail_role = messages[compress_end].get("role", "user") if compress_end < n_messages else "user"
-        # Pick a role that avoids consecutive same-role with both neighbors.
-        # Priority: avoid colliding with head (already committed), then tail.
-        if last_head_role in {"assistant", "tool"}:
-            summary_role = "user"
-        else:
-            summary_role = "assistant"
-        # If the chosen role collides with the tail AND flipping wouldn't
-        # collide with the head, flip it.
-        if summary_role == first_tail_role:
-            flipped = "assistant" if summary_role == "user" else "user"
-            if flipped != last_head_role:
-                summary_role = flipped
-            else:
-                # Both roles would create consecutive same-role messages
-                # (e.g. head=assistant, tail=user — neither role works).
-                # Merge the summary into the first tail message instead
-                # of inserting a standalone message that breaks alternation.
-                _merge_summary_into_tail = True
+        first_tail_role = messages[compress_end].get("role", "user") if compress_end < n_messages else None
+        # A compaction handoff must never become the newest standalone
+        # role="user" message. If it does, the next turn treats the summary as
+        # the current request and can complete stale work instead of the user's
+        # latest task. Prefer a standalone assistant note; if there is a live
+        # tail assistant immediately after the summary, merge the note into that
+        # tail message to preserve provider alternation without manufacturing a
+        # synthetic user turn.
+        summary_role = "assistant"
+        if first_tail_role == "assistant":
+            _merge_summary_into_tail = True
 
-        # When the summary lands as a standalone role="user" message,
-        # weak models read the verbatim "## Active Task" quote of a past
-        # user request as fresh input (#11475, #14521). Append the explicit
-        # end marker — the same one used in the merge-into-tail path — so
-        # the model has a clear "summary above, not new input" signal.
-        if not _merge_summary_into_tail and summary_role == "user":
+        if not _merge_summary_into_tail:
             summary = (
                 summary
                 + "\n\n--- END OF CONTEXT SUMMARY — "
-                "respond to the message below, not the summary above ---"
+                "reference only; wait for and answer the latest real user message ---"
             )
 
         if not _merge_summary_into_tail:
