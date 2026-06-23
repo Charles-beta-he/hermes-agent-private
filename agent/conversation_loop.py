@@ -354,7 +354,12 @@ def _run_conductor_intent_router(agent: Any, user_message: str, *, active_tasks:
         from agent.conductor_runtime import ConversationIntentRouter
 
         router = ConversationIntentRouter(default_model_name=getattr(agent, "model", "") or "unknown")
-        return router.classify(user_message or "", active_tasks=active_tasks or [])
+        decision = router.classify(user_message or "", active_tasks=active_tasks or [])
+        try:
+            setattr(agent, "_last_conductor_intent_route", decision)
+        except Exception:
+            pass
+        return decision
     except Exception as exc:  # pragma: no cover - defensive fail-soft boundary
         logger.debug("conductor intent router unavailable: %s", exc)
         return None
@@ -725,6 +730,8 @@ def run_conversation(
     # after the upstream prologue refactor, while recursive relay turns preserve
     # their count through the _auto_relay_active flag.
     _reset_auto_relay_count_for_root_turn(agent)
+
+    _run_conductor_intent_router(agent, user_message=user_message)
 
     # Main conversation loop counters (pure locals consumed by the loop below).
     api_call_count = 0

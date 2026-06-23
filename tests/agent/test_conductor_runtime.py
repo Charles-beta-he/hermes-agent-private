@@ -3,8 +3,10 @@ import sys
 from pathlib import Path
 
 from agent.conductor_runtime import (
+    AcceptanceGovernance,
     ConversationIntentRouter,
     FuguAdapter,
+    ModelCapabilityRouter,
     TaskLedger,
     conductor_defaults_enabled,
     default_conductor_config,
@@ -167,6 +169,92 @@ def test_multi_model_conductor_generates_role_specific_instructions():
     assert "Focus on implementation" in instruction
 
 
+def test_model_capability_router_selects_specialist_and_excludes_implementer():
+    profiles = {
+        "role_separation": {
+            "enabled": True,
+            "forbid_self_certification": True,
+            "same_provider_verification": "discouraged",
+            "implementer_vote_policy": "self_report_only",
+        },
+        "overlap_voting": {
+            "enabled": True,
+            "trigger_when_surface_count_gte": 2,
+            "trigger_when_risk_gte": "T2",
+            "require_independent_verifier": True,
+            "require_surface_owner_vote": True,
+            "arbiter_model": "claude-opus-4-8",
+        },
+        "surfaces": {
+            "ui_visual": {
+                "implementers": ["gpt-5.5"],
+                "verifiers": ["gemini-3.1-pro-preview", "gpt-5.5"],
+                "fallback_verifiers": ["claude-opus-4-8"],
+                "final_evidence": ["screenshot_matrix", "browser_snapshot"],
+            },
+            "code_correctness": {
+                "implementers": ["gpt-5.5"],
+                "verifiers": ["deepseek-v4-pro", "gpt-5.5"],
+                "arbiters": ["claude-opus-4-8"],
+                "final_evidence": ["test_output", "build_output"],
+            },
+        },
+    }
+    router = ModelCapabilityRouter(profiles=profiles)
+
+    decision = router.route(
+        surfaces=["ui_visual", "code_correctness"],
+        risk_tier="T2",
+        implementer_model="gpt-5.5",
+        available_models=["gpt-5.5", "gemini-3.1-pro-preview", "deepseek-v4-pro", "claude-opus-4-8"],
+    )
+
+    assert decision["overlap_voting_required"] is True
+    assert decision["implementer_model"] == "gpt-5.5"
+    assert decision["surface_routes"]["ui_visual"]["verifier"] == "gemini-3.1-pro-preview"
+    assert decision["surface_routes"]["code_correctness"]["verifier"] == "deepseek-v4-pro"
+    assert decision["surface_routes"]["ui_visual"]["implementer_vote_counts_for_certification"] is False
+    assert "gpt-5.5" not in decision["certification_participants"]
+    assert decision["required_evidence"] == ["screenshot_matrix", "browser_snapshot", "test_output", "build_output"]
+
+
+def test_acceptance_governance_rejects_model_only_and_self_certification():
+    governance = AcceptanceGovernance(
+        require_objective_evidence=True,
+        require_evidence_refs_for_votes=True,
+        forbid_model_only_certification=True,
+        forbid_self_certification=True,
+    )
+
+    model_only = governance.evaluate(
+        claims=[{"id": "C-ui", "surface": "ui_visual", "text": "UI accepted"}],
+        evidence=[],
+        votes=[{"model": "gemini-3.1-pro-preview", "role": "ui_visual_verifier", "vote": "approve", "evidence_refs": []}],
+        implementer_model="gpt-5.5",
+    )
+    assert model_only["status"] == "advisory_only"
+    assert "objective_evidence_missing" in model_only["failures"]
+    assert "vote_evidence_refs_missing:gemini-3.1-pro-preview" in model_only["failures"]
+
+    self_cert = governance.evaluate(
+        claims=[{"id": "C-code", "surface": "code_correctness", "text": "Code works"}],
+        evidence=[{"id": "E-test", "supports": ["C-code"], "source": "pytest", "status": "pass"}],
+        votes=[{"model": "gpt-5.5", "role": "implementer", "vote": "approve", "evidence_refs": ["E-test"]}],
+        implementer_model="gpt-5.5",
+    )
+    assert self_cert["status"] == "not_certified"
+    assert "self_certification_forbidden:gpt-5.5" in self_cert["failures"]
+
+    certified = governance.evaluate(
+        claims=[{"id": "C-code", "surface": "code_correctness", "text": "Code works"}],
+        evidence=[{"id": "E-test", "supports": ["C-code"], "source": "pytest", "status": "pass"}],
+        votes=[{"model": "deepseek-v4-pro", "role": "code_reviewer", "vote": "approve", "evidence_refs": ["E-test"], "best_within_constraints": True}],
+        implementer_model="gpt-5.5",
+    )
+    assert certified["status"] == "certified"
+    assert certified["failures"] == []
+
+
 def test_background_worker_probe_and_dry_run(tmp_path):
     from agent.conductor_runtime import TaskLedger
 
@@ -213,3 +301,20 @@ def test_conversation_loop_conductor_router_integration(tmp_path):
 
     result = _run_conductor_intent_router(FakeAgent(), user_message="test")
     assert result is None
+
+
+def test_conversation_loop_conductor_router_records_advisory_route_when_enabled():
+    from agent.conversation_loop import _run_conductor_intent_router
+
+    class FakeAgent:
+        _conductor_config = {"conductor": {"intent_router": {"enabled": True}}}
+        model = "test-model"
+
+    agent = FakeAgent()
+    result = _run_conductor_intent_router(agent, user_message="多模型验收一下")
+
+    assert result is not None
+    assert result["intent"] == "multimodel_escalation"
+    assert result["router_call"] is True
+    assert result["participant_models"] == []
+    assert getattr(agent, "_last_conductor_intent_route") == result

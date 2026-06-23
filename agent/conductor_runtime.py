@@ -433,6 +433,139 @@ class FuguAdapter:
 
 
 DEFAULT_ROLES = ["scout", "planner", "implementer", "critic", "verifier", "architect", "arbiter"]
+TIER_RANK = {"T0": 0, "T1": 1, "T2": 2, "T3": 3}
+
+
+def _ordered_unique(values: Iterable[Any]) -> List[Any]:
+    result: List[Any] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+class ModelCapabilityRouter:
+    """Route verification surfaces to specialist models with role separation.
+
+    This is a contract-only router: it selects verifier roles and evidence
+    requirements, but does not call models or mark work complete.
+    """
+
+    def __init__(self, profiles: Dict[str, Any] | None = None):
+        self.profiles = profiles or {}
+        role_raw = self.profiles.get("role_separation")
+        overlap_raw = self.profiles.get("overlap_voting")
+        surfaces_raw = self.profiles.get("surfaces")
+        self.role_separation: Dict[str, Any] = role_raw if isinstance(role_raw, dict) else {}
+        self.overlap_voting: Dict[str, Any] = overlap_raw if isinstance(overlap_raw, dict) else {}
+        self.surfaces: Dict[str, Any] = surfaces_raw if isinstance(surfaces_raw, dict) else {}
+
+    def route(
+        self,
+        surfaces: List[str],
+        risk_tier: str = "T0",
+        implementer_model: str = "",
+        available_models: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        available = set(available_models or [])
+        certification_participants: List[str] = []
+        required_evidence: List[str] = []
+        surface_routes: Dict[str, Any] = {}
+        forbid_self = bool(self.role_separation.get("forbid_self_certification", True))
+
+        for surface in surfaces:
+            cfg_raw = self.surfaces.get(surface)
+            cfg: Dict[str, Any] = cfg_raw if isinstance(cfg_raw, dict) else {}
+            candidates = list(cfg.get("verifiers") or []) + list(cfg.get("fallback_verifiers") or [])
+            verifier = ""
+            for candidate in candidates:
+                if available and candidate not in available:
+                    continue
+                if forbid_self and implementer_model and candidate == implementer_model:
+                    continue
+                verifier = candidate
+                break
+            if not verifier and candidates:
+                verifier = candidates[0]
+            if verifier and verifier != implementer_model:
+                certification_participants.append(verifier)
+            evidence = list(cfg.get("final_evidence") or [])
+            required_evidence.extend(evidence)
+            surface_routes[surface] = {
+                "verifier": verifier,
+                "required_evidence": evidence,
+                "implementer_vote_counts_for_certification": False if implementer_model else True,
+            }
+
+        trigger_count = int(self.overlap_voting.get("trigger_when_surface_count_gte", 2) or 2)
+        trigger_tier = str(self.overlap_voting.get("trigger_when_risk_gte", "T2") or "T2")
+        overlap_required = bool(self.overlap_voting.get("enabled", True)) and (
+            len(surfaces) >= trigger_count or TIER_RANK.get(str(risk_tier), 0) >= TIER_RANK.get(trigger_tier, 2)
+        )
+        arbiter = str(self.overlap_voting.get("arbiter_model") or "")
+        if overlap_required and arbiter and (not available or arbiter in available) and arbiter != implementer_model:
+            certification_participants.append(arbiter)
+
+        return {
+            "schema": "hermes_model_capability_route_v1",
+            "surfaces": list(surfaces),
+            "risk_tier": risk_tier,
+            "implementer_model": implementer_model,
+            "surface_routes": surface_routes,
+            "overlap_voting_required": overlap_required,
+            "certification_participants": _ordered_unique(certification_participants),
+            "required_evidence": _ordered_unique(required_evidence),
+            "truth_authority": "hermes_evidence_gate",
+        }
+
+
+class AcceptanceGovernance:
+    """Fail-closed acceptance gate for model votes plus objective evidence."""
+
+    def __init__(
+        self,
+        require_objective_evidence: bool = True,
+        require_evidence_refs_for_votes: bool = True,
+        forbid_model_only_certification: bool = True,
+        forbid_self_certification: bool = True,
+    ):
+        self.require_objective_evidence = require_objective_evidence
+        self.require_evidence_refs_for_votes = require_evidence_refs_for_votes
+        self.forbid_model_only_certification = forbid_model_only_certification
+        self.forbid_self_certification = forbid_self_certification
+
+    def evaluate(self, claims: List[Dict[str, Any]], evidence: List[Dict[str, Any]], votes: List[Dict[str, Any]], implementer_model: str = "") -> Dict[str, Any]:
+        failures: List[str] = []
+        evidence_ids = {str(item.get("id")) for item in evidence if isinstance(item, dict) and item.get("id")}
+        if self.require_objective_evidence and claims and not evidence_ids:
+            failures.append("objective_evidence_missing")
+        for vote in votes or []:
+            if not isinstance(vote, dict):
+                failures.append("vote_not_object")
+                continue
+            model = str(vote.get("model") or "unknown")
+            refs = [str(ref) for ref in (vote.get("evidence_refs") or [])]
+            if self.require_evidence_refs_for_votes and not refs:
+                failures.append(f"vote_evidence_refs_missing:{model}")
+            if refs and not set(refs).issubset(evidence_ids):
+                failures.append(f"vote_evidence_refs_unknown:{model}")
+            if self.forbid_self_certification and implementer_model and model == implementer_model:
+                failures.append(f"self_certification_forbidden:{model}")
+            verdict = str(vote.get("vote") or "").lower()
+            if verdict in {"reject", "rejected"}:
+                failures.append(f"reject_vote:{model}")
+        if failures:
+            status = "advisory_only" if "objective_evidence_missing" in failures or not evidence_ids else "not_certified"
+        else:
+            status = "certified"
+        return {
+            "schema": "hermes_acceptance_governance_result_v1",
+            "status": status,
+            "failures": sorted(set(failures)),
+            "claim_count": len(claims or []),
+            "evidence_count": len(evidence_ids),
+            "model_judgment_policy": "advisory_only_without_evidence",
+        }
 
 
 def load_model_profiles(profile_path: str | Path = DEFAULT_MODEL_PROFILES) -> Dict[str, Any]:
