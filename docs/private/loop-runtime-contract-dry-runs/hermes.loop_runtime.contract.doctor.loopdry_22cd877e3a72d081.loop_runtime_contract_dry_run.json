@@ -1,0 +1,45 @@
+{
+  "boundary": "local_loop_runtime_contract_validate_only_no_scheduler_no_executor_no_external_side_effects",
+  "contract_digest": "sha256:46f6fbb34c903096739e754ea4933b0a1d000be8b9497dc84dbf1d044917d897",
+  "contract_id": "hermes.loop_runtime.contract.doctor",
+  "coverage": {
+    "budget_required": true,
+    "evaluator_required": true,
+    "human_gate_required": true,
+    "moves": [
+      "discovery",
+      "handoff",
+      "verification",
+      "persistence",
+      "scheduling"
+    ],
+    "parts": [
+      "automations",
+      "worktrees",
+      "skills",
+      "connectors",
+      "sub_agents",
+      "memory"
+    ]
+  },
+  "dry_run_only": true,
+  "errors": [],
+  "evidence_refs": [
+    "file:/Users/charles/Downloads/Loop-Engineering橙皮书-v260615.pdf",
+    "file:/tmp/loop_engineering_orange_book.txt",
+    "file:schemas/loop_runtime_contract.schema.json",
+    "file:scripts/loop_runtime_contract_doctor.py",
+    "proof:local dry-run validator only; no scheduler, worker, taskpool, mission, or external side effects enabled"
+  ],
+  "external_side_effects": false,
+  "loop_runtime_enabled": false,
+  "mission_write_enabled": false,
+  "receipt_id": "loopdry_22cd877e3a72d081",
+  "rollback_plan": "Delete the local LoopRuntimeContract dry-run receipt and SSOT artifacts; no scheduler, worker, mission, taskpool, or external system was mutated.",
+  "scheduler_enabled": false,
+  "schema": "loop_runtime_contract_doctor_receipt_v1",
+  "status": "PASS",
+  "taskpool_write_enabled": false,
+  "version": "1.0.0",
+  "worker_spawn_enabled": false
+}
