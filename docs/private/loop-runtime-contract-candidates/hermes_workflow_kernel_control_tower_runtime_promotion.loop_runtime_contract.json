@@ -1,0 +1,140 @@
+{
+  "authority_tier": "local-reversible-dry-run",
+  "budget": {
+    "daily_token_budget": 300000,
+    "max_retries": 1,
+    "max_runtime_seconds": 600,
+    "max_subagents": 2,
+    "max_turns": 12
+  },
+  "contract_id": "hermes.workflow_kernel.control_tower_runtime_promotion",
+  "evaluator": {
+    "can_veto": true,
+    "default_posture": "fail_closed_until_all_promotion_evidence_exists",
+    "evidence_refs": [
+      "file:tests/scripts/test_loop_runtime_contract_template.py",
+      "file:tests/scripts/test_loop_runtime_contract_doctor.py",
+      "command:./venv/bin/python -m pytest -o addopts='' tests/scripts/test_loop_runtime_contract_template.py tests/scripts/test_loop_runtime_contract_doctor.py -q"
+    ],
+    "independent_from_generator": true,
+    "must_execute_checks": [
+      "schema_presence",
+      "five_moves",
+      "six_parts",
+      "budget",
+      "human_gate",
+      "side_effect_boundary",
+      "runtime_promotion_disabled"
+    ],
+    "role": "loop_runtime_contract_doctor"
+  },
+  "evidence_refs": [
+    "file:docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.json",
+    "file:docs/private/workflow-kernel-runtime-readiness-summary/workflow_kernel_runtime_readiness_summary_20260613_phase36.json",
+    "file:docs/private/workflow-kernel-sequence-map/workflow_kernel_sequence_map_20260613_phase38.json",
+    "file:scripts/loop_runtime_contract_template.py",
+    "file:scripts/loop_runtime_contract_doctor.py",
+    "proof:local candidate contract only; no runtime api, scheduler, worker, taskpool write, mission executor, credentialed generation, or external side effect enabled"
+  ],
+  "external_side_effects": false,
+  "generator": {
+    "can_write_runtime_state": false,
+    "role": "control_tower_runtime_contract_proposer",
+    "toolsets": [
+      "file",
+      "terminal"
+    ]
+  },
+  "human_gate": {
+    "decision_packet": "Authorize exact Control Tower runtime/API executor binding with scope, budget, rollback, kill switch, evaluator command, and readback evidence.",
+    "required_before": [
+      "activate_control_tower_runtime_api",
+      "enable_scheduler",
+      "spawn_worker",
+      "write_taskpool",
+      "promote_mission_executor",
+      "credentialed_model_generation",
+      "external_write",
+      "publish",
+      "destructive_action"
+    ]
+  },
+  "loop_runtime_enabled": false,
+  "moves": {
+    "discovery": {
+      "output": "control_tower_runtime_promotion_candidate",
+      "source_refs": [
+        "file:docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.json",
+        "file:docs/private/workflow-kernel-runtime-readiness-summary/workflow_kernel_runtime_readiness_summary_20260613_phase36.json",
+        "file:docs/private/workflow-kernel-sequence-map/workflow_kernel_sequence_map_20260613_phase38.json"
+      ]
+    },
+    "handoff": {
+      "mode": "contract_template_only_no_executor_claim",
+      "workspace_policy": "git_worktree"
+    },
+    "persistence": {
+      "candidate_dir": "docs/private/loop-runtime-contract-candidates/",
+      "receipt_ledger": "docs/private/loop-runtime-contract-candidates/",
+      "ssot": "docs/private/loop-engineering-runtime-contract/loop_runtime_contract_ssot_20260624.md"
+    },
+    "scheduling": {
+      "mode": "disabled_until_runtime_promotion_authorization",
+      "trigger": "manual_template_compile_and_doctor_only"
+    },
+    "verification": {
+      "evaluator_ref": "loop_runtime_contract_doctor",
+      "fail_closed_on": [
+        "missing_budget",
+        "missing_rollback",
+        "non_independent_evaluator",
+        "scheduler_enabled",
+        "external_side_effects_enabled"
+      ],
+      "required": true
+    }
+  },
+  "objective": "Preflight a future Control Tower runtime/API promotion without enabling any scheduler, worker, taskpool write-through, mission executor, or external side effect.",
+  "parts": {
+    "automations": {
+      "binding": "template compiler + doctor only; no scheduler binding",
+      "present": true
+    },
+    "connectors": {
+      "binding": "local file/git/control-tower projection only",
+      "present": true
+    },
+    "memory": {
+      "binding": "candidate contract + receipt, not global memory",
+      "present": true
+    },
+    "skills": {
+      "binding": "objective-model-path-verification + hermes-agent + test-driven-development",
+      "present": true
+    },
+    "sub_agents": {
+      "binding": "future independent evaluator only; no worker spawned",
+      "present": true
+    },
+    "worktrees": {
+      "binding": "required before future write-loop promotion",
+      "present": true
+    }
+  },
+  "persistence": {
+    "candidate_dir": "docs/private/loop-runtime-contract-candidates/",
+    "ssot": "docs/private/loop-engineering-runtime-contract/loop_runtime_contract_ssot_20260624.md",
+    "state_authority": "candidate_and_receipt_are_preflight_evidence_only_no_runtime_state"
+  },
+  "rollback_plan": "Delete the local candidate contract and receipt under docs/private/loop-runtime-contract-candidates/; no runtime, scheduler, worker, taskpool, mission, credential, or external state was mutated.",
+  "scheduler": {
+    "allowed_triggers": [
+      "manual_template_compile",
+      "manual_doctor"
+    ],
+    "enabled": false,
+    "promotion_requires": "project_authorization_plus_exact_runtime_api_executor_budget_rollback_evaluator_packet"
+  },
+  "version": "1.0.0",
+  "workspace_policy": "git_worktree"
+}

@@ -1,0 +1,46 @@
+{
+  "boundary": "local_loop_runtime_contract_validate_only_no_scheduler_no_executor_no_external_side_effects",
+  "contract_digest": "sha256:ea60b1adbc6df16d771a9e4de5a1cde4c934e5eefe20f2329c95dbd8450c5df5",
+  "contract_id": "hermes.workflow_kernel.control_tower_runtime_promotion",
+  "coverage": {
+    "budget_required": true,
+    "evaluator_required": true,
+    "human_gate_required": true,
+    "moves": [
+      "discovery",
+      "handoff",
+      "verification",
+      "persistence",
+      "scheduling"
+    ],
+    "parts": [
+      "automations",
+      "worktrees",
+      "skills",
+      "connectors",
+      "sub_agents",
+      "memory"
+    ]
+  },
+  "dry_run_only": true,
+  "errors": [],
+  "evidence_refs": [
+    "file:docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.json",
+    "file:docs/private/workflow-kernel-runtime-readiness-summary/workflow_kernel_runtime_readiness_summary_20260613_phase36.json",
+    "file:docs/private/workflow-kernel-sequence-map/workflow_kernel_sequence_map_20260613_phase38.json",
+    "file:scripts/loop_runtime_contract_template.py",
+    "file:scripts/loop_runtime_contract_doctor.py",
+    "proof:local candidate contract only; no runtime api, scheduler, worker, taskpool write, mission executor, credentialed generation, or external side effect enabled"
+  ],
+  "external_side_effects": false,
+  "loop_runtime_enabled": false,
+  "mission_write_enabled": false,
+  "receipt_id": "loopdry_97fee7870ae83828",
+  "rollback_plan": "Delete the local candidate contract and receipt under docs/private/loop-runtime-contract-candidates/; no runtime, scheduler, worker, taskpool, mission, credential, or external state was mutated.",
+  "scheduler_enabled": false,
+  "schema": "loop_runtime_contract_doctor_receipt_v1",
+  "status": "PASS",
+  "taskpool_write_enabled": false,
+  "version": "1.0.0",
+  "worker_spawn_enabled": false
+}
