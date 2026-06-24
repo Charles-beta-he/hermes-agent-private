@@ -6295,6 +6295,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     remaining_gates_terminal_index_path = root / "docs/private/workflow-kernel-remaining-gates-terminal-index/workflow_kernel_remaining_gates_terminal_index_20260615.json"
     phase_g_optimization_backlog_path = root / "docs/private/workflow-kernel-phase-g-optimization-backlog/workflow_kernel_phase_g_optimization_backlog_20260615.json"
     fail_closed_posture_path = root / "docs/private/workflow-kernel-fail-closed-posture/workflow_kernel_fail_closed_posture_20260615.json"
+    loop_runtime_candidate_receipt_path = root / "docs/private/loop-runtime-contract-candidates/hermes_workflow_kernel_control_tower_runtime_promotion.loopdry_97fee7870ae83828.loop_runtime_contract_receipt.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6361,6 +6362,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         remaining_gates_terminal_index = json.loads(remaining_gates_terminal_index_path.read_text()) if remaining_gates_terminal_index_path.exists() else None
         phase_g_optimization_backlog = json.loads(phase_g_optimization_backlog_path.read_text()) if phase_g_optimization_backlog_path.exists() else None
         fail_closed_posture = json.loads(fail_closed_posture_path.read_text()) if fail_closed_posture_path.exists() else None
+        loop_runtime_candidate_receipt = json.loads(loop_runtime_candidate_receipt_path.read_text()) if loop_runtime_candidate_receipt_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6394,6 +6396,21 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         "worker_spawn_enabled": "worker_spawn_enabled=false" not in loop_gate,
         "external_side_effects_enabled": "external_side_effects=false" not in loop_gate,
     }
+    projected_loop_candidate = ((control_tower_projection.get("operator_summary") or {}).get("loop_runtime_candidate") or {})
+    candidate_receipt = loop_runtime_candidate_receipt or {}
+    loop_runtime_candidate = {
+        "doctor_passed": bool(projected_loop_candidate.get("doctor_passed") or candidate_receipt.get("status") == "PASS"),
+        "contract_id": projected_loop_candidate.get("contract_id") or candidate_receipt.get("contract_id"),
+        "receipt_id": projected_loop_candidate.get("receipt_id") or candidate_receipt.get("receipt_id"),
+        "dry_run_only": bool(projected_loop_candidate.get("dry_run_only") or candidate_receipt.get("dry_run_only") is True),
+        "runtime_promotion_enabled": projected_loop_candidate.get("runtime_promotion_enabled", candidate_receipt.get("loop_runtime_enabled") is not False),
+        "scheduler_enabled": projected_loop_candidate.get("scheduler_enabled", candidate_receipt.get("scheduler_enabled") is not False),
+        "worker_spawn_enabled": projected_loop_candidate.get("worker_spawn_enabled", candidate_receipt.get("worker_spawn_enabled") is not False),
+        "taskpool_write_enabled": projected_loop_candidate.get("taskpool_write_enabled", candidate_receipt.get("taskpool_write_enabled") is not False),
+        "mission_write_enabled": projected_loop_candidate.get("mission_write_enabled", candidate_receipt.get("mission_write_enabled") is not False),
+        "external_side_effects_enabled": projected_loop_candidate.get("external_side_effects_enabled", candidate_receipt.get("external_side_effects") is not False),
+        "rollback_plan": projected_loop_candidate.get("rollback_plan") or candidate_receipt.get("rollback_plan"),
+    }
     return {
         "status": "ready" if not blockers else "degraded",
         "role": "read_only_workflow_kernel_projection",
@@ -6412,6 +6429,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "html_artifact": str(root / "docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.html"),
         },
         "loop_runtime_contract": loop_contract,
+        "loop_runtime_candidate": loop_runtime_candidate,
         "unattended_dispatch_policy": {
             "status": (policy or {}).get("status", "not_compiled"),
             "default_mode": (policy or {}).get("default_mode", "dry_run_preview"),

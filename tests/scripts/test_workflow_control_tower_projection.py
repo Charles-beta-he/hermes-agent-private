@@ -53,27 +53,43 @@ def fixtures(tmp_path: Path):
             }
         },
     })
-    return registry, phase50, sequence, readiness
+    candidate = write(tmp_path / "candidate_receipt.json", {
+        "status": "PASS",
+        "receipt_id": "loopdry_candidate",
+        "contract_id": "hermes.workflow_kernel.control_tower_runtime_promotion",
+        "dry_run_only": True,
+        "loop_runtime_enabled": False,
+        "scheduler_enabled": False,
+        "worker_spawn_enabled": False,
+        "taskpool_write_enabled": False,
+        "mission_write_enabled": False,
+        "external_side_effects": False,
+    })
+    return registry, phase50, sequence, readiness, candidate
 
 
 def test_projection_ready(tmp_path):
     mod = load()
-    registry, phase50, sequence, readiness = fixtures(tmp_path)
-    report = mod.build_projection(registry_path=registry, phase50_path=phase50, sequence_path=sequence, readiness_path=readiness)
+    registry, phase50, sequence, readiness, candidate = fixtures(tmp_path)
+    report = mod.build_projection(registry_path=registry, phase50_path=phase50, sequence_path=sequence, readiness_path=readiness, candidate_receipt_path=candidate)
     assert report["status"] == "CONTROL_TOWER_UI_API_PROJECTION_READY"
     assert report["blockers"] == []
     assert report["operator_summary"]["last_external_send"]["message_id"] == "4261"
     assert report["operator_summary"]["loop_runtime_contract"]["doctor_passed"] is True
     assert report["operator_summary"]["loop_runtime_contract"]["adoption_phase"] == 93
     assert report["operator_summary"]["loop_runtime_contract"]["runtime_promotion_enabled"] is False
+    assert report["operator_summary"]["loop_runtime_candidate"]["contract_id"] == "hermes.workflow_kernel.control_tower_runtime_promotion"
+    assert report["operator_summary"]["loop_runtime_candidate"]["doctor_passed"] is True
+    assert report["operator_summary"]["loop_runtime_candidate"]["runtime_promotion_enabled"] is False
     assert any(panel["id"] == "loop_runtime_contract" for panel in report["panels"])
+    assert any(panel["id"] == "loop_runtime_candidate" for panel in report["panels"])
     assert "loop runtime contract projected read-only" in report["safe_boundaries"]
     assert "no additional external send" in report["safe_boundaries"]
 
 
 def test_projection_blocks_without_phase50_receipt(tmp_path):
     mod = load()
-    registry, phase50, sequence, readiness = fixtures(tmp_path)
+    registry, phase50, sequence, readiness, candidate = fixtures(tmp_path)
     payload = json.loads(phase50.read_text())
     payload["status"] = "GUARDED_EXTERNAL_SEND_BLOCKED"
     phase50.write_text(json.dumps(payload))
@@ -84,8 +100,8 @@ def test_projection_blocks_without_phase50_receipt(tmp_path):
 
 def test_write_report_creates_html(tmp_path):
     mod = load()
-    registry, phase50, sequence, readiness = fixtures(tmp_path)
-    report = mod.build_projection(registry_path=registry, phase50_path=phase50, sequence_path=sequence, readiness_path=readiness)
+    registry, phase50, sequence, readiness, candidate = fixtures(tmp_path)
+    report = mod.build_projection(registry_path=registry, phase50_path=phase50, sequence_path=sequence, readiness_path=readiness, candidate_receipt_path=candidate)
     artifacts = mod.write_report(report, tmp_path / "out")
     html = Path(artifacts["html"]).read_text()
     assert "Workflow Kernel Control Tower Projection" in html

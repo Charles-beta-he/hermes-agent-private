@@ -27,6 +27,7 @@ REGISTRY = ROOT / "docs" / "private" / "workflow-kernel-pack-registry" / "workfl
 PHASE50 = ROOT / "docs" / "private" / "workflow-kernel-guarded-external-send" / "workflow_kernel_guarded_external_send_20260613_phase50.json"
 SEQUENCE = ROOT / "docs" / "private" / "workflow-kernel-sequence-map" / "workflow_kernel_sequence_map_20260613_phase38.json"
 READINESS = ROOT / "docs" / "private" / "workflow-kernel-runtime-readiness-summary" / "workflow_kernel_runtime_readiness_summary_20260613_phase36.json"
+CANDIDATE_RECEIPT = ROOT / "docs" / "private" / "loop-runtime-contract-candidates" / "hermes_workflow_kernel_control_tower_runtime_promotion.loopdry_97fee7870ae83828.loop_runtime_contract_receipt.json"
 
 
 def utc_now() -> datetime:
@@ -59,12 +60,30 @@ def loop_runtime_contract_projection(sequence: dict[str, Any], readiness: dict[s
     }
 
 
-def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHASE50, sequence_path: Path = SEQUENCE, readiness_path: Path = READINESS) -> dict[str, Any]:
+def loop_runtime_candidate_projection(candidate_receipt: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "doctor_passed": candidate_receipt.get("status") == "PASS",
+        "contract_id": candidate_receipt.get("contract_id"),
+        "receipt_id": candidate_receipt.get("receipt_id"),
+        "dry_run_only": candidate_receipt.get("dry_run_only") is True,
+        "runtime_promotion_enabled": candidate_receipt.get("loop_runtime_enabled") is not False,
+        "scheduler_enabled": candidate_receipt.get("scheduler_enabled") is not False,
+        "worker_spawn_enabled": candidate_receipt.get("worker_spawn_enabled") is not False,
+        "taskpool_write_enabled": candidate_receipt.get("taskpool_write_enabled") is not False,
+        "mission_write_enabled": candidate_receipt.get("mission_write_enabled") is not False,
+        "external_side_effects_enabled": candidate_receipt.get("external_side_effects") is not False,
+        "rollback_plan": candidate_receipt.get("rollback_plan"),
+    }
+
+
+def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHASE50, sequence_path: Path = SEQUENCE, readiness_path: Path = READINESS, candidate_receipt_path: Path = CANDIDATE_RECEIPT) -> dict[str, Any]:
     registry = read_json(registry_path)
     phase50 = read_json(phase50_path)
     sequence = read_json(sequence_path)
     readiness = read_json(readiness_path)
     loop_contract = loop_runtime_contract_projection(sequence, readiness)
+    candidate_receipt = read_json(candidate_receipt_path) if candidate_receipt_path.exists() else {}
+    loop_candidate = loop_runtime_candidate_projection(candidate_receipt)
     blockers: list[str] = []
     if registry.get("status") != "PACK_REGISTRY_PROJECTION_READY":
         blockers.append("phase51_registry_not_ready")
@@ -94,6 +113,7 @@ def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHA
             },
             "sequence_phase_count": sequence.get("phase_count"),
             "loop_runtime_contract": loop_contract,
+            "loop_runtime_candidate": loop_candidate,
         },
         "panels": [
             {
@@ -113,6 +133,12 @@ def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHA
                 "title": "LoopRuntimeContract Gate",
                 "status": "doctor_passed" if loop_contract["doctor_passed"] else "doctor_failed_or_missing",
                 "items": [loop_contract],
+            },
+            {
+                "id": "loop_runtime_candidate",
+                "title": "LoopRuntimeContract Runtime Promotion Candidate",
+                "status": "doctor_passed" if loop_candidate["doctor_passed"] else "candidate_missing_or_failed",
+                "items": [loop_candidate],
             },
             {
                 "id": "next_boundary",
@@ -214,11 +240,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--phase50", type=Path, default=PHASE50)
     ap.add_argument("--sequence", type=Path, default=SEQUENCE)
     ap.add_argument("--readiness", type=Path, default=READINESS)
+    ap.add_argument("--candidate-receipt", type=Path, default=CANDIDATE_RECEIPT)
     ap.add_argument("--write-report", action="store_true")
     ap.add_argument("--out-dir", default=str(DEFAULT_OUT))
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
-    report = build_projection(registry_path=args.registry, phase50_path=args.phase50, sequence_path=args.sequence, readiness_path=args.readiness)
+    report = build_projection(registry_path=args.registry, phase50_path=args.phase50, sequence_path=args.sequence, readiness_path=args.readiness, candidate_receipt_path=args.candidate_receipt)
     if args.write_report:
         report["artifacts"] = write_report(report, Path(args.out_dir))
     if args.json:
