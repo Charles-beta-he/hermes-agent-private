@@ -6285,6 +6285,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase90_path = root / "docs/private/workflow-kernel-publication-governance-final-index/workflow_kernel_publication_governance_final_index_20260613_phase90.json"
     phase91_path = root / "docs/private/workflow-kernel-publication-final-index-retention-watch/workflow_kernel_publication_final_index_retention_watch_20260613_phase91.json"
     phase92_path = root / "docs/private/workflow-kernel-publication-governance-terminal-summary/workflow_kernel_publication_governance_terminal_summary_20260613_phase92.json"
+    sequence_path = root / "docs/private/workflow-kernel-sequence-map/workflow_kernel_sequence_map_20260613_phase38.json"
     runtime_projection_path = root / "docs/private/workflow-kernel-cron-runtime-projection/workflow_kernel_cron_runtime_projection_20260613_phase32.json"
     runtime_correlation_path = root / "docs/private/workflow-kernel-cron-run-correlation/workflow_kernel_cron_run_correlation_20260613_phase33.json"
     runtime_readiness_path = root / "docs/private/workflow-kernel-runtime-readiness-summary/workflow_kernel_runtime_readiness_summary_20260613_phase36.json"
@@ -6350,6 +6351,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         publication_governance_final_index = json.loads(phase90_path.read_text()) if phase90_path.exists() else None
         publication_final_index_retention_watch = json.loads(phase91_path.read_text()) if phase91_path.exists() else None
         publication_governance_terminal_summary = json.loads(phase92_path.read_text()) if phase92_path.exists() else None
+        sequence_map = json.loads(sequence_path.read_text()) if sequence_path.exists() else None
         runtime_projection = json.loads(runtime_projection_path.read_text()) if runtime_projection_path.exists() else None
         runtime_correlation = json.loads(runtime_correlation_path.read_text()) if runtime_correlation_path.exists() else None
         runtime_readiness = json.loads(runtime_readiness_path.read_text()) if runtime_readiness_path.exists() else None
@@ -6376,6 +6378,22 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     if control_tower_projection.get("status") != "CONTROL_TOWER_UI_API_PROJECTION_READY":
         blockers.append("control_tower_projection_not_ready")
     unattended_enabled = bool((policy or {}).get("unattended_dispatch_enabled"))
+    projected_loop_contract = ((control_tower_projection.get("operator_summary") or {}).get("loop_runtime_contract") or {})
+    sequence_phase93 = next((p for p in (sequence_map or {}).get("phases", []) if p.get("phase") == 93), {})
+    loop_gate = str(projected_loop_contract.get("gate") or sequence_phase93.get("gate") or "")
+    readiness_loop_artifact = (((runtime_readiness or {}).get("artifact_states") or {}).get("loop_runtime_contract") or {})
+    loop_contract = {
+        "doctor_passed": bool(projected_loop_contract.get("doctor_passed") or ((runtime_readiness or {}).get("checks") or {}).get("loop_runtime_contract_doctor_passed")),
+        "doctor_status": projected_loop_contract.get("doctor_status") or readiness_loop_artifact.get("status"),
+        "receipt_path": projected_loop_contract.get("receipt_path") or readiness_loop_artifact.get("path"),
+        "adoption_phase": projected_loop_contract.get("adoption_phase") or sequence_phase93.get("phase"),
+        "adoption_status": projected_loop_contract.get("adoption_status") or sequence_phase93.get("status"),
+        "gate": loop_gate,
+        "runtime_promotion_enabled": "loop_runtime_enabled=false" not in loop_gate,
+        "scheduler_enabled": "scheduler_enabled=false" not in loop_gate,
+        "worker_spawn_enabled": "worker_spawn_enabled=false" not in loop_gate,
+        "external_side_effects_enabled": "external_side_effects=false" not in loop_gate,
+    }
     return {
         "status": "ready" if not blockers else "degraded",
         "role": "read_only_workflow_kernel_projection",
@@ -6393,6 +6411,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
             "api_version": control_tower_projection.get("api_version"),
             "html_artifact": str(root / "docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.html"),
         },
+        "loop_runtime_contract": loop_contract,
         "unattended_dispatch_policy": {
             "status": (policy or {}).get("status", "not_compiled"),
             "default_mode": (policy or {}).get("default_mode", "dry_run_preview"),

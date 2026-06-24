@@ -1,7 +1,7 @@
 {
   "api_version": "workflow-control-tower.v1",
   "blockers": [],
-  "created_at": "2026-06-14T03:28:07Z",
+  "created_at": "2026-06-24T14:01:28Z",
   "next_boundary": "larger divergence after Phase52: durable Control Tower runtime/API integration vs unattended dispatch policy gate",
   "operator_summary": {
     "agent_pack_id": "agent.workflow_kernel_operator",
@@ -12,8 +12,20 @@
       "message_id": "4261",
       "target_type": "telegram_home_channel"
     },
+    "loop_runtime_contract": {
+      "adoption_phase": 93,
+      "adoption_status": "loop_runtime_contract_dry_run_doctor_passed",
+      "doctor_passed": true,
+      "doctor_status": "PASS",
+      "external_side_effects_enabled": false,
+      "gate": "loop_runtime_enabled=false; scheduler_enabled=false; worker_spawn_enabled=false; external_side_effects=false",
+      "receipt_path": "/Users/charles/.hermes/hermes-agent/docs/private/loop-runtime-contract-dry-runs/hermes.loop_runtime.contract.doctor.loopdry_22cd877e3a72d081.loop_runtime_contract_dry_run.json",
+      "runtime_promotion_enabled": false,
+      "scheduler_enabled": false,
+      "worker_spawn_enabled": false
+    },
     "registry_status": "PACK_REGISTRY_PROJECTION_READY",
-    "sequence_phase_count": 34,
+    "sequence_phase_count": 77,
     "workflow_pack_id": "workflow_kernel_external_dispatch_governance"
   },
   "panels": [
@@ -92,6 +104,25 @@
       "title": "Latest Guarded External Send"
     },
     {
+      "id": "loop_runtime_contract",
+      "items": [
+        {
+          "adoption_phase": 93,
+          "adoption_status": "loop_runtime_contract_dry_run_doctor_passed",
+          "doctor_passed": true,
+          "doctor_status": "PASS",
+          "external_side_effects_enabled": false,
+          "gate": "loop_runtime_enabled=false; scheduler_enabled=false; worker_spawn_enabled=false; external_side_effects=false",
+          "receipt_path": "/Users/charles/.hermes/hermes-agent/docs/private/loop-runtime-contract-dry-runs/hermes.loop_runtime.contract.doctor.loopdry_22cd877e3a72d081.loop_runtime_contract_dry_run.json",
+          "runtime_promotion_enabled": false,
+          "scheduler_enabled": false,
+          "worker_spawn_enabled": false
+        }
+      ],
+      "status": "doctor_passed",
+      "title": "LoopRuntimeContract Gate"
+    },
+    {
       "id": "next_boundary",
       "items": [
         {
@@ -113,6 +144,7 @@
   "safe_boundaries": [
     "static HTML only",
     "read-only API payload only",
+    "loop runtime contract projected read-only",
     "no live server started",
     "no runtime mutation",
     "no unattended dispatch enablement",

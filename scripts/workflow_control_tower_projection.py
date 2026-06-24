@@ -26,6 +26,7 @@ DEFAULT_OUT = ROOT / "docs" / "private" / "workflow-kernel-control-tower-project
 REGISTRY = ROOT / "docs" / "private" / "workflow-kernel-pack-registry" / "workflow_kernel_pack_registry_20260613_phase51.json"
 PHASE50 = ROOT / "docs" / "private" / "workflow-kernel-guarded-external-send" / "workflow_kernel_guarded_external_send_20260613_phase50.json"
 SEQUENCE = ROOT / "docs" / "private" / "workflow-kernel-sequence-map" / "workflow_kernel_sequence_map_20260613_phase38.json"
+READINESS = ROOT / "docs" / "private" / "workflow-kernel-runtime-readiness-summary" / "workflow_kernel_runtime_readiness_summary_20260613_phase36.json"
 
 
 def utc_now() -> datetime:
@@ -40,10 +41,30 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHASE50, sequence_path: Path = SEQUENCE) -> dict[str, Any]:
+def loop_runtime_contract_projection(sequence: dict[str, Any], readiness: dict[str, Any]) -> dict[str, Any]:
+    adoption_phase = next((p for p in sequence.get("phases", []) if p.get("phase") == 93), {})
+    loop_artifact = ((readiness.get("artifact_states") or {}).get("loop_runtime_contract") or {})
+    gate = str(adoption_phase.get("gate") or "")
+    return {
+        "doctor_passed": bool((readiness.get("checks") or {}).get("loop_runtime_contract_doctor_passed")),
+        "doctor_status": loop_artifact.get("status"),
+        "receipt_path": loop_artifact.get("path"),
+        "adoption_phase": adoption_phase.get("phase"),
+        "adoption_status": adoption_phase.get("status"),
+        "gate": gate,
+        "runtime_promotion_enabled": "loop_runtime_enabled=false" not in gate,
+        "scheduler_enabled": "scheduler_enabled=false" not in gate,
+        "worker_spawn_enabled": "worker_spawn_enabled=false" not in gate,
+        "external_side_effects_enabled": "external_side_effects=false" not in gate,
+    }
+
+
+def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHASE50, sequence_path: Path = SEQUENCE, readiness_path: Path = READINESS) -> dict[str, Any]:
     registry = read_json(registry_path)
     phase50 = read_json(phase50_path)
     sequence = read_json(sequence_path)
+    readiness = read_json(readiness_path)
+    loop_contract = loop_runtime_contract_projection(sequence, readiness)
     blockers: list[str] = []
     if registry.get("status") != "PACK_REGISTRY_PROJECTION_READY":
         blockers.append("phase51_registry_not_ready")
@@ -72,6 +93,7 @@ def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHA
                 "external_side_effect_executed": phase50.get("external_side_effect_executed"),
             },
             "sequence_phase_count": sequence.get("phase_count"),
+            "loop_runtime_contract": loop_contract,
         },
         "panels": [
             {
@@ -85,6 +107,12 @@ def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHA
                 "title": "Latest Guarded External Send",
                 "status": phase50.get("status"),
                 "items": [phase50.get("send_result", {})],
+            },
+            {
+                "id": "loop_runtime_contract",
+                "title": "LoopRuntimeContract Gate",
+                "status": "doctor_passed" if loop_contract["doctor_passed"] else "doctor_failed_or_missing",
+                "items": [loop_contract],
             },
             {
                 "id": "next_boundary",
@@ -105,6 +133,7 @@ def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHA
         "safe_boundaries": [
             "static HTML only",
             "read-only API payload only",
+            "loop runtime contract projected read-only",
             "no live server started",
             "no runtime mutation",
             "no unattended dispatch enablement",
@@ -184,11 +213,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--registry", type=Path, default=REGISTRY)
     ap.add_argument("--phase50", type=Path, default=PHASE50)
     ap.add_argument("--sequence", type=Path, default=SEQUENCE)
+    ap.add_argument("--readiness", type=Path, default=READINESS)
     ap.add_argument("--write-report", action="store_true")
     ap.add_argument("--out-dir", default=str(DEFAULT_OUT))
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
-    report = build_projection(registry_path=args.registry, phase50_path=args.phase50, sequence_path=args.sequence)
+    report = build_projection(registry_path=args.registry, phase50_path=args.phase50, sequence_path=args.sequence, readiness_path=args.readiness)
     if args.write_report:
         report["artifacts"] = write_report(report, Path(args.out_dir))
     if args.json:

@@ -150,6 +150,11 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["agent_pack_id"] == "agent.workflow_kernel_operator"
     assert kernel["latest_guarded_send"]["message_id"] == "4261"
     assert kernel["control_tower_projection"]["status"] == "CONTROL_TOWER_UI_API_PROJECTION_READY"
+    assert kernel["loop_runtime_contract"]["doctor_passed"] is True
+    assert kernel["loop_runtime_contract"]["runtime_promotion_enabled"] is False
+    assert kernel["loop_runtime_contract"]["scheduler_enabled"] is False
+    assert kernel["loop_runtime_contract"]["worker_spawn_enabled"] is False
+    assert kernel["loop_runtime_contract"]["external_side_effects_enabled"] is False
     assert kernel["unattended_dispatch_policy"]["unattended_dispatch_enabled"] is False
     assert kernel["unattended_dry_run_scheduler"]["status"] in {"UNATTENDED_DRY_RUN_SCHEDULER_READY", "not_compiled"}
     assert kernel["policy_editor"]["status"] == "POLICY_EDITOR_APPROVAL_UI_READY"

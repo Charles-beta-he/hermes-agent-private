@@ -8,6 +8,7 @@ Last Telegram message id: `4261`
 ## Safe boundaries
 - static HTML only
 - read-only API payload only
+- loop runtime contract projected read-only
 - no live server started
 - no runtime mutation
 - no unattended dispatch enablement
