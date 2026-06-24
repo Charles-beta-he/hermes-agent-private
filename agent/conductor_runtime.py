@@ -11,6 +11,7 @@ Fugu unless a caller explicitly injects a decider/client.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -575,6 +576,109 @@ class AcceptanceGovernance:
         }
 
 
+DEFAULT_MAINLOOP_CERTIFICATION_JOBS = HOME / ".hermes" / "state" / "mainloop-verification" / "jobs"
+AUTHORITY_SMUGGLING_KEYS = {
+    "mark_done",
+    "task_status",
+    "lifecycle_status",
+    "external_write",
+    "external_writes",
+    "outbound_message",
+    "memory_write",
+    "skill_write",
+    "provider_config_change",
+}
+
+
+class MainloopCertificationQueue:
+    """Durable queue for background mainloop certification requests.
+
+    Queue entries are local JSON records only. They preserve evidence and gate
+    state for a later worker, but cannot mark tasks done or perform external
+    side effects by construction.
+    """
+
+    def __init__(self, root: str | Path = DEFAULT_MAINLOOP_CERTIFICATION_JOBS):
+        self.root = Path(root).expanduser()
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def _digest(self, payload: Dict[str, Any]) -> str:
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _job_path(self, job_id: str) -> Path:
+        safe = "".join(ch for ch in job_id if ch.isalnum() or ch in {"-", "_"})
+        return self.root / f"{safe}.json"
+
+    def _has_authority_smuggling(self, value: Any) -> bool:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if str(key) in AUTHORITY_SMUGGLING_KEYS:
+                    return True
+                if self._has_authority_smuggling(child):
+                    return True
+        elif isinstance(value, list):
+            return any(self._has_authority_smuggling(item) for item in value)
+        return False
+
+    def enqueue(self, *, decision: Dict[str, Any], user_message: str, final_response: str, implementer_model: str = "") -> Dict[str, Any]:
+        request_payload = {
+            "decision": decision,
+            "user_message": user_message,
+            "final_response": final_response,
+            "implementer_model": implementer_model,
+        }
+        if self._has_authority_smuggling(request_payload):
+            return {"schema": "hermes_mainloop_certification_job_v1", "status": "rejected", "reason": "authority_smuggling_detected"}
+        digest = self._digest(request_payload)
+        job_id = f"mainloop-cert-{digest[:16]}"
+        path = self._job_path(job_id)
+        if path.exists():
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(existing, dict):
+                    return existing
+            except Exception:
+                pass
+        job = {
+            "schema": "hermes_mainloop_certification_job_v1",
+            "job_id": job_id,
+            "status": "queued",
+            "created_at": _now(),
+            "request_digest": digest,
+            "external_side_effects_enabled": False,
+            "allowed_to_mark_done": False,
+            "request": request_payload,
+        }
+        path.write_text(json.dumps(job, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        return job
+
+    def run_job(self, job_id: str, runner: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None) -> Dict[str, Any]:
+        path = self._job_path(job_id)
+        if not path.exists():
+            return {"schema": "hermes_mainloop_certification_job_v1", "job_id": job_id, "status": "missing"}
+        job = json.loads(path.read_text(encoding="utf-8"))
+        if job.get("status") == "completed":
+            return job
+        job["status"] = "running"
+        job["started_at"] = _now()
+        path.write_text(json.dumps(job, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        try:
+            if runner is None:
+                result = {"status": "queued_for_external_worker", "reason": "no_runner_configured"}
+            else:
+                result = runner(job)
+            job["status"] = "completed"
+            job["completed_at"] = _now()
+            job["certification_result"] = result
+        except Exception as exc:
+            job["status"] = "failed"
+            job["failed_at"] = _now()
+            job["error"] = str(exc)
+        path.write_text(json.dumps(job, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        return job
+
+
 COMPLETION_CLAIM_TERMS = ("完成", "验收", "通过", "done", "complete", "completed", "verified", "certified", "production-ready", "可上线")
 T3_TERMS = ("Hermes", "主循环", "门禁", "生产", "长期稳定", "自修改", "外部副作用", "MCP", "部署", "删除")
 UI_TERMS = ("UI", "界面", "视觉", "截图", "safe-area", "uIMax", "A+")
@@ -608,6 +712,15 @@ class MainloopVerificationGate:
         if self._has_completion_claim(text):
             return "T2"
         return "T0"
+
+    def _is_internal_projection(self, user_message: str, final_response: str) -> bool:
+        prompt = user_message or ""
+        if "Hermes ContextCard" in prompt and "SOURCE_CARD" in prompt and "EVIDENCE_SPANS" in prompt:
+            return True
+        response = (final_response or "").lstrip()
+        if response.startswith("{") and "cardVersion" in response and "Hermes Context" in response:
+            return True
+        return False
 
     def _surfaces(self, user_message: str, final_response: str) -> List[str]:
         text = f"{user_message}\n{final_response}"
@@ -652,6 +765,8 @@ class MainloopVerificationGate:
         if not self.cfg.get("enabled"):
             return {"schema": "hermes_mainloop_verification_gate_v1", "status": "disabled", "blocking": False}
         response = str(final_response or "")
+        if self._is_internal_projection(user_message or "", response):
+            return {"schema": "hermes_mainloop_verification_gate_v1", "status": "skipped_internal_projection", "blocking": False}
         surfaces = self._surfaces(user_message or "", response)
         risk_tier = self._risk_tier(user_message or "", response)
         if not surfaces:

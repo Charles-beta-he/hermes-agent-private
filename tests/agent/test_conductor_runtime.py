@@ -6,6 +6,7 @@ from agent.conductor_runtime import (
     AcceptanceGovernance,
     ConversationIntentRouter,
     FuguAdapter,
+    MainloopCertificationQueue,
     MainloopVerificationGate,
     ModelCapabilityRouter,
     TaskLedger,
@@ -312,6 +313,82 @@ def test_mainloop_verification_gate_allows_low_risk_non_completion_chat():
     assert result["blocking"] is False
 
 
+def test_mainloop_verification_gate_skips_internal_contextcard_projection():
+    gate = MainloopVerificationGate(profiles={"mainloop_verification": {"enabled": True, "advisory_only": False, "blocking_tiers": ["T3"]}})
+    result = gate.evaluate_turn(
+        user_message="You generate ONE richer Hermes ContextCard JSON object from source-bound evidence.\nSOURCE_CARD:\n{}\nEVIDENCE_SPANS:\n[]",
+        final_response='{"id":"x","title":"UI 修复完成","cardVersion":1,"topics":["Hermes Context"]}',
+        messages=[],
+        implementer_model="gpt-5.5",
+    )
+    assert result["status"] == "skipped_internal_projection"
+    assert result["blocking"] is False
+
+
+def test_mainloop_certification_queue_is_idempotent_and_blocks_authority_smuggling(tmp_path):
+    queue = MainloopCertificationQueue(root=tmp_path)
+    decision = {
+        "schema": "hermes_mainloop_verification_gate_v1",
+        "status": "not_certified",
+        "blocking": True,
+        "risk_tier": "T3",
+        "claims": [{"id": "C-1", "surface": "completion_claim", "text": "已完成"}],
+        "evidence": [{"id": "E-1", "source": "pytest", "status": "pass", "supports": ["C-1"]}],
+    }
+
+    first = queue.enqueue(
+        decision=decision,
+        user_message="继续推进直至无遗漏",
+        final_response="已完成",
+        implementer_model="gpt-5.5",
+    )
+    second = queue.enqueue(
+        decision=decision,
+        user_message="继续推进直至无遗漏",
+        final_response="已完成",
+        implementer_model="gpt-5.5",
+    )
+
+    assert first["job_id"] == second["job_id"]
+    assert first["status"] == "queued"
+    assert second["status"] == "queued"
+    job_path = tmp_path / f"{first['job_id']}.json"
+    assert job_path.exists()
+    stored = json.loads(job_path.read_text())
+    assert stored["external_side_effects_enabled"] is False
+    assert stored["allowed_to_mark_done"] is False
+    assert stored["request"]["implementer_model"] == "gpt-5.5"
+
+    smuggled = dict(decision)
+    smuggled["mark_done"] = True
+    rejected = queue.enqueue(
+        decision=smuggled,
+        user_message="继续推进直至无遗漏",
+        final_response="已完成",
+        implementer_model="gpt-5.5",
+    )
+    assert rejected["status"] == "rejected"
+    assert rejected["reason"] == "authority_smuggling_detected"
+
+
+def test_mainloop_certification_queue_run_job_updates_status_with_fake_runner(tmp_path):
+    queue = MainloopCertificationQueue(root=tmp_path)
+    job = queue.enqueue(
+        decision={"blocking": True, "claims": [{"id": "C-1", "text": "完成"}], "evidence": []},
+        user_message="继续推进",
+        final_response="已完成",
+        implementer_model="gpt-5.5",
+    )
+
+    result = queue.run_job(job["job_id"], runner=lambda payload: {"status": "certified", "artifact": "/tmp/fake"})
+
+    assert result["status"] == "completed"
+    assert result["certification_result"]["status"] == "certified"
+    stored = json.loads((tmp_path / f"{job['job_id']}.json").read_text())
+    assert stored["status"] == "completed"
+    assert stored["certification_result"]["artifact"] == "/tmp/fake"
+
+
 def test_background_worker_probe_and_dry_run(tmp_path):
     from agent.conductor_runtime import TaskLedger
 
@@ -377,8 +454,10 @@ def test_conversation_loop_conductor_router_records_advisory_route_when_enabled(
     assert getattr(agent, "_last_conductor_intent_route") == result
 
 
-def test_conversation_loop_mainloop_gate_appends_blocking_notice_for_uncertified_claim():
+def test_conversation_loop_mainloop_gate_appends_blocking_notice_for_uncertified_claim(tmp_path, monkeypatch):
     from agent.conversation_loop import _run_mainloop_verification_gate
+
+    monkeypatch.setenv("HERMES_MAINLOOP_CERT_QUEUE_DIR", str(tmp_path))
 
     class FakeAgent:
         model = "gpt-5.5"
@@ -397,3 +476,5 @@ def test_conversation_loop_mainloop_gate_appends_blocking_notice_for_uncertified
     assert result["status"] == "not_certified"
     assert "Hermes verification gate" in result["final_response_override"]
     assert messages[-1]["content"] == result["final_response_override"]
+    assert result["certification_job"]["status"] == "queued"
+    assert (tmp_path / f"{result['certification_job']['job_id']}.json").exists()

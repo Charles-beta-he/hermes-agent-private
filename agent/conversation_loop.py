@@ -414,6 +414,22 @@ def _run_mainloop_verification_gate(
             if messages and isinstance(messages[-1], dict) and messages[-1].get("role") == "assistant":
                 messages[-1]["content"] = revised
             decision["final_response_override"] = revised
+            try:
+                cfg_raw = profiles.get("mainloop_verification")
+                cfg = cfg_raw if isinstance(cfg_raw, dict) else {}
+                if cfg.get("background_certification") and cfg.get("auto_start_background_certification") and not os.environ.get("HERMES_MAINLOOP_VERIFICATION_ACTIVE"):
+                    from agent.conductor_runtime import MainloopCertificationQueue
+                    queue_root = os.environ.get("HERMES_MAINLOOP_CERT_QUEUE_DIR") or (Path.home() / ".hermes" / "state" / "mainloop-verification" / "jobs")
+                    queue = MainloopCertificationQueue(root=queue_root)
+                    job = queue.enqueue(
+                        decision=decision,
+                        user_message=user_message or "",
+                        final_response=final_response,
+                        implementer_model=getattr(agent, "model", "") or "",
+                    )
+                    decision["certification_job"] = {"job_id": job.get("job_id"), "status": job.get("status"), "reason": job.get("reason")}
+            except Exception as enqueue_exc:
+                decision["certification_job"] = {"status": "enqueue_failed", "error": str(enqueue_exc)}
         return decision
     except Exception as exc:  # pragma: no cover - defensive fail-soft boundary
         logger.debug("mainloop verification gate unavailable: %s", exc)
