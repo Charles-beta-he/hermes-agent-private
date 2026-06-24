@@ -365,6 +365,61 @@ def _run_conductor_intent_router(agent: Any, user_message: str, *, active_tasks:
         return None
 
 
+def _run_mainloop_verification_gate(
+    agent: Any,
+    *,
+    user_message: str,
+    final_response: Optional[str],
+    messages: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Run the optional evidence-bound final-response gate.
+
+    Default behavior is fail-soft for runtime errors, but a configured T3
+    blocking gate degrades completion claims by appending an explicit notice.
+    The gate itself never calls external models; it only consumes current-turn
+    evidence and already-recorded votes when present.
+    """
+    if not final_response:
+        return None
+    try:
+        from agent.conductor_runtime import MainloopVerificationGate, load_model_profiles
+
+        profile_path = Path.home() / ".hermes" / "config" / "model_capability_profiles.yaml"
+        profiles = load_model_profiles(profile_path)
+        gate = MainloopVerificationGate(profiles=profiles)
+        available_models = []
+        try:
+            provider_state = Path.home() / ".hermes" / "state" / "provider_availability.json"
+            if provider_state.exists():
+                raw = json.loads(provider_state.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    available_models = list(raw.get("available") or raw.get("available_models") or [])
+        except Exception:
+            available_models = []
+        decision = gate.evaluate_turn(
+            user_message=user_message or "",
+            final_response=final_response,
+            messages=messages or [],
+            implementer_model=getattr(agent, "model", "") or "",
+            available_models=available_models,
+            votes=getattr(agent, "_mainloop_verifier_votes", None) or [],
+        )
+        try:
+            setattr(agent, "_last_mainloop_verification_gate", decision)
+        except Exception:
+            pass
+        if decision.get("blocking") and decision.get("response_notice"):
+            notice = str(decision["response_notice"])
+            revised = f"{final_response.rstrip()}\n\n[Hermes verification gate] {notice}"
+            if messages and isinstance(messages[-1], dict) and messages[-1].get("role") == "assistant":
+                messages[-1]["content"] = revised
+            decision["final_response_override"] = revised
+        return decision
+    except Exception as exc:  # pragma: no cover - defensive fail-soft boundary
+        logger.debug("mainloop verification gate unavailable: %s", exc)
+        return None
+
+
 def _ollama_context_limit_error(agent: Any, request_tokens: int) -> Optional[str]:
     """Return a user-facing error when Ollama is loaded with too little context."""
     if not getattr(agent, "tools", None):
@@ -4513,6 +4568,15 @@ def run_conversation(
                 messages.append({"role": "assistant", "content": final_response})
                 break
     
+    verification_decision = _run_mainloop_verification_gate(
+        agent,
+        user_message=user_message,
+        final_response=final_response,
+        messages=messages,
+    )
+    if verification_decision and verification_decision.get("final_response_override"):
+        final_response = str(verification_decision["final_response_override"])
+
     # Post-loop turn finalization extracted to agent/turn_finalizer.finalize_turn
     # (god-file decomposition Phase 1 step 4). Behavior-neutral: the assembled
     # result dict is returned exactly as before.

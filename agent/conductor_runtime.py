@@ -528,17 +528,20 @@ class AcceptanceGovernance:
         require_evidence_refs_for_votes: bool = True,
         forbid_model_only_certification: bool = True,
         forbid_self_certification: bool = True,
+        require_independent_verifier_vote: bool = False,
     ):
         self.require_objective_evidence = require_objective_evidence
         self.require_evidence_refs_for_votes = require_evidence_refs_for_votes
         self.forbid_model_only_certification = forbid_model_only_certification
         self.forbid_self_certification = forbid_self_certification
+        self.require_independent_verifier_vote = require_independent_verifier_vote
 
     def evaluate(self, claims: List[Dict[str, Any]], evidence: List[Dict[str, Any]], votes: List[Dict[str, Any]], implementer_model: str = "") -> Dict[str, Any]:
         failures: List[str] = []
         evidence_ids = {str(item.get("id")) for item in evidence if isinstance(item, dict) and item.get("id")}
         if self.require_objective_evidence and claims and not evidence_ids:
             failures.append("objective_evidence_missing")
+        independent_approve_votes = 0
         for vote in votes or []:
             if not isinstance(vote, dict):
                 failures.append("vote_not_object")
@@ -552,8 +555,12 @@ class AcceptanceGovernance:
             if self.forbid_self_certification and implementer_model and model == implementer_model:
                 failures.append(f"self_certification_forbidden:{model}")
             verdict = str(vote.get("vote") or "").lower()
+            if verdict in {"approve", "approved"} and (not implementer_model or model != implementer_model):
+                independent_approve_votes += 1
             if verdict in {"reject", "rejected"}:
                 failures.append(f"reject_vote:{model}")
+        if self.require_independent_verifier_vote and claims and independent_approve_votes <= 0:
+            failures.append("independent_verifier_vote_missing")
         if failures:
             status = "advisory_only" if "objective_evidence_missing" in failures or not evidence_ids else "not_certified"
         else:
@@ -565,6 +572,126 @@ class AcceptanceGovernance:
             "claim_count": len(claims or []),
             "evidence_count": len(evidence_ids),
             "model_judgment_policy": "advisory_only_without_evidence",
+        }
+
+
+COMPLETION_CLAIM_TERMS = ("完成", "验收", "通过", "done", "complete", "completed", "verified", "certified", "production-ready", "可上线")
+T3_TERMS = ("Hermes", "主循环", "门禁", "生产", "长期稳定", "自修改", "外部副作用", "MCP", "部署", "删除")
+UI_TERMS = ("UI", "界面", "视觉", "截图", "safe-area", "uIMax", "A+")
+CODE_TERMS = ("代码", "测试", "pytest", "build", "实现", "commit", "push")
+
+
+class MainloopVerificationGate:
+    """Evaluate final-response completion claims before turn finalization.
+
+    The gate is deliberately evidence-bound. It does not call external models;
+    it classifies the turn, extracts objective tool evidence already present in
+    the transcript, and returns a blocking/degraded decision when the response
+    makes a completion-critical claim without evidence and independent review.
+    """
+
+    def __init__(self, profiles: Dict[str, Any] | None = None):
+        self.profiles = profiles or {}
+        cfg_raw = self.profiles.get("mainloop_verification")
+        self.cfg: Dict[str, Any] = cfg_raw if isinstance(cfg_raw, dict) else {}
+        acceptance_raw = self.profiles.get("acceptance_governance")
+        self.acceptance_cfg: Dict[str, Any] = acceptance_raw if isinstance(acceptance_raw, dict) else {}
+
+    def _has_completion_claim(self, text: str) -> bool:
+        lowered = text.lower()
+        return any(term.lower() in lowered for term in COMPLETION_CLAIM_TERMS)
+
+    def _risk_tier(self, user_message: str, final_response: str) -> str:
+        text = f"{user_message}\n{final_response}"
+        if any(term.lower() in text.lower() for term in T3_TERMS):
+            return "T3"
+        if self._has_completion_claim(text):
+            return "T2"
+        return "T0"
+
+    def _surfaces(self, user_message: str, final_response: str) -> List[str]:
+        text = f"{user_message}\n{final_response}"
+        surfaces: List[str] = []
+        if self._has_completion_claim(text):
+            surfaces.append("completion_claim")
+        if any(term.lower() in text.lower() for term in UI_TERMS):
+            surfaces.append("ui_visual")
+        if any(term.lower() in text.lower() for term in CODE_TERMS):
+            surfaces.append("code_correctness")
+        if any(term.lower() in text.lower() for term in T3_TERMS):
+            surfaces.append("hermes_self_modification")
+        return _ordered_unique(surfaces)
+
+    def _evidence_from_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        evidence: List[Dict[str, Any]] = []
+        for idx, message in enumerate(messages or []):
+            if not isinstance(message, dict) or message.get("role") != "tool":
+                continue
+            content = str(message.get("content") or "").strip()
+            if not content:
+                continue
+            lower = content.lower()
+            status = "fail" if any(marker in lower for marker in ("traceback", "error", "failed", "exit_code\": 1")) else "pass"
+            evidence.append({
+                "id": f"E-tool-{idx}",
+                "source": str(message.get("name") or "tool"),
+                "status": status,
+                "supports": [],
+            })
+        return evidence
+
+    def evaluate_turn(
+        self,
+        user_message: str,
+        final_response: str | None,
+        messages: List[Dict[str, Any]],
+        implementer_model: str = "",
+        available_models: Optional[List[str]] = None,
+        votes: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        if not self.cfg.get("enabled"):
+            return {"schema": "hermes_mainloop_verification_gate_v1", "status": "disabled", "blocking": False}
+        response = str(final_response or "")
+        surfaces = self._surfaces(user_message or "", response)
+        risk_tier = self._risk_tier(user_message or "", response)
+        if not surfaces:
+            return {"schema": "hermes_mainloop_verification_gate_v1", "status": "skipped_low_risk", "blocking": False, "risk_tier": risk_tier, "surfaces": []}
+
+        claims = [{"id": f"C-{idx+1}", "surface": surface, "text": response[:500]} for idx, surface in enumerate(surfaces)]
+        evidence = self._evidence_from_messages(messages or [])
+        route = ModelCapabilityRouter(self.profiles).route(
+            surfaces=surfaces,
+            risk_tier=risk_tier,
+            implementer_model=implementer_model,
+            available_models=available_models or [],
+        )
+        governance = AcceptanceGovernance(
+            require_objective_evidence=bool(self.acceptance_cfg.get("require_objective_evidence", True)),
+            require_evidence_refs_for_votes=bool(self.acceptance_cfg.get("require_evidence_refs_for_votes", True)),
+            forbid_model_only_certification=bool(self.acceptance_cfg.get("forbid_model_only_certification", True)),
+            forbid_self_certification=bool(self.acceptance_cfg.get("forbid_self_certification", True)),
+            require_independent_verifier_vote=bool(self.acceptance_cfg.get("require_independent_verifier_vote", True)),
+        )
+        acceptance = governance.evaluate(claims=claims, evidence=evidence, votes=votes or [], implementer_model=implementer_model)
+        blocking_tiers = set(self.cfg.get("blocking_tiers") or [])
+        blocking = risk_tier in blocking_tiers and acceptance.get("status") != "certified" and not bool(self.cfg.get("advisory_only", False))
+        notice = ""
+        if blocking:
+            notice = "门禁未认证：不能声明已完成/已验收；需要补充客观证据和独立 verifier vote 后再提升为 certified。"
+        elif acceptance.get("status") != "certified":
+            notice = "门禁降级：当前只能作为 advisory，不能声明 certified。"
+        gate_status = "not_certified" if blocking else acceptance.get("status")
+        return {
+            "schema": "hermes_mainloop_verification_gate_v1",
+            "status": gate_status,
+            "blocking": blocking,
+            "risk_tier": risk_tier,
+            "surfaces": surfaces,
+            "claims": claims,
+            "evidence": evidence,
+            "route": route,
+            "acceptance": acceptance,
+            "response_notice": notice,
         }
 
 

@@ -6,6 +6,7 @@ from agent.conductor_runtime import (
     AcceptanceGovernance,
     ConversationIntentRouter,
     FuguAdapter,
+    MainloopVerificationGate,
     ModelCapabilityRouter,
     TaskLedger,
     conductor_defaults_enabled,
@@ -224,6 +225,7 @@ def test_acceptance_governance_rejects_model_only_and_self_certification():
         require_evidence_refs_for_votes=True,
         forbid_model_only_certification=True,
         forbid_self_certification=True,
+        require_independent_verifier_vote=True,
     )
 
     model_only = governance.evaluate(
@@ -245,6 +247,15 @@ def test_acceptance_governance_rejects_model_only_and_self_certification():
     assert self_cert["status"] == "not_certified"
     assert "self_certification_forbidden:gpt-5.5" in self_cert["failures"]
 
+    no_verifier = governance.evaluate(
+        claims=[{"id": "C-code", "surface": "code_correctness", "text": "Code works"}],
+        evidence=[{"id": "E-test", "supports": ["C-code"], "source": "pytest", "status": "pass"}],
+        votes=[],
+        implementer_model="gpt-5.5",
+    )
+    assert no_verifier["status"] == "not_certified"
+    assert "independent_verifier_vote_missing" in no_verifier["failures"]
+
     certified = governance.evaluate(
         claims=[{"id": "C-code", "surface": "code_correctness", "text": "Code works"}],
         evidence=[{"id": "E-test", "supports": ["C-code"], "source": "pytest", "status": "pass"}],
@@ -253,6 +264,52 @@ def test_acceptance_governance_rejects_model_only_and_self_certification():
     )
     assert certified["status"] == "certified"
     assert certified["failures"] == []
+
+
+def test_mainloop_verification_gate_degrades_completion_claim_without_objective_evidence():
+    profiles = {
+        "mainloop_verification": {"enabled": True, "advisory_only": False, "blocking_tiers": ["T3"]},
+        "acceptance_governance": {
+            "require_objective_evidence": True,
+            "require_evidence_refs_for_votes": True,
+            "forbid_model_only_certification": True,
+            "forbid_self_certification": True,
+            "require_independent_verifier_vote": True,
+        },
+        "role_separation": {"forbid_self_certification": True},
+        "overlap_voting": {"enabled": True, "trigger_when_surface_count_gte": 2, "trigger_when_risk_gte": "T2", "arbiter_model": "claude-opus-4-8"},
+        "surfaces": {
+            "completion_claim": {"verifiers": ["hermes_evidence_gate"], "final_evidence": ["fresh_tool_output"]},
+            "hermes_self_modification": {"verifiers": ["deepseek-v4-pro"], "arbiters": ["claude-opus-4-8"], "final_evidence": ["focused_pytest", "config_readback"]},
+        },
+    }
+    gate = MainloopVerificationGate(profiles=profiles)
+
+    result = gate.evaluate_turn(
+        user_message="继续推进直至门禁认可完成",
+        final_response="已完成并验收通过。",
+        messages=[{"role": "user", "content": "继续推进"}],
+        implementer_model="gpt-5.5",
+        available_models=["gpt-5.5", "deepseek-v4-pro", "claude-opus-4-8"],
+    )
+
+    assert result["status"] == "not_certified"
+    assert result["blocking"] is True
+    assert "objective_evidence_missing" in result["acceptance"]["failures"]
+    assert "independent_verifier_vote_missing" in result["acceptance"]["failures"]
+    assert "不能声明已完成/已验收" in result["response_notice"]
+
+
+def test_mainloop_verification_gate_allows_low_risk_non_completion_chat():
+    gate = MainloopVerificationGate(profiles={"mainloop_verification": {"enabled": True, "advisory_only": False}})
+    result = gate.evaluate_turn(
+        user_message="解释一下这个概念",
+        final_response="这是一个普通解释。",
+        messages=[],
+        implementer_model="gpt-5.5",
+    )
+    assert result["status"] == "skipped_low_risk"
+    assert result["blocking"] is False
 
 
 def test_background_worker_probe_and_dry_run(tmp_path):
@@ -318,3 +375,25 @@ def test_conversation_loop_conductor_router_records_advisory_route_when_enabled(
     assert result["router_call"] is True
     assert result["participant_models"] == []
     assert getattr(agent, "_last_conductor_intent_route") == result
+
+
+def test_conversation_loop_mainloop_gate_appends_blocking_notice_for_uncertified_claim():
+    from agent.conversation_loop import _run_mainloop_verification_gate
+
+    class FakeAgent:
+        model = "gpt-5.5"
+        _mainloop_verifier_votes = []
+
+    messages = [{"role": "assistant", "content": "Hermes 主循环门禁已完成并验收通过。"}]
+    result = _run_mainloop_verification_gate(
+        FakeAgent(),
+        user_message="继续推进直至门禁认可完成",
+        final_response="Hermes 主循环门禁已完成并验收通过。",
+        messages=messages,
+    )
+
+    assert result is not None
+    assert result["blocking"] is True
+    assert result["status"] == "not_certified"
+    assert "Hermes verification gate" in result["final_response_override"]
+    assert messages[-1]["content"] == result["final_response_override"]
