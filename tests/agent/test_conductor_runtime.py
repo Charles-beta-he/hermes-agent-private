@@ -355,6 +355,18 @@ def test_mainloop_verification_gate_skips_internal_contextcard_projection():
     assert result["blocking"] is False
 
 
+def test_mainloop_verification_gate_skips_internal_multibrain_json_projection():
+    gate = MainloopVerificationGate(profiles={"mainloop_verification": {"enabled": True, "advisory_only": False, "blocking_tiers": ["T3"]}})
+    result = gate.evaluate_turn(
+        user_message="[Auto-relay 1/12] Previous turn stopped because max_iterations_reached(1/1).\nContinue the task from that handoff.",
+        final_response='{"meta":{"planner_model":"gpt-5.5"},"diagnosis":{"summary":"已完成"},"patches":[]}',
+        messages=[],
+        implementer_model="gpt-5.5",
+    )
+    assert result["status"] == "skipped_internal_projection"
+    assert result["blocking"] is False
+
+
 def test_mainloop_certification_queue_is_idempotent_and_blocks_authority_smuggling(tmp_path):
     queue = MainloopCertificationQueue(root=tmp_path)
     decision = {

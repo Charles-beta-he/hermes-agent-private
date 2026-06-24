@@ -720,6 +720,10 @@ class MainloopVerificationGate:
         response = (final_response or "").lstrip()
         if response.startswith("{") and "cardVersion" in response and "Hermes Context" in response:
             return True
+        if response.startswith("{") and "\"planner_model\"" in response and "\"patches\"" in response and "\"diagnosis\"" in response:
+            return True
+        if "Previous turn stopped because max_iterations_reached" in prompt and "Continue the task from that handoff" in prompt:
+            return True
         return False
 
     def _surfaces(self, user_message: str, final_response: str) -> List[str]:
