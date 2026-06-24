@@ -213,11 +213,50 @@ def test_model_capability_router_selects_specialist_and_excludes_implementer():
 
     assert decision["overlap_voting_required"] is True
     assert decision["implementer_model"] == "gpt-5.5"
+    assert decision["surface_routes"]["ui_visual"]["primary"] == "gpt-5.5"
     assert decision["surface_routes"]["ui_visual"]["verifier"] == "gemini-3.1-pro-preview"
     assert decision["surface_routes"]["code_correctness"]["verifier"] == "deepseek-v4-pro"
     assert decision["surface_routes"]["ui_visual"]["implementer_vote_counts_for_certification"] is False
     assert "gpt-5.5" not in decision["certification_participants"]
     assert decision["required_evidence"] == ["screenshot_matrix", "browser_snapshot", "test_output", "build_output"]
+
+
+def test_model_capability_router_can_make_gemini_primary_for_visual_work_and_claude_primary_for_review():
+    profiles = {
+        "role_separation": {"forbid_self_certification": True},
+        "overlap_voting": {"enabled": True, "trigger_when_surface_count_gte": 2, "trigger_when_risk_gte": "T2", "arbiter_model": "claude-opus-4-8"},
+        "surfaces": {
+            "ui_visual": {
+                "implementers": ["gemini-3.1-pro-preview", "gpt-5.5"],
+                "verifiers": ["claude-opus-4-8"],
+                "final_evidence": ["screenshot_matrix"],
+            },
+            "code_review": {
+                "implementers": ["claude-opus-4-8"],
+                "verifiers": ["deepseek-v4-pro"],
+                "final_evidence": ["review_report", "diff_refs"],
+            },
+        },
+    }
+    router = ModelCapabilityRouter(profiles=profiles)
+
+    visual = router.route(
+        surfaces=["ui_visual"],
+        risk_tier="T1",
+        available_models=["gpt-5.5", "gemini-3.1-pro-preview", "claude-opus-4-8"],
+    )
+    assert visual["surface_routes"]["ui_visual"]["primary"] == "gemini-3.1-pro-preview"
+    assert visual["surface_routes"]["ui_visual"]["verifier"] == "claude-opus-4-8"
+    assert visual["primary_models"] == ["gemini-3.1-pro-preview"]
+
+    review = router.route(
+        surfaces=["code_review"],
+        risk_tier="T1",
+        available_models=["claude-opus-4-8", "deepseek-v4-pro"],
+    )
+    assert review["surface_routes"]["code_review"]["primary"] == "claude-opus-4-8"
+    assert review["surface_routes"]["code_review"]["verifier"] == "deepseek-v4-pro"
+    assert review["primary_models"] == ["claude-opus-4-8"]
 
 
 def test_acceptance_governance_rejects_model_only_and_self_certification():

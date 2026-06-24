@@ -472,30 +472,44 @@ class ModelCapabilityRouter:
         certification_participants: List[str] = []
         required_evidence: List[str] = []
         surface_routes: Dict[str, Any] = {}
+        primary_candidates: List[str] = []
         forbid_self = bool(self.role_separation.get("forbid_self_certification", True))
 
         for surface in surfaces:
             cfg_raw = self.surfaces.get(surface)
             cfg: Dict[str, Any] = cfg_raw if isinstance(cfg_raw, dict) else {}
+            implementer_candidates = list(cfg.get("implementers") or [])
+            primary = ""
+            for candidate in implementer_candidates:
+                if available and candidate not in available:
+                    continue
+                primary = candidate
+                break
+            if not primary and implementer_candidates:
+                primary = implementer_candidates[0]
+            if primary:
+                primary_candidates.append(primary)
+
             candidates = list(cfg.get("verifiers") or []) + list(cfg.get("fallback_verifiers") or [])
             verifier = ""
             for candidate in candidates:
                 if available and candidate not in available:
                     continue
-                if forbid_self and implementer_model and candidate == implementer_model:
+                if forbid_self and (implementer_model or primary) and candidate in {implementer_model, primary}:
                     continue
                 verifier = candidate
                 break
             if not verifier and candidates:
                 verifier = candidates[0]
-            if verifier and verifier != implementer_model:
+            if verifier and verifier not in {implementer_model, primary}:
                 certification_participants.append(verifier)
             evidence = list(cfg.get("final_evidence") or [])
             required_evidence.extend(evidence)
             surface_routes[surface] = {
+                "primary": primary,
                 "verifier": verifier,
                 "required_evidence": evidence,
-                "implementer_vote_counts_for_certification": False if implementer_model else True,
+                "implementer_vote_counts_for_certification": False if (implementer_model or primary) else True,
             }
 
         trigger_count = int(self.overlap_voting.get("trigger_when_surface_count_gte", 2) or 2)
@@ -512,6 +526,7 @@ class ModelCapabilityRouter:
             "surfaces": list(surfaces),
             "risk_tier": risk_tier,
             "implementer_model": implementer_model,
+            "primary_models": _ordered_unique(primary_candidates),
             "surface_routes": surface_routes,
             "overlap_voting_required": overlap_required,
             "certification_participants": _ordered_unique(certification_participants),
