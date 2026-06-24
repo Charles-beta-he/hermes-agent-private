@@ -161,6 +161,10 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["loop_runtime_candidate"]["scheduler_enabled"] is False
     assert kernel["loop_runtime_candidate"]["taskpool_write_enabled"] is False
     assert kernel["loop_runtime_candidate"]["external_side_effects_enabled"] is False
+    assert kernel["runtime_promotion_authorization"]["status"] == "HUMAN_AUTHORIZATION_REQUIRED"
+    assert kernel["runtime_promotion_authorization"]["activate_control_tower_runtime_api_requested"] is True
+    assert kernel["runtime_promotion_authorization"]["scheduler_requested"] is False
+    assert kernel["runtime_promotion_authorization"]["kill_switch"] == "disable_loop_runtime_contract_promotion"
     assert kernel["unattended_dispatch_policy"]["unattended_dispatch_enabled"] is False
     assert kernel["unattended_dry_run_scheduler"]["status"] in {"UNATTENDED_DRY_RUN_SCHEDULER_READY", "not_compiled"}
     assert kernel["policy_editor"]["status"] == "POLICY_EDITOR_APPROVAL_UI_READY"

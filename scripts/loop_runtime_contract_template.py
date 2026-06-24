@@ -166,23 +166,112 @@ def write_candidate(contract: dict[str, Any], out_dir: Path = DEFAULT_OUT_DIR) -
     return {"contract": str(contract_path), "receipt": str(receipt_path)}
 
 
+def control_tower_runtime_promotion_authorization_packet(contract: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
+    """Return a human-gated packet for a future runtime promotion.
+
+    This packet is intentionally not an authorization grant. It records the exact
+    authority that would be needed to cross from local read-only projection into
+    runtime/API activation while keeping every scheduler/write/external boundary
+    closed by default.
+    """
+    all_write_side_effects_disabled = all(
+        receipt.get(flag) is False
+        for flag in [
+            "loop_runtime_enabled",
+            "scheduler_enabled",
+            "worker_spawn_enabled",
+            "taskpool_write_enabled",
+            "mission_write_enabled",
+            "external_side_effects",
+        ]
+    )
+    return {
+        "packet_id": "authz.hermes.workflow_kernel.control_tower_runtime_promotion.v1",
+        "status": "HUMAN_AUTHORIZATION_REQUIRED",
+        "objective": "Authorize, or explicitly reject, the first runtime/API promotion path for the Control Tower LoopRuntimeContract candidate.",
+        "candidate": {
+            "contract_id": contract.get("contract_id"),
+            "receipt_id": receipt.get("receipt_id"),
+            "doctor_status": receipt.get("status"),
+            "dry_run_only": receipt.get("dry_run_only") is True,
+        },
+        "preconditions": {
+            "candidate_doctor_passed": receipt.get("status") == "PASS",
+            "all_write_side_effects_disabled": all_write_side_effects_disabled,
+            "generic_loop_contract_visible_in_control_tower": True,
+            "concrete_candidate_visible_in_control_tower": True,
+        },
+        "requested_authority": {
+            "activate_control_tower_runtime_api": True,
+            "enable_scheduler": False,
+            "spawn_worker": False,
+            "write_taskpool": False,
+            "promote_mission_executor": False,
+            "credentialed_model_generation": False,
+            "external_dispatch": False,
+            "publish": False,
+            "destructive_action": False,
+        },
+        "human_decision_required": [
+            "exact_executor_binding",
+            "runtime_api_scope",
+            "budget_max_turns_runtime_seconds_retries",
+            "rollback_owner_and_command",
+            "kill_switch_location",
+            "independent_evaluator_command",
+            "post_action_readback_surface",
+        ],
+        "default_safe_decision": "do_not_promote_runtime_until_all_required_fields_are_explicitly_authorized",
+        "escape_hatch": {
+            "kill_switch": "disable_loop_runtime_contract_promotion",
+            "rollback": contract.get("rollback_plan"),
+            "blast_radius": "local Hermes Control Tower runtime/API only; no scheduler, worker, taskpool, mission, credential, external dispatch, publish, or destructive authority included in this packet",
+        },
+        "post_action_verification": [
+            "post_action_readback",
+            "control_tower_snapshot_runtime_api_status",
+            "loop_runtime_contract_doctor_recheck",
+            "pytest_targeted_control_tower_snapshot",
+            "git_diff_scoped_to_runtime_promotion_slice",
+        ],
+        "evidence_refs": [
+            "file:docs/private/loop-runtime-contract-candidates/hermes_workflow_kernel_control_tower_runtime_promotion.loop_runtime_contract.json",
+            "file:docs/private/loop-runtime-contract-candidates/hermes_workflow_kernel_control_tower_runtime_promotion.loopdry_97fee7870ae83828.loop_runtime_contract_receipt.json",
+            "file:docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.json",
+            "command:./venv/bin/python -m pytest -o addopts='' tests/scripts/test_loop_runtime_contract_template.py tests/scripts/test_workflow_control_tower_projection.py tests/hermes_cli/test_control_tower_snapshot.py::test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifacts_exist -q",
+        ],
+    }
+
+
+def write_authorization_packet(packet: dict[str, Any], out_dir: Path = DEFAULT_OUT_DIR) -> str:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "hermes_workflow_kernel_control_tower_runtime_promotion.authorization_packet.json"
+    path.write_text(json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return str(path)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", choices=sorted(CANDIDATES), default="control_tower_runtime_promotion")
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--write-authorization-packet", action="store_true")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     contract = CANDIDATES[args.candidate]()
     receipt = doctor.build_receipt(contract)
+    authorization_packet = control_tower_runtime_promotion_authorization_packet(contract, receipt)
     result: dict[str, Any] = {
         "candidate": args.candidate,
         "contract": contract,
         "receipt": receipt,
+        "authorization_packet": authorization_packet,
     }
     if args.write:
         result["artifacts"] = write_candidate(contract, args.out_dir)
+    if args.write_authorization_packet:
+        result.setdefault("artifacts", {})["authorization_packet"] = write_authorization_packet(authorization_packet, args.out_dir)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     else:

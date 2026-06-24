@@ -6296,6 +6296,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase_g_optimization_backlog_path = root / "docs/private/workflow-kernel-phase-g-optimization-backlog/workflow_kernel_phase_g_optimization_backlog_20260615.json"
     fail_closed_posture_path = root / "docs/private/workflow-kernel-fail-closed-posture/workflow_kernel_fail_closed_posture_20260615.json"
     loop_runtime_candidate_receipt_path = root / "docs/private/loop-runtime-contract-candidates/hermes_workflow_kernel_control_tower_runtime_promotion.loopdry_97fee7870ae83828.loop_runtime_contract_receipt.json"
+    loop_runtime_authorization_packet_path = root / "docs/private/loop-runtime-contract-candidates/hermes_workflow_kernel_control_tower_runtime_promotion.authorization_packet.json"
     paths = {
         "registry": registry_path,
         "guarded_send": phase50_path,
@@ -6363,6 +6364,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         phase_g_optimization_backlog = json.loads(phase_g_optimization_backlog_path.read_text()) if phase_g_optimization_backlog_path.exists() else None
         fail_closed_posture = json.loads(fail_closed_posture_path.read_text()) if fail_closed_posture_path.exists() else None
         loop_runtime_candidate_receipt = json.loads(loop_runtime_candidate_receipt_path.read_text()) if loop_runtime_candidate_receipt_path.exists() else None
+        loop_runtime_authorization_packet = json.loads(loop_runtime_authorization_packet_path.read_text()) if loop_runtime_authorization_packet_path.exists() else None
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6411,6 +6413,23 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         "external_side_effects_enabled": projected_loop_candidate.get("external_side_effects_enabled", candidate_receipt.get("external_side_effects") is not False),
         "rollback_plan": projected_loop_candidate.get("rollback_plan") or candidate_receipt.get("rollback_plan"),
     }
+    projected_authorization = ((control_tower_projection.get("operator_summary") or {}).get("runtime_promotion_authorization") or {})
+    authorization_packet = loop_runtime_authorization_packet or {}
+    requested_authority = authorization_packet.get("requested_authority") or {}
+    escape_hatch = authorization_packet.get("escape_hatch") or {}
+    runtime_promotion_authorization = {
+        "status": projected_authorization.get("status") or authorization_packet.get("status", "missing"),
+        "packet_id": projected_authorization.get("packet_id") or authorization_packet.get("packet_id"),
+        "candidate_contract_id": projected_authorization.get("candidate_contract_id") or ((authorization_packet.get("candidate") or {}).get("contract_id")),
+        "candidate_receipt_id": projected_authorization.get("candidate_receipt_id") or ((authorization_packet.get("candidate") or {}).get("receipt_id")),
+        "activate_control_tower_runtime_api_requested": projected_authorization.get("activate_control_tower_runtime_api_requested", requested_authority.get("activate_control_tower_runtime_api") is True),
+        "scheduler_requested": projected_authorization.get("scheduler_requested", requested_authority.get("enable_scheduler") is True),
+        "worker_spawn_requested": projected_authorization.get("worker_spawn_requested", requested_authority.get("spawn_worker") is True),
+        "taskpool_write_requested": projected_authorization.get("taskpool_write_requested", requested_authority.get("write_taskpool") is True),
+        "external_dispatch_requested": projected_authorization.get("external_dispatch_requested", requested_authority.get("external_dispatch") is True),
+        "kill_switch": projected_authorization.get("kill_switch") or escape_hatch.get("kill_switch"),
+        "human_decision_required": projected_authorization.get("human_decision_required") or authorization_packet.get("human_decision_required", []),
+    }
     return {
         "status": "ready" if not blockers else "degraded",
         "role": "read_only_workflow_kernel_projection",
@@ -6430,6 +6449,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         },
         "loop_runtime_contract": loop_contract,
         "loop_runtime_candidate": loop_runtime_candidate,
+        "runtime_promotion_authorization": runtime_promotion_authorization,
         "unattended_dispatch_policy": {
             "status": (policy or {}).get("status", "not_compiled"),
             "default_mode": (policy or {}).get("default_mode", "dry_run_preview"),

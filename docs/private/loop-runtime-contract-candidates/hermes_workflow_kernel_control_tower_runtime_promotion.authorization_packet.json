@@ -1,0 +1,56 @@
+{
+  "candidate": {
+    "contract_id": "hermes.workflow_kernel.control_tower_runtime_promotion",
+    "doctor_status": "PASS",
+    "dry_run_only": true,
+    "receipt_id": "loopdry_97fee7870ae83828"
+  },
+  "default_safe_decision": "do_not_promote_runtime_until_all_required_fields_are_explicitly_authorized",
+  "escape_hatch": {
+    "blast_radius": "local Hermes Control Tower runtime/API only; no scheduler, worker, taskpool, mission, credential, external dispatch, publish, or destructive authority included in this packet",
+    "kill_switch": "disable_loop_runtime_contract_promotion",
+    "rollback": "Delete the local candidate contract and receipt under docs/private/loop-runtime-contract-candidates/; no runtime, scheduler, worker, taskpool, mission, credential, or external state was mutated."
+  },
+  "evidence_refs": [
+    "file:docs/private/loop-runtime-contract-candidates/hermes_workflow_kernel_control_tower_runtime_promotion.loop_runtime_contract.json",
+    "file:docs/private/loop-runtime-contract-candidates/hermes_workflow_kernel_control_tower_runtime_promotion.loopdry_97fee7870ae83828.loop_runtime_contract_receipt.json",
+    "file:docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.json",
+    "command:./venv/bin/python -m pytest -o addopts='' tests/scripts/test_loop_runtime_contract_template.py tests/scripts/test_workflow_control_tower_projection.py tests/hermes_cli/test_control_tower_snapshot.py::test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifacts_exist -q"
+  ],
+  "human_decision_required": [
+    "exact_executor_binding",
+    "runtime_api_scope",
+    "budget_max_turns_runtime_seconds_retries",
+    "rollback_owner_and_command",
+    "kill_switch_location",
+    "independent_evaluator_command",
+    "post_action_readback_surface"
+  ],
+  "objective": "Authorize, or explicitly reject, the first runtime/API promotion path for the Control Tower LoopRuntimeContract candidate.",
+  "packet_id": "authz.hermes.workflow_kernel.control_tower_runtime_promotion.v1",
+  "post_action_verification": [
+    "post_action_readback",
+    "control_tower_snapshot_runtime_api_status",
+    "loop_runtime_contract_doctor_recheck",
+    "pytest_targeted_control_tower_snapshot",
+    "git_diff_scoped_to_runtime_promotion_slice"
+  ],
+  "preconditions": {
+    "all_write_side_effects_disabled": true,
+    "candidate_doctor_passed": true,
+    "concrete_candidate_visible_in_control_tower": true,
+    "generic_loop_contract_visible_in_control_tower": true
+  },
+  "requested_authority": {
+    "activate_control_tower_runtime_api": true,
+    "credentialed_model_generation": false,
+    "destructive_action": false,
+    "enable_scheduler": false,
+    "external_dispatch": false,
+    "promote_mission_executor": false,
+    "publish": false,
+    "spawn_worker": false,
+    "write_taskpool": false
+  },
+  "status": "HUMAN_AUTHORIZATION_REQUIRED"
+}

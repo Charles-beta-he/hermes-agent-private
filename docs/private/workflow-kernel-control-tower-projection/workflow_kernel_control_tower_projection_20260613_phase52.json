@@ -1,7 +1,7 @@
 {
   "api_version": "workflow-control-tower.v1",
   "blockers": [],
-  "created_at": "2026-06-24T14:12:27Z",
+  "created_at": "2026-06-24T17:16:40Z",
   "next_boundary": "larger divergence after Phase52: durable Control Tower runtime/API integration vs unattended dispatch policy gate",
   "operator_summary": {
     "agent_pack_id": "agent.workflow_kernel_operator",
@@ -38,6 +38,27 @@
       "worker_spawn_enabled": false
     },
     "registry_status": "PACK_REGISTRY_PROJECTION_READY",
+    "runtime_promotion_authorization": {
+      "activate_control_tower_runtime_api_requested": true,
+      "candidate_contract_id": "hermes.workflow_kernel.control_tower_runtime_promotion",
+      "candidate_receipt_id": "loopdry_97fee7870ae83828",
+      "external_dispatch_requested": false,
+      "human_decision_required": [
+        "exact_executor_binding",
+        "runtime_api_scope",
+        "budget_max_turns_runtime_seconds_retries",
+        "rollback_owner_and_command",
+        "kill_switch_location",
+        "independent_evaluator_command",
+        "post_action_readback_surface"
+      ],
+      "kill_switch": "disable_loop_runtime_contract_promotion",
+      "packet_id": "authz.hermes.workflow_kernel.control_tower_runtime_promotion.v1",
+      "scheduler_requested": false,
+      "status": "HUMAN_AUTHORIZATION_REQUIRED",
+      "taskpool_write_requested": false,
+      "worker_spawn_requested": false
+    },
     "sequence_phase_count": 77,
     "workflow_pack_id": "workflow_kernel_external_dispatch_governance"
   },
@@ -154,6 +175,34 @@
       ],
       "status": "doctor_passed",
       "title": "LoopRuntimeContract Runtime Promotion Candidate"
+    },
+    {
+      "id": "runtime_promotion_authorization",
+      "items": [
+        {
+          "activate_control_tower_runtime_api_requested": true,
+          "candidate_contract_id": "hermes.workflow_kernel.control_tower_runtime_promotion",
+          "candidate_receipt_id": "loopdry_97fee7870ae83828",
+          "external_dispatch_requested": false,
+          "human_decision_required": [
+            "exact_executor_binding",
+            "runtime_api_scope",
+            "budget_max_turns_runtime_seconds_retries",
+            "rollback_owner_and_command",
+            "kill_switch_location",
+            "independent_evaluator_command",
+            "post_action_readback_surface"
+          ],
+          "kill_switch": "disable_loop_runtime_contract_promotion",
+          "packet_id": "authz.hermes.workflow_kernel.control_tower_runtime_promotion.v1",
+          "scheduler_requested": false,
+          "status": "HUMAN_AUTHORIZATION_REQUIRED",
+          "taskpool_write_requested": false,
+          "worker_spawn_requested": false
+        }
+      ],
+      "status": "HUMAN_AUTHORIZATION_REQUIRED",
+      "title": "Runtime Promotion Authorization Gate"
     },
     {
       "id": "next_boundary",

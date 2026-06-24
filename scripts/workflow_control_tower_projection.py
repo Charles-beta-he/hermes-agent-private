@@ -28,6 +28,7 @@ PHASE50 = ROOT / "docs" / "private" / "workflow-kernel-guarded-external-send" / 
 SEQUENCE = ROOT / "docs" / "private" / "workflow-kernel-sequence-map" / "workflow_kernel_sequence_map_20260613_phase38.json"
 READINESS = ROOT / "docs" / "private" / "workflow-kernel-runtime-readiness-summary" / "workflow_kernel_runtime_readiness_summary_20260613_phase36.json"
 CANDIDATE_RECEIPT = ROOT / "docs" / "private" / "loop-runtime-contract-candidates" / "hermes_workflow_kernel_control_tower_runtime_promotion.loopdry_97fee7870ae83828.loop_runtime_contract_receipt.json"
+AUTHORIZATION_PACKET = ROOT / "docs" / "private" / "loop-runtime-contract-candidates" / "hermes_workflow_kernel_control_tower_runtime_promotion.authorization_packet.json"
 
 
 def utc_now() -> datetime:
@@ -76,7 +77,25 @@ def loop_runtime_candidate_projection(candidate_receipt: dict[str, Any]) -> dict
     }
 
 
-def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHASE50, sequence_path: Path = SEQUENCE, readiness_path: Path = READINESS, candidate_receipt_path: Path = CANDIDATE_RECEIPT) -> dict[str, Any]:
+def runtime_promotion_authorization_projection(packet: dict[str, Any]) -> dict[str, Any]:
+    requested = packet.get("requested_authority") or {}
+    escape = packet.get("escape_hatch") or {}
+    return {
+        "status": packet.get("status", "missing"),
+        "packet_id": packet.get("packet_id"),
+        "candidate_contract_id": ((packet.get("candidate") or {}).get("contract_id")),
+        "candidate_receipt_id": ((packet.get("candidate") or {}).get("receipt_id")),
+        "activate_control_tower_runtime_api_requested": requested.get("activate_control_tower_runtime_api") is True,
+        "scheduler_requested": requested.get("enable_scheduler") is True,
+        "worker_spawn_requested": requested.get("spawn_worker") is True,
+        "taskpool_write_requested": requested.get("write_taskpool") is True,
+        "external_dispatch_requested": requested.get("external_dispatch") is True,
+        "kill_switch": escape.get("kill_switch"),
+        "human_decision_required": packet.get("human_decision_required", []),
+    }
+
+
+def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHASE50, sequence_path: Path = SEQUENCE, readiness_path: Path = READINESS, candidate_receipt_path: Path = CANDIDATE_RECEIPT, authorization_packet_path: Path = AUTHORIZATION_PACKET) -> dict[str, Any]:
     registry = read_json(registry_path)
     phase50 = read_json(phase50_path)
     sequence = read_json(sequence_path)
@@ -84,6 +103,8 @@ def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHA
     loop_contract = loop_runtime_contract_projection(sequence, readiness)
     candidate_receipt = read_json(candidate_receipt_path) if candidate_receipt_path.exists() else {}
     loop_candidate = loop_runtime_candidate_projection(candidate_receipt)
+    authorization_packet = read_json(authorization_packet_path) if authorization_packet_path.exists() else {}
+    runtime_authorization = runtime_promotion_authorization_projection(authorization_packet)
     blockers: list[str] = []
     if registry.get("status") != "PACK_REGISTRY_PROJECTION_READY":
         blockers.append("phase51_registry_not_ready")
@@ -114,6 +135,7 @@ def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHA
             "sequence_phase_count": sequence.get("phase_count"),
             "loop_runtime_contract": loop_contract,
             "loop_runtime_candidate": loop_candidate,
+            "runtime_promotion_authorization": runtime_authorization,
         },
         "panels": [
             {
@@ -139,6 +161,12 @@ def build_projection(*, registry_path: Path = REGISTRY, phase50_path: Path = PHA
                 "title": "LoopRuntimeContract Runtime Promotion Candidate",
                 "status": "doctor_passed" if loop_candidate["doctor_passed"] else "candidate_missing_or_failed",
                 "items": [loop_candidate],
+            },
+            {
+                "id": "runtime_promotion_authorization",
+                "title": "Runtime Promotion Authorization Gate",
+                "status": runtime_authorization["status"],
+                "items": [runtime_authorization],
             },
             {
                 "id": "next_boundary",
@@ -241,11 +269,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sequence", type=Path, default=SEQUENCE)
     ap.add_argument("--readiness", type=Path, default=READINESS)
     ap.add_argument("--candidate-receipt", type=Path, default=CANDIDATE_RECEIPT)
+    ap.add_argument("--authorization-packet", type=Path, default=AUTHORIZATION_PACKET)
     ap.add_argument("--write-report", action="store_true")
     ap.add_argument("--out-dir", default=str(DEFAULT_OUT))
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
-    report = build_projection(registry_path=args.registry, phase50_path=args.phase50, sequence_path=args.sequence, readiness_path=args.readiness, candidate_receipt_path=args.candidate_receipt)
+    report = build_projection(registry_path=args.registry, phase50_path=args.phase50, sequence_path=args.sequence, readiness_path=args.readiness, candidate_receipt_path=args.candidate_receipt, authorization_packet_path=args.authorization_packet)
     if args.write_report:
         report["artifacts"] = write_report(report, Path(args.out_dir))
     if args.json:

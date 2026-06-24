@@ -74,3 +74,40 @@ def test_template_cli_json_writes_local_artifacts(tmp_path):
     assert result["receipt"]["status"] == "PASS"
     assert Path(result["artifacts"]["contract"]).exists()
     assert Path(result["artifacts"]["receipt"]).exists()
+
+
+def test_runtime_promotion_authorization_packet_is_human_gated_and_fail_closed():
+    template = load_template()
+    contract = template.control_tower_runtime_promotion_contract()
+    receipt = load_doctor().build_receipt(contract)
+
+    packet = template.control_tower_runtime_promotion_authorization_packet(contract, receipt)
+
+    assert packet["packet_id"] == "authz.hermes.workflow_kernel.control_tower_runtime_promotion.v1"
+    assert packet["status"] == "HUMAN_AUTHORIZATION_REQUIRED"
+    assert packet["candidate"]["contract_id"] == contract["contract_id"]
+    assert packet["candidate"]["receipt_id"] == receipt["receipt_id"]
+    assert packet["requested_authority"]["activate_control_tower_runtime_api"] is True
+    assert packet["requested_authority"]["enable_scheduler"] is False
+    assert packet["requested_authority"]["spawn_worker"] is False
+    assert packet["requested_authority"]["external_dispatch"] is False
+    assert packet["preconditions"]["candidate_doctor_passed"] is True
+    assert packet["preconditions"]["all_write_side_effects_disabled"] is True
+    assert packet["escape_hatch"]["kill_switch"] == "disable_loop_runtime_contract_promotion"
+    assert "exact_executor_binding" in packet["human_decision_required"]
+    assert "post_action_readback" in packet["post_action_verification"]
+
+
+def test_write_authorization_packet_outputs_json(tmp_path):
+    template = load_template()
+    contract = template.control_tower_runtime_promotion_contract()
+    receipt = load_doctor().build_receipt(contract)
+    packet = template.control_tower_runtime_promotion_authorization_packet(contract, receipt)
+
+    path = Path(template.write_authorization_packet(packet, tmp_path))
+
+    assert path.exists()
+    persisted = json.loads(path.read_text())
+    assert persisted["packet_id"] == packet["packet_id"]
+    assert persisted["status"] == "HUMAN_AUTHORIZATION_REQUIRED"
+    assert persisted["candidate"]["receipt_id"] == receipt["receipt_id"]
