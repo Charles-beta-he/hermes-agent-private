@@ -735,6 +735,27 @@ class MainloopVerificationGate:
             surfaces.append("hermes_self_modification")
         return _ordered_unique(surfaces)
 
+    def _infer_evidence_classes(self, *, source: str, content: str) -> List[str]:
+        text = f"{source}\n{content}".lower()
+        classes: List[str] = []
+        if "pytest" in text or " passed" in text:
+            classes.extend(["focused_pytest", "test_output"])
+        if "py_compile" in text or "compile" in text:
+            classes.append("py_compile")
+        if "post-update" in text or "post_update" in text:
+            classes.append("post_update_check")
+        if "git diff" in text or "diff --check" in text:
+            classes.append("git_diff")
+        if "git status" in text:
+            classes.append("git_status")
+        if "config" in text or "yaml" in text or "readback" in text:
+            classes.append("config_readback")
+        if "build" in text or "compiled" in text:
+            classes.append("build_output")
+        if "smoke" in text or "worker" in text or "runtime" in text:
+            classes.append("runtime_smoke")
+        return _ordered_unique(classes)
+
     def _evidence_from_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         evidence: List[Dict[str, Any]] = []
         for idx, message in enumerate(messages or []):
@@ -745,13 +766,37 @@ class MainloopVerificationGate:
                 continue
             lower = content.lower()
             status = "fail" if any(marker in lower for marker in ("traceback", "error", "failed", "exit_code\": 1")) else "pass"
+            source = str(message.get("name") or "tool")
             evidence.append({
                 "id": f"E-tool-{idx}",
-                "source": str(message.get("name") or "tool"),
+                "source": source,
                 "status": status,
                 "supports": [],
+                "evidence_classes": self._infer_evidence_classes(source=source, content=content),
             })
         return evidence
+
+    def _route_required_evidence_coverage(self, route: Dict[str, Any], evidence: List[Dict[str, Any]]) -> Dict[str, Any]:
+        required = _ordered_unique([str(item) for item in route.get("required_evidence") or [] if item])
+        present: List[str] = []
+        for item in evidence or []:
+            if not isinstance(item, dict):
+                continue
+            for cls in item.get("evidence_classes") or []:
+                if cls:
+                    present.append(str(cls))
+            explicit = item.get("evidence_class")
+            if explicit:
+                present.append(str(explicit))
+        present = _ordered_unique(present)
+        missing = [cls for cls in required if cls not in present]
+        coverage = 1.0 if not required else (len(required) - len(missing)) / len(required)
+        return {
+            "required": required,
+            "present": present,
+            "missing": missing,
+            "coverage": coverage,
+        }
 
     def evaluate_turn(
         self,
@@ -780,6 +825,7 @@ class MainloopVerificationGate:
             implementer_model=implementer_model,
             available_models=available_models or [],
         )
+        route_required_evidence = self._route_required_evidence_coverage(route, evidence)
         governance = AcceptanceGovernance(
             require_objective_evidence=bool(self.acceptance_cfg.get("require_objective_evidence", True)),
             require_evidence_refs_for_votes=bool(self.acceptance_cfg.get("require_evidence_refs_for_votes", True)),
@@ -788,6 +834,13 @@ class MainloopVerificationGate:
             require_independent_verifier_vote=bool(self.acceptance_cfg.get("require_independent_verifier_vote", True)),
         )
         acceptance = governance.evaluate(claims=claims, evidence=evidence, votes=votes or [], implementer_model=implementer_model)
+        if route_required_evidence["missing"] and risk_tier in set(self.cfg.get("blocking_tiers") or []):
+            failures = list(acceptance.get("failures") or [])
+            failures.append("route_required_evidence_missing:" + ",".join(route_required_evidence["missing"]))
+            acceptance = dict(acceptance)
+            acceptance["failures"] = sorted(set(failures))
+            if acceptance.get("status") == "certified":
+                acceptance["status"] = "not_certified"
         blocking_tiers = set(self.cfg.get("blocking_tiers") or [])
         blocking = risk_tier in blocking_tiers and acceptance.get("status") != "certified" and not bool(self.cfg.get("advisory_only", False))
         notice = ""
@@ -805,6 +858,7 @@ class MainloopVerificationGate:
             "claims": claims,
             "evidence": evidence,
             "route": route,
+            "route_required_evidence": route_required_evidence,
             "acceptance": acceptance,
             "response_notice": notice,
         }

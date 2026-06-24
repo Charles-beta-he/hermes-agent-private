@@ -301,6 +301,36 @@ def test_mainloop_verification_gate_degrades_completion_claim_without_objective_
     assert "不能声明已完成/已验收" in result["response_notice"]
 
 
+def test_mainloop_verification_gate_reports_missing_route_required_evidence_classes():
+    profiles = {
+        "mainloop_verification": {"enabled": True, "advisory_only": False, "blocking_tiers": ["T3"]},
+        "acceptance_governance": {
+            "require_objective_evidence": True,
+            "require_evidence_refs_for_votes": True,
+            "require_independent_verifier_vote": True,
+        },
+        "surfaces": {
+            "hermes_self_modification": {"verifiers": ["deepseek-v4-pro"], "final_evidence": ["focused_pytest", "config_readback", "git_status"]},
+        },
+    }
+    gate = MainloopVerificationGate(profiles=profiles)
+    result = gate.evaluate_turn(
+        user_message="继续推进 Hermes 主循环并验收完成",
+        final_response="已完成并验收通过。",
+        messages=[
+            {"role": "tool", "content": "18 passed", "name": "pytest"},
+            {"role": "assistant", "content": "Verifier deepseek approve", "model": "deepseek-v4-pro", "evidence_refs": ["E-tool-1"], "vote": "approve"},
+        ],
+        implementer_model="gpt-5.5",
+        available_models=["gpt-5.5", "deepseek-v4-pro", "claude-opus-4-8"],
+    )
+    assert result["status"] == "not_certified"
+    assert result["blocking"] is True
+    assert result["route_required_evidence"]["missing"]
+    assert "config_readback" in result["route_required_evidence"]["missing"]
+    assert any(f.startswith("route_required_evidence_missing:") for f in result["acceptance"]["failures"])
+
+
 def test_mainloop_verification_gate_allows_low_risk_non_completion_chat():
     gate = MainloopVerificationGate(profiles={"mainloop_verification": {"enabled": True, "advisory_only": False}})
     result = gate.evaluate_turn(
