@@ -46,9 +46,13 @@ def test_build_report_is_read_only_summary_shape():
     assert "projection" in report["artifact_states"]
     assert "correlation" in report["artifact_states"]
     assert "probe" in report["artifact_states"]
+    assert "loop_runtime_contract" in report["artifact_states"]
+    assert report["artifact_states"]["loop_runtime_contract"]["status"] == "PASS"
     assert set(report["checks"]).issuperset({
         "runtime_switch_ready_or_enabled",
         "scheduler_projection_ready",
         "receipt_aware_correlation_ready",
         "global_runtime_switch_auto_enabled",
+        "loop_runtime_contract_doctor_passed",
     })
+    assert "loop runtime contract doctor passed" in report["safe_boundaries"]

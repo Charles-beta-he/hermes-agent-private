@@ -80,6 +80,7 @@ Safe default track: `EXTERNAL_DISPATCH_GOVERNED_EXPANSION`
 - Phase 90: Publication Governance Final Index — layer=`governance final index`, gate=`final_index_only=true; apply disabled`
 - Phase 91: Publication Final Index Retention Watch — layer=`final index retention`, gate=`drift=[]; apply disabled`
 - Phase 92: Publication Governance Terminal Summary — layer=`terminal summary`, gate=`terminal_state=closed_no_apply_human_gated_reopen_only`
+- Phase 93: LoopRuntimeContract Adoption Gate — layer=`loop runtime contract`, gate=`loop_runtime_enabled=false; scheduler_enabled=false; worker_spawn_enabled=false; external_side_effects=false`
 
 ## Next ladder
 

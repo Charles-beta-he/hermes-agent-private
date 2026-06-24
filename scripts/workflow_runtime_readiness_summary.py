@@ -29,6 +29,7 @@ DEFAULT_RECEIPT_AWARE_GLOB = ROOT / "docs" / "private" / "workflow-kernel-receip
 DEFAULT_RECEIPT_REPORT_GLOB = ROOT / "docs" / "private" / "workflow-kernel-wrapper-run-receipts" / "workflow_kernel_wrapper_run_receipts_*.json"
 DEFAULT_GATE_GLOB = ROOT / "docs" / "private" / "workflow-kernel-cron-provider-health-gate" / "cron_provider_health_gate_*.json"
 DEFAULT_PROBE_GLOB = ROOT / "docs" / "private" / "workflow-kernel-provider-network-probe" / "provider_network_probe_*.json"
+DEFAULT_LOOP_CONTRACT_GLOB = ROOT / "docs" / "private" / "loop-runtime-contract-dry-runs" / "*.loop_runtime_contract_dry_run.json"
 DEFAULT_OUT = ROOT / "docs" / "private" / "workflow-kernel-runtime-readiness-summary"
 DEFAULT_STALE_HOURS = 24.0
 
@@ -104,6 +105,7 @@ def build_report(*, stale_hours: float = DEFAULT_STALE_HOURS) -> dict[str, Any]:
     receipt_report_path = newest_path(DEFAULT_RECEIPT_REPORT_GLOB)
     gate_path = newest_path(DEFAULT_GATE_GLOB)
     probe_path = newest_path(DEFAULT_PROBE_GLOB)
+    loop_contract_path = newest_path(DEFAULT_LOOP_CONTRACT_GLOB)
 
     projection = load_optional(projection_path)
     correlation = load_optional(correlation_path)
@@ -111,6 +113,7 @@ def build_report(*, stale_hours: float = DEFAULT_STALE_HOURS) -> dict[str, Any]:
     receipt_report = load_optional(receipt_report_path)
     gate = load_optional(gate_path)
     probe = load_optional(probe_path)
+    loop_contract = load_optional(loop_contract_path)
 
     artifacts = {
         "projection": artifact_state("projection", projection_path, projection, now=now, stale_hours=stale_hours),
@@ -119,6 +122,7 @@ def build_report(*, stale_hours: float = DEFAULT_STALE_HOURS) -> dict[str, Any]:
         "wrapper_run_receipts": artifact_state("wrapper_run_receipts", receipt_report_path, receipt_report, now=now, stale_hours=stale_hours),
         "gate": artifact_state("gate", gate_path, gate, now=now, stale_hours=stale_hours),
         "probe": artifact_state("probe", probe_path, probe, now=now, stale_hours=stale_hours),
+        "loop_runtime_contract": artifact_state("loop_runtime_contract", loop_contract_path, loop_contract, now=now, stale_hours=stale_hours),
     }
 
     checks = {
@@ -130,6 +134,9 @@ def build_report(*, stale_hours: float = DEFAULT_STALE_HOURS) -> dict[str, Any]:
         "gate_artifact_fresh": artifacts["gate"]["exists"] and artifacts["gate"]["stale"] is False,
         "probe_artifact_fresh": artifacts["probe"]["exists"] and artifacts["probe"]["stale"] is False,
         "global_runtime_switch_auto_enabled": runtime.get("runtime_switch_enabled_by_default") is True,
+        "loop_runtime_contract_doctor_passed": (loop_contract or {}).get("status") == "PASS"
+        and (loop_contract or {}).get("external_side_effects") is False
+        and (loop_contract or {}).get("loop_runtime_enabled") is False,
     }
     blocking = [name for name, ok in checks.items() if not ok]
 
@@ -159,8 +166,9 @@ def build_report(*, stale_hours: float = DEFAULT_STALE_HOURS) -> dict[str, Any]:
             "no credential read/write",
             "no external message send",
             "runtime switch is auto-enabled",
+            "loop runtime contract doctor passed",
         ],
-        "next_boundary": "runtime switch auto-enabled; future external dispatch expansion, credentialed generation changes, or broad scheduler rewrites still require scoped gates",
+        "next_boundary": "runtime switch auto-enabled and LoopRuntimeContract dry-run doctor passed; future scheduler/worker/taskpool/mission executor promotion, external dispatch expansion, credentialed generation changes, or broad scheduler rewrites still require scoped gates",
     }
 
 

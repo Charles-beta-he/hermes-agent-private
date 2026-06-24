@@ -25,7 +25,7 @@ def test_build_map_has_current_boundary_and_safe_default():
     report = mod.build_map()
     assert report["status"] == "WORKFLOW_SEQUENCE_MAP_READY"
     assert report["safe_default_track"] == "EXTERNAL_DISPATCH_GOVERNED_EXPANSION"
-    assert "Terminal publication governance state reached" in report["recommended_next"]
+    assert "LoopRuntimeContract adoption gate" in report["recommended_next"]
     assert "external message delivery without exact target/payload/mode" in report["closed_boundaries_without_explicit_authorization"]
 
 
@@ -34,7 +34,18 @@ def test_next_ladder_requires_authority_for_future_expansion():
     report = mod.build_map()
     assert mod.NEXT_LADDER == []
     assert report["next_ladder"] == []
-    assert "Terminal publication governance state reached" in report["recommended_next"]
+    assert "LoopRuntimeContract adoption gate" in report["recommended_next"]
+
+
+def test_sequence_map_includes_loop_runtime_contract_adoption_phase():
+    mod = load()
+    report = mod.build_map()
+    phase93 = next(p for p in report["phases"] if p["phase"] == 93)
+    assert phase93["name"] == "LoopRuntimeContract Adoption Gate"
+    assert phase93["depends_on"] == [92]
+    assert phase93["authority"] == "local dry-run contract doctor only"
+    assert "loop_runtime_enabled=false" in phase93["gate"]
+    assert phase93["next_unlocked"] == []
 
 
 def test_write_report_creates_artifacts(tmp_path):

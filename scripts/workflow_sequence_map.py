@@ -98,7 +98,8 @@ PHASES: list[dict[str, Any]] = [
     {"phase": 89, "name": "Publication Human Gate Retention Watch", "layer": "human gate retention", "status": "publication_human_gate_retention_clear", "depends_on": [88], "authority": "read-only watch", "gate": "drift=[]; apply disabled", "next_unlocked": [90]},
     {"phase": 90, "name": "Publication Governance Final Index", "layer": "governance final index", "status": "publication_governance_final_index_ready", "depends_on": [89], "authority": "read-only index", "gate": "final_index_only=true; apply disabled", "next_unlocked": [91]},
     {"phase": 91, "name": "Publication Final Index Retention Watch", "layer": "final index retention", "status": "publication_final_index_retention_clear", "depends_on": [90], "authority": "read-only watch", "gate": "drift=[]; apply disabled", "next_unlocked": [92]},
-    {"phase": 92, "name": "Publication Governance Terminal Summary", "layer": "terminal summary", "status": "publication_governance_terminal_summary_ready", "depends_on": [91], "authority": "read-only summary", "gate": "terminal_state=closed_no_apply_human_gated_reopen_only", "next_unlocked": []},
+    {"phase": 92, "name": "Publication Governance Terminal Summary", "layer": "terminal summary", "status": "publication_governance_terminal_summary_ready", "depends_on": [91], "authority": "read-only summary", "gate": "terminal_state=closed_no_apply_human_gated_reopen_only", "next_unlocked": [93]},
+    {"phase": 93, "name": "LoopRuntimeContract Adoption Gate", "layer": "loop runtime contract", "status": "loop_runtime_contract_dry_run_doctor_passed", "depends_on": [92], "authority": "local dry-run contract doctor only", "gate": "loop_runtime_enabled=false; scheduler_enabled=false; worker_spawn_enabled=false; external_side_effects=false", "next_unlocked": []},
 ]
 
 NEXT_LADDER = []
@@ -142,15 +143,15 @@ def build_map() -> dict[str, Any]:
         "report_id": "workflow_kernel_sequence_map_20260613_phase38",
         "created_at": iso(utc_now()),
         "status": "WORKFLOW_SEQUENCE_MAP_READY" if not errors else "WORKFLOW_SEQUENCE_MAP_INVALID",
-        "objective": "梳理 Phase17-92 的顺序、依赖、门禁和终态边界；runtime switch 已自动开启，Phase91 已完成 final index retention watch，Phase92 已生成 governance terminal summary；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+        "objective": "梳理 Phase17-93 的顺序、依赖、门禁和终态边界；runtime switch 已自动开启，Phase92 已生成 governance terminal summary，Phase93 已接入 LoopRuntimeContract dry-run doctor；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
         "phase_count": len(PHASES),
         "phases": PHASES,
         "validation_errors": errors,
-        "current_boundary": "Phase92 has produced a terminal read-only governance summary; publication remains closed/no-apply and future real reopen requires human exact target/payload/rollback.",
+        "current_boundary": "Phase93 has adopted LoopRuntimeContract as a local dry-run doctor; publication remains closed/no-apply and future scheduler/worker/taskpool/mission runtime promotion requires human exact scope/budget/rollback/evaluator evidence.",
         "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
         "next_ladder": NEXT_LADDER,
         "closed_boundaries_without_explicit_authorization": closed_boundaries,
-        "recommended_next": "Terminal publication governance state reached; no automatic apply/reopen path remains without human exact target/payload/rollback",
+        "recommended_next": "LoopRuntimeContract adoption gate reached; no scheduler/worker/taskpool/mission executor promotion without human exact scope/budget/rollback/evaluator evidence",
     }
 
 

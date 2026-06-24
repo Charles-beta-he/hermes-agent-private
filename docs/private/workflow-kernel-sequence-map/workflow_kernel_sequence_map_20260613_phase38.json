@@ -7,11 +7,11 @@
     "broad scheduler rewrite beyond opted-in jobs",
     "credential or secret read/write"
   ],
-  "created_at": "2026-06-14T17:13:20Z",
-  "current_boundary": "Phase92 has produced a terminal read-only governance summary; publication remains closed/no-apply and future real reopen requires human exact target/payload/rollback.",
+  "created_at": "2026-06-24T13:47:14Z",
+  "current_boundary": "Phase93 has adopted LoopRuntimeContract as a local dry-run doctor; publication remains closed/no-apply and future scheduler/worker/taskpool/mission runtime promotion requires human exact scope/budget/rollback/evaluator evidence.",
   "next_ladder": [],
-  "objective": "梳理 Phase17-92 的顺序、依赖、门禁和终态边界；runtime switch 已自动开启，Phase91 已完成 final index retention watch，Phase92 已生成 governance terminal summary；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
-  "phase_count": 76,
+  "objective": "梳理 Phase17-93 的顺序、依赖、门禁和终态边界；runtime switch 已自动开启，Phase92 已生成 governance terminal summary，Phase93 已接入 LoopRuntimeContract dry-run doctor；archive/export 仍私有，publication/apply/unattended/repeated dispatch 仍关闭、无新外发。",
+  "phase_count": 77,
   "phases": [
     {
       "authority": "read-only/local contract",
@@ -1074,12 +1074,26 @@
       "gate": "terminal_state=closed_no_apply_human_gated_reopen_only",
       "layer": "terminal summary",
       "name": "Publication Governance Terminal Summary",
-      "next_unlocked": [],
+      "next_unlocked": [
+        93
+      ],
       "phase": 92,
       "status": "publication_governance_terminal_summary_ready"
+    },
+    {
+      "authority": "local dry-run contract doctor only",
+      "depends_on": [
+        92
+      ],
+      "gate": "loop_runtime_enabled=false; scheduler_enabled=false; worker_spawn_enabled=false; external_side_effects=false",
+      "layer": "loop runtime contract",
+      "name": "LoopRuntimeContract Adoption Gate",
+      "next_unlocked": [],
+      "phase": 93,
+      "status": "loop_runtime_contract_dry_run_doctor_passed"
     }
   ],
-  "recommended_next": "Terminal publication governance state reached; no automatic apply/reopen path remains without human exact target/payload/rollback",
+  "recommended_next": "LoopRuntimeContract adoption gate reached; no scheduler/worker/taskpool/mission executor promotion without human exact scope/budget/rollback/evaluator evidence",
   "report_id": "workflow_kernel_sequence_map_20260613_phase38",
   "safe_default_track": "EXTERNAL_DISPATCH_GOVERNED_EXPANSION",
   "status": "WORKFLOW_SEQUENCE_MAP_READY",
