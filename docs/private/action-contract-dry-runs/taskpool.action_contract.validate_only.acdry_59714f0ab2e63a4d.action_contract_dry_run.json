@@ -1,0 +1,31 @@
+{
+  "a2a_enabled": false,
+  "action_id": "taskpool.action_contract.validate_only",
+  "authority_tier": "budget-handoff",
+  "boundary": "local_action_contract_validate_only_no_runtime_no_external_side_effects",
+  "builderio_package_installed": false,
+  "callable_surfaces": [
+    "cli",
+    "agent",
+    "dashboard"
+  ],
+  "compensation_path": "If future runtime integration is proposed, require a separate human-gated adapter authorization packet.",
+  "contract_digest": "sha256:93848ef935b9f2afc94e3690703e5fb47d49f6320651cb57da179b40bff541bc",
+  "dry_run_only": true,
+  "errors": [],
+  "evidence_refs": [
+    "artifact:/Users/charles/.hermes/docs/private/builderio-agent-native-net-new-recertification-20260623.md",
+    "file:schemas/action_contract.schema.json",
+    "file:scripts/action_contract_dry_run.py",
+    "proof:external_side_effects=false no BuilderIO package install no runtime executor enabled"
+  ],
+  "external_side_effects": false,
+  "idempotency_key": "action-contract-validate-only-v1",
+  "mcp_enabled": false,
+  "receipt_id": "acdry_59714f0ab2e63a4d",
+  "rollback_plan": "Delete the local dry-run receipt artifact; no runtime state or external service was changed.",
+  "runtime_executor_enabled": false,
+  "schema": "action_contract_dry_run_receipt_v1",
+  "status": "PASS",
+  "write_through_enabled": false
+}

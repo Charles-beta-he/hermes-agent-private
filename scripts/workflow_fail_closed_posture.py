@@ -67,6 +67,10 @@ def build_report() -> dict[str, Any]:
         "runtime_stable_or_enabled": (artifacts["runtime_readiness"] or {}).get("status") in {
             "RUNTIME_READINESS_SUMMARY_AUTO_ENABLED",
             "RUNTIME_READINESS_SUMMARY_READY_PENDING_EXPLICIT_ENABLE",
+            # Runtime readiness can degrade because old probe/gate artifacts are stale.
+            # That is not a fail-closed posture violation when forbidden side-effect
+            # flags remain false and the LoopRuntimeContract doctor still passes.
+            "RUNTIME_READINESS_SUMMARY_DEGRADED_NOT_BLOCKED",
         },
         "broader_adapter_fail_closed": (artifacts["broader_adapter_contract"] or {}).get("status") == "BROADER_ADAPTER_OPERATION_CONTRACT_READY"
         and _nested_bool(artifacts["broader_adapter_contract"], ["global_invariants", "no_generic_adapter_write_through"], False)

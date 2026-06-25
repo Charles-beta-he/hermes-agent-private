@@ -2,7 +2,7 @@
 
 Status: `FAIL_CLOSED_POSTURE_ENABLED`
 Fail-closed enabled: `true`
-Digest: `d72ad2b91abf8f94e365d1ebd0224427680031c8fc126188c70baee92b41a52f`
+Digest: `ccbdd3125426799ceef4a692e43a5bf58f0941658af26a5c8bde2b2a880d6101`
 
 ## Safe defaults
 - `external_side_effects_enabled` = `false`

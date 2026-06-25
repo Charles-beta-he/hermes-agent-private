@@ -1,10 +1,10 @@
 {
   "artifact_digests": {
     "broader_adapter_contract": "fafba87e3d79a8b09231d57adba89e283f5363bed362a3c2cf00e112a277694a",
-    "phase_g_optimization_backlog": "d109ad07dd0bd0688a09e09e97447c586ebb66d1a364a5f835980b0bfa2889b1",
+    "phase_g_optimization_backlog": "77360040d69a5606ae3e08b8f20510ca9f6c151235dc35a1f8a85bff0548f4b1",
     "publication_terminal_summary": "106e12c8db16c48cca2a68de45782e1dfc81c8d6a846064a6339cf2ccd363202",
-    "remaining_gates_terminal_index": "fe387a9a84380b879b2f36b336ac785adf34061afb5459157dd5aa643c186251",
-    "runtime_readiness": "4ad7f7006a3b0545484e93f35b7abe2f5fa41cef06aef23808d0ff5a7e8d44a2"
+    "remaining_gates_terminal_index": "d9081ebaba66649900c57ee5129272a764c443fd9c640e7b6f13052f695ae8ad",
+    "runtime_readiness": "b6dfde19ddec3254caacf85eda7b631c70108272865c6e02867af49d58d3b704"
   },
   "checks": {
     "broader_adapter_fail_closed": true,
@@ -14,7 +14,7 @@
     "runtime_stable_or_enabled": true,
     "sources_present": true
   },
-  "created_at": "2026-06-14T18:13:38Z",
+  "created_at": "2026-06-25T05:01:20Z",
   "fail_closed_enabled": true,
   "forbidden_enabled_observations": [],
   "forbidden_true_flags": [
@@ -37,7 +37,7 @@
     "taskpool_enqueue_enabled": false,
     "unattended_dispatch_enabled": false
   },
-  "posture_digest": "d72ad2b91abf8f94e365d1ebd0224427680031c8fc126188c70baee92b41a52f",
+  "posture_digest": "ccbdd3125426799ceef4a692e43a5bf58f0941658af26a5c8bde2b2a880d6101",
   "posture_policy": "enable_fail_closed_defaults_without_opening_external_apply_or_unattended_paths",
   "read_only": true,
   "schema": "workflow_kernel_fail_closed_posture_v1",
@@ -46,7 +46,7 @@
     "phase_g_optimization_backlog": "PHASE_G_OPTIMIZATION_BACKLOG_READY",
     "publication_terminal_summary": "PUBLICATION_GOVERNANCE_TERMINAL_SUMMARY_READY",
     "remaining_gates_terminal_index": "REMAINING_GATES_TERMINAL_INDEX_READY",
-    "runtime_readiness": "RUNTIME_READINESS_SUMMARY_AUTO_ENABLED"
+    "runtime_readiness": "RUNTIME_READINESS_SUMMARY_DEGRADED_NOT_BLOCKED"
   },
   "status": "FAIL_CLOSED_POSTURE_ENABLED"
 }

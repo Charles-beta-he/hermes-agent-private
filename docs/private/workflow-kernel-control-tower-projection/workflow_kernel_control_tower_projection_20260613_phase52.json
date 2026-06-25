@@ -1,7 +1,7 @@
 {
   "api_version": "workflow-control-tower.v1",
   "blockers": [],
-  "created_at": "2026-06-25T04:21:27Z",
+  "created_at": "2026-06-25T05:02:33Z",
   "next_boundary": "larger divergence after Phase52: durable Control Tower runtime/API integration vs unattended dispatch policy gate",
   "operator_summary": {
     "agent_pack_id": "agent.workflow_kernel_operator",
