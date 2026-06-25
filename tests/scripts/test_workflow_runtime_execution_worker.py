@@ -153,6 +153,93 @@ def test_runtime_execution_idempotent_after_running():
     assert orchestrator.saved == []
 
 
+def test_runtime_execution_exact_task_id_resolves_duplicate_claim_without_guessing():
+    module = _load_module()
+    orchestrator = FakeOrchestrator()
+    orchestrator.tasks.append(
+        FakeTask(
+            "group-contract-copy",
+            Path("/tmp/group-contract-copy.md"),
+            "claimed",
+            {
+                "status": "claimed",
+                "workflow_runtime_packet_id": "rti_test",
+                "workflow_claim_execution_id": "clex_test",
+                "workflow_consolidation_group_id": "contract_acceptance_governance",
+                "workflow_claim_packet_status": "consumed_claimed_not_running",
+                "claimed_by": "workflow_runtime_claim_executor",
+                "requires_human_gate": False,
+                "model_call_enabled": False,
+                "adapter_write_enabled": False,
+                "external_side_effects_enabled": False,
+                "evidence": [],
+            },
+        )
+    )
+
+    result = module.start_runtime_execution(
+        orchestrator,
+        runtime_packet_id="rti_test",
+        claim_execution_id="clex_test",
+        group_id="contract_acceptance_governance",
+        task_id="group-contract-copy",
+        write=True,
+    )
+
+    assert result["selected_task_id"] == "group-contract-copy"
+    assert orchestrator.tasks[0].status == "claimed"
+    assert orchestrator.tasks[2].status == "running"
+    assert orchestrator.saved == ["group-contract-copy"]
+
+
+def test_runtime_execution_exact_task_id_must_match_runtime_claim_and_group():
+    module = _load_module()
+    orchestrator = FakeOrchestrator()
+
+    try:
+        module.start_runtime_execution(
+            orchestrator,
+            runtime_packet_id="rti_test",
+            claim_execution_id="clex_test",
+            group_id="contract_acceptance_governance",
+            task_id="group-safety",
+            write=True,
+        )
+    except SystemExit as exc:
+        assert "does not match runtime_packet_id/claim_execution_id/group_id" in str(exc)
+    else:
+        raise AssertionError("expected SystemExit for mismatched exact task selector")
+
+
+def test_runtime_execution_exact_done_task_returns_idempotent_terminal_readback_without_mutation():
+    module = _load_module()
+    orchestrator = FakeOrchestrator()
+    task = orchestrator.tasks[0]
+    runtime_execution_id = "rtex_legacy"
+    task.status = "done"
+    task.fm["status"] = "done"
+    task.fm["workflow_runtime_execution_id"] = runtime_execution_id
+    task.fm["workflow_runtime_execution_status"] = "module_execution_review_ready"
+    task.fm["model_call_enabled"] = True
+    task.fm["adapter_write_enabled"] = True
+
+    result = module.start_runtime_execution(
+        orchestrator,
+        runtime_packet_id="rti_test",
+        claim_execution_id="clex_test",
+        group_id="contract_acceptance_governance",
+        task_id="group-contract",
+        write=True,
+    )
+
+    assert result["runtime_execution_id"] == runtime_execution_id
+    assert result["selected_task_id"] == "group-contract"
+    assert result["readback_verified"] is True
+    assert result["runtime_execution"]["new_status"] == "done"
+    assert result["boundary"] == "runtime_execution_worker_idempotent_terminal_readback"
+    assert orchestrator.saved == []
+
+
 def test_runtime_execution_rejects_human_gated_group():
     module = _load_module()
     orchestrator = FakeOrchestrator()

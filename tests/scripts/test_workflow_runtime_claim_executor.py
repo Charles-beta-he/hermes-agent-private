@@ -148,6 +148,87 @@ def test_runtime_claim_idempotent_after_claimed():
     assert orchestrator.saved == []
 
 
+def test_runtime_claim_exact_task_id_resolves_duplicate_group_without_guessing():
+    module = _load_module()
+    orchestrator = FakeOrchestrator()
+    orchestrator.tasks.append(
+        FakeTask(
+            "group-contract-copy",
+            Path("/tmp/group-contract-copy.md"),
+            "proposed",
+            {
+                "status": "proposed",
+                "workflow_runtime_packet_id": "rti_test",
+                "workflow_consolidation_group_id": "contract_acceptance_governance",
+                "workflow_claim_packet_status": "prepared_not_claimed",
+                "requires_human_gate": False,
+                "model_call_enabled": False,
+                "adapter_write_enabled": False,
+                "external_side_effects_enabled": False,
+                "evidence": [],
+            },
+        )
+    )
+
+    result = module.execute_runtime_claim(
+        orchestrator,
+        runtime_packet_id="rti_test",
+        group_id="contract_acceptance_governance",
+        task_id="group-contract-copy",
+        write=True,
+    )
+
+    assert result["selected_task_id"] == "group-contract-copy"
+    assert orchestrator.tasks[0].status == "proposed"
+    assert orchestrator.tasks[2].status == "claimed"
+    assert orchestrator.saved == ["group-contract-copy"]
+
+
+def test_runtime_claim_exact_task_id_must_match_runtime_packet_and_group():
+    module = _load_module()
+    orchestrator = FakeOrchestrator()
+
+    try:
+        module.execute_runtime_claim(
+            orchestrator,
+            runtime_packet_id="rti_test",
+            group_id="contract_acceptance_governance",
+            task_id="group-safety",
+            write=True,
+        )
+    except SystemExit as exc:
+        assert "does not match runtime_packet_id/group_id" in str(exc)
+    else:
+        raise AssertionError("expected SystemExit for mismatched exact task selector")
+
+
+def test_runtime_claim_exact_done_task_returns_idempotent_terminal_readback_without_mutation():
+    module = _load_module()
+    orchestrator = FakeOrchestrator()
+    task = orchestrator.tasks[0]
+    claim_id = "clex_legacy"
+    task.status = "done"
+    task.fm["status"] = "done"
+    task.fm["workflow_claim_execution_id"] = claim_id
+    task.fm["workflow_claim_packet_status"] = "consumed_claimed_not_running"
+    task.fm["workflow_runtime_execution_id"] = "rtex_existing"
+
+    result = module.execute_runtime_claim(
+        orchestrator,
+        runtime_packet_id="rti_test",
+        group_id="contract_acceptance_governance",
+        task_id="group-contract",
+        write=True,
+    )
+
+    assert result["claim_execution_id"] == claim_id
+    assert result["selected_task_id"] == "group-contract"
+    assert result["readback_verified"] is True
+    assert result["claim_execution"]["new_status"] == "done"
+    assert result["boundary"] == "runtime_claim_executor_idempotent_terminal_readback"
+    assert orchestrator.saved == []
+
+
 def test_runtime_claim_rejects_human_gated_group():
     module = _load_module()
     orchestrator = FakeOrchestrator()

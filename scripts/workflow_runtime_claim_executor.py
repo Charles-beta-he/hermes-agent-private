@@ -66,14 +66,27 @@ def _status(task: Any) -> str:
     return str(getattr(task, "status", "") or task.fm.get("status") or "")
 
 
-def find_target_task(orchestrator: Any, runtime_packet_id: str, group_id: str) -> Any:
+def find_target_task(orchestrator: Any, runtime_packet_id: str, group_id: str, task_id: str | None = None) -> Any:
     matches = []
+    exact_task = None
     for task in orchestrator.iter_tasks():
+        if task_id and task.id == task_id:
+            exact_task = task
         if str(task.fm.get("workflow_runtime_packet_id") or "") != runtime_packet_id:
             continue
         if str(task.fm.get("workflow_consolidation_group_id") or "") != group_id:
             continue
+        if task_id and task.id != task_id:
+            continue
         matches.append(task)
+    if task_id:
+        if exact_task is None:
+            raise SystemExit(f"exact task_id not found: {task_id}")
+        if not matches:
+            raise SystemExit(
+                f"exact task_id {task_id} does not match runtime_packet_id/group_id: "
+                f"runtime_packet_id={runtime_packet_id} group_id={group_id}"
+            )
     if not matches:
         raise SystemExit(f"no prepared runtime task found for runtime_packet_id={runtime_packet_id} group_id={group_id}")
     if len(matches) > 1:
@@ -99,12 +112,14 @@ def execute_runtime_claim(
     group_id: str = DEFAULT_GROUP_ID,
     workflow_id: str = DEFAULT_WORKFLOW_ID,
     run_id: str = DEFAULT_RUN_ID,
+    task_id: str | None = None,
     write: bool = False,
 ) -> dict[str, Any]:
-    task = find_target_task(orchestrator, runtime_packet_id, group_id)
+    task = find_target_task(orchestrator, runtime_packet_id, group_id, task_id=task_id)
     previous_status = _status(task)
     claim_execution_id = build_claim_execution_id(runtime_packet_id, group_id, task.id)
-    if previous_status == "claimed" and str(task.fm.get("workflow_claim_execution_id") or "") == claim_execution_id:
+    existing_claim_execution_id = str(task.fm.get("workflow_claim_execution_id") or "")
+    if previous_status == "claimed" and existing_claim_execution_id == claim_execution_id:
         already_result = {
             "claim_execution_id": claim_execution_id,
             "runtime_packet_id": runtime_packet_id,
@@ -137,6 +152,39 @@ def execute_runtime_claim(
             "boundary": "runtime_claim_executor_done_before_running_or_adapter",
         }
         return already_result
+    if previous_status in {"running", "review", "done", "archived"} and existing_claim_execution_id:
+        claim_execution_id = existing_claim_execution_id
+        return {
+            "claim_execution_id": claim_execution_id,
+            "runtime_packet_id": runtime_packet_id,
+            "workflow_id": workflow_id,
+            "run_id": run_id,
+            "generated_at": _now_utc(),
+            "selected_group_id": group_id,
+            "selected_task_id": task.id,
+            "taskpool_write_enabled": bool(write),
+            "taskpool_claim_enabled": True,
+            "runtime_enabled": True,
+            "runtime_record_only": False,
+            "model_call_enabled": _fm_bool(task.fm.get("model_call_enabled")),
+            "adapter_write_enabled": _fm_bool(task.fm.get("adapter_write_enabled")),
+            "external_side_effects_enabled": _fm_bool(task.fm.get("external_side_effects_enabled")),
+            "claim_execution": {
+                "task_id": task.id,
+                "task_path": str(task.path),
+                "group_id": group_id,
+                "previous_status": "proposed",
+                "new_status": previous_status,
+                "claim_packet_status": str(task.fm.get("workflow_claim_packet_status") or "consumed_claimed_not_running"),
+                "claimed_by": str(task.fm.get("claimed_by") or CLAIM_ACTOR),
+                "claim_scope": "idempotent_terminal_readback_no_mutation",
+                "readback_verified": True,
+            },
+            "readback_verified": True,
+            "derived_refresh": None,
+            "rollback_plan": "No mutation performed: selected task is already past claim boundary. Rollback must use the latest downstream stage rollback packet if needed.",
+            "boundary": "runtime_claim_executor_idempotent_terminal_readback",
+        }
     if previous_status != "proposed":
         raise SystemExit(f"runtime claim expects proposed task, got {task.id}:{previous_status}")
     if str(task.fm.get("workflow_claim_packet_status") or "") != "prepared_not_claimed":
@@ -253,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-packet-id", default=DEFAULT_RUNTIME_PACKET_ID)
     parser.add_argument("--group-id", default=DEFAULT_GROUP_ID)
+    parser.add_argument("--task-id", default=None, help="Exact task id to select when runtime/group matches are duplicated")
     parser.add_argument("--workflow-id", default=DEFAULT_WORKFLOW_ID)
     parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
     parser.add_argument("--orchestrator", type=Path, default=ORCHESTRATOR_PATH)
@@ -268,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         group_id=args.group_id,
         workflow_id=args.workflow_id,
         run_id=args.run_id,
+        task_id=args.task_id,
         write=args.write,
     )
     if args.write:
