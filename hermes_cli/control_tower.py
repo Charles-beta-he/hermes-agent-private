@@ -6248,6 +6248,64 @@ def record_loop_runtime_promotion_decision(
     return {"status": status, "event": event, "projection": projection, "ledger": str(paths["ledger"])}
 
 
+def record_loop_runtime_promotion_disable(
+    *,
+    decision: str,
+    actor_type: str = "human",
+    actor_id: str = "dashboard",
+    actor_role: str = "operator",
+    reason: str = "",
+    kill_switch: str | None = None,
+    readback_surface: str | None = None,
+) -> dict[str, Any]:
+    """Record a local kill-switch disable event for runtime API activation only."""
+    normalized = decision.strip().lower()
+    expected = "disable_loop_runtime_contract_promotion"
+    allowed = normalized == expected and kill_switch == expected and bool(readback_surface)
+    status = "recorded" if allowed else "blocked"
+    paths = _loop_runtime_promotion_paths()
+    paths["base"].mkdir(parents=True, exist_ok=True)
+    event = {
+        "schema": "loop_runtime_promotion_authorization_v1",
+        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "status": status,
+        "decision": normalized,
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+        "reason": reason,
+        "kill_switch": kill_switch,
+        "readback_surface": readback_surface,
+        "runtime_api_enabled": False,
+        "scheduler_enabled": False,
+        "worker_spawn_enabled": False,
+        "taskpool_write_enabled": False,
+        "mission_executor_promoted": False,
+        "credentialed_model_generation_enabled": False,
+        "external_dispatch_enabled": False,
+        "external_side_effects_executed": False,
+        "publish_enabled": False,
+        "destructive_action_enabled": False,
+        "safe_boundaries": [
+            "local runtime API readback disabled",
+            "no scheduler mutation",
+            "no worker spawn",
+            "no taskpool write-through",
+            "no mission executor promotion",
+            "no credentialed generation",
+            "no external dispatch",
+            "no publish",
+            "no destructive action",
+        ],
+    }
+    event["event_digest"] = _runtime_promotion_event_digest(event)
+    with paths["ledger"].open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+    projection = build_loop_runtime_promotion_projection()
+    paths["projection"].write_text(json.dumps(projection, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return {"status": status, "event": event, "projection": projection, "ledger": str(paths["ledger"])}
+
+
 def build_loop_runtime_promotion_projection() -> dict[str, Any]:
     paths = _loop_runtime_promotion_paths()
     events: list[dict[str, Any]] = []
@@ -6257,10 +6315,17 @@ def build_loop_runtime_promotion_projection() -> dict[str, Any]:
                 events.append(json.loads(line))
     latest = events[-1] if events else None
     runtime_enabled = bool(latest and latest.get("status") == "recorded" and latest.get("runtime_api_enabled") is True)
+    disabled = bool(latest and latest.get("status") == "recorded" and latest.get("decision") == "disable_loop_runtime_contract_promotion")
+    if disabled:
+        projection_status = "RUNTIME_API_DISABLED_BY_KILL_SWITCH"
+    elif runtime_enabled:
+        projection_status = "RUNTIME_API_AUTHORIZED_LOCAL_ONLY"
+    else:
+        projection_status = "HUMAN_AUTHORIZATION_REQUIRED"
     return {
         "schema": "loop_runtime_promotion_projection_v1",
-        "status": "RUNTIME_API_AUTHORIZED_LOCAL_ONLY" if runtime_enabled else "HUMAN_AUTHORIZATION_REQUIRED",
-        "runtime_api_enabled": runtime_enabled,
+        "status": projection_status,
+        "runtime_api_enabled": runtime_enabled and not disabled,
         "latest_decision": latest,
         "authorization_ledger": str(paths["ledger"]),
         "scheduler_enabled": False,

@@ -165,7 +165,7 @@ def test_control_tower_snapshot_includes_workflow_kernel_projection_when_artifac
     assert kernel["runtime_promotion_authorization"]["activate_control_tower_runtime_api_requested"] is True
     assert kernel["runtime_promotion_authorization"]["scheduler_requested"] is False
     assert kernel["runtime_promotion_authorization"]["kill_switch"] == "disable_loop_runtime_contract_promotion"
-    assert kernel["runtime_api_activation"]["status"] in {"RUNTIME_API_AUTHORIZED_LOCAL_ONLY", "HUMAN_AUTHORIZATION_REQUIRED"}
+    assert kernel["runtime_api_activation"]["status"] in {"RUNTIME_API_AUTHORIZED_LOCAL_ONLY", "RUNTIME_API_DISABLED_BY_KILL_SWITCH", "HUMAN_AUTHORIZATION_REQUIRED"}
     assert kernel["runtime_api_activation"]["scheduler_enabled"] is False
     assert kernel["runtime_api_activation"]["worker_spawn_enabled"] is False
     assert kernel["runtime_api_activation"]["taskpool_write_enabled"] is False

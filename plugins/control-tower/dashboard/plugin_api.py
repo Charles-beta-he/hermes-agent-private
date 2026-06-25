@@ -221,6 +221,20 @@ def record_loop_runtime_promotion_decision(req: LoopRuntimePromotionDecisionRequ
     )
 
 
+@router.post("/workflow-kernel/loop-runtime-promotion/disable")
+def record_loop_runtime_promotion_disable(req: LoopRuntimePromotionDecisionRequest):
+    """Record local runtime API kill-switch rollback without scheduler/write side effects."""
+    return control_tower.record_loop_runtime_promotion_disable(
+        decision=req.decision,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        reason=req.reason,
+        kill_switch=req.kill_switch,
+        readback_surface=req.readback_surface,
+    )
+
+
 @router.post("/commands/propose")
 def propose_command(req: ProposedCommandRequest):
     """Record a proposed command without executing workflow side effects."""
