@@ -3,7 +3,7 @@
     "broader_adapter_contract": "fafba87e3d79a8b09231d57adba89e283f5363bed362a3c2cf00e112a277694a",
     "phase_g_optimization_backlog": "77360040d69a5606ae3e08b8f20510ca9f6c151235dc35a1f8a85bff0548f4b1",
     "publication_terminal_summary": "106e12c8db16c48cca2a68de45782e1dfc81c8d6a846064a6339cf2ccd363202",
-    "remaining_gates_terminal_index": "d9081ebaba66649900c57ee5129272a764c443fd9c640e7b6f13052f695ae8ad",
+    "remaining_gates_terminal_index": "f4a46b919c0c0cb6ee78eb4551c7d0a86fc71463963cb302242ace4f464c7dbe",
     "runtime_readiness": "b6dfde19ddec3254caacf85eda7b631c70108272865c6e02867af49d58d3b704"
   },
   "checks": {
@@ -14,7 +14,7 @@
     "runtime_stable_or_enabled": true,
     "sources_present": true
   },
-  "created_at": "2026-06-25T05:01:20Z",
+  "created_at": "2026-06-25T05:29:52Z",
   "fail_closed_enabled": true,
   "forbidden_enabled_observations": [],
   "forbidden_true_flags": [
@@ -37,7 +37,7 @@
     "taskpool_enqueue_enabled": false,
     "unattended_dispatch_enabled": false
   },
-  "posture_digest": "ccbdd3125426799ceef4a692e43a5bf58f0941658af26a5c8bde2b2a880d6101",
+  "posture_digest": "bcebfe80e6eb6da2d05c6b8f781badc20d37a80c02b5be9c26165208a935a902",
   "posture_policy": "enable_fail_closed_defaults_without_opening_external_apply_or_unattended_paths",
   "read_only": true,
   "schema": "workflow_kernel_fail_closed_posture_v1",
