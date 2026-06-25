@@ -103,6 +103,30 @@ def test_taskpool_import_write_is_idempotent_by_candidate_id():
     assert len(orchestrator.tasks) == 1
 
 
+def test_taskpool_import_write_treats_existing_archived_candidate_as_closed_idempotent():
+    writer = _load_writer_module()
+    orchestrator = FakeOrchestrator()
+    import_result = _import_dry_run()
+    candidate_id = import_result["candidate_tasks"][0]["candidate_id"]
+    orchestrator.tasks.append(
+        FakeTask(
+            "archived-task-001",
+            Path("/tmp/archived-task-001.md"),
+            "archived",
+            {"workflow_import_candidate_id": candidate_id, "status": "archived"},
+        )
+    )
+
+    result = writer.write_candidates(import_result, orchestrator, max_candidates=1)
+
+    assert result["taskpool_write_enabled"] is True
+    assert result["created_tasks"][0]["task_id"] == "archived-task-001"
+    assert result["created_tasks"][0]["status"] == "archived"
+    assert result["created_tasks"][0]["idempotent_replay"] is True
+    assert result["created_tasks"][0]["closed_existing"] is True
+    assert len(orchestrator.tasks) == 1
+
+
 def test_taskpool_import_write_rejects_claim_enabled_dry_run_artifact():
     writer = _load_writer_module()
     data = _import_dry_run()

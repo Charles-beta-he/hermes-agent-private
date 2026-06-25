@@ -209,6 +209,19 @@ def write_candidates(
             idempotent_replay = False
 
         if task.status != "proposed":
+            if idempotent_replay and task.status in {"archived", "done", "review", "blocked"}:
+                created_tasks.append(
+                    {
+                        "candidate_id": candidate_id,
+                        "task_id": task.id,
+                        "task_path": str(task.path),
+                        "status": task.status,
+                        "readback_verified": True,
+                        "idempotent_replay": True,
+                        "closed_existing": True,
+                    }
+                )
+                continue
             raise SystemExit(f"task {task.id} readback status mismatch: expected proposed got {task.status}")
         if str(task.fm.get("workflow_import_candidate_id") or "") != candidate_id:
             raise SystemExit(f"task {task.id} readback candidate mismatch")

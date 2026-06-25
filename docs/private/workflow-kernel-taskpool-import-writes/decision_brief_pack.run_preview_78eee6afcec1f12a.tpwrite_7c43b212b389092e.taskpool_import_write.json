@@ -1,0 +1,35 @@
+{
+  "write_id": "tpwrite_7c43b212b389092e",
+  "import_id": "tpdry_a5678ba9e856a763",
+  "run_id": "run_preview_78eee6afcec1f12a",
+  "workflow_id": "decision_brief_pack",
+  "written_at": "2026-06-25T03:28:10Z",
+  "taskpool_write_enabled": true,
+  "taskpool_claim_enabled": false,
+  "runtime_enabled": false,
+  "model_call_enabled": false,
+  "adapter_write_enabled": false,
+  "external_side_effects_enabled": false,
+  "created_tasks": [
+    {
+      "candidate_id": "candidate_005107060ee9",
+      "task_id": "2026-06-13-workflow-kernel-import-candidateworkflow-contract-valid 2",
+      "task_path": "/Users/charles/Documents/brain/05-实践与项目/tasks/2026-06-13-workflow-kernel-import-candidateworkflow-contract-valid 2.md",
+      "status": "archived",
+      "readback_verified": true,
+      "idempotent_replay": true,
+      "closed_existing": true
+    }
+  ],
+  "readback_verified": true,
+  "derived_refresh": {
+    "status": "OK",
+    "reason": "workflow_taskpool_import_write",
+    "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
+    "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
+    "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
+    "generated_at": "2026-06-25T11:28:10+08:00"
+  },
+  "rollback_plan": "If this import must be rolled back, archive or remove only the listed proposed task notes after a separate rollback authorization; no runtime/claim/model/adapter state exists.",
+  "boundary": "taskpool_import_write_done_no_claim_no_runtime"
+}
