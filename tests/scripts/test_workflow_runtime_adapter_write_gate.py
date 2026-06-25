@@ -169,6 +169,41 @@ def test_adapter_write_idempotent_after_write(tmp_path):
     assert second["readback_verified"] is True
 
 
+def test_adapter_write_exact_task_id_resolves_duplicate_model_call_chain_with_legacy_id(tmp_path):
+    module = _load_module()
+    orchestrator = FakeOrchestrator()
+    existing_id = "adw_legacy"
+    orchestrator.tasks[0].fm.update({
+        "workflow_adapter_write_id": existing_id,
+        "workflow_adapter_write_status": "adapter_write_local_outbox_simulated",
+        "workflow_adapter_write_record": {"intent_digest": "sha256:abc", "write_intent": {"target": "taskpool"}},
+        "adapter_write_enabled": True,
+    })
+    orchestrator.tasks.append(
+        FakeTask("group-contract-copy", Path("/tmp/group-contract-copy.md"), "done", dict(orchestrator.tasks[0].fm))
+    )
+
+    result = module.execute_adapter_write_gate(
+        orchestrator,
+        runtime_packet_id="rti_test",
+        claim_execution_id="clex_test",
+        runtime_execution_id="rtex_test",
+        module_execution_id="modex_test",
+        done_execution_id="done_test",
+        model_call_id="mcall_test",
+        group_id="contract_acceptance_governance",
+        task_id="group-contract",
+        output_dir=tmp_path,
+        write=True,
+    )
+
+    assert result["adapter_write_id"] == existing_id
+    assert result["selected_task_id"] == "group-contract"
+    assert result["readback_verified"] is True
+    assert result["boundary"] == "runtime_adapter_write_idempotent_readback_before_external_side_effect"
+    assert orchestrator.saved == []
+
+
 def test_adapter_write_rejects_human_gated_group(tmp_path):
     module = _load_module()
     orchestrator = FakeOrchestrator()

@@ -6,7 +6,7 @@
     "outbox_item": {
       "bytes": 778,
       "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-apply-outbox/xlocal_910913832457b33c.taskpool_outbox_simulator.item.json",
-      "sha256": "bbc6b46a766db1b69509381a02667b671f190947272aea36ec458c3545d65cbb"
+      "sha256": "5e5f9b96eed4a779b515da79025861d3c59f9fe90064d0fd1104b4e07c1e4ae5"
     }
   },
   "operation": "record_local_external_apply_intent",

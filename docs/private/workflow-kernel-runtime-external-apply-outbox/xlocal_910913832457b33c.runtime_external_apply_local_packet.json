@@ -6,7 +6,7 @@
   "derived_refresh": {
     "control_center": "/Users/charles/Documents/brain/07-仪表盘/待完成任务控制台.md",
     "dashboard": "/Users/charles/Documents/brain/07-仪表盘/待完成任务运行态.md",
-    "generated_at": "2026-06-13T16:02:35+08:00",
+    "generated_at": "2026-06-25T12:21:26+08:00",
     "reason": "workflow_runtime_external_apply_local",
     "sorted_pool": "/Users/charles/Documents/brain/05-实践与项目/tasks/任务池-排序.md",
     "status": "OK"
@@ -16,13 +16,13 @@
   "outbox_item": {
     "bytes": 778,
     "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-apply-outbox/xlocal_910913832457b33c.taskpool_outbox_simulator.item.json",
-    "sha256": "bbc6b46a766db1b69509381a02667b671f190947272aea36ec458c3545d65cbb"
+    "sha256": "5e5f9b96eed4a779b515da79025861d3c59f9fe90064d0fd1104b4e07c1e4ae5"
   },
   "readback_verified": true,
   "receipt": {
     "bytes": 859,
     "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-runtime-external-apply-outbox/xlocal_910913832457b33c.runtime_external_apply_receipt.json",
-    "sha256": "4535cfae126d780433d46ca4db177d1f43b3cb1d9b3ef2ce7c29f043249e8766"
+    "sha256": "a904ffc393c86014ddb4efaab557760712903a31b4c81ba79a4e27fc20a5923d"
   },
   "rollback_evidence": {
     "bytes": 494,

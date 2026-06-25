@@ -197,6 +197,47 @@ def test_model_call_idempotent_after_write(tmp_path):
     assert second["readback_verified"] is True
 
 
+def test_model_call_exact_task_id_resolves_duplicate_done_chain_and_allows_existing_adapter_flag(tmp_path):
+    module = _load_module()
+    orchestrator = FakeOrchestrator()
+    existing_id = "mcall_legacy"
+    orchestrator.tasks[0].fm.update({
+        "workflow_model_call_id": existing_id,
+        "workflow_model_call_status": "model_call_completed_read_only",
+        "workflow_model_call_record": {"response_artifact": {"sha256": "abc"}},
+        "model_call_enabled": True,
+        "adapter_write_enabled": True,
+    })
+    orchestrator.tasks.append(
+        FakeTask("group-contract-copy", Path("/tmp/group-contract-copy.md"), "done", dict(orchestrator.tasks[0].fm))
+    )
+
+    def should_not_run(prompt, *, provider, model, timeout):
+        raise AssertionError("idempotent exact readback should not call model")
+
+    result = module.execute_model_call_gate(
+        orchestrator,
+        runtime_packet_id="rti_test",
+        claim_execution_id="clex_test",
+        runtime_execution_id="rtex_test",
+        module_execution_id="modex_test",
+        done_execution_id="done_test",
+        group_id="contract_acceptance_governance",
+        task_id="group-contract",
+        provider="test-provider",
+        model="test-model",
+        output_dir=tmp_path,
+        write=True,
+        runner=should_not_run,
+    )
+
+    assert result["model_call_id"] == existing_id
+    assert result["selected_task_id"] == "group-contract"
+    assert result["readback_verified"] is True
+    assert result["boundary"] == "runtime_model_call_idempotent_readback_before_external_write"
+    assert orchestrator.saved == []
+
+
 def test_model_call_rejects_human_gated_group(tmp_path):
     module = _load_module()
     orchestrator = FakeOrchestrator()

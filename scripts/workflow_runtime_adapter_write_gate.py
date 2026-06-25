@@ -103,9 +103,13 @@ def find_model_call_task(
     done_execution_id: str,
     model_call_id: str,
     group_id: str,
+    task_id: str | None = None,
 ) -> Any:
     matches = []
+    exact_task = None
     for task in orchestrator.iter_tasks():
+        if task_id and task.id == task_id:
+            exact_task = task
         if str(task.fm.get("workflow_runtime_packet_id") or "") != runtime_packet_id:
             continue
         if str(task.fm.get("workflow_claim_execution_id") or "") != claim_execution_id:
@@ -120,7 +124,14 @@ def find_model_call_task(
             continue
         if str(task.fm.get("workflow_consolidation_group_id") or "") != group_id:
             continue
+        if task_id and task.id != task_id:
+            continue
         matches.append(task)
+    if task_id:
+        if exact_task is None:
+            raise SystemExit(f"exact task_id not found: {task_id}")
+        if not matches:
+            raise SystemExit(f"exact task_id {task_id} does not match selected runtime adapter chain")
     if not matches:
         raise SystemExit("no model-call-completed task found for selected runtime adapter chain")
     if len(matches) > 1:
@@ -153,9 +164,10 @@ def execute_adapter_write_gate(
     workflow_id: str = DEFAULT_WORKFLOW_ID,
     run_id: str = DEFAULT_RUN_ID,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
+    task_id: str | None = None,
     write: bool = False,
 ) -> dict[str, Any]:
-    task = find_model_call_task(orchestrator, runtime_packet_id, claim_execution_id, runtime_execution_id, module_execution_id, done_execution_id, model_call_id, group_id)
+    task = find_model_call_task(orchestrator, runtime_packet_id, claim_execution_id, runtime_execution_id, module_execution_id, done_execution_id, model_call_id, group_id, task_id=task_id)
     if _status(task) != "done":
         raise SystemExit(f"adapter write gate expects done task, got {task.id}:{_status(task)}")
     if str(task.fm.get("workflow_model_call_status") or "") != "model_call_completed_read_only":
@@ -166,7 +178,9 @@ def execute_adapter_write_gate(
         raise SystemExit(f"adapter write gate refuses task with external side effects already enabled: {task.id}")
 
     adapter_write_id = build_adapter_write_id(model_call_id, group_id, task.id)
-    if str(task.fm.get("workflow_adapter_write_id") or "") == adapter_write_id and str(task.fm.get("workflow_adapter_write_status") or "") == "adapter_write_local_outbox_simulated":
+    existing_adapter_write_id = str(task.fm.get("workflow_adapter_write_id") or "")
+    if existing_adapter_write_id and str(task.fm.get("workflow_adapter_write_status") or "") == "adapter_write_local_outbox_simulated":
+        adapter_write_id = existing_adapter_write_id
         existing = _fm_object(task.fm.get("workflow_adapter_write_record"))
         return {
             "adapter_write_id": adapter_write_id,
@@ -193,7 +207,7 @@ def execute_adapter_write_gate(
             "readback_verified": True,
             "derived_refresh": None,
             "rollback_plan": "Remove workflow_adapter_write_id / workflow_adapter_write_status / workflow_adapter_write_record and evidence markers after rollback authorization; delete local outbox artifact if desired; no external system was mutated.",
-            "boundary": "runtime_adapter_write_local_outbox_simulated_before_external_side_effect",
+            "boundary": "runtime_adapter_write_idempotent_readback_before_external_side_effect",
         }
 
     model_record = _fm_object(task.fm.get("workflow_model_call_record"))
@@ -326,6 +340,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--done-execution-id", default=DEFAULT_DONE_EXECUTION_ID)
     parser.add_argument("--model-call-id", default=DEFAULT_MODEL_CALL_ID)
     parser.add_argument("--group-id", default=DEFAULT_GROUP_ID)
+    parser.add_argument("--task-id", default=None, help="Exact task id to select when model-call chain matches are duplicated")
     parser.add_argument("--workflow-id", default=DEFAULT_WORKFLOW_ID)
     parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
     parser.add_argument("--orchestrator", type=Path, default=ORCHESTRATOR_PATH)
@@ -347,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
         workflow_id=args.workflow_id,
         run_id=args.run_id,
         output_dir=args.output_dir,
+        task_id=args.task_id,
         write=args.write,
     )
     if args.write:

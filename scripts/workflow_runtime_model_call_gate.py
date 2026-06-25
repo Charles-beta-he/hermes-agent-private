@@ -107,9 +107,13 @@ def find_done_task(
     module_execution_id: str,
     done_execution_id: str,
     group_id: str,
+    task_id: str | None = None,
 ) -> Any:
     matches = []
+    exact_task = None
     for task in orchestrator.iter_tasks():
+        if task_id and task.id == task_id:
+            exact_task = task
         if str(task.fm.get("workflow_runtime_packet_id") or "") != runtime_packet_id:
             continue
         if str(task.fm.get("workflow_claim_execution_id") or "") != claim_execution_id:
@@ -122,7 +126,14 @@ def find_done_task(
             continue
         if str(task.fm.get("workflow_consolidation_group_id") or "") != group_id:
             continue
+        if task_id and task.id != task_id:
+            continue
         matches.append(task)
+    if task_id:
+        if exact_task is None:
+            raise SystemExit(f"exact task_id not found: {task_id}")
+        if not matches:
+            raise SystemExit(f"exact task_id {task_id} does not match selected runtime/model-call chain")
     if not matches:
         raise SystemExit("no done task found for the selected runtime/model-call chain")
     if len(matches) > 1:
@@ -207,6 +218,7 @@ def execute_model_call_gate(
     provider: str = DEFAULT_PROVIDER,
     model: str = DEFAULT_MODEL,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
+    task_id: str | None = None,
     timeout: int = 180,
     write: bool = False,
     runner: Callable[..., subprocess.CompletedProcess[str]] = default_model_runner,
@@ -219,6 +231,7 @@ def execute_model_call_gate(
         module_execution_id,
         done_execution_id,
         group_id,
+        task_id=task_id,
     )
     if _status(task) != "done":
         raise SystemExit(f"model call gate expects done task, got {task.id}:{_status(task)}")
@@ -226,11 +239,11 @@ def execute_model_call_gate(
         raise SystemExit(f"model call gate expects done_local_review_closed for {task.id}")
     if _fm_bool(task.fm.get("requires_human_gate")):
         raise SystemExit(f"model call gate refuses human-gated group without separate explicit override: {group_id}")
-    if _fm_bool(task.fm.get("adapter_write_enabled")) or _fm_bool(task.fm.get("external_side_effects_enabled")):
-        raise SystemExit(f"model call gate refuses task with adapter/external flags enabled: {task.id}")
 
     model_call_id = build_model_call_id(done_execution_id, module_id, route_alias, provider, model)
-    if str(task.fm.get("workflow_model_call_id") or "") == model_call_id and str(task.fm.get("workflow_model_call_status") or "") == "model_call_completed_read_only":
+    existing_model_call_id = str(task.fm.get("workflow_model_call_id") or "")
+    if existing_model_call_id and str(task.fm.get("workflow_model_call_status") or "") == "model_call_completed_read_only":
+        model_call_id = existing_model_call_id
         existing = _fm_object(task.fm.get("workflow_model_call_record"))
         return {
             "model_call_id": model_call_id,
@@ -266,8 +279,10 @@ def execute_model_call_gate(
             "readback_verified": True,
             "derived_refresh": None,
             "rollback_plan": "Remove workflow_model_call_id / workflow_model_call_status / workflow_model_call_record and evidence markers after rollback authorization; no adapter/external write was performed.",
-            "boundary": "runtime_model_call_completed_before_adapter_or_external_write",
+            "boundary": "runtime_model_call_idempotent_readback_before_external_write",
         }
+    if _fm_bool(task.fm.get("adapter_write_enabled")) or _fm_bool(task.fm.get("external_side_effects_enabled")):
+        raise SystemExit(f"model call gate refuses task with adapter/external flags enabled: {task.id}")
 
     prompt = build_prompt(workflow_id=workflow_id, group_id=group_id, module_id=module_id, route_alias=route_alias, task_id=task.id)
     prompt_path = output_dir / f"{workflow_id}.{run_id}.{model_call_id}.prompt.txt"
@@ -416,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--module-execution-id", default=DEFAULT_MODULE_EXECUTION_ID)
     parser.add_argument("--done-execution-id", default=DEFAULT_DONE_EXECUTION_ID)
     parser.add_argument("--group-id", default=DEFAULT_GROUP_ID)
+    parser.add_argument("--task-id", default=None, help="Exact task id to select when done-chain matches are duplicated")
     parser.add_argument("--workflow-id", default=DEFAULT_WORKFLOW_ID)
     parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
     parser.add_argument("--module-id", default=DEFAULT_MODULE_ID)
@@ -445,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
         provider=args.provider,
         model=args.model,
         output_dir=args.output_dir,
+        task_id=args.task_id,
         timeout=args.timeout,
         write=args.write,
     )

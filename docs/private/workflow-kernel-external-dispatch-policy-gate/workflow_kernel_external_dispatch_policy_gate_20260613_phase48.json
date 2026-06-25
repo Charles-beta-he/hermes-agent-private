@@ -1,15 +1,15 @@
 {
   "candidate_report_id": "workflow_kernel_external_dispatch_expansion_20260613_phase47",
-  "created_at": "2026-06-13T18:58:58Z",
+  "created_at": "2026-06-25T04:21:49Z",
   "idempotency_key": "phase48:P47A_LOCAL_OUTBOX_ONLY:local_outbox_simulator:5659752eb38d0dda",
   "next_boundary": "guarded single external send requires exact adapter, target, payload, mode, idempotency key, and rollback/correction path",
   "outbox_artifact": {
     "path": "/Users/charles/.hermes/hermes-agent/docs/private/workflow-kernel-external-dispatch-policy-gate/xdispatch_f939258a1ea1b6a1.local_outbox_item.json",
-    "sha256": "be0526ab7c4a6aa7f20552daa74997d4cdb50b8705233fc231f9e9d5c9c6465c"
+    "sha256": "ce76d8efda70c6e64e2c6d71ddc56b0f6b6707c2203d402b571978d84029dd5b"
   },
   "outbox_item": {
     "adapter": "local_outbox_simulator",
-    "created_at": "2026-06-13T18:58:58Z",
+    "created_at": "2026-06-25T04:21:49Z",
     "delivery_status": "local_outbox_recorded_not_dispatched",
     "external_side_effects_enabled": false,
     "idempotency_key": "phase48:P47A_LOCAL_OUTBOX_ONLY:local_outbox_simulator:5659752eb38d0dda",
