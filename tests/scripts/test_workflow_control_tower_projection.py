@@ -83,13 +83,22 @@ def fixtures(tmp_path: Path):
         "human_decision_required": ["exact_executor_binding", "post_action_readback_surface"],
         "escape_hatch": {"kill_switch": "disable_loop_runtime_contract_promotion"},
     })
-    return registry, phase50, sequence, readiness, candidate, authorization
+    activation = write(tmp_path / "runtime_api_activation.json", {
+        "status": "RUNTIME_API_AUTHORIZED_LOCAL_ONLY",
+        "runtime_api_enabled": True,
+        "scheduler_enabled": False,
+        "worker_spawn_enabled": False,
+        "taskpool_write_enabled": False,
+        "external_side_effects_executed": False,
+        "latest_decision": {"event_digest": "abc123"},
+    })
+    return registry, phase50, sequence, readiness, candidate, authorization, activation
 
 
 def test_projection_ready(tmp_path):
     mod = load()
-    registry, phase50, sequence, readiness, candidate, authorization = fixtures(tmp_path)
-    report = mod.build_projection(registry_path=registry, phase50_path=phase50, sequence_path=sequence, readiness_path=readiness, candidate_receipt_path=candidate, authorization_packet_path=authorization)
+    registry, phase50, sequence, readiness, candidate, authorization, activation = fixtures(tmp_path)
+    report = mod.build_projection(registry_path=registry, phase50_path=phase50, sequence_path=sequence, readiness_path=readiness, candidate_receipt_path=candidate, authorization_packet_path=authorization, runtime_activation_path=activation)
     assert report["status"] == "CONTROL_TOWER_UI_API_PROJECTION_READY"
     assert report["blockers"] == []
     assert report["operator_summary"]["last_external_send"]["message_id"] == "4261"
@@ -103,16 +112,21 @@ def test_projection_ready(tmp_path):
     assert report["operator_summary"]["runtime_promotion_authorization"]["activate_control_tower_runtime_api_requested"] is True
     assert report["operator_summary"]["runtime_promotion_authorization"]["scheduler_requested"] is False
     assert report["operator_summary"]["runtime_promotion_authorization"]["kill_switch"] == "disable_loop_runtime_contract_promotion"
+    assert report["operator_summary"]["runtime_api_activation"]["status"] == "RUNTIME_API_AUTHORIZED_LOCAL_ONLY"
+    assert report["operator_summary"]["runtime_api_activation"]["runtime_api_enabled"] is True
+    assert report["operator_summary"]["runtime_api_activation"]["scheduler_enabled"] is False
+    assert report["operator_summary"]["runtime_api_activation"]["external_side_effects_executed"] is False
     assert any(panel["id"] == "loop_runtime_contract" for panel in report["panels"])
     assert any(panel["id"] == "loop_runtime_candidate" for panel in report["panels"])
     assert any(panel["id"] == "runtime_promotion_authorization" for panel in report["panels"])
+    assert any(panel["id"] == "runtime_api_activation" for panel in report["panels"])
     assert "loop runtime contract projected read-only" in report["safe_boundaries"]
     assert "no additional external send" in report["safe_boundaries"]
 
 
 def test_projection_blocks_without_phase50_receipt(tmp_path):
     mod = load()
-    registry, phase50, sequence, readiness, candidate, authorization = fixtures(tmp_path)
+    registry, phase50, sequence, readiness, candidate, authorization, activation = fixtures(tmp_path)
     payload = json.loads(phase50.read_text())
     payload["status"] = "GUARDED_EXTERNAL_SEND_BLOCKED"
     phase50.write_text(json.dumps(payload))
@@ -123,8 +137,8 @@ def test_projection_blocks_without_phase50_receipt(tmp_path):
 
 def test_write_report_creates_html(tmp_path):
     mod = load()
-    registry, phase50, sequence, readiness, candidate, authorization = fixtures(tmp_path)
-    report = mod.build_projection(registry_path=registry, phase50_path=phase50, sequence_path=sequence, readiness_path=readiness, candidate_receipt_path=candidate, authorization_packet_path=authorization)
+    registry, phase50, sequence, readiness, candidate, authorization, activation = fixtures(tmp_path)
+    report = mod.build_projection(registry_path=registry, phase50_path=phase50, sequence_path=sequence, readiness_path=readiness, candidate_receipt_path=candidate, authorization_packet_path=authorization, runtime_activation_path=activation)
     artifacts = mod.write_report(report, tmp_path / "out")
     html = Path(artifacts["html"]).read_text()
     assert "Workflow Kernel Control Tower Projection" in html

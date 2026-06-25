@@ -6156,6 +6156,126 @@ def _workflow_kernel_policy_editor_paths() -> dict[str, Path]:
     }
 
 
+def _loop_runtime_promotion_paths() -> dict[str, Path]:
+    root = Path(__file__).resolve().parents[1]
+    base = root / "docs/private/loop-runtime-contract-candidates"
+    return {
+        "base": base,
+        "ledger": base / "hermes_workflow_kernel_control_tower_runtime_promotion.authorizations.jsonl",
+        "projection": base / "hermes_workflow_kernel_control_tower_runtime_promotion.runtime_api_activation.json",
+    }
+
+
+def _runtime_promotion_event_digest(event: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(event, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def record_loop_runtime_promotion_decision(
+    *,
+    decision: str,
+    actor_type: str = "human",
+    actor_id: str = "dashboard",
+    actor_role: str = "operator",
+    reason: str = "",
+    packet_id: str | None = None,
+    executor_binding: str | None = None,
+    budget_max_turns: int | None = None,
+    budget_runtime_seconds: int | None = None,
+    rollback_command: str | None = None,
+    kill_switch: str | None = None,
+    evaluator_command: str | None = None,
+    readback_surface: str | None = None,
+) -> dict[str, Any]:
+    """Record explicit local-only runtime API activation authority.
+
+    This consumes the user's runtime API authorization only for the dashboard
+    plugin/readback surface. It never enables scheduler, worker spawn, taskpool
+    writes, mission executor promotion, credentialed generation, external
+    dispatch, publish, or destructive actions.
+    """
+    normalized = decision.strip().lower()
+    required = [executor_binding, budget_max_turns, budget_runtime_seconds, rollback_command, kill_switch, evaluator_command, readback_surface]
+    allowed = normalized == "approve_runtime_api_only" and all(x not in (None, "") for x in required)
+    status = "recorded" if allowed else "blocked"
+    paths = _loop_runtime_promotion_paths()
+    paths["base"].mkdir(parents=True, exist_ok=True)
+    event = {
+        "schema": "loop_runtime_promotion_authorization_v1",
+        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "status": status,
+        "decision": normalized,
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+        "reason": reason,
+        "packet_id": packet_id,
+        "executor_binding": executor_binding,
+        "budget": {
+            "max_turns": budget_max_turns,
+            "runtime_seconds": budget_runtime_seconds,
+        },
+        "rollback_command": rollback_command,
+        "kill_switch": kill_switch,
+        "evaluator_command": evaluator_command,
+        "readback_surface": readback_surface,
+        "runtime_api_enabled": bool(allowed),
+        "scheduler_enabled": False,
+        "worker_spawn_enabled": False,
+        "taskpool_write_enabled": False,
+        "mission_executor_promoted": False,
+        "credentialed_model_generation_enabled": False,
+        "external_dispatch_enabled": False,
+        "external_side_effects_executed": False,
+        "publish_enabled": False,
+        "destructive_action_enabled": False,
+        "safe_boundaries": [
+            "local dashboard plugin/runtime api readback only",
+            "no scheduler enablement",
+            "no worker spawn",
+            "no taskpool write-through",
+            "no mission executor promotion",
+            "no credentialed generation",
+            "no external dispatch",
+            "no publish",
+            "no destructive action",
+        ],
+    }
+    event["event_digest"] = _runtime_promotion_event_digest(event)
+    with paths["ledger"].open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+    projection = build_loop_runtime_promotion_projection()
+    paths["projection"].write_text(json.dumps(projection, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return {"status": status, "event": event, "projection": projection, "ledger": str(paths["ledger"])}
+
+
+def build_loop_runtime_promotion_projection() -> dict[str, Any]:
+    paths = _loop_runtime_promotion_paths()
+    events: list[dict[str, Any]] = []
+    if paths["ledger"].exists():
+        for line in paths["ledger"].read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                events.append(json.loads(line))
+    latest = events[-1] if events else None
+    runtime_enabled = bool(latest and latest.get("status") == "recorded" and latest.get("runtime_api_enabled") is True)
+    return {
+        "schema": "loop_runtime_promotion_projection_v1",
+        "status": "RUNTIME_API_AUTHORIZED_LOCAL_ONLY" if runtime_enabled else "HUMAN_AUTHORIZATION_REQUIRED",
+        "runtime_api_enabled": runtime_enabled,
+        "latest_decision": latest,
+        "authorization_ledger": str(paths["ledger"]),
+        "scheduler_enabled": False,
+        "worker_spawn_enabled": False,
+        "taskpool_write_enabled": False,
+        "mission_executor_promoted": False,
+        "credentialed_model_generation_enabled": False,
+        "external_dispatch_enabled": False,
+        "external_side_effects_executed": False,
+        "publish_enabled": False,
+        "destructive_action_enabled": False,
+        "next_boundary": "scheduler/worker/taskpool/mission/external/publish/destructive authority remains closed and requires a separate exact gate",
+    }
+
+
 def record_workflow_kernel_policy_editor_decision(
     *,
     decision: str,
@@ -6365,6 +6485,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         fail_closed_posture = json.loads(fail_closed_posture_path.read_text()) if fail_closed_posture_path.exists() else None
         loop_runtime_candidate_receipt = json.loads(loop_runtime_candidate_receipt_path.read_text()) if loop_runtime_candidate_receipt_path.exists() else None
         loop_runtime_authorization_packet = json.loads(loop_runtime_authorization_packet_path.read_text()) if loop_runtime_authorization_packet_path.exists() else None
+        runtime_api_activation = build_loop_runtime_promotion_projection()
         policy_editor = build_workflow_kernel_policy_editor_projection()
     except Exception as exc:
         return {
@@ -6450,6 +6571,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         "loop_runtime_contract": loop_contract,
         "loop_runtime_candidate": loop_runtime_candidate,
         "runtime_promotion_authorization": runtime_promotion_authorization,
+        "runtime_api_activation": runtime_api_activation,
         "unattended_dispatch_policy": {
             "status": (policy or {}).get("status", "not_compiled"),
             "default_mode": (policy or {}).get("default_mode", "dry_run_preview"),

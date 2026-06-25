@@ -156,6 +156,22 @@ class WorkflowKernelPolicyEditorDecisionRequest(BaseModel):
     policy_digest: str | None = None
 
 
+class LoopRuntimePromotionDecisionRequest(BaseModel):
+    decision: str = Field(min_length=1)
+    actor_type: str = Field(default="human", min_length=1)
+    actor_id: str = Field(default="dashboard", min_length=1)
+    actor_role: str = Field(default="operator", min_length=1)
+    reason: str = Field(default="", min_length=0)
+    packet_id: str | None = None
+    executor_binding: str | None = None
+    budget_max_turns: int | None = None
+    budget_runtime_seconds: int | None = None
+    rollback_command: str | None = None
+    kill_switch: str | None = None
+    evaluator_command: str | None = None
+    readback_surface: str | None = None
+
+
 @router.get("/snapshot")
 def get_snapshot():
     """Return the read-only Control Tower Phase 1 snapshot."""
@@ -182,6 +198,26 @@ def record_workflow_kernel_policy_editor_decision(req: WorkflowKernelPolicyEdito
         actor_role=req.actor_role,
         reason=req.reason,
         policy_digest=req.policy_digest,
+    )
+
+
+@router.post("/workflow-kernel/loop-runtime-promotion/decision")
+def record_loop_runtime_promotion_decision(req: LoopRuntimePromotionDecisionRequest):
+    """Record local runtime-API-only promotion authority without scheduler/write side effects."""
+    return control_tower.record_loop_runtime_promotion_decision(
+        decision=req.decision,
+        actor_type=req.actor_type,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        reason=req.reason,
+        packet_id=req.packet_id,
+        executor_binding=req.executor_binding,
+        budget_max_turns=req.budget_max_turns,
+        budget_runtime_seconds=req.budget_runtime_seconds,
+        rollback_command=req.rollback_command,
+        kill_switch=req.kill_switch,
+        evaluator_command=req.evaluator_command,
+        readback_surface=req.readback_surface,
     )
 
 
