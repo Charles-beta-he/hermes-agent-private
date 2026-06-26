@@ -31,6 +31,7 @@ from agent.prompt_builder import (
     GOOGLE_MODEL_OPERATIONAL_GUIDANCE,
     HERMES_AGENT_HELP_GUIDANCE,
     AGENT_OS_ADVISORY_GUIDANCE,
+    AGENT_OS_RUNTIME_ROUTING_GUIDANCE,
     KANBAN_GUIDANCE,
     MEMORY_GUIDANCE,
     OBJECTIVE_MODEL_PATH_GUIDANCE,
@@ -123,6 +124,8 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # gates closed; no runtime route is changed by this text.
     if getattr(agent, "_agent_os_advisory_guidance", False) and agent.valid_tool_names:
         stable_parts.append(AGENT_OS_ADVISORY_GUIDANCE)
+    if getattr(agent, "_agent_os_runtime_routing", False) and agent.valid_tool_names:
+        stable_parts.append(AGENT_OS_RUNTIME_ROUTING_GUIDANCE)
 
     # Tool-aware behavioral guidance: only inject when the tools are loaded
     tool_guidance = []

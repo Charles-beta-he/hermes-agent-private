@@ -105,7 +105,8 @@ def _agent_os_config_status(home: str | Path | None = None) -> dict[str, Any]:
             agent_cfg = {}
         return {
             "agent_os_advisory_guidance": bool(agent_cfg.get("agent_os_advisory_guidance", False)),
-            "real_runtime_routing": False,
+            "agent_os_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
+            "real_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
             "tool_invocation_from_agent_os": False,
             "external_dispatch": False,
         }
@@ -168,7 +169,11 @@ def status(home: str | Path | None = None) -> dict[str, Any]:
             "would_execute_anything": shadow.get("would_execute_anything") if isinstance(shadow, dict) else None,
         },
         "config": config_status,
-        "runtime_effect": "none; command reads artifacts and computes shadow advice only",
+        "runtime_effect": (
+            "local route preflight enabled; Agent OS may inform path selection but cannot execute"
+            if config_status.get("agent_os_runtime_routing")
+            else "none; command reads artifacts and computes shadow advice only"
+        ),
     }
     return payload
 

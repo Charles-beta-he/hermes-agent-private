@@ -1272,6 +1272,10 @@ def init_agent(
     # shadow CLI surface to the model; it does not connect runtime routing or
     # authorize execution.
     agent._agent_os_advisory_guidance = bool(_agent_section.get("agent_os_advisory_guidance", False))
+    # Default-off Agent OS runtime route preflight. This promotes route() to an
+    # active local decision aid for governed intents, but still never invokes
+    # tools or mutates lifecycle/external state by itself.
+    agent._agent_os_runtime_routing = bool(_agent_section.get("agent_os_runtime_routing", False))
 
     # Local Python toolchain probe toggle.  Default True.  When False,
     # the probe is skipped entirely (no subprocess calls, no system-prompt

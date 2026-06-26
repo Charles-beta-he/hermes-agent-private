@@ -347,6 +347,23 @@ AGENT_OS_ADVISORY_GUIDANCE = (
     "fresh readback evidence."
 )
 
+
+# Narrow runtime-routing prompt. This still does not execute anything; it
+# promotes Agent OS from "available advisory surface" to "must consult for
+# governed self-architecture/workflow intents before choosing an execution path".
+AGENT_OS_RUNTIME_ROUTING_GUIDANCE = (
+    "# Agent OS runtime route preflight (local-only)\n"
+    "When `agent.agent_os_runtime_routing` is enabled and tools are available, treat "
+    "Agent OS route preflight as an active local routing gate for Hermes self-architecture, "
+    "workflow-control-plane, taskpool/mission, scheduler, gateway, or high side-effect intents: "
+    "call `hermes agent-os status --json` and `hermes agent-os route --json <intent>` "
+    "before selecting the implementation path whenever the request touches those surfaces. "
+    "Use the result to classify domain/risk and required AuthorityGrant, but do not execute "
+    "the suggested node automatically. This opens routing advice only; tool invocation, "
+    "scheduler/worker/lifecycle writes, external dispatch, publish/deploy, and destructive "
+    "actions remain closed unless separately authorized and verified."
+)
+
 # OpenAI GPT/Codex-specific execution guidance.  Addresses known failure modes
 # where GPT models abandon work on partial results, skip prerequisite lookups,
 # hallucinate instead of using tools, and declare "done" without verification.

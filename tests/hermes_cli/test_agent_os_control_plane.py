@@ -61,14 +61,15 @@ def _seed_agent_os(home: Path, *, runtime_mutation: bool = False, shadow_execute
 
 def test_agent_os_status_reads_projection_without_runtime_mutation(tmp_path: Path, monkeypatch) -> None:
     _seed_agent_os(tmp_path)
-    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {"agent_os_advisory_guidance": True}})
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {"agent_os_advisory_guidance": True, "agent_os_runtime_routing": True}})
     payload = status(tmp_path)
     assert payload["ok"] is True
     assert payload["mode"] == "advisory_readback_only"
     assert payload["projection"]["node_count"] == 2
     assert payload["config"]["agent_os_advisory_guidance"] is True
-    assert payload["config"]["real_runtime_routing"] is False
-    assert payload["runtime_effect"].startswith("none")
+    assert payload["config"]["real_runtime_routing"] is True
+    assert payload["config"]["tool_invocation_from_agent_os"] is False
+    assert payload["runtime_effect"].startswith("local route preflight enabled")
 
 
 def test_agent_os_doctor_fails_closed_on_runtime_mutation(tmp_path: Path) -> None:

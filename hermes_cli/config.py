@@ -859,6 +859,12 @@ DEFAULT_CONFIG = {
         # prompt mentions the read-only `hermes agent-os` shadow/readback
         # surface while keeping real routing/execution gates closed.
         "agent_os_advisory_guidance": False,
+        # Default-off Agent OS runtime route preflight. When enabled, the
+        # system prompt requires consulting `hermes agent-os status/route` for
+        # governed Hermes/workflow/high-side-effect intents before choosing an
+        # execution path. Still local-only: no tools are invoked from Agent OS
+        # and no scheduler/worker/lifecycle/external gates are opened.
+        "agent_os_runtime_routing": False,
         # Embedder-supplied environment description appended to the system
         # prompt's environment-hints block. Lets a host that wraps Hermes
         # (sandbox runner, managed platform) explain the runtime environment
