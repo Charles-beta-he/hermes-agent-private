@@ -855,6 +855,10 @@ DEFAULT_CONFIG = {
         # (docker/modal/ssh — they have their own probe).  Set False to
         # disable entirely.
         "environment_probe": True,
+        # Default-off Agent OS advisory guidance. When enabled, the system
+        # prompt mentions the read-only `hermes agent-os` shadow/readback
+        # surface while keeping real routing/execution gates closed.
+        "agent_os_advisory_guidance": False,
         # Embedder-supplied environment description appended to the system
         # prompt's environment-hints block. Lets a host that wraps Hermes
         # (sandbox runner, managed platform) explain the runtime environment

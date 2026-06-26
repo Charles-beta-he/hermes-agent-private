@@ -30,6 +30,7 @@ from agent.prompt_builder import (
     DEFAULT_AGENT_IDENTITY,
     GOOGLE_MODEL_OPERATIONAL_GUIDANCE,
     HERMES_AGENT_HELP_GUIDANCE,
+    AGENT_OS_ADVISORY_GUIDANCE,
     KANBAN_GUIDANCE,
     MEMORY_GUIDANCE,
     OBJECTIVE_MODEL_PATH_GUIDANCE,
@@ -116,6 +117,12 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # it adds runtime behavior without mutating taskpool / workflow state.
     if getattr(agent, "_objective_model_path_guidance", True) and agent.valid_tool_names:
         stable_parts.append(OBJECTIVE_MODEL_PATH_GUIDANCE)
+
+    # Agent OS advisory prompt is default-off. It only advertises the
+    # read-only/shadow CLI surface and explicitly keeps execution/routing
+    # gates closed; no runtime route is changed by this text.
+    if getattr(agent, "_agent_os_advisory_guidance", False) and agent.valid_tool_names:
+        stable_parts.append(AGENT_OS_ADVISORY_GUIDANCE)
 
     # Tool-aware behavioral guidance: only inject when the tools are loaded
     tool_guidance = []

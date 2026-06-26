@@ -334,6 +334,19 @@ OBJECTIVE_MODEL_PATH_GUIDANCE = (
     "downgrading the task."
 )
 
+
+# Default-off advisory prompt for the Agent OS Control Plane. This does not route
+# or execute anything; it only tells the model that an advisory CLI exists.
+AGENT_OS_ADVISORY_GUIDANCE = (
+    "# Agent OS advisory surface (default-off)\n"
+    "When enabled by config, Hermes exposes `hermes agent-os status|doctor|route|replay|report` "
+    "as a read-only/shadow-only control-plane surface. Treat it as advisory evidence only: "
+    "it must not be interpreted as permission to invoke tools, mutate routing, schedule work, "
+    "write task/mission lifecycle state, send external messages, publish, deploy, or perform "
+    "destructive actions. High side-effect intents still require explicit AuthorityGrant and "
+    "fresh readback evidence."
+)
+
 # OpenAI GPT/Codex-specific execution guidance.  Addresses known failure modes
 # where GPT models abandon work on partial results, skip prerequisite lookups,
 # hallucinate instead of using tools, and declare "done" without verification.

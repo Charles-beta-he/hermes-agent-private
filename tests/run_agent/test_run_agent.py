@@ -1484,6 +1484,53 @@ class TestObjectiveModelPathGuidance:
             assert OBJECTIVE_MODEL_PATH_GUIDANCE not in a._build_system_prompt()
 
 
+class TestAgentOsAdvisoryGuidance:
+    """Tests for default-off Agent OS advisory prompt injection."""
+
+    def _make_agent(self, agent_os_advisory_guidance=False, tools=None):
+        tool_names = tools if tools is not None else ("terminal", "skill_view")
+        with (
+            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs(*tool_names)),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("run_agent.OpenAI"),
+            patch(
+                "hermes_cli.config.load_config",
+                return_value={"agent": {"agent_os_advisory_guidance": agent_os_advisory_guidance}},
+            ),
+        ):
+            a = AIAgent(
+                model="anthropic/claude-opus-4.8",
+                api_key="test-key-1234567890",
+                base_url="https://openrouter.ai/api/v1",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+            a.client = MagicMock()
+            return a
+
+    def test_default_off(self):
+        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE
+
+        agent = self._make_agent(agent_os_advisory_guidance=False)
+        assert AGENT_OS_ADVISORY_GUIDANCE not in agent._build_system_prompt()
+
+    def test_enabled_injects_shadow_only_guidance(self):
+        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE
+
+        agent = self._make_agent(agent_os_advisory_guidance=True)
+        prompt = agent._build_system_prompt()
+        assert AGENT_OS_ADVISORY_GUIDANCE in prompt
+        assert "hermes agent-os status|doctor|route|replay|report" in prompt
+        assert "must not be interpreted as permission" in prompt
+
+    def test_no_tools_no_injection(self):
+        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE
+
+        agent = self._make_agent(agent_os_advisory_guidance=True, tools=())
+        assert AGENT_OS_ADVISORY_GUIDANCE not in agent._build_system_prompt()
+
+
 class TestEnvironmentProbeIntegration:
     """Tests for the local Python toolchain probe wiring (config.yaml
     ``agent.environment_probe``).  The probe itself is unit-tested in

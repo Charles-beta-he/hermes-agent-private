@@ -1268,6 +1268,11 @@ def init_agent(
     # True; prompt-only and safe to disable for lean prompts.
     agent._objective_model_path_guidance = bool(_agent_section.get("objective_model_path_guidance", True))
 
+    # Default-off Agent OS advisory prompt. This only exposes the read-only
+    # shadow CLI surface to the model; it does not connect runtime routing or
+    # authorize execution.
+    agent._agent_os_advisory_guidance = bool(_agent_section.get("agent_os_advisory_guidance", False))
+
     # Local Python toolchain probe toggle.  Default True.  When False,
     # the probe is skipped entirely (no subprocess calls, no system-prompt
     # line).  Useful for users on exotic setups where the probe heuristics
