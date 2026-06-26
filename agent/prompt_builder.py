@@ -378,6 +378,17 @@ AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE = (
     "a later exact AuthorityGrant and fresh readback open that specific gate."
 )
 
+
+AGENT_OS_LOCAL_HARNESS_GUIDANCE = (
+    "# Agent OS local harness executor (SSOT-local only)\n"
+    "When `agent.agent_os_local_harness_executor` is enabled, the only Agent OS execution "
+    "surface opened is `hermes agent-os execute-local-harness`: a local JSON harness under "
+    "the Agent OS SSOT that consumes an exact authorization/intent/target/evidence tuple, "
+    "writes one harness task status, appends a receipt, and reads it back. This is not real "
+    "taskpool/Kanban/Lark/Telegram write-through; external dispatch, scheduler/worker actions, "
+    "publish/deploy/push, and destructive operations remain closed."
+)
+
 # OpenAI GPT/Codex-specific execution guidance.  Addresses known failure modes
 # where GPT models abandon work on partial results, skip prerequisite lookups,
 # hallucinate instead of using tools, and declare "done" without verification.

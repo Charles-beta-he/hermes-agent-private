@@ -1280,6 +1280,9 @@ def init_agent(
     # a certification/review boundary before future Agent OS execution gates;
     # it does not execute tools or mutate external/lifecycle state.
     agent._agent_os_multimodel_review = bool(_agent_section.get("agent_os_multimodel_review", False))
+    # Default-off Agent OS local-file harness executor. Mutates only Agent OS
+    # SSOT-local harness JSON + receipt ledger; not real adapter write-through.
+    agent._agent_os_local_harness_executor = bool(_agent_section.get("agent_os_local_harness_executor", False))
 
     # Local Python toolchain probe toggle.  Default True.  When False,
     # the probe is skipped entirely (no subprocess calls, no system-prompt

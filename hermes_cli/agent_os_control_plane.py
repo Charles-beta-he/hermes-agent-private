@@ -8,6 +8,7 @@ cron jobs, changes task/mission lifecycle, or sends external messages.
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import json
 import os
 import re
@@ -61,6 +62,9 @@ class AgentOsPaths:
     doctor_report: Path
     shadow_report: Path
     shadow_replay: Path
+    harness_state: Path
+    harness_receipts: Path
+    harness_authorizations: Path
 
 
 def resolve_home(home: str | Path | None = None) -> Path:
@@ -80,6 +84,9 @@ def paths(home: str | Path | None = None) -> AgentOsPaths:
         doctor_report=project_root / "06-projection" / "doctor_report.json",
         shadow_report=project_root / "07-shadow" / "router-shadow-report.json",
         shadow_replay=project_root / "07-shadow" / "router-shadow-replay.json",
+        harness_state=project_root / "08-executor" / "local-harness-state.json",
+        harness_receipts=project_root / "08-executor" / "local-harness-receipts.jsonl",
+        harness_authorizations=project_root / "08-executor" / "local-harness-authorizations.json",
     )
 
 
@@ -107,8 +114,9 @@ def _agent_os_config_status(home: str | Path | None = None) -> dict[str, Any]:
             "agent_os_advisory_guidance": bool(agent_cfg.get("agent_os_advisory_guidance", False)),
             "agent_os_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
             "agent_os_multimodel_review": bool(agent_cfg.get("agent_os_multimodel_review", False)),
+            "agent_os_local_harness_executor": bool(agent_cfg.get("agent_os_local_harness_executor", False)),
             "real_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
-            "tool_invocation_from_agent_os": False,
+            "tool_invocation_from_agent_os": bool(agent_cfg.get("agent_os_local_harness_executor", False)),
             "external_dispatch": False,
         }
     except Exception as exc:  # noqa: BLE001
@@ -465,6 +473,416 @@ def generate_replay_quality_report(home: str | Path | None = None, *, limit: int
         packet_path.write_text(json.dumps(authority_packet, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         report["written"] = {"report": str(report_path), "authority_packet": str(packet_path)}
     return report
+
+
+def _path_within(path: Path, root: Path) -> bool:
+    resolved_path = path.resolve(strict=False)
+    resolved_root = root.resolve(strict=False)
+    return resolved_root == resolved_path or resolved_root in resolved_path.parents
+
+
+def _safe_executor_path(p: AgentOsPaths, requested: str | Path | None, *, default: Path, suffix: str) -> Path:
+    """Return a direct-child executor file path under 08-executor.
+
+    For the first executor rung we deliberately disallow subdirectories. This
+    removes parent-directory symlink ambiguity and keeps O_NOFOLLOW protection on
+    the only mutable path component: the final file.
+    """
+    allowed_root = p.project_root / "08-executor"
+    if allowed_root.exists() and allowed_root.is_symlink():
+        raise ValueError("Agent OS 08-executor must not be a symlink")
+    if requested is None:
+        target = default
+    else:
+        raw = Path(requested).expanduser()
+        if any(part in {".", ".."} for part in raw.parts):
+            raise ValueError("executor path must not contain dot or parent traversal components")
+        if raw.is_absolute():
+            target = raw
+            if target.parent != allowed_root:
+                raise ValueError("absolute executor path must be a direct child of Agent OS 08-executor")
+        else:
+            if len(raw.parts) != 1:
+                raise ValueError("relative executor path must be a single filename")
+            target = allowed_root / raw.name
+    if target.suffix != suffix:
+        raise ValueError(f"executor path must be a {suffix} file")
+    if target.name in {"", ".", ".."}:
+        raise ValueError("executor path must name a file")
+    # Direct-child only: no caller-controlled parent directory components.
+    if target.parent.resolve(strict=False) != allowed_root.resolve(strict=False):
+        raise ValueError("executor path must be a direct child of Agent OS 08-executor")
+    if not _path_within(target, allowed_root):
+        raise ValueError("executor path must stay under Agent OS 08-executor")
+    if target.exists() and not target.is_file():
+        raise ValueError("executor path must be a regular file")
+    if target.is_symlink():
+        raise ValueError("executor path must not be a symlink")
+    return target
+
+def _safe_harness_state_path(p: AgentOsPaths, requested: str | Path | None) -> Path:
+    return _safe_executor_path(p, requested, default=p.harness_state, suffix=".json")
+
+
+def _safe_receipts_path(p: AgentOsPaths) -> Path:
+    return _safe_executor_path(p, None, default=p.harness_receipts, suffix=".jsonl")
+
+
+def _safe_authorizations_path(p: AgentOsPaths) -> Path:
+    return _safe_executor_path(p, None, default=p.harness_authorizations, suffix=".json")
+
+
+def _open_executor_dir(path: Path) -> int:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        return os.open(path.parent, flags)
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR, errno.EPERM}:
+            raise ValueError("executor parent must be a real directory, not a symlink") from None
+        raise
+
+
+def _safe_read_text(path: Path, default: str | None = None) -> str | None:
+    if not path.exists():
+        return default
+    dir_fd = _open_executor_dir(path)
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path.name, flags, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return default
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.EPERM}:
+            raise ValueError("executor read path must not be a symlink") from None
+        raise
+    finally:
+        os.close(dir_fd)
+    with os.fdopen(fd, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _safe_read_json(path: Path, default: Any) -> Any:
+    try:
+        text = _safe_read_text(path, None)
+        if text is None:
+            return default
+        return json.loads(text)
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return {"_load_error": str(exc), "_path": str(path)}
+
+
+def _safe_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    dir_fd = _open_executor_dir(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path.name, flags, 0o600, dir_fd=dir_fd)
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.EPERM}:
+            raise ValueError("executor path must not be a symlink") from None
+        raise
+    finally:
+        os.close(dir_fd)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    dir_fd = _open_executor_dir(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path.name, flags, 0o600, dir_fd=dir_fd)
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.EPERM}:
+            raise ValueError("receipt path must not be a symlink") from None
+        raise
+    finally:
+        os.close(dir_fd)
+    with os.fdopen(fd, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    text = _safe_read_text(path, None)
+    if text is None:
+        return rows
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _evidence_key(evidence_refs: list[str]) -> list[str]:
+    return sorted(x.strip() for x in evidence_refs if isinstance(x, str) and x.strip())
+
+
+def _authorization_matches(record: dict[str, Any], *, authorization_id: str, intent_id: str, target_ref: str, target_status: str, evidence_refs: list[str], adapter_state_path: Path) -> bool:
+    return (
+        record.get("authorization_id") == authorization_id
+        and record.get("intent_id") == intent_id
+        and record.get("adapter") == "local-file-harness"
+        and record.get("target_ref") == target_ref
+        and record.get("target_status") == target_status
+        and _evidence_key(record.get("evidence_refs", [])) == _evidence_key(evidence_refs)
+        and record.get("adapter_state_path") == str(adapter_state_path)
+        and record.get("execution_authorized") is True
+        and record.get("external_side_effects_authorized") is False
+    )
+
+
+def authorize_local_harness(
+    *,
+    authorization_id: str,
+    intent_id: str,
+    target_ref: str,
+    target_status: str,
+    evidence_refs: list[str],
+    adapter_state_path: str | Path | None = None,
+    home: str | Path | None = None,
+) -> dict[str, Any]:
+    """Record a non-executing local harness authorization tuple."""
+    p = paths(home)
+    cfg = _agent_os_config_status(home)
+    base = {"project": PROJECT_ID, "mode": "local_file_harness_authorization", "adapter": "local-file-harness", "executed": False, "external_side_effects_executed": False}
+    if not cfg.get("agent_os_local_harness_executor"):
+        return {**base, "ok": False, "blocked_reason": "agent_os_local_harness_executor_disabled"}
+    if not authorization_id.startswith("auth:") or not intent_id.startswith("intent:") or not target_ref.startswith("task:"):
+        return {**base, "ok": False, "blocked_reason": "invalid_authorization_tuple"}
+    if target_status not in {"pending", "review", "done", "blocked"}:
+        return {**base, "ok": False, "blocked_reason": "invalid_target_status"}
+    if not evidence_refs or not _evidence_key(evidence_refs):
+        return {**base, "ok": False, "blocked_reason": "missing_evidence_refs"}
+    try:
+        state_path = _safe_harness_state_path(p, adapter_state_path)
+        auth_path = _safe_authorizations_path(p)
+    except ValueError as exc:
+        return {**base, "ok": False, "blocked_reason": "invalid_executor_path", "error": str(exc)}
+    store = _safe_read_json(auth_path, {"authorizations": []})
+    if not isinstance(store, dict) or not isinstance(store.get("authorizations"), list):
+        store = {"authorizations": []}
+    record = {
+        "authorization_id": authorization_id,
+        "intent_id": intent_id,
+        "adapter": "local-file-harness",
+        "target_ref": target_ref,
+        "target_status": target_status,
+        "evidence_refs": _evidence_key(evidence_refs),
+        "adapter_state_path": str(state_path),
+        "execution_authorized": True,
+        "external_side_effects_authorized": False,
+        "real_taskpool_write_authorized": False,
+        "created_at": _now_iso(),
+    }
+    for existing in store["authorizations"]:
+        if _authorization_matches(existing, authorization_id=authorization_id, intent_id=intent_id, target_ref=target_ref, target_status=target_status, evidence_refs=evidence_refs, adapter_state_path=state_path):
+            return {**base, "ok": True, "authorization_id": authorization_id, "idempotent": True, "authorization_path": str(auth_path), "adapter_state_path": str(state_path)}
+    store["authorizations"].append(record)
+    try:
+        _safe_write_json(auth_path, store)
+    except ValueError as exc:
+        return {**base, "ok": False, "blocked_reason": "invalid_authorization_path", "error": str(exc)}
+    return {**base, "ok": True, "authorization_id": authorization_id, "idempotent": False, "authorization_path": str(auth_path), "adapter_state_path": str(state_path)}
+
+def execute_local_harness(
+    *,
+    authorization_id: str,
+    intent_id: str,
+    target_ref: str,
+    target_status: str,
+    evidence_refs: list[str],
+    adapter_state_path: str | Path | None = None,
+    expected_previous_status: str | None = None,
+    home: str | Path | None = None,
+) -> dict[str, Any]:
+    """Execute the first Agent OS executor rung against a local JSON harness only.
+
+    This mutates only a local harness state file under the Agent OS SSOT. It is
+    deliberately not taskpool/Kanban/Lark/Telegram write-through.
+    """
+    p = paths(home)
+    cfg = _agent_os_config_status(home)
+    base = {
+        "project": PROJECT_ID,
+        "mode": "local_file_harness_executor",
+        "adapter": "local-file-harness",
+        "external_side_effects_executed": False,
+        "real_taskpool_write_executed": False,
+    }
+    if not cfg.get("agent_os_local_harness_executor"):
+        return {**base, "ok": False, "executed": False, "blocked_reason": "agent_os_local_harness_executor_disabled"}
+    if not authorization_id.startswith("auth:"):
+        return {**base, "ok": False, "executed": False, "blocked_reason": "invalid_authorization_id"}
+    if not intent_id.startswith("intent:"):
+        return {**base, "ok": False, "executed": False, "blocked_reason": "invalid_intent_id"}
+    if not target_ref.startswith("task:"):
+        return {**base, "ok": False, "executed": False, "blocked_reason": "invalid_target_ref"}
+    if target_status not in {"pending", "review", "done", "blocked"}:
+        return {**base, "ok": False, "executed": False, "blocked_reason": "invalid_target_status"}
+    if not evidence_refs or not _evidence_key(evidence_refs):
+        return {**base, "ok": False, "executed": False, "blocked_reason": "missing_evidence_refs"}
+    try:
+        state_path = _safe_harness_state_path(p, adapter_state_path)
+        receipt_path = _safe_receipts_path(p)
+        auth_path = _safe_authorizations_path(p)
+    except ValueError as exc:
+        return {**base, "ok": False, "executed": False, "blocked_reason": "invalid_executor_path", "error": str(exc)}
+
+    store = _safe_read_json(auth_path, {"authorizations": []})
+    records = store.get("authorizations") if isinstance(store, dict) else None
+    if not isinstance(records, list) or not any(
+        isinstance(record, dict)
+        and _authorization_matches(
+            record,
+            authorization_id=authorization_id,
+            intent_id=intent_id,
+            target_ref=target_ref,
+            target_status=target_status,
+            evidence_refs=evidence_refs,
+            adapter_state_path=state_path,
+        )
+        for record in records
+    ):
+        return {**base, "ok": False, "executed": False, "blocked_reason": "authorization_record_missing_or_mismatched", "authorization_path": str(auth_path), "adapter_state_path": str(state_path)}
+
+    receipts = _read_jsonl(receipt_path)
+    evidence_tuple = _evidence_key(evidence_refs)
+    for receipt in receipts:
+        if (
+            receipt.get("authorization_id") == authorization_id
+            and receipt.get("intent_id") == intent_id
+            and receipt.get("target_ref") == target_ref
+            and receipt.get("target_status") == target_status
+            and _evidence_key(receipt.get("evidence_refs", [])) == evidence_tuple
+            and receipt.get("adapter_state_path") == str(state_path)
+            and receipt.get("verified") is True
+        ):
+            readback = _safe_read_json(state_path, {})
+            already_verified = bool(
+                isinstance(readback, dict)
+                and isinstance(readback.get("tasks"), dict)
+                and isinstance(readback["tasks"].get(target_ref), dict)
+                and readback["tasks"][target_ref].get("status") == target_status
+            )
+            if not already_verified:
+                return {**base, "ok": False, "executed": False, "blocked_reason": "idempotent_readback_mismatch", "receipt_id": receipt.get("receipt_id"), "adapter_state_path": str(state_path)}
+            return {
+                **base,
+                "ok": True,
+                "executed": False,
+                "idempotent": True,
+                "blocked_reason": "duplicate_already_verified",
+                "receipt_id": receipt.get("receipt_id"),
+                "adapter_state_path": str(state_path),
+                "external_side_effects_executed": False,
+                "real_taskpool_write_executed": False,
+            }
+
+    original_state = _safe_read_json(state_path, {"tasks": {}})
+    state = original_state if isinstance(original_state, dict) else {"tasks": {}}
+    if not isinstance(state.get("tasks", {}), dict):
+        state = {"tasks": {}}
+    state_before_mutation = json.loads(json.dumps(state))
+    tasks = state.setdefault("tasks", {})
+    current = tasks.get(target_ref, {})
+    if not isinstance(current, dict):
+        current = {}
+    previous_status = current.get("status")
+    if expected_previous_status is not None and previous_status != expected_previous_status:
+        return {
+            **base,
+            "ok": False,
+            "executed": False,
+            "blocked_reason": "expected_previous_status_mismatch",
+            "previous_status": previous_status,
+            "expected_previous_status": expected_previous_status,
+            "adapter_state_path": str(state_path),
+        }
+
+    current["status"] = target_status
+    current["updated_at"] = _now_iso()
+    tasks[target_ref] = current
+    try:
+        _safe_write_json(state_path, state)
+    except ValueError as exc:
+        return {**base, "ok": False, "executed": False, "blocked_reason": "invalid_adapter_state_path", "error": str(exc)}
+    readback = _safe_read_json(state_path, {})
+    verified = bool(
+        isinstance(readback, dict)
+        and isinstance(readback.get("tasks"), dict)
+        and isinstance(readback["tasks"].get(target_ref), dict)
+        and readback["tasks"][target_ref].get("status") == target_status
+    )
+    receipt_id = f"receipt:agent-os-local-harness:{len(receipts) + 1}"
+    receipt = {
+        "receipt_id": receipt_id,
+        "generated_at": _now_iso(),
+        "authorization_id": authorization_id,
+        "intent_id": intent_id,
+        "adapter": "local-file-harness",
+        "target_ref": target_ref,
+        "target_status": target_status,
+        "previous_status": previous_status,
+        "evidence_refs": evidence_tuple,
+        "adapter_state_path": str(state_path),
+        "executed": True,
+        "verified": verified,
+        "external_side_effects_executed": False,
+        "real_taskpool_write_executed": False,
+    }
+    try:
+        _append_jsonl(receipt_path, receipt)
+    except Exception as exc:  # noqa: BLE001 - rollback state on any receipt failure
+        rollback_failed = False
+        try:
+            _safe_write_json(state_path, state_before_mutation)
+        except Exception:  # noqa: BLE001 - report that rollback did not complete
+            rollback_failed = True
+        return {
+            **base,
+            "ok": False,
+            "executed": bool(rollback_failed),
+            "verified": False,
+            "blocked_reason": "receipt_append_failed_rollback_failed" if rollback_failed else "receipt_append_failed",
+            "error": str(exc),
+            "rollback_attempted": True,
+            "rollback_failed": rollback_failed,
+        }
+    return {
+        **base,
+        "ok": verified,
+        "executed": True,
+        "idempotent": False,
+        "receipt_id": receipt_id,
+        "verified": verified,
+        "target_ref": target_ref,
+        "target_status": target_status,
+        "previous_status": previous_status,
+        "adapter_state_path": str(state_path),
+        "receipt_path": str(receipt_path),
+        "external_side_effects_executed": False,
+        "real_taskpool_write_executed": False,
+    }
 
 
 def format_summary(payload: dict[str, Any]) -> str:

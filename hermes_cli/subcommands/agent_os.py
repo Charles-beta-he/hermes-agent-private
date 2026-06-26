@@ -11,7 +11,16 @@ import argparse
 import json
 from typing import Any
 
-from hermes_cli.agent_os_control_plane import doctor, format_summary, generate_replay_quality_report, replay_recent_user_intents, route_shadow, status
+from hermes_cli.agent_os_control_plane import (
+    authorize_local_harness,
+    doctor,
+    execute_local_harness,
+    format_summary,
+    generate_replay_quality_report,
+    replay_recent_user_intents,
+    route_shadow,
+    status,
+)
 
 
 def _emit(payload: dict[str, Any], *, as_json: bool) -> int:
@@ -35,6 +44,33 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
         return _emit(replay_recent_user_intents(home, limit=getattr(args, "limit", 20)), as_json=as_json)
     if action == "report":
         return _emit(generate_replay_quality_report(home, limit=getattr(args, "limit", 20), write=getattr(args, "write", False)), as_json=as_json)
+    if action == "authorize-local-harness":
+        return _emit(
+            authorize_local_harness(
+                authorization_id=getattr(args, "authorization_id", ""),
+                intent_id=getattr(args, "intent_id", ""),
+                target_ref=getattr(args, "target_ref", ""),
+                target_status=getattr(args, "target_status", ""),
+                evidence_refs=getattr(args, "evidence_ref", []) or [],
+                adapter_state_path=getattr(args, "adapter_state_path", None),
+                home=home,
+            ),
+            as_json=as_json,
+        )
+    if action == "execute-local-harness":
+        return _emit(
+            execute_local_harness(
+                authorization_id=getattr(args, "authorization_id", ""),
+                intent_id=getattr(args, "intent_id", ""),
+                target_ref=getattr(args, "target_ref", ""),
+                target_status=getattr(args, "target_status", ""),
+                evidence_refs=getattr(args, "evidence_ref", []) or [],
+                adapter_state_path=getattr(args, "adapter_state_path", None),
+                expected_previous_status=getattr(args, "expected_previous_status", None),
+                home=home,
+            ),
+            as_json=as_json,
+        )
     return _emit(status(home), as_json=as_json)
 
 
@@ -43,10 +79,9 @@ def build_agent_os_parser(subparsers) -> None:
         "agent-os",
         help="Inspect Hermes Agent OS Control Plane advisory projections",
         description=(
-            "Read-only/shadow-only Agent OS Control Plane commands. These expose "
-            "CapabilityGraph projection status, doctor checks, and shadow intent "
-            "routing without invoking tools, changing runtime routing, mutating "
-            "task/mission lifecycle, or sending external messages."
+            "Agent OS Control Plane commands. Most commands are read-only/shadow-only; "
+            "execute-local-harness is a governed SSOT-local JSON harness executor "
+            "that never writes real taskpool/Kanban/Lark/Telegram state."
         ),
     )
     parser.add_argument(
@@ -94,3 +129,32 @@ def build_agent_os_parser(subparsers) -> None:
     report.add_argument("--write", action="store_true", help="Write local project report artifacts under the Agent OS SSOT")
     report.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     report.set_defaults(func=cmd_agent_os)
+
+    auth = subs.add_parser(
+        "authorize-local-harness",
+        help="Record a non-executing exact local harness authorization tuple",
+    )
+    auth.add_argument("--home", default=None, help="Hermes home to inspect")
+    auth.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    auth.add_argument("--authorization-id", required=True, help="Exact auth:<id> authorization id")
+    auth.add_argument("--intent-id", required=True, help="Exact intent:<id> intent id")
+    auth.add_argument("--target-ref", required=True, help="Exact task:<id> harness target ref")
+    auth.add_argument("--target-status", required=True, choices=["pending", "review", "done", "blocked"], help="Harness target status")
+    auth.add_argument("--evidence-ref", action="append", default=[], help="Evidence reference proving the action; repeatable")
+    auth.add_argument("--adapter-state-path", default=None, help="Optional state JSON path under Agent OS 08-executor")
+    auth.set_defaults(func=cmd_agent_os)
+
+    harness = subs.add_parser(
+        "execute-local-harness",
+        help="Execute a governed local JSON harness write and receipt readback only",
+    )
+    harness.add_argument("--home", default=None, help="Hermes home to inspect")
+    harness.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    harness.add_argument("--authorization-id", required=True, help="Exact auth:<id> authorization id")
+    harness.add_argument("--intent-id", required=True, help="Exact intent:<id> intent id")
+    harness.add_argument("--target-ref", required=True, help="Exact task:<id> harness target ref")
+    harness.add_argument("--target-status", required=True, choices=["pending", "review", "done", "blocked"], help="Harness target status")
+    harness.add_argument("--evidence-ref", action="append", default=[], help="Evidence reference proving the action; repeatable")
+    harness.add_argument("--expected-previous-status", default=None, help="Optional expected current status for drift guard")
+    harness.add_argument("--adapter-state-path", default=None, help="Optional state JSON path under Agent OS 08-executor")
+    harness.set_defaults(func=cmd_agent_os)

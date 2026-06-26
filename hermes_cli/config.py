@@ -870,6 +870,11 @@ DEFAULT_CONFIG = {
         # future Agent OS execution/lifecycle/external boundary expansion.
         # Review only; no executor or write-through gate is opened here.
         "agent_os_multimodel_review": False,
+        # Default-off Agent OS local-file harness executor. This is the first
+        # execution rung and may only mutate the Agent OS SSOT-local JSON
+        # harness/receipt ledger; it must not write taskpool/Kanban/Lark/Telegram
+        # or any external adapter state.
+        "agent_os_local_harness_executor": False,
         # Embedder-supplied environment description appended to the system
         # prompt's environment-hints block. Lets a host that wraps Hermes
         # (sandbox runner, managed platform) explain the runtime environment
