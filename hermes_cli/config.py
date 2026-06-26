@@ -889,6 +889,21 @@ DEFAULT_CONFIG = {
         # target/payload/evidence/readback. Publish/deploy/push/destructive
         # operations remain separate closed gates.
         "agent_os_external_dispatch": False,
+        # Default-off Agent OS publish/deploy/push boundary. When enabled,
+        # Agent OS may only perform exact, scoped push/deploy/publish operations
+        # with explicit target, receipt, rollback, and post-action readback.
+        "agent_os_publish_deploy_push": False,
+        # Default-off Agent OS destructive-operation boundary. When enabled,
+        # destructive actions still require exact target/resource, backup or
+        # rollback path, explicit receipt, and post-action readback.
+        "agent_os_destructive_operations": False,
+        # Default-off Agent OS payment/credential-entry boundary. This projects
+        # authorization state only; runtime must never type secrets on behalf of
+        # the user and payment flows require their own exact human gate.
+        "agent_os_payment_credential_entry": False,
+        # Default-off Agent OS broad fan-out boundary. When enabled, fan-out must
+        # name the exact channel set, payload, receipt, and readback.
+        "agent_os_broad_fanout": False,
         # Embedder-supplied environment description appended to the system
         # prompt's environment-hints block. Lets a host that wraps Hermes
         # (sandbox runner, managed platform) explain the runtime environment

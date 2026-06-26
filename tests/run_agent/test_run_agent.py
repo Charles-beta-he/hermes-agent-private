@@ -1394,6 +1394,30 @@ class TestTaskCompletionGuidance:
         prompt = agent._build_system_prompt()
         assert TASK_COMPLETION_GUIDANCE not in prompt
 
+
+    def test_high_risk_boundaries_inject_exact_target_rollback_guidance(self):
+        from agent.prompt_builder import AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE
+
+        agent = self._make_agent(
+            agent_os_advisory_guidance=True,
+            agent_os_runtime_routing=True,
+            agent_os_multimodel_review=True,
+            agent_os_local_harness_executor=True,
+            agent_os_scheduler_cron_write=True,
+            agent_os_taskpool_lifecycle_write=True,
+            agent_os_external_dispatch=True,
+            agent_os_publish_deploy_push=True,
+            agent_os_destructive_operations=True,
+            agent_os_payment_credential_entry=True,
+            agent_os_broad_fanout=True,
+        )
+        prompt = agent._build_system_prompt()
+        assert AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE in prompt
+        assert "exact scoped target" in prompt
+        assert "backup or restore path" in prompt
+        assert "never type passwords" in prompt
+        assert "exact channel set" in prompt
+
     def test_no_tools_no_injection(self):
         """Same gate as tool_use_enforcement — no tools means no guidance.
         The guidance refers to ``tool calls`` and ``tool output``; without
@@ -1460,6 +1484,30 @@ class TestObjectiveModelPathGuidance:
         agent = self._make_agent(objective_model_path_guidance=False)
         assert OBJECTIVE_MODEL_PATH_GUIDANCE not in agent._build_system_prompt()
 
+
+    def test_high_risk_boundaries_inject_exact_target_rollback_guidance(self):
+        from agent.prompt_builder import AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE
+
+        agent = self._make_agent(
+            agent_os_advisory_guidance=True,
+            agent_os_runtime_routing=True,
+            agent_os_multimodel_review=True,
+            agent_os_local_harness_executor=True,
+            agent_os_scheduler_cron_write=True,
+            agent_os_taskpool_lifecycle_write=True,
+            agent_os_external_dispatch=True,
+            agent_os_publish_deploy_push=True,
+            agent_os_destructive_operations=True,
+            agent_os_payment_credential_entry=True,
+            agent_os_broad_fanout=True,
+        )
+        prompt = agent._build_system_prompt()
+        assert AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE in prompt
+        assert "exact scoped target" in prompt
+        assert "backup or restore path" in prompt
+        assert "never type passwords" in prompt
+        assert "exact channel set" in prompt
+
     def test_no_tools_no_injection(self):
         from agent.prompt_builder import OBJECTIVE_MODEL_PATH_GUIDANCE
 
@@ -1487,7 +1535,7 @@ class TestObjectiveModelPathGuidance:
 class TestAgentOsAdvisoryGuidance:
     """Tests for default-off Agent OS advisory prompt injection."""
 
-    def _make_agent(self, agent_os_advisory_guidance=False, agent_os_runtime_routing=False, agent_os_multimodel_review=False, agent_os_local_harness_executor=False, agent_os_scheduler_cron_write=False, agent_os_taskpool_lifecycle_write=False, agent_os_external_dispatch=False, tools=None):
+    def _make_agent(self, agent_os_advisory_guidance=False, agent_os_runtime_routing=False, agent_os_multimodel_review=False, agent_os_local_harness_executor=False, agent_os_scheduler_cron_write=False, agent_os_taskpool_lifecycle_write=False, agent_os_external_dispatch=False, agent_os_publish_deploy_push=False, agent_os_destructive_operations=False, agent_os_payment_credential_entry=False, agent_os_broad_fanout=False, tools=None):
         tool_names = tools if tools is not None else ("terminal", "skill_view")
         with (
             patch("run_agent.get_tool_definitions", return_value=_make_tool_defs(*tool_names)),
@@ -1495,7 +1543,7 @@ class TestAgentOsAdvisoryGuidance:
             patch("run_agent.OpenAI"),
             patch(
                 "hermes_cli.config.load_config",
-                return_value={"agent": {"agent_os_advisory_guidance": agent_os_advisory_guidance, "agent_os_runtime_routing": agent_os_runtime_routing, "agent_os_multimodel_review": agent_os_multimodel_review, "agent_os_local_harness_executor": agent_os_local_harness_executor, "agent_os_scheduler_cron_write": agent_os_scheduler_cron_write, "agent_os_taskpool_lifecycle_write": agent_os_taskpool_lifecycle_write, "agent_os_external_dispatch": agent_os_external_dispatch}},
+                return_value={"agent": {"agent_os_advisory_guidance": agent_os_advisory_guidance, "agent_os_runtime_routing": agent_os_runtime_routing, "agent_os_multimodel_review": agent_os_multimodel_review, "agent_os_local_harness_executor": agent_os_local_harness_executor, "agent_os_scheduler_cron_write": agent_os_scheduler_cron_write, "agent_os_taskpool_lifecycle_write": agent_os_taskpool_lifecycle_write, "agent_os_external_dispatch": agent_os_external_dispatch, "agent_os_publish_deploy_push": agent_os_publish_deploy_push, "agent_os_destructive_operations": agent_os_destructive_operations, "agent_os_payment_credential_entry": agent_os_payment_credential_entry, "agent_os_broad_fanout": agent_os_broad_fanout}},
             ),
         ):
             a = AIAgent(
@@ -1510,7 +1558,7 @@ class TestAgentOsAdvisoryGuidance:
             return a
 
     def test_default_off(self):
-        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE, AGENT_OS_LOCAL_HARNESS_GUIDANCE, AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE, AGENT_OS_SCHEDULER_CRON_GUIDANCE, AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE, AGENT_OS_EXTERNAL_DISPATCH_GUIDANCE
+        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE, AGENT_OS_LOCAL_HARNESS_GUIDANCE, AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE, AGENT_OS_SCHEDULER_CRON_GUIDANCE, AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE, AGENT_OS_EXTERNAL_DISPATCH_GUIDANCE, AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE, AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE
 
         agent = self._make_agent(agent_os_advisory_guidance=False, agent_os_multimodel_review=False)
         prompt = agent._build_system_prompt()
@@ -1520,6 +1568,7 @@ class TestAgentOsAdvisoryGuidance:
         assert AGENT_OS_SCHEDULER_CRON_GUIDANCE not in prompt
         assert AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE not in prompt
         assert AGENT_OS_EXTERNAL_DISPATCH_GUIDANCE not in prompt
+        assert AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE not in prompt
 
     def test_enabled_injects_shadow_only_guidance(self):
         from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE
@@ -1624,10 +1673,34 @@ class TestAgentOsAdvisoryGuidance:
         assert "does not authorize publish/deploy/push" in prompt
         assert "broad fan-out" in prompt
 
-    def test_no_tools_no_injection(self):
-        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE, AGENT_OS_LOCAL_HARNESS_GUIDANCE, AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE, AGENT_OS_SCHEDULER_CRON_GUIDANCE, AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE, AGENT_OS_EXTERNAL_DISPATCH_GUIDANCE
 
-        agent = self._make_agent(agent_os_advisory_guidance=True, agent_os_multimodel_review=True, agent_os_local_harness_executor=True, agent_os_scheduler_cron_write=True, agent_os_taskpool_lifecycle_write=True, agent_os_external_dispatch=True, tools=())
+    def test_high_risk_boundaries_inject_exact_target_rollback_guidance(self):
+        from agent.prompt_builder import AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE
+
+        agent = self._make_agent(
+            agent_os_advisory_guidance=True,
+            agent_os_runtime_routing=True,
+            agent_os_multimodel_review=True,
+            agent_os_local_harness_executor=True,
+            agent_os_scheduler_cron_write=True,
+            agent_os_taskpool_lifecycle_write=True,
+            agent_os_external_dispatch=True,
+            agent_os_publish_deploy_push=True,
+            agent_os_destructive_operations=True,
+            agent_os_payment_credential_entry=True,
+            agent_os_broad_fanout=True,
+        )
+        prompt = agent._build_system_prompt()
+        assert AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE in prompt
+        assert "exact scoped target" in prompt
+        assert "backup or restore path" in prompt
+        assert "never type passwords" in prompt
+        assert "exact channel set" in prompt
+
+    def test_no_tools_no_injection(self):
+        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE, AGENT_OS_LOCAL_HARNESS_GUIDANCE, AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE, AGENT_OS_SCHEDULER_CRON_GUIDANCE, AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE, AGENT_OS_EXTERNAL_DISPATCH_GUIDANCE, AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE
+
+        agent = self._make_agent(agent_os_advisory_guidance=True, agent_os_multimodel_review=True, agent_os_local_harness_executor=True, agent_os_scheduler_cron_write=True, agent_os_taskpool_lifecycle_write=True, agent_os_external_dispatch=True, agent_os_publish_deploy_push=True, agent_os_destructive_operations=True, agent_os_payment_credential_entry=True, agent_os_broad_fanout=True, tools=())
         prompt = agent._build_system_prompt()
         assert AGENT_OS_ADVISORY_GUIDANCE not in prompt
         assert AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE not in prompt
@@ -1635,6 +1708,7 @@ class TestAgentOsAdvisoryGuidance:
         assert AGENT_OS_SCHEDULER_CRON_GUIDANCE not in prompt
         assert AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE not in prompt
         assert AGENT_OS_EXTERNAL_DISPATCH_GUIDANCE not in prompt
+        assert AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE not in prompt
 
 
 class TestEnvironmentProbeIntegration:

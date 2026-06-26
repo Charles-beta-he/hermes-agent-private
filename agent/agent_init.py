@@ -1286,6 +1286,10 @@ def init_agent(
     agent._agent_os_scheduler_cron_write = bool(_agent_section.get("agent_os_scheduler_cron_write", False))
     agent._agent_os_taskpool_lifecycle_write = bool(_agent_section.get("agent_os_taskpool_lifecycle_write", False))
     agent._agent_os_external_dispatch = bool(_agent_section.get("agent_os_external_dispatch", False))
+    agent._agent_os_publish_deploy_push = bool(_agent_section.get("agent_os_publish_deploy_push", False))
+    agent._agent_os_destructive_operations = bool(_agent_section.get("agent_os_destructive_operations", False))
+    agent._agent_os_payment_credential_entry = bool(_agent_section.get("agent_os_payment_credential_entry", False))
+    agent._agent_os_broad_fanout = bool(_agent_section.get("agent_os_broad_fanout", False))
 
     # Local Python toolchain probe toggle.  Default True.  When False,
     # the probe is skipped entirely (no subprocess calls, no system-prompt

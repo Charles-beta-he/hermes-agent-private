@@ -37,6 +37,7 @@ from agent.prompt_builder import (
     AGENT_OS_SCHEDULER_CRON_GUIDANCE,
     AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE,
     AGENT_OS_EXTERNAL_DISPATCH_GUIDANCE,
+    AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE,
     KANBAN_GUIDANCE,
     MEMORY_GUIDANCE,
     OBJECTIVE_MODEL_PATH_GUIDANCE,
@@ -141,6 +142,13 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
         stable_parts.append(AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE)
     if getattr(agent, "_agent_os_external_dispatch", False) and agent.valid_tool_names:
         stable_parts.append(AGENT_OS_EXTERNAL_DISPATCH_GUIDANCE)
+    if (
+        getattr(agent, "_agent_os_publish_deploy_push", False)
+        or getattr(agent, "_agent_os_destructive_operations", False)
+        or getattr(agent, "_agent_os_payment_credential_entry", False)
+        or getattr(agent, "_agent_os_broad_fanout", False)
+    ) and agent.valid_tool_names:
+        stable_parts.append(AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE)
 
     # Tool-aware behavioral guidance: only inject when the tools are loaded
     tool_guidance = []

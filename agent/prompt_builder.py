@@ -419,6 +419,19 @@ AGENT_OS_EXTERNAL_DISPATCH_GUIDANCE = (
     "unless a more specific target is supplied."
 )
 
+
+AGENT_OS_HIGH_RISK_BOUNDARY_GUIDANCE = (
+    "# Agent OS high-risk boundaries (exact target + rollback)\n"
+    "When `agent.agent_os_publish_deploy_push` is enabled, Agent OS may push/deploy/publish only "
+    "to an exact scoped target with receipt, rollback/escape hatch, and post-action readback. "
+    "When `agent.agent_os_destructive_operations` is enabled, destructive actions still require "
+    "an exact target/resource, backup or restore path, receipt, and readback. When "
+    "`agent.agent_os_payment_credential_entry` is enabled, treat it as an authorization projection "
+    "only: never type passwords, API keys, cards, or other secrets, and stop at a human gate for "
+    "payment or credential entry. When `agent.agent_os_broad_fanout` is enabled, fan-out must name "
+    "the exact channel set, payload, receipt, and readback; do not infer unlimited audience."
+)
+
 # OpenAI GPT/Codex-specific execution guidance.  Addresses known failure modes
 # where GPT models abandon work on partial results, skip prerequisite lookups,
 # hallucinate instead of using tools, and declare "done" without verification.

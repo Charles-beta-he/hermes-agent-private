@@ -118,13 +118,19 @@ def _agent_os_config_status(home: str | Path | None = None) -> dict[str, Any]:
             "agent_os_scheduler_cron_write": bool(agent_cfg.get("agent_os_scheduler_cron_write", False)),
             "agent_os_taskpool_lifecycle_write": bool(agent_cfg.get("agent_os_taskpool_lifecycle_write", False)),
             "agent_os_external_dispatch": bool(agent_cfg.get("agent_os_external_dispatch", False)),
+            "agent_os_publish_deploy_push": bool(agent_cfg.get("agent_os_publish_deploy_push", False)),
+            "agent_os_destructive_operations": bool(agent_cfg.get("agent_os_destructive_operations", False)),
+            "agent_os_payment_credential_entry": bool(agent_cfg.get("agent_os_payment_credential_entry", False)),
+            "agent_os_broad_fanout": bool(agent_cfg.get("agent_os_broad_fanout", False)),
             "real_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
             "tool_invocation_from_agent_os": bool(agent_cfg.get("agent_os_local_harness_executor", False)),
             "scheduler_cron_write": bool(agent_cfg.get("agent_os_scheduler_cron_write", False)),
             "taskpool_mission_lifecycle_write": bool(agent_cfg.get("agent_os_taskpool_lifecycle_write", False)),
             "external_dispatch": bool(agent_cfg.get("agent_os_external_dispatch", False)),
-            "publish_deploy_push": False,
-            "destructive_operations": False,
+            "publish_deploy_push": bool(agent_cfg.get("agent_os_publish_deploy_push", False)),
+            "destructive_operations": bool(agent_cfg.get("agent_os_destructive_operations", False)),
+            "payment_credential_entry": bool(agent_cfg.get("agent_os_payment_credential_entry", False)),
+            "broad_fanout": bool(agent_cfg.get("agent_os_broad_fanout", False)),
         }
     except Exception as exc:  # noqa: BLE001
         return {"load_error": str(exc)}
@@ -186,7 +192,15 @@ def status(home: str | Path | None = None) -> dict[str, Any]:
         },
         "config": config_status,
         "runtime_effect": (
-            "external dispatch enabled; only exact allowlisted target/payload dispatches with readback may be owned"
+            "broad fan-out enabled; only exact named channel-set/payload fan-out with receipts may be owned"
+            if config_status.get("agent_os_broad_fanout")
+            else "payment/credential boundary projected enabled; secrets must not be typed and payment flows require exact human gate"
+            if config_status.get("agent_os_payment_credential_entry")
+            else "destructive operations enabled; only exact target with backup/rollback/readback may be owned"
+            if config_status.get("agent_os_destructive_operations")
+            else "publish/deploy/push enabled; only exact scoped target with rollback/readback may be owned"
+            if config_status.get("agent_os_publish_deploy_push")
+            else "external dispatch enabled; only exact allowlisted target/payload dispatches with readback may be owned"
             if config_status.get("agent_os_external_dispatch")
             else "local taskpool lifecycle write enabled; only exact idempotent local Kanban/taskpool operations with readback may be owned"
             if config_status.get("agent_os_taskpool_lifecycle_write")
