@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from hermes_cli.agent_os_control_plane import doctor, replay_recent_user_intents, route_shadow, status
+from hermes_cli.agent_os_control_plane import doctor, generate_replay_quality_report, replay_recent_user_intents, route_shadow, status
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -114,3 +114,30 @@ def test_agent_os_replay_recent_user_intents_is_read_only_and_redacted(tmp_path:
     assert "abc123" not in preview
     assert "ops@example.com" not in preview
     assert "[REDACTED]" in preview
+
+
+def test_agent_os_report_writes_authority_packet_without_opening_gates(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+    con = sqlite3.connect(tmp_path / "state.db")
+    con.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT)")
+    con.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, timestamp REAL, active INTEGER)"
+    )
+    con.execute("INSERT INTO sessions (id, source) VALUES ('s1', 'cli')")
+    con.execute(
+        "INSERT INTO messages (id, session_id, role, content, timestamp, active) VALUES (1, 's1', 'user', ?, 1.0, 1)",
+        ("把这个 PR 合并并发布到生产",),
+    )
+    con.commit()
+    con.close()
+
+    payload = generate_replay_quality_report(tmp_path, limit=5, write=True)
+    assert payload["ok"] is True
+    assert payload["would_execute_anything"] is False
+    packet = payload["authority_packet"]
+    assert packet["status"] == "HUMAN_AUTHORIZATION_REQUIRED"
+    assert packet["requested_authority"]["runtime_advisory_prompt_injection"] is True
+    assert packet["requested_authority"]["real_runtime_routing"] is False
+    assert packet["requested_authority"]["external_dispatch"] is False
+    assert Path(payload["written"]["report"]).exists()
+    assert Path(payload["written"]["authority_packet"]).exists()

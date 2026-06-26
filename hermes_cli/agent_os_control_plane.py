@@ -353,6 +353,95 @@ def replay_recent_user_intents(home: str | Path | None = None, *, limit: int = 2
     }
 
 
+def generate_replay_quality_report(home: str | Path | None = None, *, limit: int = 20, write: bool = False) -> dict[str, Any]:
+    replay = replay_recent_user_intents(home, limit=limit)
+    if not replay.get("ok"):
+        return replay
+    p = paths(home)
+    records = replay.get("records", [])
+    by_domain: dict[str, int] = {}
+    by_risk: dict[str, int] = {}
+    by_side: dict[str, int] = {}
+    unknown = 0
+    blocked = 0
+    for record in records:
+        domain = str(record.get("domain") or "unknown")
+        risk = str(record.get("risk_class") or "unknown")
+        sides = record.get("requested_side_effects") or ["S0"]
+        by_domain[domain] = by_domain.get(domain, 0) + 1
+        by_risk[risk] = by_risk.get(risk, 0) + 1
+        if domain == "unknown":
+            unknown += 1
+        for side in sides:
+            by_side[str(side)] = by_side.get(str(side), 0) + 1
+        blocked += sum(1 for finding in record.get("policy_findings", []) if finding.get("level") == "blocked")
+    findings: list[dict[str, str]] = []
+    if unknown:
+        findings.append({"level": "info", "check": "unknown_domain", "message": f"{unknown} replay records require better intent classification"})
+    if blocked:
+        findings.append({"level": "info", "check": "policy_block", "message": f"{blocked} high-side-effect intents were blocked in shadow mode"})
+    authority_packet = {
+        "id": "authority-packet:agent-os-runtime-routing-v1",
+        "status": "HUMAN_AUTHORIZATION_REQUIRED",
+        "project": PROJECT_ID,
+        "generated_at": _now_iso(),
+        "candidate_contract": "agent-os advisory CLI + historical replay",
+        "preconditions": {
+            "agent_os_doctor_ok": doctor(p.home).get("ok"),
+            "replay_ok": replay.get("ok"),
+            "would_execute_anything": False,
+            "runtime_mutation": False,
+        },
+        "requested_authority": {
+            "runtime_advisory_prompt_injection": True,
+            "real_runtime_routing": False,
+            "tool_invocation": False,
+            "scheduler_or_cron_write": False,
+            "taskpool_or_mission_lifecycle_write": False,
+            "worker_spawn_or_lease": False,
+            "external_dispatch": False,
+            "publish_or_deploy": False,
+            "destructive_action": False,
+        },
+        "required_human_fields_before_promotion": [
+            "exact prompt/routing injection point",
+            "kill switch config key",
+            "rollback command",
+            "focused tests/evaluator command",
+            "post-action readback command",
+        ],
+        "default_safe_decision": "do_not_connect_to_real_runtime_routing; keep shadow-only",
+        "rollback": "git revert scoped commit and disable any future agent_os advisory flag",
+        "post_action_verification": [
+            "agent-os doctor ok",
+            "focused pytest pass",
+            "live route still reports would_execute false for S5/S6/S7 unless exact authority exists",
+        ],
+    }
+    report = {
+        "ok": True,
+        "project": PROJECT_ID,
+        "mode": "replay_quality_report",
+        "generated_at": _now_iso(),
+        "record_count": len(records),
+        "blocked_by_policy": blocked,
+        "would_execute_anything": False,
+        "distributions": {"domain": by_domain, "risk": by_risk, "side_effect": by_side},
+        "findings": findings,
+        "authority_packet": authority_packet,
+        "runtime_effect": "none; report generation is local artifact/readback only",
+    }
+    if write:
+        (p.project_root / "07-shadow").mkdir(parents=True, exist_ok=True)
+        (p.project_root / "03-governance").mkdir(parents=True, exist_ok=True)
+        report_path = p.project_root / "07-shadow" / "replay-quality-report.json"
+        packet_path = p.project_root / "03-governance" / "authority-packet-runtime-routing.json"
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        packet_path.write_text(json.dumps(authority_packet, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        report["written"] = {"report": str(report_path), "authority_packet": str(packet_path)}
+    return report
+
+
 def format_summary(payload: dict[str, Any]) -> str:
     lines = [f"Agent OS Control Plane: {'OK' if payload.get('ok') else 'ATTENTION'}"]
     lines.append(f"mode: {payload.get('mode')}")

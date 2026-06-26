@@ -11,7 +11,7 @@ import argparse
 import json
 from typing import Any
 
-from hermes_cli.agent_os_control_plane import doctor, format_summary, replay_recent_user_intents, route_shadow, status
+from hermes_cli.agent_os_control_plane import doctor, format_summary, generate_replay_quality_report, replay_recent_user_intents, route_shadow, status
 
 
 def _emit(payload: dict[str, Any], *, as_json: bool) -> int:
@@ -33,6 +33,8 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
         return _emit(route_shadow(text, home), as_json=as_json)
     if action == "replay":
         return _emit(replay_recent_user_intents(home, limit=getattr(args, "limit", 20)), as_json=as_json)
+    if action == "report":
+        return _emit(generate_replay_quality_report(home, limit=getattr(args, "limit", 20), write=getattr(args, "write", False)), as_json=as_json)
     return _emit(status(home), as_json=as_json)
 
 
@@ -82,3 +84,13 @@ def build_agent_os_parser(subparsers) -> None:
     replay.add_argument("--limit", type=int, default=20, help="Recent user messages to replay, capped at 50")
     replay.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     replay.set_defaults(func=cmd_agent_os)
+
+    report = subs.add_parser(
+        "report",
+        help="Generate replay quality report and authority packet without promotion",
+    )
+    report.add_argument("--home", default=None, help="Hermes home to inspect")
+    report.add_argument("--limit", type=int, default=20, help="Recent user messages to replay, capped at 50")
+    report.add_argument("--write", action="store_true", help="Write local project report artifacts under the Agent OS SSOT")
+    report.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    report.set_defaults(func=cmd_agent_os)
