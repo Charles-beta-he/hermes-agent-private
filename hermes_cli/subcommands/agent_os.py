@@ -11,7 +11,7 @@ import argparse
 import json
 from typing import Any
 
-from hermes_cli.agent_os_control_plane import doctor, format_summary, route_shadow, status
+from hermes_cli.agent_os_control_plane import doctor, format_summary, replay_recent_user_intents, route_shadow, status
 
 
 def _emit(payload: dict[str, Any], *, as_json: bool) -> int:
@@ -31,6 +31,8 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
     if action == "route":
         text = getattr(args, "text", None) or ""
         return _emit(route_shadow(text, home), as_json=as_json)
+    if action == "replay":
+        return _emit(replay_recent_user_intents(home, limit=getattr(args, "limit", 20)), as_json=as_json)
     return _emit(status(home), as_json=as_json)
 
 
@@ -71,3 +73,12 @@ def build_agent_os_parser(subparsers) -> None:
     route.add_argument("--home", default=None, help="Hermes home to inspect")
     route.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     route.set_defaults(func=cmd_agent_os)
+
+    replay = subs.add_parser(
+        "replay",
+        help="Read-only shadow replay over recent redacted user intents from state.db",
+    )
+    replay.add_argument("--home", default=None, help="Hermes home to inspect")
+    replay.add_argument("--limit", type=int, default=20, help="Recent user messages to replay, capped at 50")
+    replay.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    replay.set_defaults(func=cmd_agent_os)

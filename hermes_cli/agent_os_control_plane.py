@@ -11,6 +11,7 @@ import datetime as dt
 import json
 import os
 import re
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,9 @@ SIDE_EFFECT_WORDS: dict[str, list[str]] = {
 }
 
 HIGH_SIDE_EFFECTS = {"S4", "S5", "S6", "S7"}
+SENSITIVE_ASSIGNMENT_RE = re.compile(
+    r"(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\s*[:=]\s*[^\s,;]+"
+)
 
 
 @dataclass(frozen=True)
@@ -264,6 +268,88 @@ def route_shadow(text: str, home: str | Path | None = None) -> dict[str, Any]:
         "would_execute": False,
         "runtime_effect": "none; shadow route was computed but no capability was invoked",
         "evidence_refs": [str(p.projection)],
+    }
+
+
+def _redact_intent_text(text: str, max_chars: int = 240) -> str:
+    redacted = SENSITIVE_ASSIGNMENT_RE.sub(lambda m: m.group(1) + "=[REDACTED]", text)
+    redacted = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[REDACTED_EMAIL]", redacted)
+    redacted = re.sub(r"\b(?:\d[ -]?){13,19}\b", "[REDACTED_NUMBER]", redacted)
+    redacted = re.sub(r"\s+", " ", redacted).strip()
+    return redacted[:max_chars]
+
+
+def replay_recent_user_intents(home: str | Path | None = None, *, limit: int = 20) -> dict[str, Any]:
+    """Shadow-route recent user messages from state.db without executing anything.
+
+    The replay is redacted/truncated and read-only. It is a routing quality probe,
+    not a transcript export or a durable-memory source.
+    """
+    p = paths(home)
+    db = p.home / "state.db"
+    if not db.exists():
+        return {
+            "ok": False,
+            "project": PROJECT_ID,
+            "mode": "historical_session_shadow_replay",
+            "records": [],
+            "findings": [{"level": "error", "check": "state_db", "message": f"missing {db}"}],
+            "would_execute_anything": False,
+        }
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT m.id, m.session_id, m.content, m.timestamp, s.source
+              FROM messages m
+              LEFT JOIN sessions s ON s.id = m.session_id
+             WHERE m.role = 'user'
+               AND COALESCE(m.active, 1) = 1
+               AND m.content IS NOT NULL
+             ORDER BY m.timestamp DESC
+             LIMIT ?
+            """,
+            (max(1, min(int(limit), 50)),),
+        ).fetchall()
+        con.close()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "project": PROJECT_ID,
+            "mode": "historical_session_shadow_replay",
+            "records": [],
+            "findings": [{"level": "error", "check": "state_db_read", "message": str(exc)}],
+            "would_execute_anything": False,
+        }
+
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        text = _redact_intent_text(str(row["content"] or ""))
+        routed = route_shadow(text, p.home)
+        records.append({
+            "message_id": row["id"],
+            "session_id": row["session_id"],
+            "source": row["source"],
+            "redacted_intent_preview": text,
+            "domain": routed["intent"]["domain"],
+            "risk_class": routed["intent"]["risk_class"],
+            "requested_side_effects": routed["intent"]["side_effect_expectation"]["requested"],
+            "policy_findings": routed["policy_findings"],
+            "would_execute": False,
+        })
+    blocked = sum(1 for record in records for f in record["policy_findings"] if f.get("level") == "blocked")
+    return {
+        "ok": True,
+        "project": PROJECT_ID,
+        "mode": "historical_session_shadow_replay",
+        "generated_at": _now_iso(),
+        "record_count": len(records),
+        "blocked_by_policy": blocked,
+        "would_execute_anything": False,
+        "findings": [],
+        "records": records,
+        "runtime_effect": "none; state.db was opened read-only and no route was executed",
     }
 
 

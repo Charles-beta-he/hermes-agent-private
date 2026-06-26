@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
-from hermes_cli.agent_os_control_plane import doctor, route_shadow, status
+from hermes_cli.agent_os_control_plane import doctor, replay_recent_user_intents, route_shadow, status
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -88,3 +89,28 @@ def test_agent_os_route_shadow_blocks_external_side_effects(tmp_path: Path) -> N
     assert payload["would_execute"] is False
     assert payload["intent"]["risk_class"] == "high"
     assert any(f["gate"] == "default_off_external_side_effects" for f in payload["policy_findings"])
+
+
+def test_agent_os_replay_recent_user_intents_is_read_only_and_redacted(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+    con = sqlite3.connect(tmp_path / "state.db")
+    con.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT)")
+    con.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, timestamp REAL, active INTEGER)"
+    )
+    con.execute("INSERT INTO sessions (id, source) VALUES ('s1', 'cli')")
+    con.execute(
+        "INSERT INTO messages (id, session_id, role, content, timestamp, active) VALUES (1, 's1', 'user', ?, 1.0, 1)",
+        ("send telegram token=abc123 to ops@example.com",),
+    )
+    con.commit()
+    con.close()
+
+    payload = replay_recent_user_intents(tmp_path, limit=5)
+    assert payload["ok"] is True
+    assert payload["would_execute_anything"] is False
+    assert payload["record_count"] == 1
+    preview = payload["records"][0]["redacted_intent_preview"]
+    assert "abc123" not in preview
+    assert "ops@example.com" not in preview
+    assert "[REDACTED]" in preview
