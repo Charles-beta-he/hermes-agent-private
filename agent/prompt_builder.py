@@ -399,6 +399,16 @@ AGENT_OS_SCHEDULER_CRON_GUIDANCE = (
     "a later exact adapter authorization, rollback path, and readback are present."
 )
 
+
+AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE = (
+    "# Agent OS taskpool/Kanban lifecycle write (local exact target only)\n"
+    "When `agent.agent_os_taskpool_lifecycle_write` is enabled, Agent OS may perform exact "
+    "idempotent local Kanban/taskpool lifecycle writes only when the command names a specific "
+    "board, task/idempotency key, intended status/action, evidence, and readback command. This "
+    "does not authorize external dispatch, message sending, worker spawning beyond existing policy, "
+    "publish/deploy/push, or destructive actions."
+)
+
 # OpenAI GPT/Codex-specific execution guidance.  Addresses known failure modes
 # where GPT models abandon work on partial results, skip prerequisite lookups,
 # hallucinate instead of using tools, and declare "done" without verification.

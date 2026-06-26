@@ -69,7 +69,7 @@ def _seed_agent_os(home: Path, *, runtime_mutation: bool = False, shadow_execute
 
 def test_agent_os_status_reads_projection_without_runtime_mutation(tmp_path: Path, monkeypatch) -> None:
     _seed_agent_os(tmp_path)
-    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {"agent_os_advisory_guidance": True, "agent_os_runtime_routing": True, "agent_os_multimodel_review": True, "agent_os_local_harness_executor": True, "agent_os_scheduler_cron_write": True}})
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {"agent_os_advisory_guidance": True, "agent_os_runtime_routing": True, "agent_os_multimodel_review": True, "agent_os_local_harness_executor": True, "agent_os_scheduler_cron_write": True, "agent_os_taskpool_lifecycle_write": True}})
     payload = status(tmp_path)
     assert payload["ok"] is True
     assert payload["mode"] == "advisory_readback_only"
@@ -81,7 +81,9 @@ def test_agent_os_status_reads_projection_without_runtime_mutation(tmp_path: Pat
     assert payload["config"]["agent_os_scheduler_cron_write"] is True
     assert payload["config"]["tool_invocation_from_agent_os"] is True
     assert payload["config"]["scheduler_cron_write"] is True
-    assert payload["runtime_effect"].startswith("local scheduler cron write enabled")
+    assert payload["config"]["agent_os_taskpool_lifecycle_write"] is True
+    assert payload["config"]["taskpool_mission_lifecycle_write"] is True
+    assert payload["runtime_effect"].startswith("local taskpool lifecycle write enabled")
 
 
 def test_agent_os_status_defaults_multimodel_review_and_execution_gates_closed(tmp_path: Path, monkeypatch) -> None:
@@ -94,6 +96,7 @@ def test_agent_os_status_defaults_multimodel_review_and_execution_gates_closed(t
     assert payload["config"]["real_runtime_routing"] is False
     assert payload["config"]["tool_invocation_from_agent_os"] is False
     assert payload["config"]["scheduler_cron_write"] is False
+    assert payload["config"]["taskpool_mission_lifecycle_write"] is False
     assert payload["config"]["external_dispatch"] is False
     assert payload["runtime_effect"].startswith("none")
 

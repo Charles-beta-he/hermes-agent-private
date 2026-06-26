@@ -1487,7 +1487,7 @@ class TestObjectiveModelPathGuidance:
 class TestAgentOsAdvisoryGuidance:
     """Tests for default-off Agent OS advisory prompt injection."""
 
-    def _make_agent(self, agent_os_advisory_guidance=False, agent_os_runtime_routing=False, agent_os_multimodel_review=False, agent_os_local_harness_executor=False, agent_os_scheduler_cron_write=False, tools=None):
+    def _make_agent(self, agent_os_advisory_guidance=False, agent_os_runtime_routing=False, agent_os_multimodel_review=False, agent_os_local_harness_executor=False, agent_os_scheduler_cron_write=False, agent_os_taskpool_lifecycle_write=False, tools=None):
         tool_names = tools if tools is not None else ("terminal", "skill_view")
         with (
             patch("run_agent.get_tool_definitions", return_value=_make_tool_defs(*tool_names)),
@@ -1495,7 +1495,7 @@ class TestAgentOsAdvisoryGuidance:
             patch("run_agent.OpenAI"),
             patch(
                 "hermes_cli.config.load_config",
-                return_value={"agent": {"agent_os_advisory_guidance": agent_os_advisory_guidance, "agent_os_runtime_routing": agent_os_runtime_routing, "agent_os_multimodel_review": agent_os_multimodel_review, "agent_os_local_harness_executor": agent_os_local_harness_executor, "agent_os_scheduler_cron_write": agent_os_scheduler_cron_write}},
+                return_value={"agent": {"agent_os_advisory_guidance": agent_os_advisory_guidance, "agent_os_runtime_routing": agent_os_runtime_routing, "agent_os_multimodel_review": agent_os_multimodel_review, "agent_os_local_harness_executor": agent_os_local_harness_executor, "agent_os_scheduler_cron_write": agent_os_scheduler_cron_write, "agent_os_taskpool_lifecycle_write": agent_os_taskpool_lifecycle_write}},
             ),
         ):
             a = AIAgent(
@@ -1510,7 +1510,7 @@ class TestAgentOsAdvisoryGuidance:
             return a
 
     def test_default_off(self):
-        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE, AGENT_OS_LOCAL_HARNESS_GUIDANCE, AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE, AGENT_OS_SCHEDULER_CRON_GUIDANCE
+        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE, AGENT_OS_LOCAL_HARNESS_GUIDANCE, AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE, AGENT_OS_SCHEDULER_CRON_GUIDANCE, AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE
 
         agent = self._make_agent(agent_os_advisory_guidance=False, agent_os_multimodel_review=False)
         prompt = agent._build_system_prompt()
@@ -1518,6 +1518,7 @@ class TestAgentOsAdvisoryGuidance:
         assert AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE not in prompt
         assert AGENT_OS_LOCAL_HARNESS_GUIDANCE not in prompt
         assert AGENT_OS_SCHEDULER_CRON_GUIDANCE not in prompt
+        assert AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE not in prompt
 
     def test_enabled_injects_shadow_only_guidance(self):
         from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE
@@ -1585,15 +1586,34 @@ class TestAgentOsAdvisoryGuidance:
         assert "stay silent on success" in prompt
         assert "message-sending" in prompt
 
-    def test_no_tools_no_injection(self):
-        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE, AGENT_OS_LOCAL_HARNESS_GUIDANCE, AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE, AGENT_OS_SCHEDULER_CRON_GUIDANCE
 
-        agent = self._make_agent(agent_os_advisory_guidance=True, agent_os_multimodel_review=True, agent_os_local_harness_executor=True, agent_os_scheduler_cron_write=True, tools=())
+    def test_taskpool_lifecycle_enabled_injects_exact_local_write_only(self):
+        from agent.prompt_builder import AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE
+
+        agent = self._make_agent(
+            agent_os_advisory_guidance=True,
+            agent_os_runtime_routing=True,
+            agent_os_multimodel_review=True,
+            agent_os_local_harness_executor=True,
+            agent_os_scheduler_cron_write=True,
+            agent_os_taskpool_lifecycle_write=True,
+        )
+        prompt = agent._build_system_prompt()
+        assert AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE in prompt
+        assert "idempotent local Kanban/taskpool lifecycle writes" in prompt
+        assert "specific board" in prompt
+        assert "does not authorize external dispatch" in prompt
+
+    def test_no_tools_no_injection(self):
+        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE, AGENT_OS_LOCAL_HARNESS_GUIDANCE, AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE, AGENT_OS_SCHEDULER_CRON_GUIDANCE, AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE
+
+        agent = self._make_agent(agent_os_advisory_guidance=True, agent_os_multimodel_review=True, agent_os_local_harness_executor=True, agent_os_scheduler_cron_write=True, agent_os_taskpool_lifecycle_write=True, tools=())
         prompt = agent._build_system_prompt()
         assert AGENT_OS_ADVISORY_GUIDANCE not in prompt
         assert AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE not in prompt
         assert AGENT_OS_LOCAL_HARNESS_GUIDANCE not in prompt
         assert AGENT_OS_SCHEDULER_CRON_GUIDANCE not in prompt
+        assert AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE not in prompt
 
 
 class TestEnvironmentProbeIntegration:

@@ -1284,6 +1284,7 @@ def init_agent(
     # SSOT-local harness JSON + receipt ledger; not real adapter write-through.
     agent._agent_os_local_harness_executor = bool(_agent_section.get("agent_os_local_harness_executor", False))
     agent._agent_os_scheduler_cron_write = bool(_agent_section.get("agent_os_scheduler_cron_write", False))
+    agent._agent_os_taskpool_lifecycle_write = bool(_agent_section.get("agent_os_taskpool_lifecycle_write", False))
 
     # Local Python toolchain probe toggle.  Default True.  When False,
     # the probe is skipped entirely (no subprocess calls, no system-prompt

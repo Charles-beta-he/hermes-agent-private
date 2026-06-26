@@ -879,6 +879,11 @@ DEFAULT_CONFIG = {
         # Agent OS may own exactly-scoped local-only cron/scheduler receipts
         # that are no-agent/silent/local-delivery and write only Agent OS SSOT.
         "agent_os_scheduler_cron_write": False,
+        # Default-off Agent OS taskpool/Kanban lifecycle write boundary. When
+        # enabled, Agent OS may perform exact idempotent local Kanban/taskpool
+        # lifecycle writes with readback and rollback notes; external dispatch
+        # still remains closed.
+        "agent_os_taskpool_lifecycle_write": False,
         # Embedder-supplied environment description appended to the system
         # prompt's environment-hints block. Lets a host that wraps Hermes
         # (sandbox runner, managed platform) explain the runtime environment
