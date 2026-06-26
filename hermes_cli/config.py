@@ -865,6 +865,11 @@ DEFAULT_CONFIG = {
         # execution path. Still local-only: no tools are invoked from Agent OS
         # and no scheduler/worker/lifecycle/external gates are opened.
         "agent_os_runtime_routing": False,
+        # Default-off Agent OS multi-model/adversarial review preflight. When
+        # enabled, the prompt requires independent review evidence before any
+        # future Agent OS execution/lifecycle/external boundary expansion.
+        # Review only; no executor or write-through gate is opened here.
+        "agent_os_multimodel_review": False,
         # Embedder-supplied environment description appended to the system
         # prompt's environment-hints block. Lets a host that wraps Hermes
         # (sandbox runner, managed platform) explain the runtime environment

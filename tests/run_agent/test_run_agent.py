@@ -1489,7 +1489,7 @@ class TestObjectiveModelPathGuidance:
 class TestAgentOsAdvisoryGuidance:
     """Tests for default-off Agent OS advisory prompt injection."""
 
-    def _make_agent(self, agent_os_advisory_guidance=False, agent_os_runtime_routing=False, tools=None):
+    def _make_agent(self, agent_os_advisory_guidance=False, agent_os_runtime_routing=False, agent_os_multimodel_review=False, tools=None):
         tool_names = tools if tools is not None else ("terminal", "skill_view")
         with (
             patch("run_agent.get_tool_definitions", return_value=_make_tool_defs(*tool_names)),
@@ -1497,7 +1497,7 @@ class TestAgentOsAdvisoryGuidance:
             patch("run_agent.OpenAI"),
             patch(
                 "hermes_cli.config.load_config",
-                return_value={"agent": {"agent_os_advisory_guidance": agent_os_advisory_guidance, "agent_os_runtime_routing": agent_os_runtime_routing}},
+                return_value={"agent": {"agent_os_advisory_guidance": agent_os_advisory_guidance, "agent_os_runtime_routing": agent_os_runtime_routing, "agent_os_multimodel_review": agent_os_multimodel_review}},
             ),
         ):
             a = AIAgent(
@@ -1512,10 +1512,12 @@ class TestAgentOsAdvisoryGuidance:
             return a
 
     def test_default_off(self):
-        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE
+        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE, AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE
 
-        agent = self._make_agent(agent_os_advisory_guidance=False)
-        assert AGENT_OS_ADVISORY_GUIDANCE not in agent._build_system_prompt()
+        agent = self._make_agent(agent_os_advisory_guidance=False, agent_os_multimodel_review=False)
+        prompt = agent._build_system_prompt()
+        assert AGENT_OS_ADVISORY_GUIDANCE not in prompt
+        assert AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE not in prompt
 
     def test_enabled_injects_shadow_only_guidance(self):
         from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE
@@ -1537,11 +1539,28 @@ class TestAgentOsAdvisoryGuidance:
         assert "do not execute the suggested node automatically" in prompt
         assert "external dispatch, publish/deploy, and destructive" in prompt
 
-    def test_no_tools_no_injection(self):
-        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE
 
-        agent = self._make_agent(agent_os_advisory_guidance=True, tools=())
-        assert AGENT_OS_ADVISORY_GUIDANCE not in agent._build_system_prompt()
+    def test_multimodel_review_enabled_injects_review_preflight_only(self):
+        from agent.prompt_builder import AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE
+
+        agent = self._make_agent(
+            agent_os_advisory_guidance=True,
+            agent_os_runtime_routing=True,
+            agent_os_multimodel_review=True,
+        )
+        prompt = agent._build_system_prompt()
+        assert AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE in prompt
+        assert "multi-model/adversarial review" in prompt
+        assert "keep execution gates closed" in prompt
+        assert "fresh readback open that specific gate" in prompt
+
+    def test_no_tools_no_injection(self):
+        from agent.prompt_builder import AGENT_OS_ADVISORY_GUIDANCE, AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE
+
+        agent = self._make_agent(agent_os_advisory_guidance=True, agent_os_multimodel_review=True, tools=())
+        prompt = agent._build_system_prompt()
+        assert AGENT_OS_ADVISORY_GUIDANCE not in prompt
+        assert AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE not in prompt
 
 
 class TestEnvironmentProbeIntegration:

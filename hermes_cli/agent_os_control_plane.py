@@ -106,6 +106,7 @@ def _agent_os_config_status(home: str | Path | None = None) -> dict[str, Any]:
         return {
             "agent_os_advisory_guidance": bool(agent_cfg.get("agent_os_advisory_guidance", False)),
             "agent_os_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
+            "agent_os_multimodel_review": bool(agent_cfg.get("agent_os_multimodel_review", False)),
             "real_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
             "tool_invocation_from_agent_os": False,
             "external_dispatch": False,

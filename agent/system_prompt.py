@@ -32,6 +32,7 @@ from agent.prompt_builder import (
     HERMES_AGENT_HELP_GUIDANCE,
     AGENT_OS_ADVISORY_GUIDANCE,
     AGENT_OS_RUNTIME_ROUTING_GUIDANCE,
+    AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE,
     KANBAN_GUIDANCE,
     MEMORY_GUIDANCE,
     OBJECTIVE_MODEL_PATH_GUIDANCE,
@@ -126,6 +127,8 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
         stable_parts.append(AGENT_OS_ADVISORY_GUIDANCE)
     if getattr(agent, "_agent_os_runtime_routing", False) and agent.valid_tool_names:
         stable_parts.append(AGENT_OS_RUNTIME_ROUTING_GUIDANCE)
+    if getattr(agent, "_agent_os_multimodel_review", False) and agent.valid_tool_names:
+        stable_parts.append(AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE)
 
     # Tool-aware behavioral guidance: only inject when the tools are loaded
     tool_guidance = []

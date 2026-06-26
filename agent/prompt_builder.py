@@ -364,6 +364,20 @@ AGENT_OS_RUNTIME_ROUTING_GUIDANCE = (
     "actions remain closed unless separately authorized and verified."
 )
 
+
+# Optional multi-model/adversarial review preflight before crossing Agent OS
+# execution boundaries. This is still a review gate, not an executor.
+AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE = (
+    "# Agent OS multi-model safety preflight (review-only)\n"
+    "When `agent.agent_os_multimodel_review` is enabled, any proposed expansion beyond "
+    "Agent OS route preflight must be reviewed before use: tool invocation, scheduler/worker "
+    "actions, taskpool/mission lifecycle writes, external dispatch, publish/deploy, push, "
+    "or destructive operations require an independent multi-model/adversarial review or a "
+    "recorded degraded-review packet with objective evidence. Treat model votes as advisory "
+    "unless they cite concrete command/readback evidence; keep execution gates closed until "
+    "a later exact AuthorityGrant and fresh readback open that specific gate."
+)
+
 # OpenAI GPT/Codex-specific execution guidance.  Addresses known failure modes
 # where GPT models abandon work on partial results, skip prerequisite lookups,
 # hallucinate instead of using tools, and declare "done" without verification.

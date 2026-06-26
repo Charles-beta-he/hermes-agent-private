@@ -1276,6 +1276,10 @@ def init_agent(
     # active local decision aid for governed intents, but still never invokes
     # tools or mutates lifecycle/external state by itself.
     agent._agent_os_runtime_routing = bool(_agent_section.get("agent_os_runtime_routing", False))
+    # Default-off Agent OS multi-model/adversarial review preflight. This adds
+    # a certification/review boundary before future Agent OS execution gates;
+    # it does not execute tools or mutate external/lifecycle state.
+    agent._agent_os_multimodel_review = bool(_agent_section.get("agent_os_multimodel_review", False))
 
     # Local Python toolchain probe toggle.  Default True.  When False,
     # the probe is skipped entirely (no subprocess calls, no system-prompt
