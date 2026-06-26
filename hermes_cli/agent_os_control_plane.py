@@ -96,6 +96,23 @@ def _read_json(path: Path, default: Any) -> Any:
         return {"_load_error": str(exc), "_path": str(path)}
 
 
+def _agent_os_config_status(home: str | Path | None = None) -> dict[str, Any]:
+    try:
+        from hermes_cli.config import load_config
+        cfg = load_config()
+        agent_cfg = cfg.get("agent", {}) if isinstance(cfg, dict) else {}
+        if not isinstance(agent_cfg, dict):
+            agent_cfg = {}
+        return {
+            "agent_os_advisory_guidance": bool(agent_cfg.get("agent_os_advisory_guidance", False)),
+            "real_runtime_routing": False,
+            "tool_invocation_from_agent_os": False,
+            "external_dispatch": False,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"load_error": str(exc)}
+
+
 def _project_status(profile: dict[str, Any], projection: dict[str, Any], doctor: dict[str, Any], shadow: dict[str, Any]) -> str:
     components = profile.get("current_components") if isinstance(profile, dict) else None
     if isinstance(components, dict):
@@ -123,6 +140,7 @@ def status(home: str | Path | None = None) -> dict[str, Any]:
         if not path.exists()
     ]
     runtime_mutation = bool(projection.get("runtime_mutation")) if isinstance(projection, dict) else False
+    config_status = _agent_os_config_status(home)
     payload = {
         "ok": not missing and not runtime_mutation,
         "project": PROJECT_ID,
@@ -149,6 +167,7 @@ def status(home: str | Path | None = None) -> dict[str, Any]:
             "blocked_by_policy": shadow.get("blocked_by_policy") if isinstance(shadow, dict) else None,
             "would_execute_anything": shadow.get("would_execute_anything") if isinstance(shadow, dict) else None,
         },
+        "config": config_status,
         "runtime_effect": "none; command reads artifacts and computes shadow advice only",
     }
     return payload
