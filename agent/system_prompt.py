@@ -34,6 +34,7 @@ from agent.prompt_builder import (
     AGENT_OS_RUNTIME_ROUTING_GUIDANCE,
     AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE,
     AGENT_OS_LOCAL_HARNESS_GUIDANCE,
+    AGENT_OS_SCHEDULER_CRON_GUIDANCE,
     KANBAN_GUIDANCE,
     MEMORY_GUIDANCE,
     OBJECTIVE_MODEL_PATH_GUIDANCE,
@@ -132,6 +133,8 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
         stable_parts.append(AGENT_OS_MULTIMODEL_REVIEW_GUIDANCE)
     if getattr(agent, "_agent_os_local_harness_executor", False) and agent.valid_tool_names:
         stable_parts.append(AGENT_OS_LOCAL_HARNESS_GUIDANCE)
+    if getattr(agent, "_agent_os_scheduler_cron_write", False) and agent.valid_tool_names:
+        stable_parts.append(AGENT_OS_SCHEDULER_CRON_GUIDANCE)
 
     # Tool-aware behavioral guidance: only inject when the tools are loaded
     tool_guidance = []

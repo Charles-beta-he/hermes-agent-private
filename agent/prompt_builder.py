@@ -389,6 +389,16 @@ AGENT_OS_LOCAL_HARNESS_GUIDANCE = (
     "publish/deploy/push, and destructive operations remain closed."
 )
 
+
+AGENT_OS_SCHEDULER_CRON_GUIDANCE = (
+    "# Agent OS scheduler cron write (local heartbeat only)\n"
+    "When `agent.agent_os_scheduler_cron_write` is enabled, the opened scheduler boundary is "
+    "limited to already-authorized no-agent cron jobs with `deliver=local` whose scripts write "
+    "Agent OS SSOT receipts and stay silent on success. Do not create message-sending, external, "
+    "worker/lifecycle, publish/deploy/push, or destructive scheduled actions from Agent OS unless "
+    "a later exact adapter authorization, rollback path, and readback are present."
+)
+
 # OpenAI GPT/Codex-specific execution guidance.  Addresses known failure modes
 # where GPT models abandon work on partial results, skip prerequisite lookups,
 # hallucinate instead of using tools, and declare "done" without verification.

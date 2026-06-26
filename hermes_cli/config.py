@@ -875,6 +875,10 @@ DEFAULT_CONFIG = {
         # harness/receipt ledger; it must not write taskpool/Kanban/Lark/Telegram
         # or any external adapter state.
         "agent_os_local_harness_executor": False,
+        # Default-off Agent OS scheduler/cron write boundary. When enabled,
+        # Agent OS may own exactly-scoped local-only cron/scheduler receipts
+        # that are no-agent/silent/local-delivery and write only Agent OS SSOT.
+        "agent_os_scheduler_cron_write": False,
         # Embedder-supplied environment description appended to the system
         # prompt's environment-hints block. Lets a host that wraps Hermes
         # (sandbox runner, managed platform) explain the runtime environment

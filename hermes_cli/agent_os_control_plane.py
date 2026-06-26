@@ -115,8 +115,10 @@ def _agent_os_config_status(home: str | Path | None = None) -> dict[str, Any]:
             "agent_os_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
             "agent_os_multimodel_review": bool(agent_cfg.get("agent_os_multimodel_review", False)),
             "agent_os_local_harness_executor": bool(agent_cfg.get("agent_os_local_harness_executor", False)),
+            "agent_os_scheduler_cron_write": bool(agent_cfg.get("agent_os_scheduler_cron_write", False)),
             "real_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
             "tool_invocation_from_agent_os": bool(agent_cfg.get("agent_os_local_harness_executor", False)),
+            "scheduler_cron_write": bool(agent_cfg.get("agent_os_scheduler_cron_write", False)),
             "external_dispatch": False,
         }
     except Exception as exc:  # noqa: BLE001
@@ -179,7 +181,9 @@ def status(home: str | Path | None = None) -> dict[str, Any]:
         },
         "config": config_status,
         "runtime_effect": (
-            "local route preflight enabled; Agent OS may inform path selection but cannot execute"
+            "local scheduler cron write enabled; only no-agent/silent/local SSOT heartbeat jobs may be owned"
+            if config_status.get("agent_os_scheduler_cron_write")
+            else "local route preflight enabled; Agent OS may inform path selection but cannot execute"
             if config_status.get("agent_os_runtime_routing")
             else "none; command reads artifacts and computes shadow advice only"
         ),
