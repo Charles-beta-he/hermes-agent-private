@@ -301,6 +301,7 @@ from hermes_cli.subcommands.skills import build_skills_parser
 from hermes_cli.subcommands.pairing import build_pairing_parser
 from hermes_cli.subcommands.plugins import build_plugins_parser
 from hermes_cli.subcommands.portfolio import build_portfolio_parser
+from hermes_cli.subcommands.agent_os import build_agent_os_parser
 from hermes_cli.subcommands.mcp import build_mcp_parser
 from hermes_cli.subcommands.codegraph import build_codegraph_parser
 from hermes_cli.subcommands.claw import build_claw_parser
@@ -11029,6 +11030,11 @@ def main():
     # portfolio command — project portfolio governance status
     # =========================================================================
     build_portfolio_parser(subparsers)
+
+    # =========================================================================
+    # agent-os command — Agent OS Control Plane advisory/readback surface
+    # =========================================================================
+    build_agent_os_parser(subparsers)
 
     # =========================================================================
     # plugins command  (parser built in hermes_cli/subcommands/plugins.py)
