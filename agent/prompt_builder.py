@@ -409,6 +409,16 @@ AGENT_OS_TASKPOOL_LIFECYCLE_GUIDANCE = (
     "publish/deploy/push, or destructive actions."
 )
 
+
+AGENT_OS_EXTERNAL_DISPATCH_GUIDANCE = (
+    "# Agent OS external dispatch (exact allowlist only)\n"
+    "When `agent.agent_os_external_dispatch` is enabled, Agent OS may perform external dispatch "
+    "only for an exact allowlisted platform/target/payload with evidence, receipt, and post-send "
+    "readback. This does not authorize publish/deploy/push, destructive operations, payments, "
+    "credential entry, or broad fan-out. Prefer the current origin/home channel for smoke tests "
+    "unless a more specific target is supplied."
+)
+
 # OpenAI GPT/Codex-specific execution guidance.  Addresses known failure modes
 # where GPT models abandon work on partial results, skip prerequisite lookups,
 # hallucinate instead of using tools, and declare "done" without verification.

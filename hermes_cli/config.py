@@ -884,6 +884,11 @@ DEFAULT_CONFIG = {
         # lifecycle writes with readback and rollback notes; external dispatch
         # still remains closed.
         "agent_os_taskpool_lifecycle_write": False,
+        # Default-off Agent OS external dispatch boundary. When enabled, Agent
+        # OS may execute exact allowlisted external dispatches with explicit
+        # target/payload/evidence/readback. Publish/deploy/push/destructive
+        # operations remain separate closed gates.
+        "agent_os_external_dispatch": False,
         # Embedder-supplied environment description appended to the system
         # prompt's environment-hints block. Lets a host that wraps Hermes
         # (sandbox runner, managed platform) explain the runtime environment

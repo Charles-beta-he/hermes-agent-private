@@ -117,11 +117,14 @@ def _agent_os_config_status(home: str | Path | None = None) -> dict[str, Any]:
             "agent_os_local_harness_executor": bool(agent_cfg.get("agent_os_local_harness_executor", False)),
             "agent_os_scheduler_cron_write": bool(agent_cfg.get("agent_os_scheduler_cron_write", False)),
             "agent_os_taskpool_lifecycle_write": bool(agent_cfg.get("agent_os_taskpool_lifecycle_write", False)),
+            "agent_os_external_dispatch": bool(agent_cfg.get("agent_os_external_dispatch", False)),
             "real_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
             "tool_invocation_from_agent_os": bool(agent_cfg.get("agent_os_local_harness_executor", False)),
             "scheduler_cron_write": bool(agent_cfg.get("agent_os_scheduler_cron_write", False)),
             "taskpool_mission_lifecycle_write": bool(agent_cfg.get("agent_os_taskpool_lifecycle_write", False)),
-            "external_dispatch": False,
+            "external_dispatch": bool(agent_cfg.get("agent_os_external_dispatch", False)),
+            "publish_deploy_push": False,
+            "destructive_operations": False,
         }
     except Exception as exc:  # noqa: BLE001
         return {"load_error": str(exc)}
@@ -183,7 +186,9 @@ def status(home: str | Path | None = None) -> dict[str, Any]:
         },
         "config": config_status,
         "runtime_effect": (
-            "local taskpool lifecycle write enabled; only exact idempotent local Kanban/taskpool operations with readback may be owned"
+            "external dispatch enabled; only exact allowlisted target/payload dispatches with readback may be owned"
+            if config_status.get("agent_os_external_dispatch")
+            else "local taskpool lifecycle write enabled; only exact idempotent local Kanban/taskpool operations with readback may be owned"
             if config_status.get("agent_os_taskpool_lifecycle_write")
             else "local scheduler cron write enabled; only no-agent/silent/local SSOT heartbeat jobs may be owned"
             if config_status.get("agent_os_scheduler_cron_write")
