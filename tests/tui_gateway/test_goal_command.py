@@ -122,6 +122,23 @@ def test_goal_set_returns_send_with_notice(server, session):
     assert mgr.state.status == "active"
 
 
+def test_goal_workflow_dry_run_after_set_persists_runtime_packet(server, session):
+    sid, session_key, _ = session
+    _call(server, "command.dispatch", name="goal", arg="write a story", session_id=sid)
+    r = _call(server, "command.dispatch", name="goal", arg="workflow --dry-run", session_id=sid)
+    result = r["result"]
+    assert result["type"] == "exec"
+    assert "goal_dynamic_workflow_packet_v1" in result["output"]
+    assert "dynamic_goal_workflow_run_v1" in result["output"]
+
+    from hermes_cli.goals import GoalManager
+
+    mgr = GoalManager(session_key)
+    assert mgr.state is not None
+    assert mgr.state.workflow_run["schema"] == "dynamic_goal_workflow_run_v1"
+    assert mgr.state.workflow_run["execution_enabled"] is False
+
+
 def test_goal_pause_after_set(server, session):
     sid, session_key, _ = session
     _call(server, "command.dispatch", name="goal", arg="write a story", session_id=sid)

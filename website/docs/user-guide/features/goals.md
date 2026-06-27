@@ -41,6 +41,8 @@ What you'll see:
 |---|---|
 | `/goal <text>` | Set (or replace) the standing goal. Kicks off the first turn immediately so you don't need to send a separate message. |
 | `/goal` or `/goal status` | Show the current goal, its status, and turns used. |
+| `/goal promote --dry-run` | Project the active goal into a governed promotion candidate (taskpool/mission/cron/human-gate/session) without mutating those systems. |
+| `/goal workflow --dry-run` | Compile the active goal into a dynamic workflow runtime packet: DAG nodes, ready/blocked/human-gated state, evidence contracts, progress/cost visibility, and next actions. It persists only to the goal checkpoint and executes nothing. |
 | `/goal pause` | Stop the auto-continuation loop without clearing the goal. |
 | `/goal resume` | Resume the loop (resets the turn counter back to zero). |
 | `/goal clear` | Drop the goal entirely. |
@@ -61,6 +63,19 @@ While a goal is active you can append extra acceptance criteria with `/subgoal <
 Subgoals are persisted alongside the goal in `SessionDB.state_meta`, so they survive `/resume`. Setting a new `/goal <text>` replaces the goal and clears the subgoal list; `/goal clear` does the same.
 
 Use this when you start a loop ("fix the failing tests") and notice partway through that you also want it to "and add a regression test for the bug you just patched" — `/subgoal add a regression test` tightens the success criteria without breaking the running loop.
+
+### Dynamic workflow dry run
+
+`/goal workflow --dry-run` is the default-safe runtime landing for the Claude Code Ultracode/dynamic-workflow pattern. It compiles the active `goal_spec_v1` into:
+
+- a `workflow_plan_v1` DAG;
+- a `dynamic_goal_workflow_run_v1` state packet;
+- ready / blocked / human-gated node state;
+- evidence contracts and permission boundaries per node;
+- progress and cost visibility counters;
+- next actions that explicitly carry `execute: false`.
+
+The packet is persisted on the goal state and checkpoint sidecar so `/resume` or compression rollover can recover it. It does **not** execute node commands, dispatch workers/subagents, write taskpool/mission/cron state, or perform external side effects. Those require later governed adapters and explicit authority.
 
 ## Behavior details
 

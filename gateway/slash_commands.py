@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
+import json
 import logging
 import os
 import re
@@ -1467,6 +1468,13 @@ class GatewaySlashCommandsMixin:
                 result = mgr.promote_dry_run()
             except RuntimeError as exc:
                 return f"/goal promote --dry-run: {exc}"
+            return json.dumps(result, ensure_ascii=False, indent=2)
+
+        if lower in {"workflow", "workflow --dry-run", "workflow dry-run", "workflow status"}:
+            try:
+                result = mgr.workflow_dry_run()
+            except (RuntimeError, ValueError) as exc:
+                return f"/goal workflow --dry-run: {exc}"
             return json.dumps(result, ensure_ascii=False, indent=2)
 
         if lower == "pause":

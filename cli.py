@@ -7604,6 +7604,14 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 return
             _cprint(json.dumps(result, ensure_ascii=False, indent=2))
             return
+        if lower in {"workflow", "workflow --dry-run", "workflow dry-run", "workflow status"}:
+            try:
+                result = mgr.workflow_dry_run()
+            except (RuntimeError, ValueError) as exc:
+                _cprint(f"  /goal workflow --dry-run: {exc}")
+                return
+            _cprint(json.dumps(result, ensure_ascii=False, indent=2))
+            return
         if lower == "pause":
             state = mgr.pause(reason="user-paused")
             _cprint(f"  ⏸ Goal paused: {state.goal}" if state else "  No active goal to pause.")

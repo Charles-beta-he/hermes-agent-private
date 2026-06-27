@@ -7043,6 +7043,12 @@ def _(rid, params: dict) -> dict:
         lower = arg.strip().lower()
         if not arg.strip() or lower == "status":
             return _ok(rid, {"type": "exec", "output": mgr.status_line()})
+        if lower in {"workflow", "workflow --dry-run", "workflow dry-run", "workflow status"}:
+            try:
+                result = mgr.workflow_dry_run()
+            except (RuntimeError, ValueError) as exc:
+                return _ok(rid, {"type": "exec", "output": f"/goal workflow --dry-run: {exc}"})
+            return _ok(rid, {"type": "exec", "output": json.dumps(result, ensure_ascii=False, indent=2)})
         if lower == "pause":
             state = mgr.pause(reason="user-paused")
             out = "No goal set." if state is None else f"⏸ Goal paused: {state.goal}"

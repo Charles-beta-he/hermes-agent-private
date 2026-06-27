@@ -41,6 +41,8 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 |---|---|
 | `/goal <text>` | 设置（或替换）持续目标。立即启动第一轮，无需再发送单独消息。 |
 | `/goal` 或 `/goal status` | 显示当前目标、状态及已用轮次。 |
+| `/goal promote --dry-run` | 将活跃目标投影为受治理的 promotion candidate（taskpool/mission/cron/human-gate/session），但不修改这些系统。 |
+| `/goal workflow --dry-run` | 将活跃目标编译为动态工作流 runtime packet：DAG 节点、ready/blocked/human-gated 状态、证据契约、进度/成本可见性和下一步动作。只持久化到 goal checkpoint，不执行任何动作。 |
 | `/goal pause` | 停止自动续行循环，但不清除目标。 |
 | `/goal resume` | 恢复循环（将轮次计数器重置为零）。 |
 | `/goal clear` | 完全删除目标。 |
@@ -61,6 +63,19 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 子目标与目标一起持久化存储在 `SessionDB.state_meta` 中，因此在 `/resume` 后依然有效。设置新的 `/goal <text>` 会替换目标并清空子目标列表；`/goal clear` 同样如此。
 
 当你启动一个循环（"修复失败的测试"）后，中途发现还需要"为刚修复的 bug 添加回归测试"时，使用此功能——`/subgoal add a regression test` 可在不中断运行循环的情况下收紧成功条件。
+
+### 动态工作流 dry run
+
+`/goal workflow --dry-run` 是 Claude Code Ultracode/dynamic-workflow 模式在 Hermes 中的默认安全 runtime 落点。它会把活跃的 `goal_spec_v1` 编译为：
+
+- `workflow_plan_v1` DAG；
+- `dynamic_goal_workflow_run_v1` 状态包；
+- ready / blocked / human-gated 节点状态；
+- 每个节点的证据契约和权限边界；
+- 进度与成本可见性计数器；
+- 明确带有 `execute: false` 的下一步动作。
+
+该 packet 会持久化到 goal state 和 checkpoint sidecar，因此 `/resume` 或 compression rollover 后可以恢复。它**不会**执行节点命令、派发 worker/subagent、写 taskpool/mission/cron 状态或产生外部副作用。这些需要后续受治理 adapter 和显式授权。
 
 ## 行为细节
 

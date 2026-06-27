@@ -565,6 +565,67 @@ class TestGoalManager:
         with pytest.raises(ValueError, match="acyclic"):
             compile_workflow_plan_v1(spec)
 
+    def test_compile_dynamic_workflow_run_v1_initializes_script_held_state_without_execution(self, tmp_path):
+        from hermes_cli.goals import (
+            build_goal_spec,
+            compile_dynamic_workflow_run_v1,
+            compile_workflow_plan_v1,
+        )
+
+        marker = tmp_path / "must_not_exist"
+        spec = build_goal_spec("runtime land goal workflow harness", max_turns=20)
+        spec["workflow_steps"] = [
+            {
+                "id": "plan",
+                "evidence_contract": ["plan artifact"],
+                "permission_boundary": "evidence_only",
+            },
+            {
+                "id": "implement",
+                "depends_on": ["plan"],
+                "evidence_contract": ["scoped diff"],
+                "permission_boundary": "local_patch_only",
+                "command": f"touch {marker}",
+            },
+        ]
+        plan = compile_workflow_plan_v1(spec)
+
+        run = compile_dynamic_workflow_run_v1(plan)
+
+        assert run["schema"] == "dynamic_goal_workflow_run_v1"
+        assert run["mode"] == "dry_run"
+        assert run["execution_enabled"] is False
+        assert run["script_runtime"] == "hermes_internal_state_machine"
+        assert run["progress"] == {"total": 2, "ready": 1, "blocked": 1, "completed": 0, "human_gated": 0}
+        assert run["ready_node_ids"] == ["goal:plan"]
+        assert run["node_state"]["goal:plan"]["status"] == "ready"
+        assert run["node_state"]["goal:implement"]["status"] == "blocked"
+        assert run["cost_visibility"]["worker_dispatches"] == 0
+        assert run["state_mutations"] == []
+        assert run["next_actions"][0]["execute"] is False
+        assert not marker.exists()
+
+    def test_goal_manager_workflow_dry_run_persists_recoverable_dynamic_workflow_state(self, hermes_home):
+        from hermes_cli.goals import GoalManager, load_goal
+
+        mgr = GoalManager(session_id="workflow-runtime-sid", default_max_turns=12)
+        mgr.set("全盘推进 runtime dynamic workflow harness", success_criteria=["run state persisted"])
+        mgr.state.spec["workflow_steps"] = [
+            {"id": "plan", "evidence_contract": ["plan evidence"]},
+            {"id": "verify", "depends_on": ["plan"], "evidence_contract": ["test evidence"]},
+        ]
+
+        packet = mgr.workflow_dry_run()
+        reloaded = load_goal("workflow-runtime-sid")
+
+        assert packet["schema"] == "goal_dynamic_workflow_packet_v1"
+        assert packet["plan"]["schema"] == "workflow_plan_v1"
+        assert packet["run"]["schema"] == "dynamic_goal_workflow_run_v1"
+        assert packet["run"]["ready_node_ids"] == ["goal:plan"]
+        assert reloaded is not None
+        assert reloaded.workflow_run["schema"] == "dynamic_goal_workflow_run_v1"
+        assert "workflow_run=2" in GoalManager(session_id="workflow-runtime-sid").status_line()
+
     def test_set_rejects_empty(self, hermes_home):
         from hermes_cli.goals import GoalManager
 

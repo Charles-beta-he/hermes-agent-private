@@ -209,6 +209,11 @@ class GoalState:
     # restart or compression rollover can recover more than the raw goal text.
     proof_refs: List[str] = field(default_factory=list)
     remaining_plan: List[str] = field(default_factory=list)
+    # Dynamic workflow runtime packet compiled from the goal spec. This is
+    # Hermes' default-safe Ultracode-style landing: script-held state, DAG
+    # progress, evidence contracts, and cost visibility without dispatching
+    # workers or executing node commands.
+    workflow_run: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         if not self.goal_id:
@@ -234,6 +239,7 @@ class GoalState:
             remaining_plan = [str(s).strip() for s in raw_remaining_plan if str(s).strip()]
         raw_spec = data.get("spec") if isinstance(data.get("spec"), dict) else None
         raw_route = data.get("route") if isinstance(data.get("route"), dict) else None
+        raw_workflow_run = data.get("workflow_run") if isinstance(data.get("workflow_run"), dict) else None
         return cls(
             goal=data.get("goal", ""),
             goal_id=str(data.get("goal_id") or ""),
@@ -251,6 +257,7 @@ class GoalState:
             subgoals=subgoals,
             proof_refs=proof_refs,
             remaining_plan=remaining_plan,
+            workflow_run=raw_workflow_run,
         )
 
     # --- subgoals helpers -------------------------------------------------
@@ -302,6 +309,7 @@ def _build_goal_checkpoint(session_id: str, state: GoalState, *, reason: str = "
         "last_reason": state.last_reason,
         "proof_refs": list(state.proof_refs or []),
         "remaining_plan": list(state.remaining_plan or []),
+        "workflow_run": state.workflow_run,
         "reason": reason,
         "updated_at": datetime.now(tz=timezone.utc).isoformat(),
     }
@@ -323,6 +331,8 @@ def _apply_goal_checkpoint(state: GoalState, checkpoint: Optional[Dict[str, Any]
         state.proof_refs = _clean_str_list(checkpoint.get("proof_refs"))
     if isinstance(checkpoint.get("remaining_plan"), list):
         state.remaining_plan = _clean_str_list(checkpoint.get("remaining_plan"))
+    if isinstance(checkpoint.get("workflow_run"), dict):
+        state.workflow_run = checkpoint.get("workflow_run")
     last_verdict = checkpoint.get("last_verdict")
     if last_verdict and not state.last_verdict:
         state.last_verdict = str(last_verdict)
@@ -1000,6 +1010,102 @@ def compile_workflow_plan_v1(
     }
 
 
+def compile_dynamic_workflow_run_v1(workflow_plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Compile a dry-run dynamic workflow runtime packet from a workflow plan.
+
+    This is the Hermes-safe runtime landing for the Ultracode/dynamic-workflow
+    pattern: a script-held state machine with DAG progress, evidence contracts,
+    and cost/progress visibility. It is intentionally non-executing; node
+    ``command``/``tool``/``handler`` refs are preserved for later governed
+    adapters but are never invoked here.
+    """
+    if not isinstance(workflow_plan, dict) or workflow_plan.get("schema") != "workflow_plan_v1":
+        raise ValueError("workflow_plan_v1 dict required")
+    nodes = workflow_plan.get("nodes") or []
+    if not isinstance(nodes, list):
+        raise ValueError("workflow_plan_v1.nodes must be a list")
+
+    node_state: Dict[str, Dict[str, Any]] = {}
+    ready_node_ids: List[str] = []
+    human_gated = 0
+    blocked = 0
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise ValueError("workflow_plan_v1.nodes entries must be dicts")
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            raise ValueError("workflow_plan_v1 node id is required")
+        deps = [str(dep) for dep in (node.get("depends_on") or [])]
+        is_human_gated = bool(node.get("human_gate_required"))
+        if is_human_gated:
+            status = "human_gated"
+            human_gated += 1
+        elif deps:
+            status = "blocked"
+            blocked += 1
+        else:
+            status = "ready"
+            ready_node_ids.append(node_id)
+        node_state[node_id] = {
+            "status": status,
+            "depends_on": deps,
+            "evidence_contract": list(node.get("evidence_contract") or []),
+            "permission_boundary": str(node.get("permission_boundary") or "evidence_only"),
+            "execute": False,
+            "worker_dispatches": 0,
+            "evidence_refs": [],
+            "last_reason": "dry_run_ready" if status == "ready" else f"dry_run_{status}",
+        }
+
+    nodes_by_id = {str(node.get("id")): node for node in nodes if isinstance(node, dict)}
+    next_actions: List[Dict[str, Any]] = []
+    for node_id in ready_node_ids:
+        node = nodes_by_id.get(node_id, {})
+        next_actions.append({
+            "node_id": node_id,
+            "title": str(node.get("title") or node_id),
+            "execute": False,
+            "required_evidence": list(node.get("evidence_contract") or []),
+            "permission_boundary": str(node.get("permission_boundary") or "evidence_only"),
+        })
+
+    return {
+        "schema": "dynamic_goal_workflow_run_v1",
+        "mode": "dry_run",
+        "run_id": f"goal_workflow_{uuid.uuid4().hex[:12]}",
+        "script_runtime": "hermes_internal_state_machine",
+        "execution_enabled": False,
+        "worker_dispatch_enabled": False,
+        "adapter_write_enabled": False,
+        "state_mutations": [],
+        "plan_schema": workflow_plan.get("schema"),
+        "plan_node_count": len(nodes),
+        "ready_node_ids": ready_node_ids,
+        "node_state": node_state,
+        "progress": {
+            "total": len(nodes),
+            "ready": len(ready_node_ids),
+            "blocked": blocked,
+            "completed": 0,
+            "human_gated": human_gated,
+        },
+        "cost_visibility": {
+            "worker_dispatches": 0,
+            "tool_invocations": 0,
+            "estimated_external_cost": 0,
+            "currency": "USD",
+        },
+        "evidence_ledger": [],
+        "next_actions": next_actions,
+        "safety_boundary": (
+            "Dynamic workflow dry-run only; keeps script-held state and progress "
+            "visibility without executing commands, dispatching workers, or mutating "
+            "taskpool/mission/cron/external state."
+        ),
+        "updated_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
 def clear_goal(session_id: str) -> None:
     """Mark a goal cleared in the DB (preserved for audit, status=cleared)."""
     state = load_goal(session_id)
@@ -1328,6 +1434,10 @@ class GoalManager:
                 detail.append(f"proof_refs={len(s.proof_refs)}")
             if s.remaining_plan:
                 detail.append(f"remaining_plan={len(s.remaining_plan)}")
+            if s.workflow_run:
+                progress = s.workflow_run.get("progress") if isinstance(s.workflow_run, dict) else None
+                total = (progress or {}).get("total") if isinstance(progress, dict) else None
+                detail.append(f"workflow_run={total if total is not None else 'active'}")
             if detail:
                 spec_bits = ", " + ", ".join(detail)
         if s.status == "active":
@@ -1384,6 +1494,40 @@ class GoalManager:
             success_criteria=self._state.subgoals,
         )
         return compile_goal_promotion_dry_run(spec)
+
+    def workflow_dry_run(self) -> Dict[str, Any]:
+        """Compile and persist a safe dynamic-workflow runtime packet.
+
+        This is runtime state, not just a pure compiler return: the packet is
+        saved on the active goal and mirrored into the checkpoint sidecar so a
+        resumed/compressed session can recover progress. It still does not
+        execute node commands, dispatch workers, or mutate taskpool/mission/cron.
+        """
+        if self._state is None or not self.has_goal():
+            raise RuntimeError("no active goal")
+        spec = self._state.spec or build_goal_spec(
+            self._state.goal,
+            max_turns=self._state.max_turns,
+            success_criteria=self._state.subgoals,
+        )
+        plan = compile_workflow_plan_v1(spec)
+        run = compile_dynamic_workflow_run_v1(plan)
+        self._state.workflow_run = run
+        self._state.remaining_plan = [
+            str(action.get("title") or action.get("node_id"))
+            for action in run.get("next_actions", [])
+            if isinstance(action, dict)
+        ]
+        save_goal(self.session_id, self._state)
+        save_goal_checkpoint(self.session_id, self._state, reason="workflow-dry-run")
+        return {
+            "schema": "goal_dynamic_workflow_packet_v1",
+            "dry_run": True,
+            "execution_enabled": False,
+            "plan": plan,
+            "run": run,
+            "safety_boundary": run.get("safety_boundary"),
+        }
 
     def force_checkpoint(self, *, reason: str = "force") -> Dict[str, Any]:
         """Persist and return the goal checkpoint sidecar for this session."""
