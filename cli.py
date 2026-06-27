@@ -7648,6 +7648,14 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 return
             _cprint(json.dumps(result, ensure_ascii=False, indent=2))
             return
+        if lower in {"workflow execute", "workflow execute-local", "workflow run-local"}:
+            try:
+                result = mgr.workflow_execute_local(taskpool_integration=True, mission_integration=True)
+            except (RuntimeError, ValueError) as exc:
+                _cprint(f"  /goal workflow execute: {exc}")
+                return
+            _cprint(json.dumps(result, ensure_ascii=False, indent=2))
+            return
         if lower in {"workflow receipts", "workflow harness receipts"}:
             result = mgr.workflow_harness_receipts()
             _cprint(json.dumps(result, ensure_ascii=False, indent=2))

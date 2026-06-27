@@ -1314,3 +1314,83 @@ class TestDynamicWorkflowSafeCompletionSurface:
         assert receipts["schema"] == "goal_workflow_local_harness_receipts_v1"
         assert receipts["count"] == 1
         assert receipts["receipts"][0]["receipt_id"] == receipt["receipt_id"]
+
+    def test_governed_local_worker_execute_mutates_exact_ready_nodes_with_readback(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        mgr = GoalManager(session_id="workflow-execute")
+        mgr.set("ship feature with tests and review")
+        run_packet = mgr.workflow_dry_run()
+        target_nodes = list(run_packet["run"]["ready_node_ids"])
+
+        packet = mgr.workflow_execute_local(
+            target_nodes=target_nodes,
+            max_workers=2,
+            max_cost=0,
+            max_turns=1,
+            allowed_toolsets=["terminal", "file"],
+            write_boundary="goal_state_meta_only",
+            rollback="restore_previous_workflow_run_snapshot",
+            readback="state_meta_checkpoint",
+            taskpool_integration=True,
+            mission_integration=True,
+        )
+
+        assert packet["schema"] == "goal_workflow_governed_local_execution_v1"
+        assert packet["write_executed"] is True
+        assert packet["worker_dispatch_enabled"] is True
+        assert packet["external_side_effects"] == []
+        assert packet["authority"]["target_nodes"] == target_nodes
+        assert packet["authority"]["max_workers"] == 2
+        assert packet["authority"]["max_cost"] == 0
+        assert packet["authority"]["max_turns"] == 1
+        assert packet["authority"]["allowed_toolsets"] == ["terminal", "file"]
+        assert packet["authority"]["taskpool_integration"] is True
+        assert packet["authority"]["mission_integration"] is True
+        assert packet["receipt"]["executed_node_ids"] == target_nodes
+        assert all(item["dispatch_state"] == "completed_local_worker" for item in packet["receipt"]["worker_receipts"])
+        assert packet["readback"]["completed"] == len(target_nodes)
+        assert packet["readback"]["worker_dispatches"] == len(target_nodes)
+        assert packet["rollback"]["available"] is True
+
+        reloaded = GoalManager(session_id="workflow-execute")
+        state = reloaded.state
+        assert state is not None
+        assert state.workflow_run is not None
+        for node_id in target_nodes:
+            assert state.workflow_run["node_state"][node_id]["status"] == "completed"
+            assert state.workflow_run["node_state"][node_id]["worker_dispatches"] == 1
+
+    def test_governed_local_worker_execute_rejects_unready_target_node(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        mgr = GoalManager(session_id="workflow-execute-reject")
+        mgr.set("ship feature with tests and review")
+        mgr.workflow_dry_run()
+
+        try:
+            mgr.workflow_execute_local(target_nodes=["missing-node"], max_workers=1, max_cost=0, max_turns=1)
+        except ValueError as exc:
+            assert "not ready" in str(exc)
+        else:
+            raise AssertionError("expected unready node rejection")
+
+    def test_governed_local_worker_execute_rejects_invalid_authority_limits(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        invalid_cases = [
+            {"max_workers": 0, "max_cost": 0, "max_turns": 1},
+            {"max_workers": 1, "max_cost": 0, "max_turns": 0},
+            {"max_workers": "bad", "max_cost": 0, "max_turns": 1},
+            {"max_workers": 1, "max_cost": "bad", "max_turns": 1},
+        ]
+        for idx, kwargs in enumerate(invalid_cases):
+            mgr = GoalManager(session_id=f"workflow-execute-invalid-{idx}")
+            mgr.set("ship feature with tests and review")
+            mgr.workflow_dry_run()
+            try:
+                mgr.workflow_execute_local(**kwargs)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"expected invalid authority rejection for {kwargs}")

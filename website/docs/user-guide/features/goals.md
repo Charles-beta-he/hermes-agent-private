@@ -48,6 +48,7 @@ What you'll see:
 | `/goal workflow templates` | List session-local saved workflow templates. |
 | `/goal workflow proposal` | Project the workflow run into a not-executed dispatch proposal for a later governed executor/subagent adapter. It lists exact authority/readback requirements and keeps `write_executed=false`. |
 | `/goal workflow local-harness` | Consume the proposal into a local harness receipt: records dispatch intent/readback shape, keeps workers unlaunched, and writes no adapter/taskpool/mission/cron state. |
+| `/goal workflow execute` | Execute currently ready workflow nodes through the governed local worker boundary. Default authority uses exact ready nodes, `max_workers=2`, `max_cost=0`, `max_turns=1`, allowed toolsets `terminal,file`, and write boundary `goal_state_meta_only`. This mutates only local goal state + execution receipts; taskpool/mission flags are recorded as authorized intent, not adapter write-through. |
 | `/goal workflow receipts` | List local harness receipts for the active session. |
 | `/goal pause` | Stop the auto-continuation loop without clearing the goal. |
 | `/goal resume` | Resume the loop (resets the turn counter back to zero). |
@@ -90,6 +91,8 @@ The packet is persisted on the goal state and checkpoint sidecar so `/resume` or
 `/goal workflow proposal` adds the first executor/subagent boundary as a proposal only. It emits `goal_workflow_execution_proposal_v1` with `approval_required: true`, `execute: false`, `worker_dispatch_enabled: false`, `write_executed: false`, a not-executed dispatch plan, requested authority fields, and a rollback/readback note. Use this to see exactly what a later governed executor would need before asking for authority; it is not a worker launch.
 
 `/goal workflow local-harness` consumes the proposal into a durable local receipt. It records the dispatch plan as `recorded_not_executed` and proves the local readback path, but still keeps `worker_dispatch_enabled: false`, `adapter_write_enabled: false`, and `external_side_effects: []`.
+
+`/goal workflow execute` is the governed local worker boundary opened by explicit authorization. It targets only currently ready nodes, enforces `max_workers * max_turns`, keeps estimated external cost at 0, and writes only `goal_state.workflow_run`, checkpoint metadata, and local execution receipts. It marks selected node state as completed and appends evidence refs. It still does not spawn LLM/subagent processes and does not write taskpool/mission/cron adapters; taskpool/mission booleans are recorded as `authorized_not_written` until an adapter-specific boundary is implemented.
 
 ## Behavior details
 

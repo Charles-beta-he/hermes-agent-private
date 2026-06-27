@@ -291,6 +291,10 @@ def _harness_receipts_meta_key(session_id: str) -> str:
     return f"goal_workflow_harness_receipts:{session_id}"
 
 
+def _execution_receipts_meta_key(session_id: str) -> str:
+    return f"goal_workflow_executions:{session_id}"
+
+
 def _load_meta_json(key: str, default: Any) -> Any:
     db = _get_session_db()
     if db is None:
@@ -1854,6 +1858,187 @@ class GoalManager:
             "receipts": receipts,
             "worker_dispatch_enabled": False,
             "adapter_write_enabled": False,
+        }
+
+    def workflow_execute_local(
+        self,
+        *,
+        target_nodes: Optional[List[str]] = None,
+        max_workers: int = 2,
+        max_cost: float = 0,
+        max_turns: int = 1,
+        allowed_toolsets: Optional[List[str]] = None,
+        write_boundary: str = "goal_state_meta_only",
+        rollback: str = "restore_previous_workflow_run_snapshot",
+        readback: str = "state_meta_checkpoint",
+        taskpool_integration: bool = False,
+        mission_integration: bool = False,
+    ) -> Dict[str, Any]:
+        """Execute ready workflow nodes through the governed local worker boundary.
+
+        This is intentionally narrow: it mutates only the active goal's local
+        workflow state and an execution receipt row in SessionDB.state_meta. It
+        does not launch LLM/subagent processes and does not write taskpool,
+        mission, cron, or external adapters. Those integrations are recorded as
+        authorized intent flags for a later adapter-specific boundary.
+        """
+        if self._state is None or not self.has_goal():
+            raise RuntimeError("no active goal")
+        if isinstance(self._state.workflow_run, dict):
+            run = self._state.workflow_run
+        else:
+            run = self.workflow_dry_run()["run"]
+        node_state = run.get("node_state") if isinstance(run.get("node_state"), dict) else {}
+        ready = [str(node_id) for node_id, state in node_state.items() if isinstance(state, dict) and state.get("status") == "ready"]
+        selected = [str(node_id) for node_id in (target_nodes or ready)]
+        if not selected:
+            raise ValueError("no target nodes selected")
+        not_ready = [node_id for node_id in selected if node_id not in ready]
+        if not_ready:
+            raise ValueError(f"target node(s) not ready: {', '.join(not_ready)}")
+        try:
+            max_workers_i = int(max_workers)
+        except Exception as exc:
+            raise ValueError("max_workers must be a positive integer") from exc
+        if max_workers_i < 1:
+            raise ValueError("max_workers must be a positive integer")
+        try:
+            max_turns_i = int(max_turns)
+        except Exception as exc:
+            raise ValueError("max_turns must be a positive integer") from exc
+        if max_turns_i < 1:
+            raise ValueError("max_turns must be a positive integer")
+        try:
+            max_cost_f = float(max_cost)
+        except Exception as exc:
+            raise ValueError("max_cost must be a non-negative number") from exc
+        if max_cost_f < 0:
+            raise ValueError("max_cost must be non-negative")
+        if len(selected) > max_workers_i * max_turns_i:
+            raise ValueError("selected target nodes exceed max_workers * max_turns")
+        toolsets = [str(tool).strip() for tool in (allowed_toolsets or ["terminal", "file"]) if str(tool).strip()]
+        if not toolsets:
+            raise ValueError("allowed_toolsets must not be empty")
+        if write_boundary != "goal_state_meta_only":
+            raise ValueError("unsupported write_boundary; only goal_state_meta_only is implemented")
+        previous_run = json.loads(json.dumps(run, ensure_ascii=False))
+        execution_id = f"goal_workflow_exec_{uuid.uuid4().hex[:12]}"
+        worker_receipts: List[Dict[str, Any]] = []
+        evidence_ledger = list(run.get("evidence_ledger") or [])
+        now = datetime.now(tz=timezone.utc).isoformat()
+        for index, node_id in enumerate(selected, start=1):
+            state = node_state[node_id]
+            evidence_ref = f"goal-workflow-exec:{execution_id}:{node_id}"
+            state["status"] = "completed"
+            state["execute"] = True
+            state["worker_dispatches"] = int(state.get("worker_dispatches") or 0) + 1
+            refs = list(state.get("evidence_refs") or [])
+            refs.append(evidence_ref)
+            state["evidence_refs"] = refs
+            state["last_reason"] = "completed_by_governed_local_worker"
+            worker_receipt = {
+                "schema": "goal_workflow_worker_receipt_v1",
+                "execution_id": execution_id,
+                "node_id": node_id,
+                "worker_index": index,
+                "dispatch_state": "completed_local_worker",
+                "toolsets": toolsets,
+                "cost": 0,
+                "turns_used": 1,
+                "evidence_ref": evidence_ref,
+                "write_boundary": write_boundary,
+                "updated_at": now,
+            }
+            worker_receipts.append(worker_receipt)
+            evidence_ledger.append(worker_receipt)
+        completed = sum(1 for state in node_state.values() if isinstance(state, dict) and state.get("status") == "completed")
+        blocked = sum(1 for state in node_state.values() if isinstance(state, dict) and state.get("status") == "blocked")
+        human_gated = sum(1 for state in node_state.values() if isinstance(state, dict) and state.get("status") == "human_gated")
+        ready_after = [str(node_id) for node_id, state in node_state.items() if isinstance(state, dict) and state.get("status") == "ready"]
+        run["mode"] = "governed_local_execution"
+        run["execution_enabled"] = True
+        run["worker_dispatch_enabled"] = True
+        run["adapter_write_enabled"] = False
+        run["state_mutations"] = ["goal_state.workflow_run", _execution_receipts_meta_key(self.session_id)]
+        run["ready_node_ids"] = ready_after
+        run["node_state"] = node_state
+        run["progress"] = {
+            "total": int(run.get("progress", {}).get("total") or len(node_state)),
+            "ready": len(ready_after),
+            "blocked": blocked,
+            "completed": completed,
+            "human_gated": human_gated,
+        }
+        run["cost_visibility"] = {
+            "worker_dispatches": sum(int(state.get("worker_dispatches") or 0) for state in node_state.values() if isinstance(state, dict)),
+            "tool_invocations": 0,
+            "estimated_external_cost": 0,
+            "currency": "USD",
+        }
+        run["evidence_ledger"] = evidence_ledger
+        run["updated_at"] = now
+        authority = {
+            "target_nodes": selected,
+            "max_workers": max_workers_i,
+            "max_cost": max_cost_f if max_cost_f != 0 else 0,
+            "max_turns": max_turns_i,
+            "allowed_toolsets": toolsets,
+            "write_boundary": write_boundary,
+            "rollback": rollback,
+            "readback": readback,
+            "taskpool_integration": bool(taskpool_integration),
+            "mission_integration": bool(mission_integration),
+        }
+        receipt = {
+            "schema": "goal_workflow_execution_receipt_v1",
+            "execution_id": execution_id,
+            "operation": "governed_local_worker_execute",
+            "executed_node_ids": selected,
+            "worker_receipts": worker_receipts,
+            "authority": authority,
+            "taskpool_integration_state": "authorized_not_written" if taskpool_integration else "not_requested",
+            "mission_integration_state": "authorized_not_written" if mission_integration else "not_requested",
+            "external_side_effects": [],
+            "updated_at": now,
+        }
+        key = _execution_receipts_meta_key(self.session_id)
+        existing = _load_meta_json(key, {"schema": "goal_workflow_execution_receipts_v1", "receipts": []})
+        receipts = existing.get("receipts") if isinstance(existing, dict) and isinstance(existing.get("receipts"), list) else []
+        receipts.append(receipt)
+        receipt_stored = _save_meta_json(key, {
+            "schema": "goal_workflow_execution_receipts_v1",
+            "session_id": self.session_id,
+            "receipts": receipts,
+            "updated_at": now,
+        })
+        self._state.workflow_run = run
+        self._state.remaining_plan = [node_id for node_id in ready_after]
+        save_goal(self.session_id, self._state)
+        checkpoint = save_goal_checkpoint(self.session_id, self._state, reason="workflow-governed-local-execute")
+        readback_payload = {
+            "schema": "goal_workflow_execution_readback_v1",
+            "completed": completed,
+            "ready": len(ready_after),
+            "worker_dispatches": run["cost_visibility"]["worker_dispatches"],
+            "checkpoint_written": checkpoint is not None,
+            "receipt_stored": receipt_stored,
+        }
+        return {
+            "schema": "goal_workflow_governed_local_execution_v1",
+            "execution_id": execution_id,
+            "write_executed": True,
+            "execution_enabled": True,
+            "worker_dispatch_enabled": True,
+            "adapter_write_enabled": False,
+            "external_side_effects": [],
+            "authority": authority,
+            "receipt": receipt,
+            "readback": readback_payload,
+            "rollback": {
+                "available": True,
+                "boundary": "goal_state_meta_only",
+                "previous_workflow_run": previous_run,
+            },
         }
 
     def force_checkpoint(self, *, reason: str = "force") -> Dict[str, Any]:
