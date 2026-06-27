@@ -1695,8 +1695,8 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
     def _finish_agent_tool(result: Any, observed_args: Optional[dict] = None) -> Any:
         hook_args = observed_args if isinstance(observed_args, dict) else function_args
         try:
-            from model_tools import _emit_post_tool_call_hook
-            _emit_post_tool_call_hook(
+            from model_tools import _apply_post_tool_feedback_to_result, _emit_post_tool_call_hook
+            hook_results = _emit_post_tool_call_hook(
                 function_name=function_name,
                 function_args=hook_args,
                 result=result,
@@ -1708,9 +1708,42 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
                 duration_ms=int((time.monotonic() - tool_start_time) * 1000),
                 middleware_trace=list(_tool_middleware_trace),
             )
+            result = _apply_post_tool_feedback_to_result(result, hook_results)
         except Exception:
             pass
         return result
+
+    def _finish_agent_tool_failure(error: Exception, observed_args: Optional[dict] = None) -> Any:
+        hook_args = observed_args if isinstance(observed_args, dict) else function_args
+        error_msg = f"Error executing {function_name}: {str(error)}"
+        try:
+            from model_tools import (
+                _apply_post_tool_feedback_to_result,
+                _emit_post_tool_failure_hook,
+                _sanitize_tool_error,
+            )
+            sanitized = _sanitize_tool_error(error_msg)
+            result = json.dumps({"error": sanitized}, ensure_ascii=False)
+            hook_results = _emit_post_tool_failure_hook(
+                function_name=function_name,
+                function_args=hook_args,
+                error_message=sanitized,
+                task_id=effective_task_id or "",
+                session_id=getattr(agent, "session_id", "") or "",
+                tool_call_id=tool_call_id or "",
+                turn_id=getattr(agent, "_current_turn_id", "") or "",
+                api_request_id=getattr(agent, "_current_api_request_id", "") or "",
+                duration_ms=int((time.monotonic() - tool_start_time) * 1000),
+                middleware_trace=list(_tool_middleware_trace),
+            )
+            return _apply_post_tool_feedback_to_result(
+                result,
+                hook_results,
+                event_label="post_tool_failure",
+                allow_replacement=False,
+            )
+        except Exception:
+            return json.dumps({"error": error_msg}, ensure_ascii=False)
 
     if function_name == "todo":
         def _execute(next_args: dict) -> Any:
@@ -1805,17 +1838,21 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
 
     from hermes_cli.middleware import run_tool_execution_middleware
 
-    return run_tool_execution_middleware(
-        function_name,
-        function_args,
-        lambda next_args: _execute(next_args if isinstance(next_args, dict) else function_args),
-        original_args=function_args,
-        task_id=effective_task_id or "",
-        session_id=getattr(agent, "session_id", "") or "",
-        tool_call_id=tool_call_id or "",
-        turn_id=getattr(agent, "_current_turn_id", "") or "",
-        api_request_id=getattr(agent, "_current_api_request_id", "") or "",
-    )
+    try:
+        return run_tool_execution_middleware(
+            function_name,
+            function_args,
+            lambda next_args: _execute(next_args if isinstance(next_args, dict) else function_args),
+            original_args=function_args,
+            task_id=effective_task_id or "",
+            session_id=getattr(agent, "session_id", "") or "",
+            tool_call_id=tool_call_id or "",
+            turn_id=getattr(agent, "_current_turn_id", "") or "",
+            api_request_id=getattr(agent, "_current_api_request_id", "") or "",
+        )
+    except Exception as exc:
+        logger.exception("Error executing %s", function_name)
+        return _finish_agent_tool_failure(exc)
 
 
 

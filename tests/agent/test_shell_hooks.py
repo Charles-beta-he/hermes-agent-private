@@ -90,6 +90,20 @@ class TestParseResponse:
         )
         assert r == {"context": "child role=leaf"}
 
+    def test_post_tool_use_additional_context_passthrough(self):
+        r = shell_hooks._parse_response(
+            "PostToolUse", '{"hookSpecificOutput": {'
+            '"hookEventName": "PostToolUse", '
+            '"additionalContext": "run pytest next"}}',
+        )
+        assert r == {"context": "run pytest next"}
+
+    def test_pre_tool_use_alias_block_passthrough(self):
+        r = shell_hooks._parse_response(
+            "PreToolUse", '{"decision": "block", "reason": "unsafe"}',
+        )
+        assert r == {"action": "block", "message": "unsafe"}
+
     def test_pre_llm_call_block_ignored(self):
         """Only pre_tool_call honors block directives."""
         r = shell_hooks._parse_response(
@@ -151,8 +165,23 @@ class TestSerializePayload:
         raw = shell_hooks._serialize_payload(
             "pre_tool_call", {"args": ["not", "a", "dict"]},
         )
+        assert json.loads(raw)["tool_input"] is None
+
+    def test_non_post_event_preserves_event_specific_values_in_extra(self):
+        raw = shell_hooks._serialize_payload(
+            "transform_tool_result",
+            {
+                "tool_name": "terminal",
+                "args": {"command": "false"},
+                "result": '{"error":"exit 1"}',
+                "duration_ms": 9,
+                "error_message": "exit 1",
+            },
+        )
         payload = json.loads(raw)
-        assert payload["tool_input"] is None
+        assert payload["extra"]["result"] == '{"error":"exit 1"}'
+        assert payload["extra"]["duration_ms"] == 9
+        assert payload["extra"]["error_message"] == "exit 1"
 
     def test_parent_session_id_used_when_no_session_id(self):
         raw = shell_hooks._serialize_payload(
@@ -171,6 +200,46 @@ class TestSerializePayload:
         )
         payload = json.loads(raw)
         assert payload["extra"]["obj"] == "<weird>"
+
+    def test_post_tool_use_payload_uses_claude_compatible_fields(self):
+        raw = shell_hooks._serialize_payload(
+            "PostToolUse",
+            {
+                "tool_name": "write_file",
+                "args": {"path": "x.txt", "content": "hi"},
+                "result": {"success": True, "path": "x.txt"},
+                "session_id": "sess-1",
+                "tool_call_id": "call-1",
+                "duration_ms": 12,
+            },
+        )
+        payload = json.loads(raw)
+        assert payload["hook_event_name"] == "PostToolUse"
+        assert payload["tool_name"] == "write_file"
+        assert payload["tool_input"] == {"path": "x.txt", "content": "hi"}
+        assert payload["tool_response"] == {"success": True, "path": "x.txt"}
+        assert payload["tool_use_id"] == "call-1"
+        assert payload["duration_ms"] == 12
+
+    def test_post_tool_use_failure_payload_uses_error_fields(self):
+        raw = shell_hooks._serialize_payload(
+            "PostToolUseFailure",
+            {
+                "tool_name": "terminal",
+                "args": {"command": "false"},
+                "session_id": "sess-1",
+                "tool_call_id": "call-1",
+                "error_message": "exit 1",
+                "duration_ms": 7,
+            },
+        )
+        payload = json.loads(raw)
+        assert payload["hook_event_name"] == "PostToolUseFailure"
+        assert payload["tool_input"] == {"command": "false"}
+        assert payload["tool_use_id"] == "call-1"
+        assert payload["error"] == "exit 1"
+        assert payload["is_interrupt"] is False
+        assert payload["duration_ms"] == 7
 
 
 # ── Matcher behaviour ─────────────────────────────────────────────────────
@@ -493,6 +562,38 @@ class TestParseHooksBlock:
         assert specs[0].timeout == 30
         assert specs[0].hook_class == "gate"
         assert specs[0].fail_policy == "fail_closed"
+
+    def test_claude_code_post_tool_alias_is_registered_on_internal_hook(self):
+        specs = shell_hooks._parse_hooks_block({
+            "PostToolUse": [
+                {"matcher": "write_file", "command": "/tmp/hook.sh"},
+            ],
+            "PostToolUseFailure": [
+                {"matcher": "terminal", "command": "/tmp/fail-hook.sh"},
+            ],
+        })
+
+        assert [(s.event, s.wire_event_name, s.matcher) for s in specs] == [
+            ("post_tool_call", "PostToolUse", "write_file"),
+            ("post_tool_failure", "PostToolUseFailure", "terminal"),
+        ]
+
+    def test_run_once_uses_wire_event_name_for_claude_alias_payload(self, monkeypatch):
+        specs = shell_hooks._parse_hooks_block({
+            "PostToolUse": [{"matcher": "write_file", "command": "/tmp/hook.sh"}],
+        })
+        captured = {}
+
+        def _fake_spawn(spec, stdin_json):
+            captured["stdin"] = stdin_json
+            return {"returncode": 0, "stdout": '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"ok"}}', "stderr": "", "timed_out": False, "elapsed_seconds": 0.0, "error": None}
+
+        monkeypatch.setattr(shell_hooks, "_spawn", _fake_spawn)
+
+        result = shell_hooks.run_once(specs[0], {"tool_name": "write_file", "args": {}, "result": {"ok": True}})
+
+        assert json.loads(captured["stdin"])["hook_event_name"] == "PostToolUse"
+        assert result["parsed"] == {"context": "ok"}
 
     def test_manifest_policy_selfcheck_flags_missing_class_and_fail_policy(self):
         specs = shell_hooks._parse_hooks_block({

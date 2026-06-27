@@ -161,6 +161,105 @@ def test_transform_tool_result_runs_after_post_tool_call(monkeypatch):
     ]
 
 
+def test_post_tool_call_additional_context_is_appended(monkeypatch):
+    def _hook(hook_name, **kw):
+        if hook_name == "post_tool_call":
+            return [{"context": "run pytest before claiming done"}]
+        return []
+
+    out = _run_handle_function_call(
+        monkeypatch,
+        dispatch_result='{"raw": "value"}',
+        invoke_hook=_hook,
+    )
+
+    assert '{"raw": "value"}' in out
+    assert "[post_tool_call additional context]" in out
+    assert "run pytest before claiming done" in out
+
+
+def test_post_tool_call_updated_tool_output_can_replace_result(monkeypatch):
+    def _hook(hook_name, **kw):
+        if hook_name == "post_tool_call":
+            return [{"updatedToolOutput": {"stdout": "[redacted]", "stderr": ""}}]
+        return []
+
+    out = _run_handle_function_call(
+        monkeypatch,
+        dispatch_result='{"stdout": "secret", "stderr": ""}',
+        invoke_hook=_hook,
+    )
+
+    assert out == '{"stdout": "[redacted]", "stderr": ""}'
+
+
+def test_post_tool_failure_hook_fires_on_dispatch_exception(monkeypatch):
+    from tools.registry import registry
+
+    calls = []
+
+    def _boom(name, args, **kw):
+        raise RuntimeError("dispatch exploded")
+
+    def _hook(hook_name, **kw):
+        calls.append((hook_name, kw))
+        if hook_name == "post_tool_failure":
+            return [{"context": "retry with a safer command"}]
+        return []
+
+    monkeypatch.setattr(registry, "dispatch", _boom)
+    monkeypatch.setattr(model_tools, "_READ_SEARCH_TOOLS", frozenset())
+    monkeypatch.setattr("hermes_cli.plugins.invoke_hook", _hook)
+    monkeypatch.setattr("hermes_cli.plugins.has_hook", lambda name: True)
+
+    out = model_tools.handle_function_call(
+        "dummy_tool",
+        {},
+        task_id="t1",
+        session_id="s1",
+        tool_call_id="tc1",
+        skip_pre_tool_call_hook=True,
+    )
+
+    assert "dispatch exploded" in out
+    failure = next(kwargs for name, kwargs in calls if name == "post_tool_failure")
+    assert failure["tool_name"] == "dummy_tool"
+    assert failure["tool_call_id"] == "tc1"
+    assert failure["status"] == "error"
+    assert failure["error_message"]
+    assert "retry with a safer command" in out
+
+
+def test_post_tool_failure_context_cannot_replace_error_result(monkeypatch):
+    from tools.registry import registry
+
+    def _boom(name, args, **kw):
+        raise RuntimeError("dispatch exploded")
+
+    def _hook(hook_name, **kw):
+        if hook_name == "post_tool_failure":
+            return [{"updatedToolOutput": {"ok": True}, "context": "failure remains visible"}]
+        return []
+
+    monkeypatch.setattr(registry, "dispatch", _boom)
+    monkeypatch.setattr(model_tools, "_READ_SEARCH_TOOLS", frozenset())
+    monkeypatch.setattr("hermes_cli.plugins.invoke_hook", _hook)
+    monkeypatch.setattr("hermes_cli.plugins.has_hook", lambda name: True)
+
+    out = model_tools.handle_function_call(
+        "dummy_tool",
+        {},
+        task_id="t1",
+        session_id="s1",
+        tool_call_id="tc1",
+        skip_pre_tool_call_hook=True,
+    )
+
+    assert "dispatch exploded" in out
+    assert "failure remains visible" in out
+    assert '{"ok": true}' not in out
+
+
 def test_transform_tool_result_integration_with_real_plugin(monkeypatch, tmp_path):
     """End-to-end: load a real plugin from HERMES_HOME and verify it rewrites results."""
     import yaml

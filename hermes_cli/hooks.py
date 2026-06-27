@@ -126,6 +126,24 @@ _DEFAULT_PAYLOADS = {
         "result": '{"output": "hello"}',
         "duration_ms": 42,
     },
+    "PostToolUse": {
+        "tool_name": "terminal",
+        "args": {"command": "echo hello"},
+        "session_id": "test-session",
+        "task_id": "test-task",
+        "tool_call_id": "test-call",
+        "result": {"stdout": "hello", "stderr": ""},
+        "duration_ms": 42,
+    },
+    "PostToolUseFailure": {
+        "tool_name": "terminal",
+        "args": {"command": "false"},
+        "session_id": "test-session",
+        "task_id": "test-task",
+        "tool_call_id": "test-call",
+        "error_message": "Command exited with non-zero status code 1",
+        "duration_ms": 42,
+    },
     "pre_llm_call": {
         "session_id": "test-session",
         "user_message": "What is the weather?",
@@ -191,14 +209,17 @@ def _cmd_test(args) -> None:
     from agent import shell_hooks
 
     event = args.event
-    if event not in VALID_HOOKS:
+    internal_event, _wire_event = shell_hooks._normalize_event_name(event)
+    if internal_event not in VALID_HOOKS:
         print(f"Unknown event: {event!r}")
+        aliases = ", ".join(sorted(shell_hooks._CLAUDE_EVENT_ALIASES))
         print(f"Valid events: {', '.join(sorted(VALID_HOOKS))}")
+        print(f"Claude-compatible aliases: {aliases}")
         return
 
     # Synthetic kwargs in the same shape invoke_hook() would pass.  Merged
     # with --for-tool (overrides tool_name) and --payload-file (extra kwargs).
-    payload = dict(_DEFAULT_PAYLOADS.get(event, {"session_id": "test-session"}))
+    payload = dict(_DEFAULT_PAYLOADS.get(event, _DEFAULT_PAYLOADS.get(internal_event, {"session_id": "test-session"})))
 
     if getattr(args, "for_tool", None):
         payload["tool_name"] = args.for_tool
@@ -215,12 +236,12 @@ def _cmd_test(args) -> None:
             return
 
     specs = shell_hooks.iter_configured_hooks(load_config())
-    specs = [s for s in specs if s.event == event]
+    specs = [s for s in specs if s.event == internal_event]
 
     if getattr(args, "for_tool", None):
         specs = [
             s for s in specs
-            if s.event not in {"pre_tool_call", "post_tool_call"}
+            if s.event not in {"pre_tool_call", "post_tool_call", "post_tool_failure"}
             or s.matches_tool(args.for_tool)
         ]
 

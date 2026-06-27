@@ -128,6 +128,7 @@ _install_plugin_debug_handler()
 VALID_HOOKS: Set[str] = {
     "pre_tool_call",
     "post_tool_call",
+    "post_tool_failure",
     "transform_terminal_output",
     "transform_tool_result",
     # Transform LLM output before it's returned to the user.

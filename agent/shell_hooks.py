@@ -115,6 +115,7 @@ class ShellHookSpec:
     timeout: int = DEFAULT_TIMEOUT_SECONDS
     hook_class: Optional[str] = None
     fail_policy: Optional[str] = None
+    wire_event_name: Optional[str] = None
     compiled_matcher: Optional[re.Pattern] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -287,6 +288,20 @@ def reset_for_tests() -> None:
 # Config parsing
 # ---------------------------------------------------------------------------
 
+_CLAUDE_EVENT_ALIASES = {
+    "PreToolUse": "pre_tool_call",
+    "PostToolUse": "post_tool_call",
+    "PostToolUseFailure": "post_tool_failure",
+}
+
+
+def _normalize_event_name(event_name: Any) -> Tuple[str, Optional[str]]:
+    """Return (internal_event, wire_event_alias) for configured hook names."""
+    if isinstance(event_name, str) and event_name in _CLAUDE_EVENT_ALIASES:
+        return _CLAUDE_EVENT_ALIASES[event_name], event_name
+    return str(event_name), None
+
+
 def _parse_hooks_block(hooks_cfg: Any) -> List[ShellHookSpec]:
     """Normalise the ``hooks:`` dict into a flat list of ``ShellHookSpec``.
 
@@ -301,7 +316,8 @@ def _parse_hooks_block(hooks_cfg: Any) -> List[ShellHookSpec]:
     specs: List[ShellHookSpec] = []
 
     for event_name, entries in hooks_cfg.items():
-        if event_name not in VALID_HOOKS:
+        event, wire_event_name = _normalize_event_name(event_name)
+        if event not in VALID_HOOKS:
             suggestion = difflib.get_close_matches(
                 str(event_name), VALID_HOOKS, n=1, cutoff=0.6,
             )
@@ -328,7 +344,7 @@ def _parse_hooks_block(hooks_cfg: Any) -> List[ShellHookSpec]:
             continue
 
         for i, raw in enumerate(entries):
-            spec = _parse_single_entry(event_name, i, raw)
+            spec = _parse_single_entry(event, i, raw, wire_event_name=wire_event_name)
             if spec is not None:
                 specs.append(spec)
 
@@ -336,7 +352,7 @@ def _parse_hooks_block(hooks_cfg: Any) -> List[ShellHookSpec]:
 
 
 def _parse_single_entry(
-    event: str, index: int, raw: Any,
+    event: str, index: int, raw: Any, *, wire_event_name: Optional[str] = None,
 ) -> Optional[ShellHookSpec]:
     if not isinstance(raw, dict):
         logger.warning(
@@ -361,11 +377,11 @@ def _parse_single_entry(
         )
         matcher = None
 
-    if matcher is not None and event not in {"pre_tool_call", "post_tool_call"}:
+    if matcher is not None and event not in {"pre_tool_call", "post_tool_call", "post_tool_failure"}:
         logger.warning(
             "hooks.%s[%d].matcher=%r will be ignored at runtime — the "
             "matcher field is only honored for pre_tool_call / "
-            "post_tool_call.  The hook will fire on every %s event.",
+            "post_tool_call / post_tool_failure.  The hook will fire on every %s event.",
             event, index, matcher, event,
         )
         matcher = None
@@ -417,6 +433,7 @@ def _parse_single_entry(
         timeout=timeout,
         hook_class=hook_class,
         fail_policy=fail_policy,
+        wire_event_name=wire_event_name,
     )
 
 
@@ -490,11 +507,11 @@ def _make_callback(spec: ShellHookSpec) -> Callable[..., Optional[Dict[str, Any]
 
     def _callback(**kwargs: Any) -> Optional[Dict[str, Any]]:
         # Matcher gate — only meaningful for tool-scoped events.
-        if spec.event in {"pre_tool_call", "post_tool_call"}:
+        if spec.event in {"pre_tool_call", "post_tool_call", "post_tool_failure"}:
             if not spec.matches_tool(kwargs.get("tool_name")):
                 return None
 
-        r = _spawn(spec, _serialize_payload(spec.event, kwargs))
+        r = _spawn(spec, _serialize_payload(spec.wire_event_name or spec.event, kwargs))
 
         if r["error"]:
             logger.warning(
@@ -573,6 +590,15 @@ def _serialize_payload(event: str, kwargs: Dict[str, Any]) -> str:
         "cwd": cwd,
         "extra": extras,
     }
+    if event in {"PostToolUse", "post_tool_call"}:
+        payload["tool_response"] = kwargs.get("result")
+        payload["tool_use_id"] = kwargs.get("tool_call_id") or ""
+        payload["duration_ms"] = kwargs.get("duration_ms", 0)
+    if event in {"PostToolUseFailure", "post_tool_failure"}:
+        payload["tool_use_id"] = kwargs.get("tool_call_id") or ""
+        payload["error"] = kwargs.get("error_message") or kwargs.get("error") or ""
+        payload["is_interrupt"] = bool(kwargs.get("is_interrupt", False))
+        payload["duration_ms"] = kwargs.get("duration_ms", 0)
     return json.dumps(payload, ensure_ascii=False, default=str)
 
 
@@ -619,12 +645,33 @@ def _parse_response(event: str, stdout: str) -> Optional[Dict[str, Any]]:
     if not isinstance(data, dict):
         return None
 
+    event, _wire_event = _normalize_event_name(event)
+
     if event == "pre_tool_call":
         if data.get("action") == "block":
             return {"action": "block", "message": _block_message(data.get("message"), data.get("reason"))}
         if data.get("decision") == "block":
             return {"action": "block", "message": _block_message(data.get("reason"), data.get("message"))}
         return None
+
+    hook_specific = data.get("hookSpecificOutput")
+    if isinstance(hook_specific, dict):
+        data = {**data, **hook_specific}
+
+    if event in {"post_tool_call", "post_tool_failure"}:
+        parsed: Dict[str, Any] = {}
+        additional_context = data.get("additionalContext") or data.get("context")
+        if isinstance(additional_context, str) and additional_context.strip():
+            parsed["context"] = additional_context
+        if data.get("decision") == "block":
+            reason = data.get("reason")
+            parsed["decision"] = "block"
+            parsed["reason"] = reason if isinstance(reason, str) and reason else _DEFAULT_BLOCK_MESSAGE
+        if "updatedToolOutput" in data:
+            parsed["updatedToolOutput"] = data.get("updatedToolOutput")
+        if "updatedMCPToolOutput" in data:
+            parsed["updatedMCPToolOutput"] = data.get("updatedMCPToolOutput")
+        return parsed or None
 
     context = data.get("context")
     if isinstance(context, str) and context.strip():
@@ -935,7 +982,7 @@ def run_once(
 
     Returns the :func:`_spawn` diagnostic dict plus a ``parsed`` field
     holding the canonical Hermes-wire-shape response."""
-    stdin_json = _serialize_payload(spec.event, kwargs)
+    stdin_json = _serialize_payload(spec.wire_event_name or spec.event, kwargs)
     result = _spawn(spec, stdin_json)
-    result["parsed"] = _parse_response(spec.event, result["stdout"])
+    result["parsed"] = _parse_response(spec.wire_event_name or spec.event, result["stdout"])
     return result

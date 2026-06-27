@@ -360,6 +360,7 @@ the [Plugins guide](/docs/user-guide/features/plugins).
 def register(ctx):
     ctx.register_hook("pre_tool_call", my_tool_observer)
     ctx.register_hook("post_tool_call", my_tool_logger)
+    ctx.register_hook("post_tool_failure", my_failure_logger)
     ctx.register_hook("pre_llm_call", my_memory_callback)
     ctx.register_hook("post_llm_call", my_sync_callback)
     ctx.register_hook("on_session_start", my_init_callback)
@@ -370,7 +371,7 @@ def register(ctx):
 
 - Callbacks receive **keyword arguments**. Always accept `**kwargs` for forward compatibility — new parameters may be added in future versions without breaking your plugin.
 - If a callback **crashes**, it's logged and skipped. Other hooks and the agent continue normally. A misbehaving plugin can never break the agent.
-- Two hooks' return values affect behavior: [`pre_tool_call`](#pre_tool_call) can **block** the tool, and [`pre_llm_call`](#pre_llm_call) can **inject context** into the LLM call. All other hooks are fire-and-forget observers.
+- Return values that affect behavior: [`pre_tool_call`](#pre_tool_call) can **block** the tool, [`post_tool_call`](#post_tool_call) can append advisory context or replace the returned/model-visible tool output after execution, [`post_tool_failure`](#post_tool_failure) can append failure guidance, and [`pre_llm_call`](#pre_llm_call) can **inject context** into the LLM call. Other hooks are fire-and-forget observers.
 - Observer callbacks receive `telemetry_schema_version` automatically. When present, `turn_id`, `api_request_id`, `task_id`, `session_id`, and `api_call_count` are separate correlation fields. Treat `api_request_id` as an opaque identifier; do not parse its string format.
 
 ### Quick reference
@@ -378,7 +379,8 @@ def register(ctx):
 | Hook | Fires when | Returns |
 |------|-----------|---------|
 | [`pre_tool_call`](#pre_tool_call) | Before any tool executes | `{"action": "block", "message": str}` to veto the call |
-| [`post_tool_call`](#post_tool_call) | After any tool returns | ignored |
+| [`post_tool_call`](#post_tool_call) | After any tool returns successfully | `{"context": str}` / `{"additionalContext": str}` to append context, `{"updatedToolOutput": ...}` to replace model-visible output |
+| [`post_tool_failure`](#post_tool_failure) | After a tool dispatch raises | `{"context": str}` / `{"additionalContext": str}` to append failure guidance |
 | [`pre_llm_call`](#pre_llm_call) | Once per turn, before the tool-calling loop | `{"context": str}` to prepend context to the user message |
 | [`post_llm_call`](#post_llm_call) | Once per turn, after the tool-calling loop | ignored |
 | [`on_session_start`](#on_session_start) | New session created (first turn only) | ignored |
@@ -473,11 +475,32 @@ def my_callback(tool_name: str, args: dict, result: str, task_id: str,
 | `task_id` | `str` | Session/task identifier. Empty string if not set. |
 | `duration_ms` | `int` | How long the tool's dispatch took, in milliseconds (measured with `time.monotonic()` around `registry.dispatch()`). |
 
-**Fires:** In `model_tools.py`, inside `handle_function_call()`, after the tool's handler returns. Fires once per tool call. Does **not** fire if the tool raised an unhandled exception (the error is caught and returned as an error JSON string instead, and `post_tool_call` fires with that error string as `result`).
+**Fires:** In `model_tools.py`, inside `handle_function_call()`, after the tool's handler returns successfully. Fires once per tool call. If tool dispatch raises, Hermes fires [`post_tool_failure`](#post_tool_failure) instead.
 
-**Return value:** Ignored.
+**Return value:** Optional advisory feedback. Plain strings are ignored for backward compatibility. Dict returns may use Hermes or Claude Code-compatible fields:
 
-**Use cases:** Logging tool results, metrics collection, tracking tool success/failure rates, latency dashboards, per-tool budget alerts, sending notifications when specific tools complete.
+```python
+# Append guidance next to the tool result before the next model call.
+return {"context": "Run pytest before claiming this task is done"}
+return {"additionalContext": "Run pytest before claiming this task is done"}
+
+# Claude Code-style wrapper also works.
+return {"hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
+    "additionalContext": "Run pytest before claiming this task is done",
+}}
+
+# Replace the returned/model-visible tool result after the tool already ran.
+# Downstream result-transform/logging code may observe this replacement too;
+# the original side effect and the raw payload received by this hook are unchanged.
+return {"updatedToolOutput": {"stdout": "[redacted]", "stderr": ""}}
+```
+
+:::warning
+`post_tool_call` is post-execution. It can steer the next model step or replace the model-visible result, but it cannot prevent, undo, or redact side effects that already happened. Use `pre_tool_call` / permissions for prevention.
+:::
+
+**Use cases:** Logging tool results, metrics collection, tracking tool success/failure rates, latency dashboards, per-tool budget alerts, post-write format hints, evidence capture, and sending notifications when specific tools complete.
 
 **Example — track tool usage metrics:**
 
@@ -502,6 +525,44 @@ def track_metrics(tool_name, result, duration_ms=0, **kwargs):
 def register(ctx):
     ctx.register_hook("post_tool_call", track_metrics)
 ```
+
+---
+
+### `post_tool_failure`
+
+Fires **after** a tool dispatch raises an unhandled exception and Hermes has converted the exception into the model-visible error JSON. This is the failure-lane analogue of Claude Code's `PostToolUseFailure`.
+
+**Callback signature:**
+
+```python
+def my_callback(tool_name: str, args: dict, error_message: str, task_id: str,
+                duration_ms: int, **kwargs):
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `tool_name` | `str` | Name of the tool that raised |
+| `args` | `dict` | The arguments the model passed to the tool |
+| `error_message` | `str` | Sanitized error message returned to the model |
+| `task_id` | `str` | Session/task identifier. Empty string if not set. |
+| `duration_ms` | `int` | How long elapsed before the failure was caught. |
+
+**Fires:** In `model_tools.py`, inside `handle_function_call()`, from the exception path after the error has been logged and sanitized. It does not fire for normal tool results that encode a domain error in JSON; those still go through [`post_tool_call`](#post_tool_call).
+
+**Return value:** Optional advisory feedback. Dict returns may use `{"context": str}` / `{"additionalContext": str}` or the Claude Code-style `hookSpecificOutput` wrapper. Hermes appends that feedback to the model-visible error result so the next model step can retry or recover with more context.
+
+```python
+def suggest_recovery(tool_name, error_message, **kwargs):
+    if tool_name == "terminal" and "No such file" in error_message:
+        return {"additionalContext": "List the directory before retrying the command."}
+
+def register(ctx):
+    ctx.register_hook("post_tool_failure", suggest_recovery)
+```
+
+:::warning
+`post_tool_failure` is advisory and fail-open. It cannot make a failed tool succeed, prevent the failed attempt, or run rollback by itself. Use it for evidence capture and recovery guidance; put prevention in `pre_tool_call`.
+:::
 
 ---
 
@@ -1162,9 +1223,9 @@ Shell hooks are registered by calling `agent.shell_hooks.register_from_config(cf
 | Lives under | `~/.hermes/agent-hooks/` (by convention) | `~/.hermes/plugins/<name>/` | `~/.hermes/hooks/<name>/` |
 | Language | Any (Bash, Python, Go binary, …) | Python only | Python only |
 | Runs in | CLI + Gateway | CLI + Gateway | Gateway only |
-| Events | `VALID_HOOKS` (incl. `subagent_stop`) | `VALID_HOOKS` | Gateway lifecycle (`gateway:startup`, `agent:*`, `command:*`) |
+| Events | `VALID_HOOKS` plus Claude-compatible aliases (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`) | `VALID_HOOKS` | Gateway lifecycle (`gateway:startup`, `agent:*`, `command:*`) |
 | Can block a tool call | Yes (`pre_tool_call`) | Yes (`pre_tool_call`) | No |
-| Can inject LLM context | Yes (`pre_llm_call`) | Yes (`pre_llm_call`) | No |
+| Can inject LLM context | Yes (`pre_llm_call`; post-tool hooks can append advisory context to tool results) | Yes (`pre_llm_call`; post-tool hooks can append advisory context to tool results) | No |
 | Consent | First-use prompt per `(event, command)` pair | Implicit (Python plugin trust) | Implicit (dir trust) |
 | Inter-process isolation | Yes (subprocess) | No (in-process) | No (in-process) |
 
@@ -1172,15 +1233,15 @@ Shell hooks are registered by calling `agent.shell_hooks.register_from_config(cf
 
 ```yaml
 hooks:
-  <event_name>:                  # Must be in VALID_HOOKS
-    - matcher: "<regex>"         # Optional; used for pre/post_tool_call only
+  <event_name>:                  # Must be in VALID_HOOKS, or a Claude-compatible alias
+    - matcher: "<regex>"         # Optional; used for pre/post_tool_call/post_tool_failure only
       command: "<shell command>" # Required; runs via shlex.split, shell=False
       timeout: <seconds>         # Optional; default 60, capped at 300
 
 hooks_auto_accept: false         # See "Consent model" below
 ```
 
-Event names must be one of the [plugin hook events](#plugin-hooks); typos produce a "Did you mean X?" warning and are skipped. Unknown keys inside a single entry are ignored; missing `command` is a skip-with-warning. `timeout > 300` is clamped with a warning.
+Event names must be one of the [plugin hook events](#plugin-hooks). For Claude Code config portability, shell hooks also accept `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` as aliases for `pre_tool_call`, `post_tool_call`, and `post_tool_failure`; the JSON stdin payload keeps the configured alias in `hook_event_name`. Typos produce a "Did you mean X?" warning and are skipped. Unknown keys inside a single entry are ignored; missing `command` is a skip-with-warning. `timeout > 300` is clamped with a warning.
 
 ### JSON wire protocol
 
@@ -1201,6 +1262,8 @@ Each time the event fires, Hermes spawns a subprocess for every matching hook (m
 
 `tool_name` and `tool_input` are `null` for non-tool events (`pre_llm_call`, `subagent_stop`, session lifecycle). The `extra` dict carries all event-specific kwargs (`user_message`, `conversation_history`, `child_role`, `duration_ms`, …). Unserialisable values are stringified rather than omitted.
 
+For `PostToolUse` / `post_tool_call`, the payload also includes Claude-compatible `tool_response`, `tool_use_id`, and `duration_ms`. For `PostToolUseFailure` / `post_tool_failure`, it includes `tool_use_id`, `error`, `is_interrupt`, and `duration_ms`. Post-tool shell hooks receive the raw tool input/result/error before any `updatedToolOutput` replacement, so treat them as trusted sinks; do not point them at scripts you would not trust with normal tool output.
+
 **stdout — optional response:**
 
 ```jsonc
@@ -1210,6 +1273,13 @@ Each time the event fires, Hermes spawns a subprocess for every matching hook (m
 
 // Inject context for pre_llm_call:
 {"context": "Today is Friday, 2026-04-17"}
+
+// Append post-tool guidance (Hermes or Claude-Code style):
+{"context": "Run tests before claiming completion"}
+{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "Run tests before claiming completion"}}
+
+// Replace the returned/model-visible tool result after a successful tool already ran:
+{"updatedToolOutput": {"stdout": "[redacted]", "stderr": ""}}
 
 // Silent no-op — any empty / non-matching output is fine:
 ```
@@ -1298,6 +1368,40 @@ log=~/.hermes/logs/orchestration.log
 jq -c '{ts: now, parent: .session_id, extra: .extra}' < /dev/stdin >> "$log"
 printf '{}\n'
 ```
+
+#### 5. Claude-compatible `PostToolUse` guidance
+
+```yaml
+hooks:
+  PostToolUse:
+    - matcher: "write_file|patch"
+      command: "~/.hermes/agent-hooks/post-write-guidance.sh"
+  PostToolUseFailure:
+    - matcher: "terminal"
+      command: "~/.hermes/agent-hooks/terminal-failure-hint.sh"
+```
+
+```bash
+#!/usr/bin/env bash
+# ~/.hermes/agent-hooks/post-write-guidance.sh
+payload="$(cat -)"
+tool=$(jq -r '.tool_name // empty' <<<"$payload")
+if [[ "$tool" == "write_file" || "$tool" == "patch" ]]; then
+  jq --null-input '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: "Run the focused test or syntax check for the file you just changed before claiming completion."}}'
+else
+  printf '{}\n'
+fi
+```
+
+```bash
+#!/usr/bin/env bash
+# ~/.hermes/agent-hooks/terminal-failure-hint.sh
+payload="$(cat -)"
+err=$(jq -r '.error // empty' <<<"$payload")
+jq --null-input --arg err "$err" '{hookSpecificOutput: {hookEventName: "PostToolUseFailure", additionalContext: ("The previous terminal call failed. Inspect the error and retry with a narrower command. Error: " + $err)}}'
+```
+
+These hooks steer the **next** model step only. They do not undo writes, rerun tools, or bypass the normal permission/approval system.
 
 ### Consent model
 

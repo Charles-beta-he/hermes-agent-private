@@ -837,7 +837,7 @@ def _emit_post_tool_call_hook(
     error_type: Optional[str] = None,
     error_message: Optional[str] = None,
     middleware_trace: Optional[List[Dict[str, Any]]] = None,
-) -> None:
+) -> List[Any]:
     """Emit the ``post_tool_call`` observer hook.
 
     No-ops cheaply when no plugin has registered for ``post_tool_call`` —
@@ -850,10 +850,10 @@ def _emit_post_tool_call_hook(
     try:
         from hermes_cli.plugins import has_hook, invoke_hook
         if not has_hook("post_tool_call"):
-            return
+            return []
         if status is None:
             status, error_type, error_message = _tool_result_observer_fields(result)
-        invoke_hook(
+        return invoke_hook(
             "post_tool_call",
             tool_name=function_name,
             args=function_args,
@@ -871,6 +871,112 @@ def _emit_post_tool_call_hook(
         )
     except Exception as _hook_err:
         logger.debug("post_tool_call hook error: %s", _hook_err)
+        return []
+
+
+def _emit_post_tool_failure_hook(
+    *,
+    function_name: str,
+    function_args: Dict[str, Any],
+    error_message: str,
+    task_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
+    api_request_id: Optional[str] = None,
+    duration_ms: int = 0,
+    middleware_trace: Optional[List[Dict[str, Any]]] = None,
+) -> List[Any]:
+    """Emit ``post_tool_failure`` after a tool dispatch raises.
+
+    This is the Hermes runtime analogue of Claude Code's
+    ``PostToolUseFailure``: it is observational/advisory and cannot undo the
+    failed tool attempt.
+    """
+    try:
+        from hermes_cli.plugins import has_hook, invoke_hook
+        if not has_hook("post_tool_failure"):
+            return []
+        return invoke_hook(
+            "post_tool_failure",
+            tool_name=function_name,
+            args=function_args,
+            result=None,
+            task_id=task_id or "",
+            session_id=session_id or "",
+            tool_call_id=tool_call_id or "",
+            turn_id=turn_id or "",
+            api_request_id=api_request_id or "",
+            duration_ms=duration_ms,
+            status="error",
+            error_type="exception",
+            error_message=error_message,
+            middleware_trace=list(middleware_trace or []),
+        )
+    except Exception as _hook_err:
+        logger.debug("post_tool_failure hook error: %s", _hook_err)
+        return []
+
+
+def _extract_post_tool_feedback(hook_result: Any) -> Dict[str, Any]:
+    if not isinstance(hook_result, dict):
+        return {}
+    nested = hook_result.get("hookSpecificOutput")
+    if isinstance(nested, dict):
+        return {**hook_result, **nested}
+    return hook_result
+
+
+def _render_tool_output(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        return str(value)
+
+
+def _apply_post_tool_feedback_to_result(
+    result: Any,
+    hook_results: Optional[List[Any]],
+    *,
+    event_label: str = "post_tool_call",
+    allow_replacement: bool = True,
+) -> Any:
+    """Apply advisory post-tool hook feedback to what the model sees.
+
+    Plain string returns stay ignored for backward compatibility. Structured
+    dict returns may add context, attach a block reason, or replace output via
+    Claude-compatible ``updatedToolOutput``/``updatedMCPToolOutput`` fields.
+    """
+    if not hook_results:
+        return result
+    next_result = result
+    contexts: List[str] = []
+    block_reasons: List[str] = []
+    for raw in hook_results:
+        feedback = _extract_post_tool_feedback(raw)
+        if not feedback:
+            continue
+        if allow_replacement and "updatedToolOutput" in feedback:
+            next_result = _render_tool_output(feedback.get("updatedToolOutput"))
+        elif allow_replacement and "updatedMCPToolOutput" in feedback:
+            next_result = _render_tool_output(feedback.get("updatedMCPToolOutput"))
+        context = feedback.get("additionalContext") or feedback.get("context")
+        if isinstance(context, str) and context.strip():
+            contexts.append(context.strip())
+        if feedback.get("decision") == "block":
+            reason = feedback.get("reason")
+            block_reasons.append(reason if isinstance(reason, str) and reason.strip() else "Post-tool hook requested block")
+    if not contexts and not block_reasons:
+        return next_result
+    text = _render_tool_output(next_result)
+    additions: List[str] = []
+    if block_reasons:
+        additions.append(f"[{event_label} block feedback]\n" + "\n".join(f"- {r}" for r in block_reasons))
+    if contexts:
+        additions.append(f"[{event_label} additional context]\n" + "\n".join(f"- {c}" for c in contexts))
+    return text + "\n\n" + "\n\n".join(additions)
 
 
 def handle_function_call(
@@ -918,6 +1024,7 @@ def handle_function_call(
     if not isinstance(function_args, dict):
         function_args = {}
     _tool_middleware_trace = list(tool_request_middleware_trace or [])
+    _handle_start = time.monotonic()
 
     # ── Tool Search bridge dispatch ──────────────────────────────────
     # tool_search and tool_describe are pure catalog reads — handle them
@@ -1170,7 +1277,7 @@ def handle_function_call(
                     pass
         duration_ms = int((time.monotonic() - _dispatch_start) * 1000)
 
-        _emit_post_tool_call_hook(
+        hook_results = _emit_post_tool_call_hook(
             function_name=function_name,
             function_args=function_args,
             result=result,
@@ -1182,6 +1289,7 @@ def handle_function_call(
             duration_ms=duration_ms,
             middleware_trace=list(_tool_middleware_trace),
         )
+        result = _apply_post_tool_feedback_to_result(result, hook_results)
 
         # Generic tool-result canonicalization seam: plugins receive the
         # final result string (JSON, usually) and may replace it by
@@ -1222,7 +1330,27 @@ def handle_function_call(
     except Exception as e:
         error_msg = f"Error executing {function_name}: {str(e)}"
         logger.exception(error_msg)
-        return json.dumps({"error": _sanitize_tool_error(error_msg)}, ensure_ascii=False)
+        sanitized_error = _sanitize_tool_error(error_msg)
+        result = json.dumps({"error": sanitized_error}, ensure_ascii=False)
+        duration_ms = int((time.monotonic() - _handle_start) * 1000)
+        failure_feedback = _emit_post_tool_failure_hook(
+            function_name=function_name,
+            function_args=function_args,
+            error_message=sanitized_error,
+            task_id=task_id,
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            turn_id=turn_id,
+            api_request_id=api_request_id,
+            duration_ms=duration_ms,
+            middleware_trace=list(_tool_middleware_trace),
+        )
+        return _apply_post_tool_feedback_to_result(
+            result,
+            failure_feedback,
+            event_label="post_tool_failure",
+            allow_replacement=False,
+        )
 
 
 # =============================================================================

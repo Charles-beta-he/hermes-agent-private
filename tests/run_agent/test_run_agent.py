@@ -2880,6 +2880,29 @@ class TestConcurrentToolExecution:
         assert post_call[1]["error_type"] is None
         assert isinstance(post_call[1]["duration_ms"], int)
 
+    def test_invoke_tool_agent_level_tool_emits_post_tool_failure_on_exception(self, agent, monkeypatch):
+        hook_calls = []
+        monkeypatch.setattr(
+            "hermes_cli.plugins.get_pre_tool_call_block_message",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "hermes_cli.plugins.invoke_hook",
+            lambda hook_name, **kwargs: hook_calls.append((hook_name, kwargs)) or ([{"context": "recover todo"}] if hook_name == "post_tool_failure" else []),
+        )
+        monkeypatch.setattr("hermes_cli.plugins.has_hook", lambda name: True)
+
+        with patch("tools.todo_tool.todo_tool", side_effect=RuntimeError("todo exploded")):
+            result = agent._invoke_tool("todo", {"todos": []}, "task-1", tool_call_id="todo-1")
+
+        assert "todo exploded" in result
+        assert "recover todo" in result
+        failure = next(call for call in hook_calls if call[0] == "post_tool_failure")
+        assert failure[1]["tool_name"] == "todo"
+        assert failure[1]["tool_call_id"] == "todo-1"
+        assert failure[1]["status"] == "error"
+        assert failure[1]["error_type"] == "exception"
+
     def test_invoke_tool_blocked_returns_error_and_skips_execution(self, agent, monkeypatch):
         """_invoke_tool should return error JSON when a plugin blocks the tool."""
         monkeypatch.setattr(
