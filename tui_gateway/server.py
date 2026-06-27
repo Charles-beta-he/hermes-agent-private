@@ -7055,12 +7055,28 @@ def _(rid, params: dict) -> dict:
             except (RuntimeError, ValueError) as exc:
                 return _ok(rid, {"type": "exec", "output": f"/goal workflow template --dry-run: {exc}"})
             return _ok(rid, {"type": "exec", "output": json.dumps(result, ensure_ascii=False, indent=2)})
+        if lower in {"workflow save", "workflow template save", "workflow save-template"}:
+            try:
+                result = mgr.workflow_template_save()
+            except (RuntimeError, ValueError) as exc:
+                return _ok(rid, {"type": "exec", "output": f"/goal workflow save: {exc}"})
+            return _ok(rid, {"type": "exec", "output": json.dumps(result, ensure_ascii=False, indent=2)})
+        if lower in {"workflow templates", "workflow template list", "workflow list-templates"}:
+            return _ok(rid, {"type": "exec", "output": json.dumps(mgr.workflow_template_list(), ensure_ascii=False, indent=2)})
         if lower in {"workflow proposal", "workflow execute --dry-run", "workflow dispatch --dry-run"}:
             try:
                 result = mgr.workflow_execution_proposal()
             except (RuntimeError, ValueError) as exc:
                 return _ok(rid, {"type": "exec", "output": f"/goal workflow proposal: {exc}"})
             return _ok(rid, {"type": "exec", "output": json.dumps(result, ensure_ascii=False, indent=2)})
+        if lower in {"workflow local-harness", "workflow harness", "workflow execute-local-harness"}:
+            try:
+                result = mgr.workflow_local_harness()
+            except (RuntimeError, ValueError) as exc:
+                return _ok(rid, {"type": "exec", "output": f"/goal workflow local-harness: {exc}"})
+            return _ok(rid, {"type": "exec", "output": json.dumps(result, ensure_ascii=False, indent=2)})
+        if lower in {"workflow receipts", "workflow harness receipts"}:
+            return _ok(rid, {"type": "exec", "output": json.dumps(mgr.workflow_harness_receipts(), ensure_ascii=False, indent=2)})
         if lower == "pause":
             state = mgr.pause(reason="user-paused")
             out = "No goal set." if state is None else f"⏸ Goal paused: {state.goal}"

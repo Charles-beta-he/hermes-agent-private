@@ -7620,12 +7620,36 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 return
             _cprint(json.dumps(result, ensure_ascii=False, indent=2))
             return
+        if lower in {"workflow save", "workflow template save", "workflow save-template"}:
+            try:
+                result = mgr.workflow_template_save()
+            except (RuntimeError, ValueError) as exc:
+                _cprint(f"  /goal workflow save: {exc}")
+                return
+            _cprint(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        if lower in {"workflow templates", "workflow template list", "workflow list-templates"}:
+            result = mgr.workflow_template_list()
+            _cprint(json.dumps(result, ensure_ascii=False, indent=2))
+            return
         if lower in {"workflow proposal", "workflow execute --dry-run", "workflow dispatch --dry-run"}:
             try:
                 result = mgr.workflow_execution_proposal()
             except (RuntimeError, ValueError) as exc:
                 _cprint(f"  /goal workflow proposal: {exc}")
                 return
+            _cprint(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        if lower in {"workflow local-harness", "workflow harness", "workflow execute-local-harness"}:
+            try:
+                result = mgr.workflow_local_harness()
+            except (RuntimeError, ValueError) as exc:
+                _cprint(f"  /goal workflow local-harness: {exc}")
+                return
+            _cprint(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        if lower in {"workflow receipts", "workflow harness receipts"}:
+            result = mgr.workflow_harness_receipts()
             _cprint(json.dumps(result, ensure_ascii=False, indent=2))
             return
         if lower == "pause":

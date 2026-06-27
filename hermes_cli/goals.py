@@ -283,6 +283,44 @@ def _checkpoint_meta_key(session_id: str) -> str:
     return f"goal_checkpoint:{session_id}"
 
 
+def _template_registry_meta_key(session_id: str) -> str:
+    return f"goal_workflow_templates:{session_id}"
+
+
+def _harness_receipts_meta_key(session_id: str) -> str:
+    return f"goal_workflow_harness_receipts:{session_id}"
+
+
+def _load_meta_json(key: str, default: Any) -> Any:
+    db = _get_session_db()
+    if db is None:
+        return default
+    try:
+        raw = db.get_meta(key)
+    except Exception as exc:
+        logger.debug("GoalManager: get_meta %s failed: %s", key, exc)
+        return default
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except Exception as exc:
+        logger.debug("GoalManager: parse meta %s failed: %s", key, exc)
+        return default
+
+
+def _save_meta_json(key: str, value: Any) -> bool:
+    db = _get_session_db()
+    if db is None:
+        return False
+    try:
+        db.set_meta(key, json.dumps(value, ensure_ascii=False))
+    except Exception as exc:
+        logger.debug("GoalManager: set_meta %s failed: %s", key, exc)
+        return False
+    return True
+
+
 def _clean_str_list(values: Any) -> List[str]:
     if not isinstance(values, list):
         return []
@@ -1704,6 +1742,118 @@ class GoalManager:
             "execution_enabled": False,
             "proposal": proposal,
             "safety_boundary": proposal.get("safety_boundary"),
+        }
+
+    def workflow_template_save(self, *, name: str = "active_goal_workflow") -> Dict[str, Any]:
+        """Persist a reusable workflow template in this session-local registry."""
+        packet = self.workflow_template_dry_run(name=name)
+        template = packet["template"]
+        registry_key = _template_registry_meta_key(self.session_id)
+        registry = _load_meta_json(registry_key, {"schema": "goal_workflow_template_registry_v1", "templates": []})
+        if not isinstance(registry, dict):
+            registry = {"schema": "goal_workflow_template_registry_v1", "templates": []}
+        templates = registry.get("templates") if isinstance(registry.get("templates"), list) else []
+        templates = [item for item in templates if not (isinstance(item, dict) and item.get("name") == template.get("name"))]
+        templates.append(template)
+        registry = {
+            "schema": "goal_workflow_template_registry_v1",
+            "session_id": self.session_id,
+            "templates": templates,
+            "updated_at": datetime.now(tz=timezone.utc).isoformat(),
+        }
+        stored = _save_meta_json(registry_key, registry)
+        receipt = {
+            "schema": "goal_workflow_template_save_receipt_v1",
+            "receipt_id": f"goal_template_save_{uuid.uuid4().hex[:12]}",
+            "operation": "template_save",
+            "registry_key": f"{self.session_id}:{template.get('name')}",
+            "write_executed": stored,
+            "execution_enabled": False,
+            "worker_dispatch_enabled": False,
+            "adapter_write_enabled": False,
+            "updated_at": datetime.now(tz=timezone.utc).isoformat(),
+        }
+        return {
+            "schema": "goal_workflow_template_saved_v1",
+            "write_executed": stored,
+            "registry_key": receipt["registry_key"],
+            "template": template,
+            "receipt": receipt,
+        }
+
+    def workflow_template_list(self) -> Dict[str, Any]:
+        """Return the session-local reusable workflow template registry."""
+        registry = _load_meta_json(
+            _template_registry_meta_key(self.session_id),
+            {"schema": "goal_workflow_template_registry_v1", "session_id": self.session_id, "templates": []},
+        )
+        if not isinstance(registry, dict):
+            registry = {"schema": "goal_workflow_template_registry_v1", "session_id": self.session_id, "templates": []}
+        templates = registry.get("templates") if isinstance(registry.get("templates"), list) else []
+        return {
+            "schema": "goal_workflow_template_registry_v1",
+            "session_id": self.session_id,
+            "count": len(templates),
+            "templates": templates,
+            "execution_enabled": False,
+            "worker_dispatch_enabled": False,
+            "adapter_write_enabled": False,
+        }
+
+    def workflow_local_harness(self) -> Dict[str, Any]:
+        """Record a local harness receipt for the workflow proposal without dispatching workers."""
+        proposal_packet = self.workflow_execution_proposal()
+        proposal = proposal_packet["proposal"]
+        receipt = {
+            "schema": "goal_workflow_local_harness_receipt_item_v1",
+            "receipt_id": f"goal_workflow_harness_{uuid.uuid4().hex[:12]}",
+            "operation": "local_harness_record",
+            "execution_state": "recorded_not_dispatched",
+            "source_proposal_id": proposal.get("proposal_id"),
+            "worker_dispatches": 0,
+            "adapter_writes": 0,
+            "external_side_effects": [],
+            "dispatch_plan": [
+                {**item, "dispatch_state": "recorded_not_executed"}
+                for item in proposal.get("dispatch_plan", [])
+                if isinstance(item, dict)
+            ],
+            "updated_at": datetime.now(tz=timezone.utc).isoformat(),
+        }
+        key = _harness_receipts_meta_key(self.session_id)
+        existing = _load_meta_json(key, {"schema": "goal_workflow_local_harness_receipts_v1", "receipts": []})
+        receipts = existing.get("receipts") if isinstance(existing, dict) and isinstance(existing.get("receipts"), list) else []
+        receipts.append(receipt)
+        stored = _save_meta_json(key, {
+            "schema": "goal_workflow_local_harness_receipts_v1",
+            "session_id": self.session_id,
+            "receipts": receipts,
+            "updated_at": datetime.now(tz=timezone.utc).isoformat(),
+        })
+        return {
+            "schema": "goal_workflow_local_harness_receipt_v1",
+            "write_executed": stored,
+            "execution_enabled": False,
+            "worker_dispatch_enabled": False,
+            "adapter_write_enabled": False,
+            "external_side_effects": [],
+            "receipt": receipt,
+        }
+
+    def workflow_harness_receipts(self) -> Dict[str, Any]:
+        """Return local harness receipts recorded for this session."""
+        data = _load_meta_json(
+            _harness_receipts_meta_key(self.session_id),
+            {"schema": "goal_workflow_local_harness_receipts_v1", "session_id": self.session_id, "receipts": []},
+        )
+        receipts = data.get("receipts") if isinstance(data, dict) and isinstance(data.get("receipts"), list) else []
+        return {
+            "schema": "goal_workflow_local_harness_receipts_v1",
+            "session_id": self.session_id,
+            "count": len(receipts),
+            "receipts": receipts,
+            "worker_dispatch_enabled": False,
+            "adapter_write_enabled": False,
         }
 
     def force_checkpoint(self, *, reason: str = "force") -> Dict[str, Any]:

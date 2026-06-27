@@ -44,7 +44,11 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 | `/goal promote --dry-run` | 将活跃目标投影为受治理的 promotion candidate（taskpool/mission/cron/human-gate/session），但不修改这些系统。 |
 | `/goal workflow --dry-run` | 将活跃目标编译为动态工作流 runtime packet：DAG 节点、ready/blocked/human-gated 状态、证据契约、进度/成本可见性和下一步动作。只持久化到 goal checkpoint，不执行任何动作。 |
 | `/goal workflow template --dry-run` | 将活跃目标工作流编译为可复用 template packet。保留节点、依赖、证据契约和权限边界，但不是可执行脚本，也不写入 registry。 |
+| `/goal workflow save` | 将当前可复用 template 持久化到 session-local workflow template registry。只写本地 `SessionDB.state_meta`，不安装可执行脚本。 |
+| `/goal workflow templates` | 列出当前 session 保存的 workflow templates。 |
 | `/goal workflow proposal` | 将 workflow run 投影为一个未执行的 dispatch proposal，供后续受治理 executor/subagent adapter 使用。它列出精确授权/回读要求，并保持 `write_executed=false`。 |
+| `/goal workflow local-harness` | 将 proposal 消费为本地 harness receipt：记录 dispatch intent/readback 形状，不启动 worker，也不写 adapter/taskpool/mission/cron 状态。 |
+| `/goal workflow receipts` | 列出当前 session 的 local harness receipts。 |
 | `/goal pause` | 停止自动续行循环，但不清除目标。 |
 | `/goal resume` | 恢复循环（将轮次计数器重置为零）。 |
 | `/goal clear` | 完全删除目标。 |
@@ -81,7 +85,11 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 
 `/goal workflow template --dry-run` 补充可复用工作流层，但不打开执行：它输出 `goal_workflow_template_v1`，包含节点契约、依赖、角色、证据要求和权限边界。该 packet 可检查、可复制为未来 library candidate，但此命令不会安装或执行脚本。
 
+`/goal workflow save` 是第一层本地 registry 写入边界。它把 template 存入 session-local 的 `goal_workflow_template_registry_v1`，位置是 `SessionDB.state_meta`。该写入可通过清理本地 state 回滚，并且仍不会创建可执行脚本或 worker。
+
 `/goal workflow proposal` 补充第一层 executor/subagent 边界，但只生成 proposal。它输出 `goal_workflow_execution_proposal_v1`，包含 `approval_required: true`、`execute: false`、`worker_dispatch_enabled: false`、`write_executed: false`、未执行的 dispatch plan、所需授权字段以及 rollback/readback 说明。它用于看清后续受治理 executor 需要什么，不是 worker 启动命令。
+
+`/goal workflow local-harness` 将 proposal 消费为持久本地 receipt。它把 dispatch plan 记录为 `recorded_not_executed` 并证明本地回读路径，但仍保持 `worker_dispatch_enabled: false`、`adapter_write_enabled: false` 和 `external_side_effects: []`。
 
 ## 行为细节
 

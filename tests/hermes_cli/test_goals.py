@@ -1269,3 +1269,48 @@ class TestDynamicWorkflowSafeCompletionSurface:
         assert all(item["parallel_eligible"] is True for item in proposal["dispatch_plan"])
         assert "explicit_authority" in proposal["requested_authority"]
         assert "local_dry_run_only" in proposal["rollback_plan"]
+
+    def test_workflow_template_save_persists_registry_across_goalmanagers(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        mgr = GoalManager(session_id="workflow-registry")
+        mgr.set("ship feature with tests and review")
+        saved = mgr.workflow_template_save(name="ship_feature")
+
+        assert saved["schema"] == "goal_workflow_template_saved_v1"
+        assert saved["write_executed"] is True
+        assert saved["registry_key"].endswith(":ship_feature")
+        assert saved["template"]["execution_enabled"] is False
+        assert saved["receipt"]["operation"] == "template_save"
+
+        reloaded = GoalManager(session_id="workflow-registry")
+        listed = reloaded.workflow_template_list()
+        assert listed["schema"] == "goal_workflow_template_registry_v1"
+        assert listed["count"] == 1
+        assert listed["templates"][0]["name"] == "ship_feature"
+        assert listed["templates"][0]["execution_enabled"] is False
+
+    def test_local_harness_records_receipt_without_worker_dispatch(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        mgr = GoalManager(session_id="workflow-harness")
+        mgr.set("ship feature with tests and review")
+        receipt_packet = mgr.workflow_local_harness()
+
+        assert receipt_packet["schema"] == "goal_workflow_local_harness_receipt_v1"
+        assert receipt_packet["write_executed"] is True
+        assert receipt_packet["worker_dispatch_enabled"] is False
+        assert receipt_packet["adapter_write_enabled"] is False
+        assert receipt_packet["external_side_effects"] == []
+        receipt = receipt_packet["receipt"]
+        assert receipt["operation"] == "local_harness_record"
+        assert receipt["execution_state"] == "recorded_not_dispatched"
+        assert receipt["worker_dispatches"] == 0
+        assert receipt["dispatch_plan"]
+        assert all(item["dispatch_state"] == "recorded_not_executed" for item in receipt["dispatch_plan"])
+
+        reloaded = GoalManager(session_id="workflow-harness")
+        receipts = reloaded.workflow_harness_receipts()
+        assert receipts["schema"] == "goal_workflow_local_harness_receipts_v1"
+        assert receipts["count"] == 1
+        assert receipts["receipts"][0]["receipt_id"] == receipt["receipt_id"]

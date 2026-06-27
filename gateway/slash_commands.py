@@ -1484,12 +1484,32 @@ class GatewaySlashCommandsMixin:
                 return f"/goal workflow template --dry-run: {exc}"
             return json.dumps(result, ensure_ascii=False, indent=2)
 
+        if lower in {"workflow save", "workflow template save", "workflow save-template"}:
+            try:
+                result = mgr.workflow_template_save()
+            except (RuntimeError, ValueError) as exc:
+                return f"/goal workflow save: {exc}"
+            return json.dumps(result, ensure_ascii=False, indent=2)
+
+        if lower in {"workflow templates", "workflow template list", "workflow list-templates"}:
+            return json.dumps(mgr.workflow_template_list(), ensure_ascii=False, indent=2)
+
         if lower in {"workflow proposal", "workflow execute --dry-run", "workflow dispatch --dry-run"}:
             try:
                 result = mgr.workflow_execution_proposal()
             except (RuntimeError, ValueError) as exc:
                 return f"/goal workflow proposal: {exc}"
             return json.dumps(result, ensure_ascii=False, indent=2)
+
+        if lower in {"workflow local-harness", "workflow harness", "workflow execute-local-harness"}:
+            try:
+                result = mgr.workflow_local_harness()
+            except (RuntimeError, ValueError) as exc:
+                return f"/goal workflow local-harness: {exc}"
+            return json.dumps(result, ensure_ascii=False, indent=2)
+
+        if lower in {"workflow receipts", "workflow harness receipts"}:
+            return json.dumps(mgr.workflow_harness_receipts(), ensure_ascii=False, indent=2)
 
         if lower == "pause":
             state = mgr.pause(reason="user-paused")

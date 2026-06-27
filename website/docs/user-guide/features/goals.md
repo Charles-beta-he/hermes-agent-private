@@ -44,7 +44,11 @@ What you'll see:
 | `/goal promote --dry-run` | Project the active goal into a governed promotion candidate (taskpool/mission/cron/human-gate/session) without mutating those systems. |
 | `/goal workflow --dry-run` | Compile the active goal into a dynamic workflow runtime packet: DAG nodes, ready/blocked/human-gated state, evidence contracts, progress/cost visibility, and next actions. It persists only to the goal checkpoint and executes nothing. |
 | `/goal workflow template --dry-run` | Compile the active goal workflow into a reusable template packet. The template preserves nodes, dependencies, evidence contracts, and permission boundaries, but is not an executable script and does not write a registry. |
+| `/goal workflow save` | Persist the current reusable template into the session-local workflow template registry. This is a local `SessionDB.state_meta` write only; it does not install an executable script. |
+| `/goal workflow templates` | List session-local saved workflow templates. |
 | `/goal workflow proposal` | Project the workflow run into a not-executed dispatch proposal for a later governed executor/subagent adapter. It lists exact authority/readback requirements and keeps `write_executed=false`. |
+| `/goal workflow local-harness` | Consume the proposal into a local harness receipt: records dispatch intent/readback shape, keeps workers unlaunched, and writes no adapter/taskpool/mission/cron state. |
+| `/goal workflow receipts` | List local harness receipts for the active session. |
 | `/goal pause` | Stop the auto-continuation loop without clearing the goal. |
 | `/goal resume` | Resume the loop (resets the turn counter back to zero). |
 | `/goal clear` | Drop the goal entirely. |
@@ -81,7 +85,11 @@ The packet is persisted on the goal state and checkpoint sidecar so `/resume` or
 
 `/goal workflow template --dry-run` adds the reusable-workflow layer without opening execution: it emits a `goal_workflow_template_v1` packet with the node contracts, dependencies, roles, evidence requirements, and permission boundaries. The packet is inspectable/copyable as a future library candidate, but Hermes does not install or execute it as a script in this command.
 
+`/goal workflow save` is the first local registry write boundary. It stores that template in a session-local `goal_workflow_template_registry_v1` row under `SessionDB.state_meta`. It is reversible by clearing local state and still does not create an executable script or worker.
+
 `/goal workflow proposal` adds the first executor/subagent boundary as a proposal only. It emits `goal_workflow_execution_proposal_v1` with `approval_required: true`, `execute: false`, `worker_dispatch_enabled: false`, `write_executed: false`, a not-executed dispatch plan, requested authority fields, and a rollback/readback note. Use this to see exactly what a later governed executor would need before asking for authority; it is not a worker launch.
+
+`/goal workflow local-harness` consumes the proposal into a durable local receipt. It records the dispatch plan as `recorded_not_executed` and proves the local readback path, but still keeps `worker_dispatch_enabled: false`, `adapter_write_enabled: false`, and `external_side_effects: []`.
 
 ## Behavior details
 
