@@ -1106,6 +1106,124 @@ def compile_dynamic_workflow_run_v1(workflow_plan: Dict[str, Any]) -> Dict[str, 
     }
 
 
+def compile_workflow_template_v1(
+    workflow_plan: Dict[str, Any],
+    *,
+    name: str = "active_goal_workflow",
+) -> Dict[str, Any]:
+    """Compile a reusable, non-executing workflow template from a plan.
+
+    This is the safe landing for the "saved workflow library" part of the
+    dynamic-workflow pattern. It preserves node contracts and role hints for
+    later reuse, but it is only a template: no command, worker, adapter, or
+    lifecycle write is executed or authorized here.
+    """
+    if not isinstance(workflow_plan, dict) or workflow_plan.get("schema") != "workflow_plan_v1":
+        raise ValueError("workflow_plan_v1 dict required")
+    nodes = workflow_plan.get("nodes") or []
+    if not isinstance(nodes, list):
+        raise ValueError("workflow_plan_v1.nodes must be a list")
+    clean_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", (name or "active_goal_workflow").strip()).strip("_")
+    if not clean_name:
+        clean_name = "active_goal_workflow"
+    template_nodes: List[Dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise ValueError("workflow_plan_v1.nodes entries must be dicts")
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            raise ValueError("workflow_plan_v1 node id is required")
+        template_nodes.append({
+            "id": node_id,
+            "title": str(node.get("title") or node_id),
+            "kind": str(node.get("kind") or "workflow_node"),
+            "role": str(node.get("role") or node.get("kind") or "worker"),
+            "depends_on": [str(dep) for dep in (node.get("depends_on") or [])],
+            "inputs": list(node.get("inputs") or []),
+            "outputs": list(node.get("outputs") or []),
+            "evidence_contract": list(node.get("evidence_contract") or []),
+            "permission_boundary": str(node.get("permission_boundary") or "evidence_only"),
+            "human_gate_required": bool(node.get("human_gate_required")),
+            "execute": False,
+        })
+    return {
+        "schema": "goal_workflow_template_v1",
+        "name": clean_name,
+        "reusable": True,
+        "source_plan_schema": workflow_plan.get("schema"),
+        "execution_enabled": False,
+        "worker_dispatch_enabled": False,
+        "adapter_write_enabled": False,
+        "state_mutations": [],
+        "nodes": template_nodes,
+        "graph": workflow_plan.get("graph") or {},
+        "safety_boundary": (
+            "Reusable workflow template only; not an executable script, not a "
+            "worker dispatcher, and not an adapter/lifecycle write authority."
+        ),
+        "updated_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
+def compile_workflow_execution_proposal_v1(
+    workflow_run: Dict[str, Any],
+    *,
+    authority: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Project a dynamic workflow run into a not-executed dispatch proposal.
+
+    This is the safe landing for the parallel-subagent/executor part of the
+    pattern. It makes the dispatch shape inspectable and replayable while
+    keeping all execution gates closed until a later exact authority grant.
+    """
+    if not isinstance(workflow_run, dict) or workflow_run.get("schema") != "dynamic_goal_workflow_run_v1":
+        raise ValueError("dynamic_goal_workflow_run_v1 dict required")
+    ready_node_ids = [str(node_id) for node_id in (workflow_run.get("ready_node_ids") or [])]
+    node_state = workflow_run.get("node_state") or {}
+    if not isinstance(node_state, dict):
+        raise ValueError("dynamic_goal_workflow_run_v1.node_state must be a dict")
+    dispatch_plan: List[Dict[str, Any]] = []
+    for node_id in ready_node_ids:
+        state = node_state.get(node_id) if isinstance(node_state.get(node_id), dict) else {}
+        dispatch_plan.append({
+            "node_id": node_id,
+            "role": str(state.get("role") or "worker"),
+            "dispatch_state": "not_executed",
+            "parallel_eligible": True,
+            "execute": False,
+            "worker_dispatches": 0,
+            "required_evidence": list(state.get("evidence_contract") or []),
+            "permission_boundary": str(state.get("permission_boundary") or "evidence_only"),
+        })
+    return {
+        "schema": "goal_workflow_execution_proposal_v1",
+        "proposal_id": f"goal_workflow_proposal_{uuid.uuid4().hex[:12]}",
+        "approval_required": True,
+        "execute": False,
+        "execution_enabled": False,
+        "worker_dispatch_enabled": False,
+        "adapter_write_enabled": False,
+        "write_executed": False,
+        "state_mutations": [],
+        "source_run_id": workflow_run.get("run_id"),
+        "dispatch_plan": dispatch_plan,
+        "requested_authority": [
+            "explicit_authority",
+            "exact_target_nodes",
+            "budget_limit",
+            "worker_tool_boundary",
+            "post_action_readback",
+        ],
+        "authority": authority or None,
+        "rollback_plan": "local_dry_run_only: no rollback action needed until a later executor mutates state",
+        "safety_boundary": (
+            "Execution proposal only; no subagent/worker was dispatched and no "
+            "adapter, taskpool, mission, cron, or external state was written."
+        ),
+        "updated_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
 def clear_goal(session_id: str) -> None:
     """Mark a goal cleared in the DB (preserved for audit, status=cleared)."""
     state = load_goal(session_id)
@@ -1381,6 +1499,28 @@ def judge_goal(
 # ──────────────────────────────────────────────────────────────────────
 
 
+def _compile_active_goal_workflow_plan(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Compile a plan for GoalManager command surfaces.
+
+    Plain `/goal <text>` specs often have no explicit workflow_steps. The public
+    workflow commands still need an inspectable node, but the lower-level
+    `compile_workflow_plan_v1(..., pain_clusters=...)` contract must stay
+    unchanged for fixture-only plans. This helper adds the default node only for
+    active-goal command surfaces.
+    """
+    plan = compile_workflow_plan_v1(spec)
+    if plan.get("nodes"):
+        return plan
+    spec_with_default = json.loads(json.dumps(spec))
+    spec_with_default["workflow_steps"] = [{
+        "id": "goal-completion",
+        "title": str(spec.get("user_goal") or "Complete goal"),
+        "permission_boundary": "local_dry_run_only",
+        "evidence_contract": spec.get("success_criteria") or ["fresh evidence readback"],
+    }]
+    return compile_workflow_plan_v1(spec_with_default)
+
+
 class GoalManager:
     """Per-session goal state + continuation decisions.
 
@@ -1510,7 +1650,7 @@ class GoalManager:
             max_turns=self._state.max_turns,
             success_criteria=self._state.subgoals,
         )
-        plan = compile_workflow_plan_v1(spec)
+        plan = _compile_active_goal_workflow_plan(spec)
         run = compile_dynamic_workflow_run_v1(plan)
         self._state.workflow_run = run
         self._state.remaining_plan = [
@@ -1527,6 +1667,43 @@ class GoalManager:
             "plan": plan,
             "run": run,
             "safety_boundary": run.get("safety_boundary"),
+        }
+
+    def workflow_template_dry_run(self, *, name: str = "active_goal_workflow") -> Dict[str, Any]:
+        """Compile a reusable, non-executing template from the active goal."""
+        if self._state is None or not self.has_goal():
+            raise RuntimeError("no active goal")
+        spec = self._state.spec or build_goal_spec(
+            self._state.goal,
+            max_turns=self._state.max_turns,
+            success_criteria=self._state.subgoals,
+        )
+        plan = _compile_active_goal_workflow_plan(spec)
+        template = compile_workflow_template_v1(plan, name=name)
+        return {
+            "schema": "goal_workflow_template_packet_v1",
+            "dry_run": True,
+            "execution_enabled": False,
+            "template": template,
+            "safety_boundary": template.get("safety_boundary"),
+        }
+
+    def workflow_execution_proposal(self) -> Dict[str, Any]:
+        """Project the active goal workflow into a not-executed dispatch proposal."""
+        if self._state is None or not self.has_goal():
+            raise RuntimeError("no active goal")
+        if isinstance(self._state.workflow_run, dict):
+            run = self._state.workflow_run
+        else:
+            run_packet = self.workflow_dry_run()
+            run = run_packet["run"]
+        proposal = compile_workflow_execution_proposal_v1(run)
+        return {
+            "schema": "goal_workflow_execution_proposal_packet_v1",
+            "dry_run": True,
+            "execution_enabled": False,
+            "proposal": proposal,
+            "safety_boundary": proposal.get("safety_boundary"),
         }
 
     def force_checkpoint(self, *, reason: str = "force") -> Dict[str, Any]:

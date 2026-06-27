@@ -1225,3 +1225,47 @@ class TestStatusLineSubgoalCount:
         mgr.add_subgoal("b")
         line = mgr.status_line()
         assert "2 subgoals" in line
+
+
+class TestDynamicWorkflowSafeCompletionSurface:
+    def test_workflow_template_dry_run_returns_reusable_non_executing_template(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        mgr = GoalManager(session_id="workflow-template")
+        mgr.set("ship feature with tests and review")
+        packet = mgr.workflow_template_dry_run(name="ship_feature")
+
+        assert packet["schema"] == "goal_workflow_template_packet_v1"
+        template = packet["template"]
+        assert template["schema"] == "goal_workflow_template_v1"
+        assert template["name"] == "ship_feature"
+        assert template["reusable"] is True
+        assert template["execution_enabled"] is False
+        assert template["worker_dispatch_enabled"] is False
+        assert template["adapter_write_enabled"] is False
+        assert template["state_mutations"] == []
+        assert template["nodes"]
+        assert all(node["execute"] is False for node in template["nodes"])
+        assert template["safety_boundary"].startswith("Reusable workflow template")
+
+    def test_workflow_execution_proposal_keeps_parallel_subagent_plan_not_executed(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        mgr = GoalManager(session_id="workflow-proposal")
+        mgr.set("ship feature with tests and review")
+        packet = mgr.workflow_execution_proposal()
+
+        assert packet["schema"] == "goal_workflow_execution_proposal_packet_v1"
+        proposal = packet["proposal"]
+        assert proposal["schema"] == "goal_workflow_execution_proposal_v1"
+        assert proposal["approval_required"] is True
+        assert proposal["execute"] is False
+        assert proposal["execution_enabled"] is False
+        assert proposal["worker_dispatch_enabled"] is False
+        assert proposal["adapter_write_enabled"] is False
+        assert proposal["write_executed"] is False
+        assert proposal["dispatch_plan"]
+        assert all(item["dispatch_state"] == "not_executed" for item in proposal["dispatch_plan"])
+        assert all(item["parallel_eligible"] is True for item in proposal["dispatch_plan"])
+        assert "explicit_authority" in proposal["requested_authority"]
+        assert "local_dry_run_only" in proposal["rollback_plan"]

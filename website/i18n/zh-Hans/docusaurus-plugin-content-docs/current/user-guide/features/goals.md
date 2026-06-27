@@ -43,6 +43,8 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 | `/goal` 或 `/goal status` | 显示当前目标、状态及已用轮次。 |
 | `/goal promote --dry-run` | 将活跃目标投影为受治理的 promotion candidate（taskpool/mission/cron/human-gate/session），但不修改这些系统。 |
 | `/goal workflow --dry-run` | 将活跃目标编译为动态工作流 runtime packet：DAG 节点、ready/blocked/human-gated 状态、证据契约、进度/成本可见性和下一步动作。只持久化到 goal checkpoint，不执行任何动作。 |
+| `/goal workflow template --dry-run` | 将活跃目标工作流编译为可复用 template packet。保留节点、依赖、证据契约和权限边界，但不是可执行脚本，也不写入 registry。 |
+| `/goal workflow proposal` | 将 workflow run 投影为一个未执行的 dispatch proposal，供后续受治理 executor/subagent adapter 使用。它列出精确授权/回读要求，并保持 `write_executed=false`。 |
 | `/goal pause` | 停止自动续行循环，但不清除目标。 |
 | `/goal resume` | 恢复循环（将轮次计数器重置为零）。 |
 | `/goal clear` | 完全删除目标。 |
@@ -76,6 +78,10 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 - 明确带有 `execute: false` 的下一步动作。
 
 该 packet 会持久化到 goal state 和 checkpoint sidecar，因此 `/resume` 或 compression rollover 后可以恢复。它**不会**执行节点命令、派发 worker/subagent、写 taskpool/mission/cron 状态或产生外部副作用。这些需要后续受治理 adapter 和显式授权。
+
+`/goal workflow template --dry-run` 补充可复用工作流层，但不打开执行：它输出 `goal_workflow_template_v1`，包含节点契约、依赖、角色、证据要求和权限边界。该 packet 可检查、可复制为未来 library candidate，但此命令不会安装或执行脚本。
+
+`/goal workflow proposal` 补充第一层 executor/subagent 边界，但只生成 proposal。它输出 `goal_workflow_execution_proposal_v1`，包含 `approval_required: true`、`execute: false`、`worker_dispatch_enabled: false`、`write_executed: false`、未执行的 dispatch plan、所需授权字段以及 rollback/readback 说明。它用于看清后续受治理 executor 需要什么，不是 worker 启动命令。
 
 ## 行为细节
 

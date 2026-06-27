@@ -43,6 +43,8 @@ What you'll see:
 | `/goal` or `/goal status` | Show the current goal, its status, and turns used. |
 | `/goal promote --dry-run` | Project the active goal into a governed promotion candidate (taskpool/mission/cron/human-gate/session) without mutating those systems. |
 | `/goal workflow --dry-run` | Compile the active goal into a dynamic workflow runtime packet: DAG nodes, ready/blocked/human-gated state, evidence contracts, progress/cost visibility, and next actions. It persists only to the goal checkpoint and executes nothing. |
+| `/goal workflow template --dry-run` | Compile the active goal workflow into a reusable template packet. The template preserves nodes, dependencies, evidence contracts, and permission boundaries, but is not an executable script and does not write a registry. |
+| `/goal workflow proposal` | Project the workflow run into a not-executed dispatch proposal for a later governed executor/subagent adapter. It lists exact authority/readback requirements and keeps `write_executed=false`. |
 | `/goal pause` | Stop the auto-continuation loop without clearing the goal. |
 | `/goal resume` | Resume the loop (resets the turn counter back to zero). |
 | `/goal clear` | Drop the goal entirely. |
@@ -76,6 +78,10 @@ Use this when you start a loop ("fix the failing tests") and notice partway thro
 - next actions that explicitly carry `execute: false`.
 
 The packet is persisted on the goal state and checkpoint sidecar so `/resume` or compression rollover can recover it. It does **not** execute node commands, dispatch workers/subagents, write taskpool/mission/cron state, or perform external side effects. Those require later governed adapters and explicit authority.
+
+`/goal workflow template --dry-run` adds the reusable-workflow layer without opening execution: it emits a `goal_workflow_template_v1` packet with the node contracts, dependencies, roles, evidence requirements, and permission boundaries. The packet is inspectable/copyable as a future library candidate, but Hermes does not install or execute it as a script in this command.
+
+`/goal workflow proposal` adds the first executor/subagent boundary as a proposal only. It emits `goal_workflow_execution_proposal_v1` with `approval_required: true`, `execute: false`, `worker_dispatch_enabled: false`, `write_executed: false`, a not-executed dispatch plan, requested authority fields, and a rollback/readback note. Use this to see exactly what a later governed executor would need before asking for authority; it is not a worker launch.
 
 ## Behavior details
 
