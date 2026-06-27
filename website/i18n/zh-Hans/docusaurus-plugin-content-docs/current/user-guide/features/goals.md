@@ -49,6 +49,8 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 | `/goal workflow proposal` | 将 workflow run 投影为一个未执行的 dispatch proposal，供后续受治理 executor/subagent adapter 使用。它列出精确授权/回读要求，并保持 `write_executed=false`。 |
 | `/goal workflow local-harness` | 将 proposal 消费为本地 harness receipt：记录 dispatch intent/readback 形状，不启动 worker，也不写 adapter/taskpool/mission/cron 状态。 |
 | `/goal workflow execute` | 通过 governed local worker boundary 执行当前 ready 的 workflow nodes。默认授权使用精确 ready nodes、`max_workers=2`、`max_cost=0`、`max_turns=1`、允许 toolsets `terminal,file`、写边界 `goal_state_meta_only`。只修改本地 goal state + execution receipts；taskpool/mission flags 记录为 authorized intent，不做 adapter write-through。 |
+| `/goal workflow apply-adapters` | 为最近的 governed execution 应用本地 taskpool/mission adapter receipts。它消费 execution evidence 并写入 adapter-specific `SessionDB.state_meta` receipts，包含 readback/rollback metadata；不会调用 taskpool/mission CLI 或外部服务。 |
+| `/goal workflow adapters` | 列出当前 session 的 taskpool/mission adapter receipts。 |
 | `/goal workflow receipts` | 列出当前 session 的 local harness receipts。 |
 | `/goal pause` | 停止自动续行循环，但不清除目标。 |
 | `/goal resume` | 恢复循环（将轮次计数器重置为零）。 |
@@ -93,6 +95,8 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 `/goal workflow local-harness` 将 proposal 消费为持久本地 receipt。它把 dispatch plan 记录为 `recorded_not_executed` 并证明本地回读路径，但仍保持 `worker_dispatch_enabled: false`、`adapter_write_enabled: false` 和 `external_side_effects: []`。
 
 `/goal workflow execute` 是显式授权后打开的 governed local worker boundary。它只以当前 ready nodes 为目标，强制 `max_workers * max_turns` 上限，保持外部估算成本为 0，并且只写 `goal_state.workflow_run`、checkpoint metadata 和本地 execution receipts。它会把选中的 node state 标为 completed 并追加 evidence refs。它仍不会启动 LLM/subagent 进程，也不会写 taskpool/mission/cron adapters；taskpool/mission boolean 只记录为 `authorized_not_written`，直到后续 adapter-specific boundary 实现。
+
+`/goal workflow apply-adapters` 为本地 receipts 打开 adapter-specific boundary。它消费已验证 execution receipt，在 `SessionDB.state_meta` 下写入 taskpool/mission adapter receipts，记录精确 evidence refs、readback 和 rollback metadata，并对同一 execution 保持幂等。它仍不会调用 taskpool/mission CLI、cron 或外部服务。
 
 ## 行为细节
 

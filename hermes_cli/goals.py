@@ -295,6 +295,10 @@ def _execution_receipts_meta_key(session_id: str) -> str:
     return f"goal_workflow_executions:{session_id}"
 
 
+def _adapter_receipts_meta_key(session_id: str) -> str:
+    return f"goal_workflow_adapter_receipts:{session_id}"
+
+
 def _load_meta_json(key: str, default: Any) -> Any:
     db = _get_session_db()
     if db is None:
@@ -2039,6 +2043,121 @@ class GoalManager:
                 "boundary": "goal_state_meta_only",
                 "previous_workflow_run": previous_run,
             },
+        }
+
+    def workflow_adapter_receipts(self) -> Dict[str, Any]:
+        """Return taskpool/mission adapter receipts recorded for this session."""
+        data = _load_meta_json(
+            _adapter_receipts_meta_key(self.session_id),
+            {"schema": "goal_workflow_adapter_receipts_v1", "session_id": self.session_id, "taskpool": [], "mission": []},
+        )
+        if not isinstance(data, dict):
+            data = {"schema": "goal_workflow_adapter_receipts_v1", "session_id": self.session_id, "taskpool": [], "mission": []}
+        taskpool = data.get("taskpool") if isinstance(data.get("taskpool"), list) else []
+        mission = data.get("mission") if isinstance(data.get("mission"), list) else []
+        return {
+            "schema": "goal_workflow_adapter_receipts_v1",
+            "session_id": self.session_id,
+            "taskpool_receipt_count": len(taskpool),
+            "mission_receipt_count": len(mission),
+            "taskpool": taskpool,
+            "mission": mission,
+            "external_side_effects": [],
+        }
+
+    def workflow_apply_adapters(
+        self,
+        *,
+        execution_id: str,
+        adapters: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Apply local taskpool/mission adapter write-through receipts for an execution.
+
+        Adapter write-through here is still local and exact: it consumes a
+        verified goal workflow execution receipt and writes adapter-specific
+        projection receipts under SessionDB.state_meta. It does not call the
+        taskpool CLI, mission CLI, cron, or external platforms.
+        """
+        execution_id = str(execution_id or "").strip()
+        if not execution_id:
+            raise ValueError("execution_id is required")
+        requested = [str(a).strip().lower() for a in (adapters or ["taskpool", "mission"]) if str(a).strip()]
+        if not requested:
+            raise ValueError("adapters must not be empty")
+        unsupported = [a for a in requested if a not in {"taskpool", "mission"}]
+        if unsupported:
+            raise ValueError(f"unsupported adapter(s): {', '.join(unsupported)}")
+        executions = _load_meta_json(_execution_receipts_meta_key(self.session_id), {"schema": "goal_workflow_execution_receipts_v1", "receipts": []})
+        receipts = executions.get("receipts") if isinstance(executions, dict) and isinstance(executions.get("receipts"), list) else []
+        source = None
+        for item in receipts:
+            if isinstance(item, dict) and item.get("execution_id") == execution_id:
+                source = item
+                break
+        if source is None:
+            raise ValueError("execution receipt not found")
+        executed_nodes = [str(node_id) for node_id in (source.get("executed_node_ids") or [])]
+        evidence_refs: List[str] = []
+        for worker in source.get("worker_receipts") or []:
+            if isinstance(worker, dict) and worker.get("evidence_ref"):
+                evidence_refs.append(str(worker.get("evidence_ref")))
+        if not evidence_refs:
+            raise ValueError("execution receipt lacks evidence refs")
+        key = _adapter_receipts_meta_key(self.session_id)
+        current = _load_meta_json(key, {"schema": "goal_workflow_adapter_receipts_v1", "session_id": self.session_id, "taskpool": [], "mission": []})
+        if not isinstance(current, dict):
+            current = {"schema": "goal_workflow_adapter_receipts_v1", "session_id": self.session_id, "taskpool": [], "mission": []}
+        now = datetime.now(tz=timezone.utc).isoformat()
+        adapter_receipts: Dict[str, Any] = {}
+        idempotent_replay = True
+        for adapter in requested:
+            bucket = current.get(adapter) if isinstance(current.get(adapter), list) else []
+            existing = next((item for item in bucket if isinstance(item, dict) and item.get("source_execution_id") == execution_id), None)
+            if existing:
+                adapter_receipts[adapter] = existing
+                continue
+            idempotent_replay = False
+            receipt = {
+                "schema": f"goal_workflow_{adapter}_adapter_receipt_v1",
+                "adapter": adapter,
+                "source_execution_id": execution_id,
+                "executed_node_ids": executed_nodes,
+                "evidence_refs": evidence_refs,
+                "write_executed": True,
+                "write_boundary": f"goal_workflow_{adapter}_adapter_state_meta",
+                "readback": "state_meta_adapter_receipt",
+                "rollback": "remove_adapter_receipt_by_source_execution_id",
+                "external_side_effects": [],
+                "updated_at": now,
+            }
+            bucket.append(receipt)
+            current[adapter] = bucket
+            adapter_receipts[adapter] = receipt
+        current["schema"] = "goal_workflow_adapter_receipts_v1"
+        current["session_id"] = self.session_id
+        current["updated_at"] = now
+        stored = _save_meta_json(key, current)
+        listed = self.workflow_adapter_receipts() if stored else {
+            "taskpool_receipt_count": len(current.get("taskpool") or []),
+            "mission_receipt_count": len(current.get("mission") or []),
+        }
+        readback_payload = {
+            "schema": "goal_workflow_adapter_readback_v1",
+            "applied_adapters": requested,
+            "taskpool_receipt_count": int(listed.get("taskpool_receipt_count") or 0),
+            "mission_receipt_count": int(listed.get("mission_receipt_count") or 0),
+            "receipt_stored": stored,
+        }
+        return {
+            "schema": "goal_workflow_adapter_apply_packet_v1",
+            "write_executed": stored,
+            "adapter_write_enabled": True,
+            "worker_dispatch_enabled": False,
+            "external_side_effects": [],
+            "source_execution_id": execution_id,
+            "adapter_receipts": adapter_receipts,
+            "readback": readback_payload,
+            "idempotent_replay": idempotent_replay,
         }
 
     def force_checkpoint(self, *, reason: str = "force") -> Dict[str, Any]:

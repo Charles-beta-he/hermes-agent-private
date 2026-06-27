@@ -1394,3 +1394,64 @@ class TestDynamicWorkflowSafeCompletionSurface:
                 pass
             else:
                 raise AssertionError(f"expected invalid authority rejection for {kwargs}")
+
+    def test_workflow_apply_adapters_writes_taskpool_and_mission_adapter_receipts(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        mgr = GoalManager(session_id="workflow-adapters")
+        mgr.set("ship feature with tests and review")
+        target_nodes = list(mgr.workflow_dry_run()["run"]["ready_node_ids"])
+        execution = mgr.workflow_execute_local(target_nodes=target_nodes, taskpool_integration=True, mission_integration=True)
+
+        packet = mgr.workflow_apply_adapters(execution_id=execution["execution_id"], adapters=["taskpool", "mission"])
+
+        assert packet["schema"] == "goal_workflow_adapter_apply_packet_v1"
+        assert packet["write_executed"] is True
+        assert packet["adapter_write_enabled"] is True
+        assert packet["external_side_effects"] == []
+        assert packet["source_execution_id"] == execution["execution_id"]
+        assert packet["readback"]["applied_adapters"] == ["taskpool", "mission"]
+        assert packet["readback"]["taskpool_receipt_count"] == 1
+        assert packet["readback"]["mission_receipt_count"] == 1
+        taskpool = packet["adapter_receipts"]["taskpool"]
+        mission = packet["adapter_receipts"]["mission"]
+        assert taskpool["adapter"] == "taskpool"
+        assert taskpool["write_boundary"] == "goal_workflow_taskpool_adapter_state_meta"
+        assert mission["adapter"] == "mission"
+        assert mission["write_boundary"] == "goal_workflow_mission_adapter_state_meta"
+        assert all(ref.startswith("goal-workflow-exec:") for ref in taskpool["evidence_refs"])
+
+        reloaded = GoalManager(session_id="workflow-adapters")
+        listed = reloaded.workflow_adapter_receipts()
+        assert listed["schema"] == "goal_workflow_adapter_receipts_v1"
+        assert listed["taskpool_receipt_count"] == 1
+        assert listed["mission_receipt_count"] == 1
+
+    def test_workflow_apply_adapters_is_idempotent_for_same_execution(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        mgr = GoalManager(session_id="workflow-adapters-idempotent")
+        mgr.set("ship feature with tests and review")
+        target_nodes = list(mgr.workflow_dry_run()["run"]["ready_node_ids"])
+        execution = mgr.workflow_execute_local(target_nodes=target_nodes, taskpool_integration=True, mission_integration=True)
+
+        first = mgr.workflow_apply_adapters(execution_id=execution["execution_id"], adapters=["taskpool", "mission"])
+        second = mgr.workflow_apply_adapters(execution_id=execution["execution_id"], adapters=["taskpool", "mission"])
+
+        assert first["readback"]["taskpool_receipt_count"] == 1
+        assert first["readback"]["mission_receipt_count"] == 1
+        assert second["readback"]["taskpool_receipt_count"] == 1
+        assert second["readback"]["mission_receipt_count"] == 1
+        assert second["idempotent_replay"] is True
+
+    def test_workflow_apply_adapters_rejects_unknown_execution_id(self, hermes_home):
+        from hermes_cli.goals import GoalManager
+
+        mgr = GoalManager(session_id="workflow-adapters-reject")
+        mgr.set("ship feature with tests and review")
+        try:
+            mgr.workflow_apply_adapters(execution_id="missing", adapters=["taskpool"])
+        except ValueError as exc:
+            assert "execution receipt not found" in str(exc)
+        else:
+            raise AssertionError("expected missing execution rejection")

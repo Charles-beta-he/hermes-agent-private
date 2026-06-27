@@ -7081,6 +7081,15 @@ def _(rid, params: dict) -> dict:
             except (RuntimeError, ValueError) as exc:
                 return _ok(rid, {"type": "exec", "output": f"/goal workflow execute: {exc}"})
             return _ok(rid, {"type": "exec", "output": json.dumps(result, ensure_ascii=False, indent=2)})
+        if lower in {"workflow apply-adapters", "workflow adapters apply", "workflow write-adapters"}:
+            try:
+                exec_packet = mgr.workflow_execute_local(taskpool_integration=True, mission_integration=True)
+                result = mgr.workflow_apply_adapters(execution_id=str(exec_packet.get("execution_id")), adapters=["taskpool", "mission"])
+            except (RuntimeError, ValueError) as exc:
+                return _ok(rid, {"type": "exec", "output": f"/goal workflow apply-adapters: {exc}"})
+            return _ok(rid, {"type": "exec", "output": json.dumps(result, ensure_ascii=False, indent=2)})
+        if lower in {"workflow adapter receipts", "workflow adapters", "workflow write receipts"}:
+            return _ok(rid, {"type": "exec", "output": json.dumps(mgr.workflow_adapter_receipts(), ensure_ascii=False, indent=2)})
         if lower in {"workflow receipts", "workflow harness receipts"}:
             return _ok(rid, {"type": "exec", "output": json.dumps(mgr.workflow_harness_receipts(), ensure_ascii=False, indent=2)})
         if lower == "pause":
