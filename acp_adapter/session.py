@@ -626,6 +626,10 @@ class SessionManager:
                 command_bits.append(command)
             command_bits.extend(str(arg) for arg in (runtime_meta.get("args") or []) if str(arg).strip())
         setattr(agent, "_session_sidecar_command", " ".join(command_bits))
+        # Codex app-server sessions are spawned lazily on the first turn. Stamp
+        # the ACP workspace onto the agent so the Codex runtime starts from the
+        # editor/session cwd instead of the Hermes daemon's process cwd.
+        agent.session_cwd = cwd
         # ACP stdio transport requires stdout to remain protocol-only JSON-RPC.
         # Route any incidental human-readable agent output to stderr instead.
         agent._print_fn = _acp_stderr_print
