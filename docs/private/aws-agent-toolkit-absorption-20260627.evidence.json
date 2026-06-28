@@ -1,0 +1,24 @@
+{
+  "task_id": "2026-06-26-评估-aws-agent-toolkit-for-aws-对-hermes-mcp-servers-skills-plugins-官方工具包化的可吸收模式-2",
+  "source_repo": "https://github.com/aws/agent-toolkit-for-aws",
+  "source_commit": "49c4592dc490f569d5adf0c483239886bad2f09b",
+  "source_clone": "/Users/charles/.hermes/runs/aws-agent-toolkit-for-aws-20260627",
+  "artifact": "/Users/charles/.hermes/hermes-agent/docs/private/aws-agent-toolkit-absorption-20260627.md",
+  "required_source_paths": [
+    "README.md",
+    ".cursor-plugin/marketplace.json",
+    ".claude-plugin/marketplace.json",
+    ".agents/plugins/marketplace.json",
+    "plugins/aws-core/.codex-plugin/plugin.json",
+    "plugins/aws-core/.mcp.json",
+    "rules/aws-agent-rules.md",
+    "tools/validate.py"
+  ],
+  "hermes_paths_checked": [
+    "/Users/charles/.hermes/hermes-agent/tools/registry.py",
+    "/Users/charles/.hermes/hermes-agent/hermes_cli/plugins.py",
+    "/Users/charles/.hermes/hermes-agent/tools/mcp_tool.py",
+    "/Users/charles/.hermes/config.yaml"
+  ],
+  "recommended_next_slice": "read-only Hermes plugin-bundle validator with fixture; no config mutation or MCP process start"
+}
