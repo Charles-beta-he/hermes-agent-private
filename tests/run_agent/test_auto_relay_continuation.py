@@ -6,6 +6,8 @@ from agent.conversation_loop import (
     _build_recurrent_task_state_hint,
     _capture_auto_relay_summary,
     _is_auto_relay_exit_reason,
+    _is_self_advance_checkpoint_response,
+    _self_advance_checkpoint_reason,
     _reset_auto_relay_count_for_root_turn,
     _should_auto_relay,
     _try_auto_relay,
@@ -128,6 +130,33 @@ def test_write_auto_relay_packet_and_prompt(tmp_path, monkeypatch):
     assert "Continue the task" in prompt
     assert "DecisionPacket-style human gate" in prompt
     assert "model agreement as authority" in prompt
+
+
+def test_self_advance_checkpoint_response_requests_relay_without_hard_gate():
+    response = (
+        "已按最高授权完成第一轮本地切片。\n\n"
+        "下一轮我会继续推进：1. 接入真实 taskpool 状态；2. 跑验证。"
+    )
+    assert _is_self_advance_checkpoint_response(response) is True
+    assert _self_advance_checkpoint_reason(
+        final_response=response,
+        user_message="认可，给你最高授权，你可以自推进了",
+        original_user_message="认可，给你最高授权，你可以自推进了",
+        messages=[{"role": "user", "content": "认可，给你最高授权，你可以自推进了"}],
+        interrupted=False,
+    ) == "self_advance_checkpoint"
+
+
+def test_self_advance_checkpoint_response_does_not_relay_hard_gate_or_non_autonomous_turn():
+    gated = "我需要你授权 TestFlight 发布；下一轮我会在授权后继续。"
+    assert _is_self_advance_checkpoint_response(gated) is False
+    assert _self_advance_checkpoint_reason(
+        final_response="下一轮我会继续推进本地切片。",
+        user_message="普通问答",
+        original_user_message="普通问答",
+        messages=[{"role": "user", "content": "普通问答"}],
+        interrupted=False,
+    ) is None
 
 
 def test_try_auto_relay_starts_successor_turn_and_annotates_result(tmp_path, monkeypatch):

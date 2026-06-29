@@ -416,12 +416,25 @@ def finalize_turn(
     # Private continuation overlay: auto-relay tool/iteration budget exhaustion
     # into a fresh turn before surfacing a partial summary. Kanban timeout
     # failure is recorded only if the bounded relay gate declines or exhausts
-    # its cap.
+    # its cap. Also protect explicit self-advance mode: a normal final response
+    # that says "next I will continue" is a checkpoint, not a stop condition,
+    # unless it names a hard human/authority gate.
     from agent.conversation_loop import (
         _is_auto_relay_exit_reason,
         _record_kanban_budget_failure,
+        _self_advance_checkpoint_reason,
         _try_auto_relay,
     )
+    _checkpoint_reason = _self_advance_checkpoint_reason(
+        final_response=final_response,
+        user_message=user_message,
+        original_user_message=original_user_message,
+        messages=messages,
+        interrupted=interrupted,
+    )
+    if _checkpoint_reason and not _auto_relay_summary:
+        _turn_exit_reason = _checkpoint_reason
+        _auto_relay_summary = str(final_response or "")
     relay_result = _try_auto_relay(
         agent,
         final_response=_auto_relay_summary,
