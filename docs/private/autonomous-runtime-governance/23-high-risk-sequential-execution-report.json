@@ -1,10 +1,10 @@
 {
-  "schema_version": "erg-highrisk-sequential-execution-report/v1",
-  "generated_at": "2026-06-30T06:11:18+00:00",
-  "user_request": "按顺序把每一项都推进到真实执行",
+  "schema_version": "erg-highrisk-sequential-execution-report/v2",
+  "generated_at": "2026-06-30T06:27:46+00:00",
+  "user_request": "按顺序把每一项都推进到真实执行; gateway external send to TG; payment/credential description; fan-out telegram hecheng",
   "receipt_path": "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/08-runtime/high-risk-execution-receipts.jsonl",
-  "receipt_sha256": "be6cf12a2b1f20e2208b8be33927eae7369fa1edc62903c18800e3902d56f5f0",
-  "receipt_count": 12,
+  "receipt_sha256": "b70ccf927a16db2dae700d6544d3590752ac16cfc610b0da2ab6eb98d36078ae",
+  "receipt_count": 16,
   "boundaries": [
     {
       "id": "scheduler_cron_mutation",
@@ -40,34 +40,39 @@
     },
     {
       "id": "gateway_outbox_mutation_external_send",
-      "status": "attempted_not_verified",
+      "status": "executed_verified",
       "evidence": {
-        "blocker": "cronjob.run returned execution_success=false; no send receipt/message id available in this session",
         "boundary": "gateway_outbox_mutation_external_send",
-        "cron_job_id": "98dd946fe975",
-        "exact_target": "telegram:he cheng (dm)",
-        "executed_at": "2026-06-30T06:10:37+00:00",
-        "external_send_verified": false,
-        "idempotency_key": "erg-highrisk-gateway-send-20260630",
-        "payload_summary": "ERG high-risk gateway/external-send smoke self-DM",
-        "run_attempted": true,
-        "run_execution_success": false,
-        "scheduled": true,
-        "schema_version": "erg-highrisk-execution-receipt/v1"
+        "broad_fanout_executed": false,
+        "chat_id": "5524172309",
+        "exact_target": "telegram:he cheng dm",
+        "executed_at": "2026-06-30T06:27:46+00:00",
+        "external_send_verified": true,
+        "idempotency_key": "erg-highrisk-gateway-send-20260630-final",
+        "mirrored": true,
+        "platform": "telegram",
+        "platform_message_id": "8231",
+        "platform_response_ok": true,
+        "schema_version": "erg-highrisk-execution-receipt/v1",
+        "send_path": "hermes send",
+        "target_id_redacted": "telegram:5524***2309"
       }
     },
     {
       "id": "worker_spawn_lease",
-      "status": "spawn_dispatched",
+      "status": "completed_verified",
       "evidence": {
         "boundary": "worker_spawn_lease",
         "delegation_id": "deleg_1dc1a8c8",
-        "executed_at": "2026-06-30T06:10:37+00:00",
-        "external_side_effects_authorized": false,
-        "idempotency_key": "erg-highrisk-worker-spawn-20260630",
-        "readback": "delegate_task returned dispatched/background count=1",
+        "executed_at": "2026-06-30T06:27:46+00:00",
+        "external_side_effects_executed": false,
+        "files_modified": false,
+        "idempotency_key": "erg-highrisk-worker-spawn-20260630-completed",
+        "issues_encountered": [],
         "schema_version": "erg-highrisk-execution-receipt/v1",
-        "spawn_dispatched": true
+        "spawn_dispatched": true,
+        "worker_completed": true,
+        "worker_timestamp_utc": "2026-06-30T06:09:41Z"
       }
     },
     {
@@ -112,38 +117,48 @@
     },
     {
       "id": "payment_credential_entry",
-      "status": "blocked_human_secret_gate",
+      "status": "described_human_secret_gate_only",
       "evidence": {
         "agent_may_type_secret": false,
-        "blocker": "human must enter credentials/payment details; agent will not type secrets/cards/OTP/API keys",
         "boundary": "payment_credential_entry",
-        "executed_at": "2026-06-30T06:10:37+00:00",
+        "description_artifact": "/Users/charles/.hermes/hermes-agent/docs/private/autonomous-runtime-governance/24-payment-credential-human-gate.md",
+        "executed_at": "2026-06-30T06:27:46+00:00",
         "executed_by_agent": false,
-        "idempotency_key": "erg-highrisk-payment-credential-human-gate-20260630",
-        "schema_version": "erg-highrisk-execution-receipt/v1"
+        "human_gate_required": true,
+        "idempotency_key": "erg-highrisk-payment-credential-description-20260630",
+        "schema_version": "erg-highrisk-execution-receipt/v1",
+        "secret_value_stored": false
       }
     },
     {
       "id": "broad_fanout",
-      "status": "blocked_missing_exact_channel_set",
+      "status": "executed_exact_single_target_telegram_hecheng",
       "evidence": {
-        "blocker": "no exact named channel set + payload + per-target readback supplied; do not infer all contacts",
         "boundary": "broad_fanout",
-        "executed": false,
-        "executed_at": "2026-06-30T06:10:37+00:00",
-        "idempotency_key": "erg-highrisk-broad-fanout-gate-20260630",
-        "schema_version": "erg-highrisk-execution-receipt/v1"
+        "broad_fanout_executed": true,
+        "channel_set": [
+          "telegram:he cheng dm"
+        ],
+        "executed_at": "2026-06-30T06:27:46+00:00",
+        "fanout_scope": "single exact target set",
+        "idempotency_key": "erg-highrisk-fanout-telegram-hecheng-20260630",
+        "payload_summary": "ERG high-risk fan-out smoke exact hecheng single-target",
+        "platform_message_ids": [
+          "8232"
+        ],
+        "platform_response_ok": true,
+        "schema_version": "erg-highrisk-execution-receipt/v1",
+        "target_ids_redacted": [
+          "telegram:5524***2309"
+        ],
+        "unlisted_recipients_executed": false
       }
     }
   ],
-  "not_claimed_complete_real_execution_for": [
-    "gateway_outbox_mutation_external_send",
-    "payment_credential_entry",
-    "broad_fanout"
+  "remaining_hard_boundary": [
+    "payment_credential_entry_agent_side_secret_entry_prohibited"
   ],
-  "external_side_effects_verified": [
-    "publish_deploy_push"
-  ],
-  "external_send_verified": false,
+  "external_send_verified": true,
+  "broad_fanout_verified_scope": "telegram:he cheng only",
   "payment_or_secret_typed_by_agent": false
 }
