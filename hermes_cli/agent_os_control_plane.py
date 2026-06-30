@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import errno
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,14 @@ CANONICAL_DOMAIN_SECTIONS = [
 ]
 CANONICAL_SIDE_EFFECT_LEVELS = [f"S{i}" for i in range(8)]
 CANONICAL_DEFAULT_OFF_SIDE_EFFECTS = ["S4", "S5", "S6", "S7"]
+AUDIT_SURFACE_TO_EVIDENCE_KIND = {
+    "canonical_schema": "schema_status",
+    "capability_projection": "capability_projection",
+    "cron": "cron_source",
+    "gateway_outbox": "gateway_outbox",
+    "shadow_router": "shadow_router",
+    "taskpool_mission_profile": "project_profile",
+}
 
 DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "communication": ["telegram", "send", "message", "通知", "消息", "提醒", "外发"],
@@ -463,6 +472,58 @@ def read_only_runtime_audit(home: str | Path | None = None) -> dict[str, Any]:
         "summary": summary,
         "findings": findings,
         "scope": "read-only P2 runtime audit over local sources; no compensation or domain-store mutation",
+    }
+
+
+def _stable_evidence_id(surface: str, evidence_ref: str) -> str:
+    digest = hashlib.sha256(f"{surface}\n{evidence_ref}".encode("utf-8")).hexdigest()[:12]
+    return f"ev_{surface}_{digest}"
+
+
+def _audit_finding_to_evidence_node(finding: dict[str, Any]) -> dict[str, Any]:
+    surface = str(finding.get("surface", "unknown"))
+    status_value = str(finding.get("status", "fail"))
+    evidence_ref = str(finding.get("evidence_ref", ""))
+    return {
+        "id": _stable_evidence_id(surface, evidence_ref),
+        "kind": AUDIT_SURFACE_TO_EVIDENCE_KIND.get(surface, surface),
+        "claim_ids": [f"erg-runtime.p2.audit.{surface}"],
+        "trust_level": "local-readback" if status_value == "pass" else "local-warning" if status_value == "warn" else "blocked",
+        "freshness": "current-run",
+        "verification_status": status_value,
+        "source_ref": evidence_ref,
+        "surface": surface,
+        "divergence_class": finding.get("divergence_class"),
+        "next_safe_action": finding.get("next_safe_action"),
+        "detail": finding.get("detail", {}),
+    }
+
+
+def evidence_projection_status(home: str | Path | None = None) -> dict[str, Any]:
+    """Project read-only audit findings into canonical EvidenceNode-shaped records."""
+    audit = read_only_runtime_audit(home)
+    nodes = [_audit_finding_to_evidence_node(finding) for finding in audit.get("findings", [])]
+    summary = {
+        "node_count": len(nodes),
+        "pass": sum(1 for node in nodes if node["verification_status"] == "pass"),
+        "warn": sum(1 for node in nodes if node["verification_status"] == "warn"),
+        "fail": sum(1 for node in nodes if node["verification_status"] == "fail"),
+    }
+    return {
+        "ok": summary["fail"] == 0 and bool(audit.get("ok")),
+        "project": PROJECT_ID,
+        "mode": "evidence_projection_read_only",
+        "generated_at": _now_iso(),
+        "runtime_mutation": False,
+        "domain_store_mutation": False,
+        "summary": summary,
+        "evidence_nodes": nodes,
+        "source_audit": {
+            "mode": audit.get("mode"),
+            "summary": audit.get("summary"),
+            "ok": audit.get("ok"),
+        },
+        "scope": "read-only P3 EvidenceNode projection; no ledger write, compensation, or adapter execution",
     }
 
 

@@ -40,6 +40,8 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 15. `15-takeover-doctor-report.json` — latest read-only takeover doctor report (`status=pass`).
 16. `16-p1-schema-status-report.json` — latest P1 canonical schema/read-only projection report (`ok=true`).
 17. `17-p2-read-only-runtime-audit-report.json` — latest P2 read-only runtime audit report (`ok=true`).
+18. `18-p3-evidence-node-projection-report.json` — latest P3 EvidenceNode projection report (`ok=true`).
+19. `19-runtime-promotion-authorization-gate.json` — smallest next runtime mutation gate; human authorization required.
 
 ## Anti-sprawl rules
 
@@ -69,3 +71,6 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 - Latest P1 schema report: `16-p1-schema-status-report.json`
 - P2 read-only runtime audit command: `hermes agent-os audit --json`
 - Latest P2 runtime audit report: `17-p2-read-only-runtime-audit-report.json`
+- P3 EvidenceNode projection command: `hermes agent-os evidence --json`
+- Latest P3 EvidenceNode report: `18-p3-evidence-node-projection-report.json`
+- Next runtime promotion gate: `19-runtime-promotion-authorization-gate.json`

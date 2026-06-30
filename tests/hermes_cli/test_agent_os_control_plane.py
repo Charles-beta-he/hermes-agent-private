@@ -8,6 +8,7 @@ from hermes_cli.agent_os_control_plane import (
     authorize_local_harness,
     canonical_schema_status,
     doctor,
+    evidence_projection_status,
     execute_local_harness,
     generate_replay_quality_report,
     read_only_runtime_audit,
@@ -223,6 +224,39 @@ def test_agent_os_read_only_runtime_audit_fails_closed_on_malformed_outbox(tmp_p
 
     assert payload["ok"] is False
     assert any(f["surface"] == "gateway_outbox" and f["status"] == "fail" for f in payload["findings"])
+
+
+def test_agent_os_evidence_projection_maps_audit_sources_to_read_only_evidence_nodes(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+    _write_json(tmp_path / "cron" / "jobs.json", {"jobs": [{"id": "daily", "enabled": True}]})
+    outbox = tmp_path / "state" / "gateway_delivery_outbox.jsonl"
+    outbox.parent.mkdir(parents=True, exist_ok=True)
+    outbox.write_text('{"status":"sent","idempotency_key":"k1"}\n', encoding="utf-8")
+
+    payload = evidence_projection_status(tmp_path)
+
+    assert payload["ok"] is True
+    assert payload["mode"] == "evidence_projection_read_only"
+    assert payload["runtime_mutation"] is False
+    assert payload["domain_store_mutation"] is False
+    assert payload["summary"]["node_count"] >= 6
+    kinds = {node["kind"] for node in payload["evidence_nodes"]}
+    assert {"schema_status", "capability_projection", "cron_source", "gateway_outbox", "shadow_router", "project_profile"}.issubset(kinds)
+    assert all(node["verification_status"] in {"pass", "warn"} for node in payload["evidence_nodes"])
+    assert any(node["claim_ids"] == ["erg-runtime.p2.audit.cron"] for node in payload["evidence_nodes"])
+
+
+def test_agent_os_evidence_projection_blocks_on_audit_failures(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+    outbox = tmp_path / "state" / "gateway_delivery_outbox.jsonl"
+    outbox.parent.mkdir(parents=True, exist_ok=True)
+    outbox.write_text('{not-json}\n', encoding="utf-8")
+
+    payload = evidence_projection_status(tmp_path)
+
+    assert payload["ok"] is False
+    assert payload["summary"]["fail"] >= 1
+    assert any(node["verification_status"] == "fail" and node["kind"] == "gateway_outbox" for node in payload["evidence_nodes"])
 
 
 def test_agent_os_doctor_fails_closed_on_runtime_mutation(tmp_path: Path) -> None:

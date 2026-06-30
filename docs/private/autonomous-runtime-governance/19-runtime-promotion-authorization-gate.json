@@ -1,0 +1,67 @@
+{
+  "id": "authority-packet:erg-runtime-p4-runtime-promotion-v1",
+  "status": "HUMAN_AUTHORIZATION_REQUIRED",
+  "project": "hermes-agent-os-control-plane",
+  "generated_at": "2026-06-30T12:49:30+08:00",
+  "reason": "P0-P3 are complete through read-only documentation takeover, schema gate, runtime audit, and EvidenceNode projection. The next meaningful step would mutate a local ERG runtime domain store and/or connect reconciliation outputs to scheduler/taskpool/gateway surfaces, which is a runtime side-effect boundary.",
+  "completed_safe_layers": [
+    "P0 documentation/local-brain takeover",
+    "P1 canonical schema/read-only projection gate",
+    "P2 read-only runtime audit",
+    "P3 read-only EvidenceNode projection"
+  ],
+  "preconditions_observed": {
+    "agent_os_schema_ok": true,
+    "agent_os_audit_ok": true,
+    "evidence_projection_ok": true,
+    "evidence_node_summary": {
+      "node_count": 6,
+      "pass": 6,
+      "warn": 0,
+      "fail": 0
+    },
+    "runtime_mutation": false,
+    "domain_store_mutation": false,
+    "compensation_executed": false,
+    "external_side_effects_executed": false
+  },
+  "requested_authority_for_next_slice": {
+    "exact_slice": "P4 local ERG runtime domain-store bootstrap + dry-run reconciliation plan only",
+    "allowed_targets": [
+      "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/08-runtime/erg_runtime_state.json",
+      "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/08-runtime/erg_runtime_receipts.jsonl",
+      "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/08-runtime/reconciliation_plan.json"
+    ],
+    "allowed_actions": [
+      "create local runtime directory if missing",
+      "write idempotent local bootstrap receipt",
+      "persist read-only EvidenceNode projection snapshot into local ERG runtime state",
+      "generate dry-run reconciliation plan with execute=false",
+      "read back hash/record counts"
+    ],
+    "not_allowed_by_this_packet": [
+      "scheduler or cron mutation",
+      "taskpool or mission lifecycle write",
+      "gateway outbox mutation or external send",
+      "worker spawn or lease",
+      "compensation execution",
+      "publish/deploy/push",
+      "destructive action outside the exact local runtime files",
+      "payment or credential entry",
+      "broad fan-out"
+    ]
+  },
+  "rollback": {
+    "strategy": "remove only the exact P4 local runtime files listed in allowed_targets, or restore from their pre-write backup if they already exist",
+    "requires_backup_before_write": true,
+    "post_rollback_readback": "verify target files absent or restored hash matches pre-write hash"
+  },
+  "acceptance_after_authorized_execution": [
+    "focused pytest passes",
+    "hermes agent-os evidence --json remains ok=true",
+    "new runtime state has schema_version, source_report_hash, evidence_node_count=6, execute=false",
+    "reconciliation plan has all actions execute=false and no adapter target enabled",
+    "receipt readback proves idempotency key and before/after hashes"
+  ],
+  "default_safe_decision": "stop at P3; do not create or mutate local runtime domain store until this exact P4 packet is accepted"
+}
