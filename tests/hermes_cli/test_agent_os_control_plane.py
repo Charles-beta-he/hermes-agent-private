@@ -6,6 +6,7 @@ from pathlib import Path
 
 from hermes_cli.agent_os_control_plane import (
     authorize_local_harness,
+    canonical_schema_status,
     doctor,
     execute_local_harness,
     generate_replay_quality_report,
@@ -20,6 +21,50 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _write_agent_os_canonical_docs(home: Path) -> dict[str, str]:
+    docs_root = home / "docs" / "private" / "autonomous-runtime-governance"
+    docs_root.mkdir(parents=True, exist_ok=True)
+    domain_model = docs_root / "04-core-domain-model.md"
+    domain_model.write_text(
+        "\n".join(
+            [
+                "# Core Domain Model",
+                "## IntentRecord",
+                "## CapabilityNode",
+                "## AgentWrapper",
+                "## AuthorityGrant",
+                "## ExecutionLease",
+                "## EvidenceNode",
+                "## GateDecision",
+                "## ProjectionRecord",
+                "## CompensationRecord",
+                "## ClosureRecord",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    authority = docs_root / "07-authority-and-side-effect-governance.md"
+    authority.write_text("S0 S1 S2 S3 S4 S5 S6 S7\n", encoding="utf-8")
+    schema = home / "workflows" / "projects" / "hermes-agent-os-control-plane" / "01-architecture" / "agent-os-schemas.json"
+    _write_json(
+        schema,
+        {
+            "side_effect_levels": {f"S{i}": f"level {i}" for i in range(8)},
+            "capability_node_required": ["id", "kind", "responsibility", "side_effects", "source_ref", "evidence_requirements"],
+            "evidence_node_required": ["id", "kind", "claim_ids", "trust_level", "freshness", "verification_status"],
+            "closure_record_required": ["id", "intent_id", "capability_node_id", "status", "claims", "evidence_refs", "next_boundary"],
+            "authority_grant_required": ["id", "granted_by", "scope", "duration", "audit"],
+            "default_off_side_effects": ["S4", "S5", "S6", "S7"],
+        },
+    )
+    return {
+        "autonomous_runtime_governance_domain_model": str(domain_model),
+        "autonomous_runtime_governance_authority": str(authority),
+        "schema": str(schema),
+    }
+
+
 def _seed_agent_os(home: Path, *, runtime_mutation: bool = False, shadow_executes: bool = False) -> None:
     project = "hermes-agent-os-control-plane"
     root = home / "workflows" / "projects" / project
@@ -30,6 +75,7 @@ def _seed_agent_os(home: Path, *, runtime_mutation: bool = False, shadow_execute
             "status": "p0-read-only-projection-validated+p1-sample-shadow-validated",
             "ssot_root": str(root),
             "progress_ledger": str(root / "progress-ledger.md"),
+            "canonical_docs": _write_agent_os_canonical_docs(home),
             "current_components": {
                 "runtime_implementation": "advisory_readback_only/default-off",
                 "capability_graph_projection": "validated-local-read-only-slice/2-nodes",
@@ -118,6 +164,34 @@ def test_agent_os_status_defaults_multimodel_review_and_execution_gates_closed(t
     assert payload["config"]["agent_os_broad_fanout"] is False
     assert payload["config"]["broad_fanout"] is False
     assert payload["runtime_effect"].startswith("none")
+
+
+def test_agent_os_canonical_schema_status_validates_arg_domain_model_and_schema(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+
+    payload = canonical_schema_status(tmp_path)
+
+    assert payload["ok"] is True
+    assert payload["mode"] == "canonical_schema_read_only"
+    assert payload["runtime_mutation"] is False
+    assert payload["domain_model"]["missing_sections"] == []
+    assert payload["agent_os_schema"]["missing_side_effect_levels"] == []
+    assert payload["agent_os_schema"]["default_off_side_effects"] == ["S4", "S5", "S6", "S7"]
+    assert payload["findings"] == []
+
+
+def test_agent_os_canonical_schema_status_fails_closed_on_missing_domain_section(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+    profile_path = tmp_path / "project-profiles" / "hermes-agent-os-control-plane.json"
+    profile = json.loads(profile_path.read_text())
+    domain_model = Path(profile["canonical_docs"]["autonomous_runtime_governance_domain_model"])
+    domain_model.write_text(domain_model.read_text().replace("## ClosureRecord\n", ""), encoding="utf-8")
+
+    payload = canonical_schema_status(tmp_path)
+
+    assert payload["ok"] is False
+    assert "ClosureRecord" in payload["domain_model"]["missing_sections"]
+    assert any(f["check"] == "canonical_domain_model_sections" for f in payload["findings"])
 
 
 def test_agent_os_doctor_fails_closed_on_runtime_mutation(tmp_path: Path) -> None:

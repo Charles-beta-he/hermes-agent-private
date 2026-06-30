@@ -13,6 +13,7 @@ from typing import Any
 
 from hermes_cli.agent_os_control_plane import (
     authorize_local_harness,
+    canonical_schema_status,
     doctor,
     execute_local_harness,
     format_summary,
@@ -37,6 +38,8 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
     home = getattr(args, "home", None)
     if action == "doctor":
         return _emit(doctor(home), as_json=as_json)
+    if action == "schema":
+        return _emit(canonical_schema_status(home), as_json=as_json)
     if action == "route":
         text = getattr(args, "text", None) or ""
         return _emit(route_shadow(text, home), as_json=as_json)
@@ -96,6 +99,7 @@ def build_agent_os_parser(subparsers) -> None:
     for name, help_text in [
         ("status", "Show Agent OS projection status"),
         ("doctor", "Run fail-closed read-only doctor checks"),
+        ("schema", "Validate canonical ERG Runtime schema/read-only projection status"),
     ]:
         p = subs.add_parser(name, help=help_text)
         p.add_argument("--home", default=None, help="Hermes home to inspect")

@@ -19,6 +19,21 @@ from typing import Any
 
 PROJECT_ID = "hermes-agent-os-control-plane"
 
+CANONICAL_DOMAIN_SECTIONS = [
+    "IntentRecord",
+    "CapabilityNode",
+    "AgentWrapper",
+    "AuthorityGrant",
+    "ExecutionLease",
+    "EvidenceNode",
+    "GateDecision",
+    "ProjectionRecord",
+    "CompensationRecord",
+    "ClosureRecord",
+]
+CANONICAL_SIDE_EFFECT_LEVELS = [f"S{i}" for i in range(8)]
+CANONICAL_DEFAULT_OFF_SIDE_EFFECTS = ["S4", "S5", "S6", "S7"]
+
 DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "communication": ["telegram", "send", "message", "通知", "消息", "提醒", "外发"],
     "devops": ["server", "deploy", "cron", "gateway", "doctor", "monitor", "github", "pr", "release", "merge", "进程", "端口", "合并", "发布", "部署"],
@@ -212,6 +227,127 @@ def status(home: str | Path | None = None) -> dict[str, Any]:
         ),
     }
     return payload
+
+
+def _profile_canonical_path(profile: dict[str, Any], key: str, *, home: Path, fallback: str) -> Path:
+    docs = profile.get("canonical_docs") if isinstance(profile, dict) else None
+    if isinstance(docs, dict) and isinstance(docs.get(key), str):
+        return Path(docs[key]).expanduser()
+    return home / fallback
+
+
+def _read_text_or_error(path: Path) -> tuple[str, str | None]:
+    try:
+        return path.read_text(encoding="utf-8"), None
+    except Exception as exc:  # noqa: BLE001 - schema status reports the error
+        return "", str(exc)
+
+
+def canonical_schema_status(home: str | Path | None = None) -> dict[str, Any]:
+    """Validate the canonical ARG schema projection without mutating state.
+
+    This is the P1 read-only bridge from the documentation takeover into an
+    executable schema gate. It checks that the ARG domain model sections exist,
+    that the Agent OS schema source still covers S0-S7, and that high side
+    effects remain default-off. It never writes reports or changes runtime
+    routing/lifecycle state.
+    """
+    p = paths(home)
+    profile = _read_json(p.profile, {})
+    projection = _read_json(p.projection, {})
+    domain_model_path = _profile_canonical_path(
+        profile,
+        "autonomous_runtime_governance_domain_model",
+        home=p.home,
+        fallback="hermes-agent/docs/private/autonomous-runtime-governance/04-core-domain-model.md",
+    )
+    authority_path = _profile_canonical_path(
+        profile,
+        "autonomous_runtime_governance_authority",
+        home=p.home,
+        fallback="hermes-agent/docs/private/autonomous-runtime-governance/07-authority-and-side-effect-governance.md",
+    )
+    schema_path = _profile_canonical_path(
+        profile,
+        "schema",
+        home=p.home,
+        fallback=f"workflows/projects/{PROJECT_ID}/01-architecture/agent-os-schemas.json",
+    )
+
+    domain_text, domain_error = _read_text_or_error(domain_model_path)
+    authority_text, authority_error = _read_text_or_error(authority_path)
+    schema = _read_json(schema_path, {})
+    findings: list[dict[str, Any]] = []
+
+    missing_sections = [section for section in CANONICAL_DOMAIN_SECTIONS if f"## {section}" not in domain_text]
+    if domain_error or missing_sections:
+        findings.append({
+            "level": "error",
+            "check": "canonical_domain_model_sections",
+            "message": domain_error or "missing canonical domain model sections",
+            "missing": missing_sections,
+        })
+
+    authority_missing_levels = [level for level in CANONICAL_SIDE_EFFECT_LEVELS if level not in authority_text]
+    if authority_error or authority_missing_levels:
+        findings.append({
+            "level": "error",
+            "check": "canonical_authority_side_effect_levels",
+            "message": authority_error or "authority doc does not mention all side-effect levels",
+            "missing": authority_missing_levels,
+        })
+
+    side_effect_levels = schema.get("side_effect_levels", {}) if isinstance(schema, dict) else {}
+    missing_side_effect_levels = [level for level in CANONICAL_SIDE_EFFECT_LEVELS if level not in side_effect_levels]
+    default_off_side_effects = schema.get("default_off_side_effects", []) if isinstance(schema, dict) else []
+    if missing_side_effect_levels:
+        findings.append({
+            "level": "error",
+            "check": "agent_os_schema_side_effect_levels",
+            "message": "Agent OS schema source is missing canonical S0-S7 levels",
+            "missing": missing_side_effect_levels,
+        })
+    if default_off_side_effects != CANONICAL_DEFAULT_OFF_SIDE_EFFECTS:
+        findings.append({
+            "level": "error",
+            "check": "agent_os_schema_default_off_levels",
+            "message": "S4-S7 must stay default-off in the schema source",
+            "expected": CANONICAL_DEFAULT_OFF_SIDE_EFFECTS,
+            "actual": default_off_side_effects,
+        })
+
+    runtime_mutation = bool(projection.get("runtime_mutation")) if isinstance(projection, dict) else False
+    if runtime_mutation:
+        findings.append({
+            "level": "error",
+            "check": "schema_projection_runtime_mutation_default_off",
+            "message": "canonical schema status must remain read-only",
+        })
+
+    return {
+        "ok": not any(f["level"] == "error" for f in findings),
+        "project": PROJECT_ID,
+        "mode": "canonical_schema_read_only",
+        "generated_at": _now_iso(),
+        "runtime_mutation": runtime_mutation,
+        "domain_model": {
+            "path": str(domain_model_path),
+            "required_sections": CANONICAL_DOMAIN_SECTIONS,
+            "missing_sections": missing_sections,
+        },
+        "authority": {
+            "path": str(authority_path),
+            "required_side_effect_levels": CANONICAL_SIDE_EFFECT_LEVELS,
+            "missing_side_effect_levels": authority_missing_levels,
+        },
+        "agent_os_schema": {
+            "path": str(schema_path),
+            "missing_side_effect_levels": missing_side_effect_levels,
+            "default_off_side_effects": default_off_side_effects,
+        },
+        "findings": findings,
+        "scope": "read-only P1 canonical schema/projection status; no domain store mutation",
+    }
 
 
 def doctor(home: str | Path | None = None) -> dict[str, Any]:

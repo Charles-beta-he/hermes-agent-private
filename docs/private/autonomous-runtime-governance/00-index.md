@@ -38,6 +38,7 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 13. `13-local-brain-absorption.md` — source map from older local-brain artifacts into this canonical packet.
 14. `14-takeover-disposition-manifest.md` — takeover manifest for old source dispositions and JSON/profile sources.
 15. `15-takeover-doctor-report.json` — latest read-only takeover doctor report (`status=pass`).
+16. `16-p1-schema-status-report.json` — latest P1 canonical schema/read-only projection report (`ok=true`).
 
 ## Anti-sprawl rules
 
@@ -63,3 +64,5 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 - Takeover disposition manifest: `14-takeover-disposition-manifest.md`
 - Latest takeover doctor report: `15-takeover-doctor-report.json`
 - Takeover doctor script: `scripts/arg_doctor.py`
+- P1 schema status command: `hermes agent-os schema --json`
+- Latest P1 schema report: `16-p1-schema-status-report.json`

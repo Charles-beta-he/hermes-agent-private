@@ -24,6 +24,9 @@ Acceptance:
 - projection doctor passes;
 - no domain store mutation.
 
+P1 implementation note (2026-06-30): the first executable schema gate is landed as a read-only Agent OS CLI surface: `hermes agent-os schema --json`. It validates canonical domain-model sections, S0-S7 side-effect coverage, S4-S7 default-off semantics, and projection runtime_mutation=false. Latest report: `16-p1-schema-status-report.json` (`ok=true`, `findings=[]`). This is not domain-store migration.
+
+
 ## P2 — Read-only runtime audit
 
 - Build read-only audit over cron, gateway, taskpool, mission, worker jobs, provider health, source drift.

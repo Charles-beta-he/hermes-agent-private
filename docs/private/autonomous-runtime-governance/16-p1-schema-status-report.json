@@ -1,0 +1,49 @@
+{
+  "ok": true,
+  "project": "hermes-agent-os-control-plane",
+  "mode": "canonical_schema_read_only",
+  "generated_at": "2026-06-30T04:29:29+00:00",
+  "runtime_mutation": false,
+  "domain_model": {
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/autonomous-runtime-governance/04-core-domain-model.md",
+    "required_sections": [
+      "IntentRecord",
+      "CapabilityNode",
+      "AgentWrapper",
+      "AuthorityGrant",
+      "ExecutionLease",
+      "EvidenceNode",
+      "GateDecision",
+      "ProjectionRecord",
+      "CompensationRecord",
+      "ClosureRecord"
+    ],
+    "missing_sections": []
+  },
+  "authority": {
+    "path": "/Users/charles/.hermes/hermes-agent/docs/private/autonomous-runtime-governance/07-authority-and-side-effect-governance.md",
+    "required_side_effect_levels": [
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S5",
+      "S6",
+      "S7"
+    ],
+    "missing_side_effect_levels": []
+  },
+  "agent_os_schema": {
+    "path": "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/01-architecture/agent-os-schemas.json",
+    "missing_side_effect_levels": [],
+    "default_off_side_effects": [
+      "S4",
+      "S5",
+      "S6",
+      "S7"
+    ]
+  },
+  "findings": [],
+  "scope": "read-only P1 canonical schema/projection status; no domain store mutation"
+}
