@@ -20,6 +20,7 @@ from hermes_cli.agent_os_control_plane import (
     execute_local_harness,
     format_summary,
     generate_replay_quality_report,
+    high_risk_boundary_coverage,
     read_only_runtime_audit,
     replay_recent_user_intents,
     route_shadow,
@@ -49,6 +50,8 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
         return _emit(evidence_projection_status(home), as_json=as_json)
     if action == "bootstrap-runtime":
         return _emit(bootstrap_erg_runtime_state(home, authority_gate=getattr(args, "authority_gate", None)), as_json=as_json)
+    if action == "boundary-coverage":
+        return _emit(high_risk_boundary_coverage(home, destructive_canary=bool(getattr(args, "destructive_canary", False))), as_json=as_json)
     if action == "route":
         text = getattr(args, "text", None) or ""
         return _emit(route_shadow(text, home), as_json=as_json)
@@ -112,12 +115,15 @@ def build_agent_os_parser(subparsers) -> None:
         ("audit", "Run read-only ERG Runtime source/divergence audit"),
         ("evidence", "Project read-only audit findings into ERG EvidenceNode records"),
         ("bootstrap-runtime", "Execute exact P4 local ERG runtime bootstrap boundary"),
+        ("boundary-coverage", "Project/read back high-risk Agent OS boundary coverage without unscoped execution"),
     ]:
         p = subs.add_parser(name, help=help_text)
         p.add_argument("--home", default=None, help="Hermes home to inspect")
         p.add_argument("--json", action="store_true", help="Emit JSON")
         if name == "bootstrap-runtime":
             p.add_argument("--authority-gate", default=None, help="Exact P4 authority gate JSON path")
+        if name == "boundary-coverage":
+            p.add_argument("--destructive-canary", action="store_true", help="Run disposable local delete/restore canary smoke")
         p.set_defaults(func=cmd_agent_os)
 
     route = subs.add_parser(

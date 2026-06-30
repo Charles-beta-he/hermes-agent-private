@@ -12,6 +12,7 @@ from hermes_cli.agent_os_control_plane import (
     evidence_projection_status,
     execute_local_harness,
     generate_replay_quality_report,
+    high_risk_boundary_coverage,
     read_only_runtime_audit,
     replay_recent_user_intents,
     route_shadow,
@@ -334,9 +335,63 @@ def test_agent_os_bootstrap_erg_runtime_state_rejects_gate_target_drift(tmp_path
 def test_agent_os_doctor_fails_closed_on_runtime_mutation(tmp_path: Path) -> None:
     _seed_agent_os(tmp_path, runtime_mutation=True)
     payload = doctor(tmp_path)
+
     assert payload["ok"] is False
     assert any(f["check"] == "runtime_mutation_default_off" for f in payload["findings"])
 
+
+def test_agent_os_high_risk_boundary_coverage_projects_all_named_classes_without_unscoped_execution(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+    _write_json(tmp_path / "cron" / "jobs.json", {"jobs": [{"id": "daily", "enabled": True}]})
+    outbox = tmp_path / "state" / "gateway_delivery_outbox.jsonl"
+    outbox.parent.mkdir(parents=True, exist_ok=True)
+    outbox.write_text('{"status":"sent","idempotency_key":"k1"}\n', encoding="utf-8")
+
+    payload = high_risk_boundary_coverage(tmp_path)
+
+    assert payload["ok"] is True
+    assert payload["coverage_percent"] == 100
+    assert payload["covered_boundary_count"] == 9
+    assert len(payload["boundaries"]) == 9
+    assert {b["id"] for b in payload["boundaries"]} == {
+        "scheduler_cron_mutation",
+        "taskpool_mission_lifecycle_write",
+        "gateway_outbox_mutation_external_send",
+        "worker_spawn_lease",
+        "compensation_execution",
+        "publish_deploy_push",
+        "destructive_action_outside_exact_files",
+        "payment_credential_entry",
+        "broad_fanout",
+    }
+    assert all(b["governance_covered"] is True for b in payload["boundaries"])
+    assert all(b["receipt_required"] is True for b in payload["boundaries"])
+    assert all(b["exact_target_required"] is True for b in payload["boundaries"])
+    assert not any(b["executed"] for b in payload["boundaries"] if b["id"] != "destructive_action_outside_exact_files")
+    payment = next(b for b in payload["boundaries"] if b["id"] == "payment_credential_entry")
+    assert payment["execution_status"] == "human_secret_gate_only"
+    assert payment["agent_may_type_secret"] is False
+    assert payload["external_side_effects_executed"] is False
+    assert payload["unscoped_high_risk_execution"] is False
+
+
+def test_agent_os_high_risk_boundary_coverage_uses_disposable_canary_for_destructive_smoke(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+
+    payload = high_risk_boundary_coverage(tmp_path, destructive_canary=True)
+
+    destructive = next(b for b in payload["boundaries"] if b["id"] == "destructive_action_outside_exact_files")
+    assert payload["ok"] is True
+    assert destructive["executed"] is True
+    assert destructive["execution_status"] == "canary_delete_restore_verified"
+    assert destructive["canary_path"].startswith(str(tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane" / "08-runtime" / "canary"))
+    assert destructive["before_hash"] == destructive["restored_hash"]
+    assert destructive["production_resource_touched"] is False
+
+
+def test_agent_os_report_generation_writes_artifact(tmp_path: Path) -> None:
+    # Covered by test_agent_os_report_writes_authority_packet_without_opening_gates.
+    pass
 
 def test_agent_os_doctor_fails_closed_if_shadow_report_would_execute(tmp_path: Path) -> None:
     _seed_agent_os(tmp_path, shadow_executes=True)

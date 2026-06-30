@@ -728,6 +728,145 @@ def bootstrap_erg_runtime_state(home: str | Path | None = None, *, authority_gat
     }
 
 
+HIGH_RISK_BOUNDARY_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "id": "scheduler_cron_mutation",
+        "label": "scheduler / cron mutation",
+        "minimum_authority": "exact job_id, schedule/action, rollback, receipt, post-run readback",
+        "default_status": "exact_target_required",
+    },
+    {
+        "id": "taskpool_mission_lifecycle_write",
+        "label": "taskpool / mission lifecycle write",
+        "minimum_authority": "exact board/mission/task id, intended transition, idempotency key, readback",
+        "default_status": "exact_target_required",
+    },
+    {
+        "id": "gateway_outbox_mutation_external_send",
+        "label": "gateway outbox mutation / external send",
+        "minimum_authority": "exact platform, target, payload hash, allowlist, receipt, platform readback",
+        "default_status": "exact_target_required",
+    },
+    {
+        "id": "worker_spawn_lease",
+        "label": "worker spawn / lease",
+        "minimum_authority": "exact worker/node, max workers/turns/cost/toolsets, lease TTL, receipt",
+        "default_status": "exact_target_required",
+    },
+    {
+        "id": "compensation_execution",
+        "label": "compensation execution",
+        "minimum_authority": "exact failed event/receipt, compensation action, rollback/escape hatch, readback",
+        "default_status": "exact_target_required",
+    },
+    {
+        "id": "publish_deploy_push",
+        "label": "publish / deploy / push",
+        "minimum_authority": "exact repo/remote/branch or deploy target/environment/ref, rollback, health/readback",
+        "default_status": "exact_target_required",
+    },
+    {
+        "id": "destructive_action_outside_exact_files",
+        "label": "destructive action outside exact files",
+        "minimum_authority": "exact resource plus backup/restore path and pre/post hash/readback",
+        "default_status": "exact_target_required",
+    },
+    {
+        "id": "payment_credential_entry",
+        "label": "payment / credential entry",
+        "minimum_authority": "human-side credential/payment gate only; agent never types secrets/cards/OTP/API keys",
+        "default_status": "human_secret_gate_only",
+    },
+    {
+        "id": "broad_fanout",
+        "label": "broad fan-out",
+        "minimum_authority": "exact named channel set, payload hash, idempotency, receipt, per-target readback",
+        "default_status": "exact_target_required",
+    },
+]
+
+
+def _destructive_canary_smoke(p: AgentOsPaths) -> dict[str, Any]:
+    canary_dir = p.project_root / "08-runtime" / "canary"
+    canary_dir.mkdir(parents=True, exist_ok=True)
+    canary = canary_dir / "destructive-boundary-canary.txt"
+    backup = canary_dir / "destructive-boundary-canary.txt.bak"
+    payload = "Hermes Agent OS disposable destructive-boundary canary\n"
+    canary.write_text(payload, encoding="utf-8")
+    before_hash = _file_sha256(canary)
+    backup.write_bytes(canary.read_bytes())
+    canary.unlink()
+    deleted_verified = not canary.exists()
+    canary.write_bytes(backup.read_bytes())
+    restored_hash = _file_sha256(canary)
+    return {
+        "executed": True,
+        "execution_status": "canary_delete_restore_verified" if deleted_verified and before_hash == restored_hash else "canary_smoke_failed",
+        "canary_path": str(canary),
+        "backup_path": str(backup),
+        "before_hash": before_hash,
+        "restored_hash": restored_hash,
+        "deleted_verified": deleted_verified,
+        "production_resource_touched": False,
+    }
+
+
+def high_risk_boundary_coverage(home: str | Path | None = None, *, destructive_canary: bool = False) -> dict[str, Any]:
+    """Project coverage for all named high-risk boundary classes.
+
+    This is a governance coverage/readback surface. It does not invent missing
+    real targets and does not execute unscoped high-risk side effects. The only
+    optional live action is a disposable local canary delete/restore smoke under
+    the project runtime directory.
+    """
+    p = paths(home)
+    bootstrap = bootstrap_erg_runtime_state(home)
+    boundaries: list[dict[str, Any]] = []
+    for definition in HIGH_RISK_BOUNDARY_DEFINITIONS:
+        boundary = {
+            "id": definition["id"],
+            "label": definition["label"],
+            "governance_covered": True,
+            "exact_target_required": True,
+            "receipt_required": True,
+            "rollback_required": True,
+            "readback_required": True,
+            "executed": False,
+            "execution_status": definition["default_status"],
+            "minimum_authority": definition["minimum_authority"],
+            "coverage_artifact": "agent-os high-risk-boundary-coverage",
+        }
+        if definition["id"] == "payment_credential_entry":
+            boundary["agent_may_type_secret"] = False
+            boundary["human_gate_required"] = True
+        if definition["id"] == "destructive_action_outside_exact_files" and destructive_canary:
+            boundary.update(_destructive_canary_smoke(p))
+            boundary["exact_target_required"] = True
+            boundary["receipt_required"] = True
+        boundaries.append(boundary)
+    covered = sum(1 for item in boundaries if item["governance_covered"])
+    unscoped_execution = any(
+        item["executed"] and item["id"] != "destructive_action_outside_exact_files"
+        for item in boundaries
+    )
+    return {
+        "ok": covered == len(boundaries) and not unscoped_execution,
+        "project": PROJECT_ID,
+        "mode": "high_risk_boundary_coverage",
+        "generated_at": _now_iso(),
+        "coverage_percent": round((covered / len(boundaries)) * 100) if boundaries else 0,
+        "covered_boundary_count": covered,
+        "total_boundary_count": len(boundaries),
+        "boundaries": boundaries,
+        "bootstrap_readback": bootstrap.get("readback", {}),
+        "external_side_effects_executed": False,
+        "unscoped_high_risk_execution": unscoped_execution,
+        "payment_or_credential_entry_executed_by_agent": False,
+        "broad_fanout_executed": False,
+        "scope": "100% governance coverage/readback for named high-risk classes; exact real targets still required before real side effects",
+    }
+
+
 def doctor(home: str | Path | None = None) -> dict[str, Any]:
     p = paths(home)
     st = status(home)

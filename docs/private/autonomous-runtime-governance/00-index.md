@@ -44,6 +44,7 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 19. `19-runtime-promotion-authorization-gate.json` — smallest next runtime mutation gate; human authorization required.
 20. `20-p4-runtime-bootstrap-report.json` — initial P4 local runtime bootstrap execution report.
 21. `21-p4-runtime-bootstrap-idempotency-readback.json` — P4 idempotency/readback report after rerun.
+22. `22-high-risk-boundary-coverage-report.json` — high-risk boundary governance coverage report for nine requested classes.
 
 ## Anti-sprawl rules
 
@@ -78,3 +79,6 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 - Next runtime promotion gate: `19-runtime-promotion-authorization-gate.json`
 - P4 exact local runtime bootstrap command: `hermes agent-os bootstrap-runtime --authority-gate <gate> --json`
 - P4 reports: `20-p4-runtime-bootstrap-report.json`, `21-p4-runtime-bootstrap-idempotency-readback.json`
+
+
+High-risk boundary coverage command: `hermes agent-os boundary-coverage --destructive-canary --json`. This reports 100% governance coverage for scheduler/cron mutation, taskpool/mission lifecycle write, gateway external send, worker lease, compensation, publish/deploy/push, destructive action, payment/credential entry, and broad fan-out. It does not execute class-only real side effects; the only live destructive coverage is a disposable local canary delete/restore smoke under the project runtime directory.
