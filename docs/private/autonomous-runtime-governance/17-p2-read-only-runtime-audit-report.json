@@ -1,0 +1,77 @@
+{
+  "ok": true,
+  "project": "hermes-agent-os-control-plane",
+  "mode": "runtime_audit_read_only",
+  "generated_at": "2026-06-30T04:34:06+00:00",
+  "runtime_mutation": false,
+  "summary": {
+    "pass": 6,
+    "warn": 0,
+    "fail": 0
+  },
+  "findings": [
+    {
+      "surface": "canonical_schema",
+      "status": "pass",
+      "divergence_class": "schema_ready",
+      "evidence_ref": "/Users/charles/.hermes/project-profiles/hermes-agent-os-control-plane.json",
+      "next_safe_action": "continue_to_evidence_projection",
+      "detail": {
+        "findings": []
+      }
+    },
+    {
+      "surface": "capability_projection",
+      "status": "pass",
+      "divergence_class": "projection_read_only",
+      "evidence_ref": "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/06-projection/capability_graph_projection.json",
+      "next_safe_action": "use_as_mapping_source",
+      "detail": {
+        "node_count": 281
+      }
+    },
+    {
+      "surface": "cron",
+      "status": "pass",
+      "divergence_class": "source_observed",
+      "evidence_ref": "/Users/charles/.hermes/cron/jobs.json",
+      "next_safe_action": "map_cron_jobs_to_intent_records",
+      "detail": {
+        "job_count": 71
+      }
+    },
+    {
+      "surface": "gateway_outbox",
+      "status": "pass",
+      "divergence_class": "source_observed",
+      "evidence_ref": "/Users/charles/.hermes/state/gateway_delivery_outbox.jsonl",
+      "next_safe_action": "map_outbox_receipts_to_evidence_nodes",
+      "detail": {
+        "records": 11,
+        "status_counts": {
+          "sent": 10,
+          "pending": 1
+        },
+        "path": "/Users/charles/.hermes/state/gateway_delivery_outbox.jsonl"
+      }
+    },
+    {
+      "surface": "shadow_router",
+      "status": "pass",
+      "divergence_class": "shadow_no_execute",
+      "evidence_ref": "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/07-shadow/router-shadow-report.json",
+      "next_safe_action": "continue_shadow_replay",
+      "detail": {
+        "would_execute_anything": false
+      }
+    },
+    {
+      "surface": "taskpool_mission_profile",
+      "status": "pass",
+      "divergence_class": "source_observed",
+      "evidence_ref": "/Users/charles/.hermes/project-profiles/hermes-agent-os-control-plane.json",
+      "next_safe_action": "use_profile_as_scoped_local_brain"
+    }
+  ],
+  "scope": "read-only P2 runtime audit over local sources; no compensation or domain-store mutation"
+}

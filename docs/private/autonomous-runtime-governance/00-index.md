@@ -39,6 +39,7 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 14. `14-takeover-disposition-manifest.md` — takeover manifest for old source dispositions and JSON/profile sources.
 15. `15-takeover-doctor-report.json` — latest read-only takeover doctor report (`status=pass`).
 16. `16-p1-schema-status-report.json` — latest P1 canonical schema/read-only projection report (`ok=true`).
+17. `17-p2-read-only-runtime-audit-report.json` — latest P2 read-only runtime audit report (`ok=true`).
 
 ## Anti-sprawl rules
 
@@ -66,3 +67,5 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 - Takeover doctor script: `scripts/arg_doctor.py`
 - P1 schema status command: `hermes agent-os schema --json`
 - Latest P1 schema report: `16-p1-schema-status-report.json`
+- P2 read-only runtime audit command: `hermes agent-os audit --json`
+- Latest P2 runtime audit report: `17-p2-read-only-runtime-audit-report.json`

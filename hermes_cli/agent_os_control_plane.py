@@ -350,6 +350,122 @@ def canonical_schema_status(home: str | Path | None = None) -> dict[str, Any]:
     }
 
 
+def _append_audit(findings: list[dict[str, Any]], *, surface: str, status: str, divergence_class: str, evidence_ref: str, next_safe_action: str, detail: Any = None) -> None:
+    item: dict[str, Any] = {
+        "surface": surface,
+        "status": status,
+        "divergence_class": divergence_class,
+        "evidence_ref": evidence_ref,
+        "next_safe_action": next_safe_action,
+    }
+    if detail is not None:
+        item["detail"] = detail
+    findings.append(item)
+
+
+def _jsonl_status(path: Path) -> tuple[str, dict[str, Any]]:
+    if not path.exists():
+        return "warn", {"reason": "missing", "records": 0}
+    records = 0
+    statuses: dict[str, int] = {}
+    try:
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            obj = json.loads(line)
+            records += 1
+            status_value = str(obj.get("status", "unknown")) if isinstance(obj, dict) else "non_object"
+            statuses[status_value] = statuses.get(status_value, 0) + 1
+    except Exception as exc:  # noqa: BLE001 - audit reports fail-closed parse errors
+        return "fail", {"reason": "parse_error", "error": str(exc), "records_before_error": records, "path": str(path)}
+    return "pass", {"records": records, "status_counts": statuses, "path": str(path)}
+
+
+def read_only_runtime_audit(home: str | Path | None = None) -> dict[str, Any]:
+    """Classify runtime divergence sources without mutating any domain store."""
+    p = paths(home)
+    findings: list[dict[str, Any]] = []
+
+    schema_payload = canonical_schema_status(home)
+    _append_audit(
+        findings,
+        surface="canonical_schema",
+        status="pass" if schema_payload.get("ok") else "fail",
+        divergence_class="schema_ready" if schema_payload.get("ok") else "schema_blocked",
+        evidence_ref=str(p.profile),
+        next_safe_action="continue_to_evidence_projection" if schema_payload.get("ok") else "repair_schema_findings_before_runtime_migration",
+        detail={"findings": schema_payload.get("findings", [])},
+    )
+
+    projection = _read_json(p.projection, {})
+    projection_status = "pass" if isinstance(projection, dict) and projection.get("runtime_mutation") is False else "fail"
+    _append_audit(
+        findings,
+        surface="capability_projection",
+        status=projection_status,
+        divergence_class="projection_read_only" if projection_status == "pass" else "projection_mutation_or_unreadable",
+        evidence_ref=str(p.projection),
+        next_safe_action="use_as_mapping_source" if projection_status == "pass" else "restore_runtime_mutation_false",
+        detail={"node_count": len(projection.get("nodes", [])) if isinstance(projection, dict) else 0},
+    )
+
+    cron_path = p.home / "cron" / "jobs.json"
+    cron_payload = _read_json(cron_path, None)
+    if cron_payload is None:
+        _append_audit(findings, surface="cron", status="warn", divergence_class="source_missing", evidence_ref=str(cron_path), next_safe_action="skip_cron_mapping_until_source_exists")
+    elif isinstance(cron_payload, dict) and cron_payload.get("_load_error"):
+        _append_audit(findings, surface="cron", status="fail", divergence_class="source_unreadable", evidence_ref=str(cron_path), next_safe_action="repair_cron_json_before_audit", detail=cron_payload)
+    else:
+        jobs = cron_payload.get("jobs", cron_payload) if isinstance(cron_payload, dict) else cron_payload
+        _append_audit(findings, surface="cron", status="pass", divergence_class="source_observed", evidence_ref=str(cron_path), next_safe_action="map_cron_jobs_to_intent_records", detail={"job_count": len(jobs) if isinstance(jobs, list) else 0})
+
+    outbox_path = p.home / "state" / "gateway_delivery_outbox.jsonl"
+    outbox_status, outbox_detail = _jsonl_status(outbox_path)
+    _append_audit(
+        findings,
+        surface="gateway_outbox",
+        status=outbox_status,
+        divergence_class="source_observed" if outbox_status == "pass" else "source_missing" if outbox_status == "warn" else "source_unreadable",
+        evidence_ref=str(outbox_path),
+        next_safe_action="map_outbox_receipts_to_evidence_nodes" if outbox_status == "pass" else "repair_or_wait_for_gateway_outbox_source",
+        detail=outbox_detail,
+    )
+
+    shadow = _read_json(p.shadow_report, {})
+    shadow_status = "pass" if isinstance(shadow, dict) and shadow.get("would_execute_anything") in {False, None} else "fail"
+    _append_audit(
+        findings,
+        surface="shadow_router",
+        status=shadow_status,
+        divergence_class="shadow_no_execute" if shadow_status == "pass" else "shadow_execution_leak",
+        evidence_ref=str(p.shadow_report),
+        next_safe_action="continue_shadow_replay" if shadow_status == "pass" else "disable_shadow_execution_before_migration",
+        detail={"would_execute_anything": shadow.get("would_execute_anything") if isinstance(shadow, dict) else None},
+    )
+
+    profile_exists = p.profile.exists()
+    _append_audit(
+        findings,
+        surface="taskpool_mission_profile",
+        status="pass" if profile_exists else "warn",
+        divergence_class="source_observed" if profile_exists else "source_missing",
+        evidence_ref=str(p.profile),
+        next_safe_action="use_profile_as_scoped_local_brain" if profile_exists else "create_project_profile_before_runtime_migration",
+    )
+
+    summary = {status_name: sum(1 for f in findings if f["status"] == status_name) for status_name in ["pass", "warn", "fail"]}
+    return {
+        "ok": summary["fail"] == 0,
+        "project": PROJECT_ID,
+        "mode": "runtime_audit_read_only",
+        "generated_at": _now_iso(),
+        "runtime_mutation": False,
+        "summary": summary,
+        "findings": findings,
+        "scope": "read-only P2 runtime audit over local sources; no compensation or domain-store mutation",
+    }
+
+
 def doctor(home: str | Path | None = None) -> dict[str, Any]:
     p = paths(home)
     st = status(home)

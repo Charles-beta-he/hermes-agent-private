@@ -38,6 +38,9 @@ Acceptance:
 - known fixtures classify correctly;
 - no side effect beyond local report write.
 
+P2 implementation note (2026-06-30): the first read-only runtime audit is landed as `hermes agent-os audit --json`. It classifies canonical schema, capability projection, cron jobs, gateway delivery outbox, shadow router, and scoped project profile into pass/warn/fail divergence records with evidence refs and next safe actions. Latest report: `17-p2-read-only-runtime-audit-report.json` (`ok=true`, summary `pass=6 warn=0 fail=0`). This is audit/report only: no compensation, store migration, or external side effect.
+
+
 ## P3 — Evidence ledger consolidation projection
 
 - Map existing outbox, cron output, taskpool proof, mission stage report, worker artifact into EvidenceNode projections.

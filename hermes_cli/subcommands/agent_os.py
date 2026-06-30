@@ -18,6 +18,7 @@ from hermes_cli.agent_os_control_plane import (
     execute_local_harness,
     format_summary,
     generate_replay_quality_report,
+    read_only_runtime_audit,
     replay_recent_user_intents,
     route_shadow,
     status,
@@ -40,6 +41,8 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
         return _emit(doctor(home), as_json=as_json)
     if action == "schema":
         return _emit(canonical_schema_status(home), as_json=as_json)
+    if action == "audit":
+        return _emit(read_only_runtime_audit(home), as_json=as_json)
     if action == "route":
         text = getattr(args, "text", None) or ""
         return _emit(route_shadow(text, home), as_json=as_json)
@@ -100,6 +103,7 @@ def build_agent_os_parser(subparsers) -> None:
         ("status", "Show Agent OS projection status"),
         ("doctor", "Run fail-closed read-only doctor checks"),
         ("schema", "Validate canonical ERG Runtime schema/read-only projection status"),
+        ("audit", "Run read-only ERG Runtime source/divergence audit"),
     ]:
         p = subs.add_parser(name, help=help_text)
         p.add_argument("--home", default=None, help="Hermes home to inspect")

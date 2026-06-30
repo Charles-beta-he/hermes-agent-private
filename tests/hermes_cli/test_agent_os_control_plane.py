@@ -10,6 +10,7 @@ from hermes_cli.agent_os_control_plane import (
     doctor,
     execute_local_harness,
     generate_replay_quality_report,
+    read_only_runtime_audit,
     replay_recent_user_intents,
     route_shadow,
     status,
@@ -192,6 +193,36 @@ def test_agent_os_canonical_schema_status_fails_closed_on_missing_domain_section
     assert payload["ok"] is False
     assert "ClosureRecord" in payload["domain_model"]["missing_sections"]
     assert any(f["check"] == "canonical_domain_model_sections" for f in payload["findings"])
+
+
+def test_agent_os_read_only_runtime_audit_classifies_known_sources_without_mutation(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+    _write_json(tmp_path / "cron" / "jobs.json", {"jobs": []})
+    outbox = tmp_path / "state" / "gateway_delivery_outbox.jsonl"
+    outbox.parent.mkdir(parents=True, exist_ok=True)
+    outbox.write_text('{"status":"sent","idempotency_key":"k1"}\n', encoding="utf-8")
+
+    payload = read_only_runtime_audit(tmp_path)
+
+    assert payload["ok"] is True
+    assert payload["mode"] == "runtime_audit_read_only"
+    assert payload["runtime_mutation"] is False
+    assert payload["summary"]["fail"] == 0
+    assert payload["summary"]["pass"] >= 4
+    assert any(f["surface"] == "cron" and f["status"] == "pass" for f in payload["findings"])
+    assert any(f["surface"] == "gateway_outbox" and f["status"] == "pass" for f in payload["findings"])
+
+
+def test_agent_os_read_only_runtime_audit_fails_closed_on_malformed_outbox(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+    outbox = tmp_path / "state" / "gateway_delivery_outbox.jsonl"
+    outbox.parent.mkdir(parents=True, exist_ok=True)
+    outbox.write_text('{not-json}\n', encoding="utf-8")
+
+    payload = read_only_runtime_audit(tmp_path)
+
+    assert payload["ok"] is False
+    assert any(f["surface"] == "gateway_outbox" and f["status"] == "fail" for f in payload["findings"])
 
 
 def test_agent_os_doctor_fails_closed_on_runtime_mutation(tmp_path: Path) -> None:
