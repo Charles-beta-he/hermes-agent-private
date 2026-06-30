@@ -1,3 +1,9 @@
+> Autonomous Runtime Governance disposition:
+> - Current role: historical-authority-ledger
+> - Canonical architecture entrypoint: `/Users/charles/.hermes/hermes-agent/docs/private/autonomous-runtime-governance/00-index.md`
+> - Canonical landing: `07-authority-and-side-effect-governance.md / 12-verification-and-acceptance.md`
+> - Do not extend this file with new target architecture. Keep it as source/evidence/history; land new target-model changes in `docs/private/autonomous-runtime-governance/` and register them in `11-adr-index.md` or `13-local-brain-absorption.md`.
+
 # Agent Architecture Coverage Plan — 2026-06-08
 
 Goal: turn the prior Claude Code / Hermes agent-architecture coverage discussion into a Hermes-owned, evidence-grounded control-plane artifact and land the first safe implementation slices until the next boundary requires runtime authority or human approval.

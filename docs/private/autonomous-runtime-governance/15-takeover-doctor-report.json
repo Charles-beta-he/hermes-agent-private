@@ -1,0 +1,10 @@
+{
+  "status": "pass",
+  "root": "/Users/charles/.hermes/hermes-agent/docs/private/autonomous-runtime-governance",
+  "canonical_index": "/Users/charles/.hermes/hermes-agent/docs/private/autonomous-runtime-governance/00-index.md",
+  "required_doc_count": 15,
+  "banner_source_count": 13,
+  "json_source_count": 5,
+  "findings": [],
+  "scope": "read-only documentation takeover doctor; no runtime authority or side effects"
+}

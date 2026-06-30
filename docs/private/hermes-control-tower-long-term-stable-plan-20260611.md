@@ -1,3 +1,9 @@
+> Autonomous Runtime Governance disposition:
+> - Current role: source-operator-surface
+> - Canonical architecture entrypoint: `/Users/charles/.hermes/hermes-agent/docs/private/autonomous-runtime-governance/00-index.md`
+> - Canonical landing: `08-runtime-surfaces.md`
+> - Do not extend this file with new target architecture. Keep it as source/evidence/history; land new target-model changes in `docs/private/autonomous-runtime-governance/` and register them in `11-adr-index.md` or `13-local-brain-absorption.md`.
+
 # Hermes Control Tower long-term stable plan
 
 Date: 2026-06-11
