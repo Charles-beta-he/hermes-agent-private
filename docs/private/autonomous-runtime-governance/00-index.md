@@ -42,6 +42,8 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 17. `17-p2-read-only-runtime-audit-report.json` — latest P2 read-only runtime audit report (`ok=true`).
 18. `18-p3-evidence-node-projection-report.json` — latest P3 EvidenceNode projection report (`ok=true`).
 19. `19-runtime-promotion-authorization-gate.json` — smallest next runtime mutation gate; human authorization required.
+20. `20-p4-runtime-bootstrap-report.json` — initial P4 local runtime bootstrap execution report.
+21. `21-p4-runtime-bootstrap-idempotency-readback.json` — P4 idempotency/readback report after rerun.
 
 ## Anti-sprawl rules
 
@@ -74,3 +76,5 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 - P3 EvidenceNode projection command: `hermes agent-os evidence --json`
 - Latest P3 EvidenceNode report: `18-p3-evidence-node-projection-report.json`
 - Next runtime promotion gate: `19-runtime-promotion-authorization-gate.json`
+- P4 exact local runtime bootstrap command: `hermes agent-os bootstrap-runtime --authority-gate <gate> --json`
+- P4 reports: `20-p4-runtime-bootstrap-report.json`, `21-p4-runtime-bootstrap-idempotency-readback.json`

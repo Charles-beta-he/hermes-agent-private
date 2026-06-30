@@ -527,6 +527,207 @@ def evidence_projection_status(home: str | Path | None = None) -> dict[str, Any]
     }
 
 
+def _file_sha256(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _canonical_json_bytes(payload: Any) -> bytes:
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _write_json_file(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_canonical_json_bytes(payload))
+
+
+def _expected_p4_targets(p: AgentOsPaths) -> dict[str, Path]:
+    runtime_dir = p.project_root / "08-runtime"
+    return {
+        "state": runtime_dir / "erg_runtime_state.json",
+        "receipts": runtime_dir / "erg_runtime_receipts.jsonl",
+        "plan": runtime_dir / "reconciliation_plan.json",
+    }
+
+
+def _default_p4_gate_path(p: AgentOsPaths) -> Path:
+    return p.home / "hermes-agent" / "docs" / "private" / "autonomous-runtime-governance" / "19-runtime-promotion-authorization-gate.json"
+
+
+def _validate_p4_gate(gate: dict[str, Any], expected: dict[str, Path]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    if gate.get("id") != "authority-packet:erg-runtime-p4-runtime-promotion-v1":
+        findings.append({"level": "error", "check": "p4_gate_id", "message": "unexpected P4 authority packet id"})
+    if gate.get("status") != "HUMAN_AUTHORIZATION_REQUIRED":
+        findings.append({"level": "error", "check": "p4_gate_status", "message": "P4 authority packet must be HUMAN_AUTHORIZATION_REQUIRED before explicit user acceptance"})
+    allowed = gate.get("requested_authority_for_next_slice", {}).get("allowed_targets", []) if isinstance(gate, dict) else []
+    expected_set = {str(path) for path in expected.values()}
+    if set(allowed) != expected_set:
+        findings.append({
+            "level": "error",
+            "check": "p4_allowed_targets_exact",
+            "message": "P4 allowed targets drifted from exact runtime state/receipt/plan files",
+            "expected": sorted(expected_set),
+            "actual": sorted(str(item) for item in allowed),
+        })
+    return findings
+
+
+def bootstrap_erg_runtime_state(home: str | Path | None = None, *, authority_gate: str | Path | None = None) -> dict[str, Any]:
+    """Execute the exact P4 local runtime bootstrap boundary.
+
+    Writes only the allowed local runtime state, receipt, and execute=false plan
+    named by the P4 authority packet. Does not mutate scheduler/taskpool/gateway,
+    does not execute compensation, and does not call external adapters.
+    """
+    p = paths(home)
+    expected = _expected_p4_targets(p)
+    gate_path = Path(authority_gate).expanduser() if authority_gate else _default_p4_gate_path(p)
+    gate = _read_json(gate_path, {})
+    findings = _validate_p4_gate(gate if isinstance(gate, dict) else {}, expected)
+    evidence = evidence_projection_status(home)
+    if not evidence.get("ok"):
+        findings.append({"level": "error", "check": "p3_evidence_projection_ok", "message": "P3 evidence projection must be ok before P4 bootstrap"})
+    if findings:
+        return {
+            "ok": False,
+            "project": PROJECT_ID,
+            "mode": "erg_runtime_p4_bootstrap",
+            "generated_at": _now_iso(),
+            "findings": findings,
+            "runtime_mutation": False,
+            "external_side_effects_executed": False,
+            "compensation_executed": False,
+        }
+
+    before_hashes = {name: _file_sha256(path) for name, path in expected.items()}
+    stable_evidence = dict(evidence)
+    stable_evidence.pop("generated_at", None)
+    source_report_hash = hashlib.sha256(_canonical_json_bytes(stable_evidence)).hexdigest()
+    request_digest = hashlib.sha256(
+        _canonical_json_bytes({
+            "gate_id": gate.get("id"),
+            "allowed_targets": sorted(str(path) for path in expected.values()),
+            "source_report_hash": source_report_hash,
+            "idempotency_key": "erg-runtime-p4-bootstrap-v1",
+        })
+    ).hexdigest()
+    state_payload = {
+        "schema_version": "erg-runtime-state/v1",
+        "project": PROJECT_ID,
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+        "authority_gate": str(gate_path),
+        "request_digest": request_digest,
+        "source_report_hash": source_report_hash,
+        "evidence_node_count": evidence["summary"]["node_count"],
+        "evidence_summary": evidence["summary"],
+        "evidence_nodes": evidence["evidence_nodes"],
+        "execute": False,
+        "runtime_mutation_scope": "local_state_bootstrap_only",
+        "external_side_effects_executed": False,
+        "compensation_executed": False,
+    }
+    plan_actions = []
+    for node in evidence["evidence_nodes"]:
+        plan_actions.append({
+            "id": f"plan_{node['id']}",
+            "source_evidence_node": node["id"],
+            "surface": node["surface"],
+            "kind": node["kind"],
+            "proposed_action": node.get("next_safe_action"),
+            "execute": False,
+            "adapter_enabled": False,
+            "compensation_enabled": False,
+            "requires_future_authority": True,
+        })
+    plan_payload = {
+        "schema_version": "erg-reconciliation-plan/v1",
+        "project": PROJECT_ID,
+        "created_at": _now_iso(),
+        "authority_gate": str(gate_path),
+        "request_digest": request_digest,
+        "source_report_hash": source_report_hash,
+        "execute": False,
+        "adapter_targets_enabled": [],
+        "actions": plan_actions,
+    }
+
+    expected["state"].parent.mkdir(parents=True, exist_ok=True)
+    receipts_path = expected["receipts"]
+    existing_receipts = receipts_path.read_text(encoding="utf-8").splitlines() if receipts_path.exists() else []
+    parsed_receipts: list[dict[str, Any]] = []
+    for line in existing_receipts:
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            parsed_receipts.append(parsed)
+    idempotent_replay = any(
+        record.get("request_digest") == request_digest or record.get("idempotency_key") == "erg-runtime-p4-bootstrap-v1"
+        for record in parsed_receipts
+    )
+    if not idempotent_replay:
+        _write_json_file(expected["state"], state_payload)
+        _write_json_file(expected["plan"], plan_payload)
+        after_state_hash = _file_sha256(expected["state"])
+        after_plan_hash = _file_sha256(expected["plan"])
+        receipt = {
+            "schema_version": "erg-runtime-receipt/v1",
+            "idempotency_key": "erg-runtime-p4-bootstrap-v1",
+            "request_digest": request_digest,
+            "created_at": _now_iso(),
+            "authority_gate": str(gate_path),
+            "runtime_boundary": "p4_local_domain_store_bootstrap",
+            "before_hashes": before_hashes,
+            "after_hashes": {"state": after_state_hash, "plan": after_plan_hash, "receipts_before": before_hashes["receipts"]},
+            "external_side_effects_executed": False,
+            "compensation_executed": False,
+            "readback": {"evidence_node_count": evidence["summary"]["node_count"], "plan_action_count": len(plan_actions), "execute": False},
+        }
+        receipts_path.parent.mkdir(parents=True, exist_ok=True)
+        with receipts_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n")
+    after_hashes = {name: _file_sha256(path) for name, path in expected.items()}
+    return {
+        "ok": True,
+        "project": PROJECT_ID,
+        "mode": "erg_runtime_p4_bootstrap",
+        "generated_at": _now_iso(),
+        "runtime_mutation": True,
+        "domain_store_mutation": True,
+        "external_side_effects_executed": False,
+        "compensation_executed": False,
+        "idempotent_replay": idempotent_replay,
+        "request_digest": request_digest,
+        "source_report_hash": source_report_hash,
+        "written_targets": {name: str(path) for name, path in expected.items()},
+        "before_hashes": before_hashes,
+        "after_hashes": after_hashes,
+        "readback": {
+            "evidence_node_count": evidence["summary"]["node_count"],
+            "plan_action_count": len(plan_actions),
+            "execute": False,
+            "receipt_count": len(receipts_path.read_text(encoding="utf-8").splitlines()) if receipts_path.exists() else 0,
+        },
+        "not_executed": [
+            "scheduler_or_cron_mutation",
+            "taskpool_or_mission_lifecycle_write",
+            "gateway_outbox_mutation_or_external_send",
+            "worker_spawn_or_lease",
+            "compensation_execution",
+            "publish_deploy_push",
+            "destructive_action_outside_exact_targets",
+            "payment_or_credential_entry",
+            "broad_fanout",
+        ],
+    }
+
+
 def doctor(home: str | Path | None = None) -> dict[str, Any]:
     p = paths(home)
     st = status(home)

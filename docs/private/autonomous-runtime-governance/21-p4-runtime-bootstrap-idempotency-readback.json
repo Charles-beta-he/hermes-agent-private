@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "project": "hermes-agent-os-control-plane",
+  "mode": "erg_runtime_p4_bootstrap",
+  "generated_at": "2026-06-30T05:01:03+00:00",
+  "runtime_mutation": true,
+  "domain_store_mutation": true,
+  "external_side_effects_executed": false,
+  "compensation_executed": false,
+  "idempotent_replay": true,
+  "request_digest": "11b9b3243287164a78d946f6e54bb417ca3bed6c4e43fe84d1984b605b8ea0be",
+  "source_report_hash": "b6eaf20209da313467718a02851a552517d8c35ef2ec1336beee95e331d2c55b",
+  "written_targets": {
+    "state": "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/08-runtime/erg_runtime_state.json",
+    "receipts": "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/08-runtime/erg_runtime_receipts.jsonl",
+    "plan": "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/08-runtime/reconciliation_plan.json"
+  },
+  "before_hashes": {
+    "state": "c2e3f4a3daf3e739d784a2d1002175d23f98f08520d8c7f8d3f53fcaf524e2b6",
+    "receipts": "825d33bcab46b102cbf7e3319e437e71d8b1a7dbb4174739b557b0a48a5bbd7e",
+    "plan": "f1c866e52901afff1d7258e66fb29da5923102c6b5a95d874dc9e24e6341da9c"
+  },
+  "after_hashes": {
+    "state": "c2e3f4a3daf3e739d784a2d1002175d23f98f08520d8c7f8d3f53fcaf524e2b6",
+    "receipts": "825d33bcab46b102cbf7e3319e437e71d8b1a7dbb4174739b557b0a48a5bbd7e",
+    "plan": "f1c866e52901afff1d7258e66fb29da5923102c6b5a95d874dc9e24e6341da9c"
+  },
+  "readback": {
+    "evidence_node_count": 6,
+    "plan_action_count": 6,
+    "execute": false,
+    "receipt_count": 2
+  },
+  "not_executed": [
+    "scheduler_or_cron_mutation",
+    "taskpool_or_mission_lifecycle_write",
+    "gateway_outbox_mutation_or_external_send",
+    "worker_spawn_or_lease",
+    "compensation_execution",
+    "publish_deploy_push",
+    "destructive_action_outside_exact_targets",
+    "payment_or_credential_entry",
+    "broad_fanout"
+  ]
+}

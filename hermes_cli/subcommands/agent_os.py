@@ -13,6 +13,7 @@ from typing import Any
 
 from hermes_cli.agent_os_control_plane import (
     authorize_local_harness,
+    bootstrap_erg_runtime_state,
     canonical_schema_status,
     doctor,
     evidence_projection_status,
@@ -46,6 +47,8 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
         return _emit(read_only_runtime_audit(home), as_json=as_json)
     if action == "evidence":
         return _emit(evidence_projection_status(home), as_json=as_json)
+    if action == "bootstrap-runtime":
+        return _emit(bootstrap_erg_runtime_state(home, authority_gate=getattr(args, "authority_gate", None)), as_json=as_json)
     if action == "route":
         text = getattr(args, "text", None) or ""
         return _emit(route_shadow(text, home), as_json=as_json)
@@ -108,10 +111,13 @@ def build_agent_os_parser(subparsers) -> None:
         ("schema", "Validate canonical ERG Runtime schema/read-only projection status"),
         ("audit", "Run read-only ERG Runtime source/divergence audit"),
         ("evidence", "Project read-only audit findings into ERG EvidenceNode records"),
+        ("bootstrap-runtime", "Execute exact P4 local ERG runtime bootstrap boundary"),
     ]:
         p = subs.add_parser(name, help=help_text)
         p.add_argument("--home", default=None, help="Hermes home to inspect")
-        p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+        p.add_argument("--json", action="store_true", help="Emit JSON")
+        if name == "bootstrap-runtime":
+            p.add_argument("--authority-gate", default=None, help="Exact P4 authority gate JSON path")
         p.set_defaults(func=cmd_agent_os)
 
     route = subs.add_parser(

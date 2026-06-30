@@ -6,6 +6,7 @@ from pathlib import Path
 
 from hermes_cli.agent_os_control_plane import (
     authorize_local_harness,
+    bootstrap_erg_runtime_state,
     canonical_schema_status,
     doctor,
     evidence_projection_status,
@@ -257,6 +258,77 @@ def test_agent_os_evidence_projection_blocks_on_audit_failures(tmp_path: Path) -
     assert payload["ok"] is False
     assert payload["summary"]["fail"] >= 1
     assert any(node["verification_status"] == "fail" and node["kind"] == "gateway_outbox" for node in payload["evidence_nodes"])
+
+
+def test_agent_os_bootstrap_erg_runtime_state_writes_only_exact_p4_targets_idempotently(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+    _write_json(tmp_path / "cron" / "jobs.json", {"jobs": [{"id": "daily", "enabled": True}]})
+    outbox = tmp_path / "state" / "gateway_delivery_outbox.jsonl"
+    outbox.parent.mkdir(parents=True, exist_ok=True)
+    outbox.write_text('{"status":"sent","idempotency_key":"k1"}\n', encoding="utf-8")
+    gate = tmp_path / "hermes-agent" / "docs" / "private" / "autonomous-runtime-governance" / "19-runtime-promotion-authorization-gate.json"
+    _write_json(
+        gate,
+        {
+            "id": "authority-packet:erg-runtime-p4-runtime-promotion-v1",
+            "status": "HUMAN_AUTHORIZATION_REQUIRED",
+            "requested_authority_for_next_slice": {
+                "allowed_targets": [
+                    str(tmp_path / "workflows/projects/hermes-agent-os-control-plane/08-runtime/erg_runtime_state.json"),
+                    str(tmp_path / "workflows/projects/hermes-agent-os-control-plane/08-runtime/erg_runtime_receipts.jsonl"),
+                    str(tmp_path / "workflows/projects/hermes-agent-os-control-plane/08-runtime/reconciliation_plan.json"),
+                ],
+                "allowed_actions": ["persist read-only EvidenceNode projection snapshot into local ERG runtime state"],
+                "not_allowed_by_this_packet": ["scheduler or cron mutation", "gateway outbox mutation or external send"],
+            },
+        },
+    )
+
+    first = bootstrap_erg_runtime_state(tmp_path, authority_gate=gate)
+    second = bootstrap_erg_runtime_state(tmp_path, authority_gate=gate)
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert second["idempotent_replay"] is True
+    assert second["after_hashes"]["state"] == first["after_hashes"]["state"]
+    assert second["after_hashes"]["plan"] == first["after_hashes"]["plan"]
+    assert first["runtime_mutation"] is True
+    assert first["external_side_effects_executed"] is False
+    assert first["compensation_executed"] is False
+    assert set(first["written_targets"].keys()) == {"state", "receipts", "plan"}
+    state = json.loads(Path(first["written_targets"]["state"]).read_text())
+    plan = json.loads(Path(first["written_targets"]["plan"]).read_text())
+    receipts = Path(first["written_targets"]["receipts"]).read_text().strip().splitlines()
+    assert state["schema_version"] == "erg-runtime-state/v1"
+    assert state["evidence_node_count"] == 6
+    assert state["execute"] is False
+    assert plan["execute"] is False
+    assert all(action["execute"] is False and action["adapter_enabled"] is False for action in plan["actions"])
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0])
+    assert receipt["idempotency_key"] == "erg-runtime-p4-bootstrap-v1"
+    assert receipt["readback"]["evidence_node_count"] == 6
+
+
+def test_agent_os_bootstrap_erg_runtime_state_rejects_gate_target_drift(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+    gate = tmp_path / "gate.json"
+    _write_json(
+        gate,
+        {
+            "id": "authority-packet:erg-runtime-p4-runtime-promotion-v1",
+            "status": "HUMAN_AUTHORIZATION_REQUIRED",
+            "requested_authority_for_next_slice": {
+                "allowed_targets": [str(tmp_path / "unexpected.json")],
+                "allowed_actions": [],
+            },
+        },
+    )
+
+    payload = bootstrap_erg_runtime_state(tmp_path, authority_gate=gate)
+
+    assert payload["ok"] is False
+    assert any(f["check"] == "p4_allowed_targets_exact" for f in payload["findings"])
 
 
 def test_agent_os_doctor_fails_closed_on_runtime_mutation(tmp_path: Path) -> None:

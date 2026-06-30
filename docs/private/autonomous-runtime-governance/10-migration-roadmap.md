@@ -137,3 +137,6 @@ Before changing old local-brain structure:
 - only archive or move old entrypoints after readback proves no active consumer depends on them as truth source.
 
 This avoids replacing a working but messy evidence store with an unverified new taxonomy.
+
+
+P4 execution note (2026-06-30): after exact user authorization of `19-runtime-promotion-authorization-gate.json`, the local runtime bootstrap boundary was executed with `hermes agent-os bootstrap-runtime --authority-gate ... --json`. It wrote only the listed targets under `08-runtime/`: `erg_runtime_state.json`, `erg_runtime_receipts.jsonl`, and `reconciliation_plan.json`. Readback: evidence_node_count=6, plan_action_count=6, execute=false. A follow-up idempotency rerun produced `idempotent_replay=true` and did not append another receipt under the final implementation. No scheduler/taskpool/gateway mutation, external dispatch, worker spawn, compensation, push/deploy, destructive action outside exact targets, credential entry, or broad fanout was executed.
