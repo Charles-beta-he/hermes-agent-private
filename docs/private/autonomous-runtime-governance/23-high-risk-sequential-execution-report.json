@@ -1,0 +1,149 @@
+{
+  "schema_version": "erg-highrisk-sequential-execution-report/v1",
+  "generated_at": "2026-06-30T06:11:18+00:00",
+  "user_request": "按顺序把每一项都推进到真实执行",
+  "receipt_path": "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/08-runtime/high-risk-execution-receipts.jsonl",
+  "receipt_sha256": "be6cf12a2b1f20e2208b8be33927eae7369fa1edc62903c18800e3902d56f5f0",
+  "receipt_count": 12,
+  "boundaries": [
+    {
+      "id": "scheduler_cron_mutation",
+      "status": "partial_executed_with_scheduler_mutation",
+      "evidence": {
+        "action": "created local no-agent cron smoke jobs; cronjob.run returned execution_success=false, script fallback executed separately",
+        "boundary": "scheduler_cron_mutation",
+        "cron_job_ids": [
+          "63cbe5b5c037",
+          "5f37149e5930"
+        ],
+        "executed_at": "2026-06-30T06:10:37+00:00",
+        "external_side_effects_executed": false,
+        "idempotency_key": "erg-highrisk-scheduler-cron-create-20260630",
+        "schema_version": "erg-highrisk-execution-receipt/v1"
+      }
+    },
+    {
+      "id": "taskpool_mission_lifecycle_write",
+      "status": "executed",
+      "evidence": {
+        "boundary": "taskpool_mission_lifecycle_write",
+        "executed_at": "2026-06-30T06:10:37+00:00",
+        "external_side_effects_executed": false,
+        "idempotency_key": "erg-highrisk-taskpool-mission-lifecycle-smoke-20260630-corrected",
+        "mission_id": "msn_20260630_140834_01dd4046",
+        "mission_status": "paused",
+        "schema_version": "erg-highrisk-execution-receipt/v1",
+        "task_id": "t_22f2078d",
+        "task_status": "done",
+        "worker_spawned": false
+      }
+    },
+    {
+      "id": "gateway_outbox_mutation_external_send",
+      "status": "attempted_not_verified",
+      "evidence": {
+        "blocker": "cronjob.run returned execution_success=false; no send receipt/message id available in this session",
+        "boundary": "gateway_outbox_mutation_external_send",
+        "cron_job_id": "98dd946fe975",
+        "exact_target": "telegram:he cheng (dm)",
+        "executed_at": "2026-06-30T06:10:37+00:00",
+        "external_send_verified": false,
+        "idempotency_key": "erg-highrisk-gateway-send-20260630",
+        "payload_summary": "ERG high-risk gateway/external-send smoke self-DM",
+        "run_attempted": true,
+        "run_execution_success": false,
+        "scheduled": true,
+        "schema_version": "erg-highrisk-execution-receipt/v1"
+      }
+    },
+    {
+      "id": "worker_spawn_lease",
+      "status": "spawn_dispatched",
+      "evidence": {
+        "boundary": "worker_spawn_lease",
+        "delegation_id": "deleg_1dc1a8c8",
+        "executed_at": "2026-06-30T06:10:37+00:00",
+        "external_side_effects_authorized": false,
+        "idempotency_key": "erg-highrisk-worker-spawn-20260630",
+        "readback": "delegate_task returned dispatched/background count=1",
+        "schema_version": "erg-highrisk-execution-receipt/v1",
+        "spawn_dispatched": true
+      }
+    },
+    {
+      "id": "compensation_execution",
+      "status": "executed_canary",
+      "evidence": {
+        "backup_path": "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/08-runtime/compensation-canary.txt.bak",
+        "before_hash": "24e8d1d60079315a2acf6cafd87866736d2da18a537783968563963b6e520d53",
+        "boundary": "compensation_execution",
+        "canary_path": "/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/08-runtime/compensation-canary.txt",
+        "compensation_executed": true,
+        "executed_at": "2026-06-30T06:10:37+00:00",
+        "failed_hash": "b3a0135af1da6e821630aa1e3f149b53693a63826a85e8cd8cacea6d9041ef84",
+        "idempotency_key": "erg-highrisk-compensation-canary-20260630",
+        "production_resource_touched": false,
+        "restored_hash": "24e8d1d60079315a2acf6cafd87866736d2da18a537783968563963b6e520d53",
+        "restored_matches_before": true,
+        "schema_version": "erg-highrisk-execution-receipt/v1"
+      }
+    },
+    {
+      "id": "publish_deploy_push",
+      "status": "executed_private_push",
+      "evidence": {
+        "boundary": "publish_deploy_push",
+        "branch": "private/main",
+        "command": "git push origin private/main",
+        "executed_at": "2026-06-30T06:10:37+00:00",
+        "idempotency_key": "erg-highrisk-private-main-push-20260630",
+        "pushed_commit": "5f601666a1e67c05f06b1042d742dcc1924b6eaf",
+        "readback": "5f601666a1e67c05f06b1042d742dcc1924b6eaf\trefs/heads/private/main",
+        "remote": "origin",
+        "repo": "/Users/charles/.hermes/hermes-agent",
+        "rollback_hint": "git revert or reset/push with explicit future authorization",
+        "schema_version": "erg-highrisk-execution-receipt/v1"
+      }
+    },
+    {
+      "id": "destructive_action_outside_exact_files",
+      "status": "already_executed_canary_in_22_report",
+      "evidence_report": "/Users/charles/.hermes/hermes-agent/docs/private/autonomous-runtime-governance/22-high-risk-boundary-coverage-report.json"
+    },
+    {
+      "id": "payment_credential_entry",
+      "status": "blocked_human_secret_gate",
+      "evidence": {
+        "agent_may_type_secret": false,
+        "blocker": "human must enter credentials/payment details; agent will not type secrets/cards/OTP/API keys",
+        "boundary": "payment_credential_entry",
+        "executed_at": "2026-06-30T06:10:37+00:00",
+        "executed_by_agent": false,
+        "idempotency_key": "erg-highrisk-payment-credential-human-gate-20260630",
+        "schema_version": "erg-highrisk-execution-receipt/v1"
+      }
+    },
+    {
+      "id": "broad_fanout",
+      "status": "blocked_missing_exact_channel_set",
+      "evidence": {
+        "blocker": "no exact named channel set + payload + per-target readback supplied; do not infer all contacts",
+        "boundary": "broad_fanout",
+        "executed": false,
+        "executed_at": "2026-06-30T06:10:37+00:00",
+        "idempotency_key": "erg-highrisk-broad-fanout-gate-20260630",
+        "schema_version": "erg-highrisk-execution-receipt/v1"
+      }
+    }
+  ],
+  "not_claimed_complete_real_execution_for": [
+    "gateway_outbox_mutation_external_send",
+    "payment_credential_entry",
+    "broad_fanout"
+  ],
+  "external_side_effects_verified": [
+    "publish_deploy_push"
+  ],
+  "external_send_verified": false,
+  "payment_or_secret_typed_by_agent": false
+}

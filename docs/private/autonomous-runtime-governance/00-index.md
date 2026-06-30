@@ -45,6 +45,7 @@ Autonomous Runtime = Intent Sources + Capability Graph + Authority Gates + Execu
 20. `20-p4-runtime-bootstrap-report.json` — initial P4 local runtime bootstrap execution report.
 21. `21-p4-runtime-bootstrap-idempotency-readback.json` — P4 idempotency/readback report after rerun.
 22. `22-high-risk-boundary-coverage-report.json` — high-risk boundary governance coverage report for nine requested classes.
+23. `23-high-risk-sequential-execution-report.json` — sequential high-risk execution attempt/readback report after user requested real execution in order.
 
 ## Anti-sprawl rules
 
