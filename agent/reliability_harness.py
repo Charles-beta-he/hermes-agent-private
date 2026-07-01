@@ -247,6 +247,15 @@ class LifecycleContractRegistry:
                     authority_boundary="read-only verification; runtime activation requires a later exact target gate",
                 ),
                 LifecycleCommandContract(
+                    "edge-activation-packet",
+                    "Write a non-executing runtime activation authority packet template from a passing verifier.",
+                    ["edge_runtime", "governance"],
+                    ["activation packet template"],
+                    ["execute=false", "rollback and readback required", "side-effect gates remain closed"],
+                    side_effect_level="local_write",
+                    authority_boundary="packet/template only; no runtime activation is performed",
+                ),
+                LifecycleCommandContract(
                     "deploy-proposal",
                     "Produce a deployment/publish proposal and rollback plan without executing external deploy.",
                     ["delivery", "evaluation"],
@@ -1028,6 +1037,85 @@ def verify_edge_benchmark_receipt(receipt_path: str | Path) -> dict[str, Any]:
     }
 
 
+def write_edge_activation_packet(
+    verification_path: str | Path,
+    runs_dir: str | Path,
+    target_id: str,
+) -> tuple[dict[str, Any], int]:
+    path = Path(verification_path)
+    try:
+        verification = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return (
+            {
+                "schema": "hermes_edge_activation_packet_preflight_v1",
+                "status": "blocked",
+                "runtime_effect": "read_only_preflight",
+                "reason": "verification_not_parseable",
+                "evidence": str(exc),
+            },
+            1,
+        )
+    if verification.get("status") != "pass":
+        return (
+            {
+                "schema": "hermes_edge_activation_packet_preflight_v1",
+                "status": "blocked",
+                "runtime_effect": "read_only_preflight",
+                "reason": "verification_not_passed",
+                "verification_path": str(path),
+                "verification_status": verification.get("status"),
+                "failed_checks": [check for check in verification.get("checks", []) if check.get("status") != "pass"],
+            },
+            1,
+        )
+
+    root = Path(runs_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    profile_id = verification.get("profile_id")
+    packet = {
+        "schema": "hermes_edge_activation_packet_v1",
+        "status": "authorization_required",
+        "ts": _now(),
+        "profile_id": profile_id,
+        "execute": False,
+        "runtime_effect": "local_write_packet_only",
+        "target": {
+            "id": target_id,
+            "type": "exact_target_placeholder",
+            "must_be_replaced_before_execution": True,
+        },
+        "preconditions": {
+            "verification_path": str(path),
+            "verification_status": verification.get("status"),
+            "all_checks_passed": True,
+        },
+        "rollback": {
+            "kill_switch_required": True,
+            "rollback_receipt_required": True,
+            "restore_path_required": True,
+        },
+        "readback": {
+            "required": True,
+            "post_action_status_required": True,
+            "must_confirm_execute_true_was_explicitly_authorized": True,
+        },
+        "gates_remain_closed": {
+            "device_control": "closed",
+            "external_dispatch": "closed",
+            "mcp_write_authority": "closed",
+            "publish_deploy_push": "closed",
+            "destructive_operation": "closed",
+            "credential_entry": "closed",
+        },
+        "next_authority_required": "exact_runtime_activation_packet_execute_true",
+    }
+    packet_path = root / f"edge-activation-packet-{profile_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    packet["packet_path"] = str(packet_path)
+    packet_path.write_text(json.dumps(packet, ensure_ascii=False, indent=2), encoding="utf-8")
+    return packet, 0
+
+
 def bundled_cases_dir() -> Path:
     """Return the packaged seed eval cases directory.
 
@@ -1081,6 +1169,15 @@ def _build_parser() -> argparse.ArgumentParser:
     edge_verify = sub.add_parser("edge-verify", help="Verify an edge benchmark receipt without opening runtime gates")
     edge_verify.add_argument("--receipt", required=True)
     edge_verify.add_argument("--json", action="store_true")
+
+    edge_activation = sub.add_parser(
+        "edge-activation-packet",
+        help="Write a non-executing edge runtime activation authority packet template",
+    )
+    edge_activation.add_argument("--verification", required=True)
+    edge_activation.add_argument("--target-id", required=True)
+    edge_activation.add_argument("--runs-dir", required=True)
+    edge_activation.add_argument("--json", action="store_true")
     return parser
 
 
@@ -1134,6 +1231,17 @@ def main(argv: list[str] | None = None) -> int:
             for check in verification["checks"]:
                 print(f"- {check['status']} {check['name']}: {check['evidence']}")
         return 0 if verification["status"] == "pass" else 1
+
+    if args.command == "edge-activation-packet":
+        packet, code = write_edge_activation_packet(args.verification, args.runs_dir, args.target_id)
+        if args.json:
+            print(json.dumps(packet, ensure_ascii=False))
+        else:
+            if code == 0:
+                print(f"status={packet['status']} execute={packet['execute']} packet={packet['packet_path']}")
+            else:
+                print(f"status={packet['status']} reason={packet['reason']}")
+        return code
 
     if args.command == "run":
         harness = EvalHarness(cases_dir=_resolve_cases_dir(args.cases_dir), runs_dir=args.runs_dir, router_mode=args.router_mode)

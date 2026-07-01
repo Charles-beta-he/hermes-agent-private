@@ -82,6 +82,7 @@ def test_lifecycle_contract_registry_models_skill_packs_and_commands():
         "edge-profile",
         "edge-benchmark",
         "edge-verify",
+        "edge-activation-packet",
         "deploy-proposal",
         "observe",
         "ratchet",
@@ -406,3 +407,126 @@ def test_module_cli_edge_verify_blocks_open_side_effect_gate(tmp_path):
     assert payload["status"] == "blocked"
     assert payload["promotion_ready"] is False
     assert any(check["name"] == "gate_external_dispatch_closed" and check["status"] == "fail" for check in payload["checks"])
+
+
+def test_module_cli_edge_activation_packet_writes_non_executing_authority_packet(tmp_path):
+    runs_dir = tmp_path / "edge-runs"
+    benchmark = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-benchmark",
+            "--runs-dir",
+            str(runs_dir),
+            "--profile",
+            "local_edge_worker",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert benchmark.returncode == 0, benchmark.stderr
+    receipt_path = json.loads(benchmark.stdout)["receipt_path"]
+    verify = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-verify",
+            "--receipt",
+            receipt_path,
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert verify.returncode == 0, verify.stderr
+    verification_path = tmp_path / "verification.json"
+    verification_path.write_text(verify.stdout, encoding="utf-8")
+
+    packet = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-activation-packet",
+            "--verification",
+            str(verification_path),
+            "--target-id",
+            "local-mac-fixture",
+            "--runs-dir",
+            str(runs_dir),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert packet.returncode == 0, packet.stderr
+    payload = json.loads(packet.stdout)
+    packet_path = Path(payload["packet_path"])
+    assert packet_path.exists()
+    activation = json.loads(packet_path.read_text(encoding="utf-8"))
+    assert activation["schema"] == "hermes_edge_activation_packet_v1"
+    assert activation["execute"] is False
+    assert activation["runtime_effect"] == "local_write_packet_only"
+    assert activation["target"]["id"] == "local-mac-fixture"
+    assert activation["profile_id"] == "local_edge_worker"
+    assert activation["preconditions"]["verification_status"] == "pass"
+    assert activation["rollback"]["kill_switch_required"] is True
+    assert activation["readback"]["required"] is True
+    assert activation["gates_remain_closed"]["device_control"] == "closed"
+    assert activation["gates_remain_closed"]["external_dispatch"] == "closed"
+
+
+def test_module_cli_edge_activation_packet_blocks_failed_verification(tmp_path):
+    verification_path = tmp_path / "blocked-verification.json"
+    verification_path.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_benchmark_verification_v1",
+                "status": "blocked",
+                "profile_id": "local_edge_worker",
+                "promotion_ready": False,
+                "checks": [{"name": "gate_external_dispatch_closed", "status": "fail", "evidence": "open"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    packet = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-activation-packet",
+            "--verification",
+            str(verification_path),
+            "--target-id",
+            "local-mac-fixture",
+            "--runs-dir",
+            str(tmp_path),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert packet.returncode == 1
+    payload = json.loads(packet.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["runtime_effect"] == "read_only_preflight"
+    assert payload["reason"] == "verification_not_passed"
