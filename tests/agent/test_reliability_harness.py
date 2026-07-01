@@ -1188,3 +1188,62 @@ def test_module_cli_edge_runtime_activate_rejects_failed_preflight(tmp_path):
     assert payload["schema"] == "hermes_edge_runtime_activation_preflight_v1"
     assert payload["status"] == "blocked"
     assert payload["reason"] == "activation_preflight_not_passed"
+
+
+def test_module_cli_edge_runtime_activate_rejects_receipt_path_outside_runs_dir(tmp_path):
+    runs_dir = tmp_path / "runs"
+    packet_path = tmp_path / "packet.json"
+    outside_receipt = tmp_path / "outside" / "receipt.json"
+    packet_path.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_activation_packet_v1",
+                "target": {"id": "local-mac-fixture", "kind": "local_runtime_fixture"},
+                "execute": True,
+                "profile_id": "local_edge_worker",
+                "rollback": {"kill_switch_required": True, "restore_path_required": True, "restore_path": "local-fixture-state:disabled"},
+                "readback": {"required": True, "post_action_status_required": True, "source": "edge-runtime-readback:local-mac-fixture"},
+                "receipt_path": str(outside_receipt),
+            }
+        ),
+        encoding="utf-8",
+    )
+    preflight_path = tmp_path / "preflight.json"
+    preflight_path.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_activation_preflight_v1",
+                "status": "pass",
+                "target_id": "local-mac-fixture",
+                "matched_execute_true_packet": str(packet_path),
+                "execute": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-runtime-activate",
+            "--preflight",
+            str(preflight_path),
+            "--activation-packet",
+            str(packet_path),
+            "--runs-dir",
+            str(runs_dir),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["reason"] == "receipt_path_outside_runs_dir"
+    assert not outside_receipt.exists()

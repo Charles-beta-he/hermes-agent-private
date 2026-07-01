@@ -115,7 +115,14 @@ Regression:
 
 ```bash
 ./venv/bin/python -m pytest tests/agent/test_reliability_harness.py tests/agent/test_reliability_harness_distribution.py tests/test_trajectory_compressor.py tests/test_trajectory_compressor_async.py -q
-# 72 passed in 2.45s
+# 73 passed in 2.48s
+```
+
+Additional hardening evidence after independent verifier suggestion:
+
+```text
+edge-runtime-activate rejects packet.receipt_path outside runs_dir before writing fixture state.
+receipt_path_under_runs_dir=true in final smoke.
 ```
 
 Syntax/diff check:

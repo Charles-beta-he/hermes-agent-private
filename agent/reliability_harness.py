@@ -1614,6 +1614,17 @@ def edge_runtime_activate(preflight_path: str | Path, activation_packet_path: st
 
     root = Path(runs_dir)
     root.mkdir(parents=True, exist_ok=True)
+    receipt_path = Path(str(packet.get("receipt_path") or root / "edge-runtime-activation-receipt.json"))
+    root_resolved = root.resolve()
+    receipt_resolved = receipt_path.resolve(strict=False)
+    if not receipt_resolved.is_relative_to(root_resolved):
+        return {
+            **base,
+            "status": "blocked",
+            "reason": "receipt_path_outside_runs_dir",
+            "receipt_path": str(receipt_path),
+            "runs_dir": str(root),
+        }, 1
     state_path = root / "edge-runtime-local-mac-fixture-state.json"
     previous_status = _read_local_runtime_state(state_path)
     state = {
@@ -1625,7 +1636,6 @@ def edge_runtime_activate(preflight_path: str | Path, activation_packet_path: st
     }
     state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     readback_status = _read_local_runtime_state(state_path)
-    receipt_path = Path(str(packet.get("receipt_path") or root / "edge-runtime-activation-receipt.json"))
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
     receipt = {
         "schema": "hermes_edge_runtime_activation_receipt_v1",
