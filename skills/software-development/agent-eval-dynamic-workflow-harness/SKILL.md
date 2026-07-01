@@ -154,6 +154,7 @@ Default-off/off-hot-path scaffold landed in Hermes Agent:
   ```
 - `capabilities` prints the Google agents-cli-inspired local contract: skill-pack IDs plus lifecycle command IDs (`intake`, `scaffold`, `implement`, `eval-generate`, `eval-grade`, `edge-profile`, `edge-benchmark`, `deploy-proposal`, `observe`, `ratchet`). It is contract/readback only; it does not load skills, mutate taskpool/memory/cron, or deploy externally.
 - `capabilities` also exposes the PicoClaw-inspired `local_edge_worker` edge-runtime profile. Treat it as a local/default-off profile and benchmark contract only: it may record device class, memory/boot budget, profile readback, fixture command simulation, and kill-switch dry run; it must not enable device control, MCP write authority, external dispatch, credential entry, publish/deploy/push, or destructive operations without a later exact authority gate.
+- `edge-benchmark --runs-dir <dir> --profile local_edge_worker --json` is the first executable dry-run surface for that profile. It writes a local `hermes_edge_benchmark_receipt_v1` receipt with `memory_rss_mb`, `boot_ms`, profile id, resource budget, and closed gate readback. Applicability: benchmark/readiness evidence only. Anti-condition: it still must not start workers, install PicoClaw, call MCP, control devices, mutate taskpool/cron/gateway, or dispatch externally.
 - Regression command:
   ```bash
   uv run --extra dev pytest tests/agent/test_reliability_harness.py tests/test_trajectory_compressor.py tests/test_trajectory_compressor_async.py -q

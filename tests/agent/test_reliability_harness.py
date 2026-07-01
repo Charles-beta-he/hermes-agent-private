@@ -270,3 +270,40 @@ def test_module_cli_capabilities_outputs_lifecycle_manifest():
     assert payload["schema"] == "hermes_agent_lifecycle_contract_v1"
     assert any(pack["id"] == "evaluation" for pack in payload["skill_packs"])
     assert any(command["id"] == "eval-grade" for command in payload["commands"])
+
+
+def test_module_cli_edge_benchmark_writes_local_receipt(tmp_path):
+    runs_dir = tmp_path / "edge-runs"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-benchmark",
+            "--runs-dir",
+            str(runs_dir),
+            "--profile",
+            "local_edge_worker",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    receipt_path = Path(payload["receipt_path"])
+    assert receipt_path.exists()
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["schema"] == "hermes_edge_benchmark_receipt_v1"
+    assert receipt["profile_id"] == "local_edge_worker"
+    assert receipt["runtime_effect"] == "local_write_receipt_only"
+    assert receipt["measurements"]["memory_rss_mb"] >= 0
+    assert receipt["measurements"]["boot_ms"] >= 0
+    assert receipt["gates"]["device_control"] == "closed"
+    assert receipt["gates"]["external_dispatch"] == "closed"
+    assert receipt["gates"]["mcp_write_authority"] == "closed"
+    assert receipt["forbidden_by_default"]

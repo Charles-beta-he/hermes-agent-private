@@ -11,10 +11,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 import re
 import sqlite3
 import sys
 import sysconfig
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +32,8 @@ DEFAULT_BLOCKED_TOOLS = {
     "mcp_filesystem_write_file",
     "mcp_filesystem_edit_file",
 }
+
+_MODULE_START = time.perf_counter()
 
 
 @dataclass(frozen=True)
@@ -881,6 +885,52 @@ def _suggest_fix_layer(failure_type: str | None) -> str:
     return "regression_case_or_fix"
 
 
+def _memory_rss_mb() -> float:
+    try:
+        import resource
+
+        rss = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
+        return round(rss / divisor, 3)
+    except Exception:
+        return 0.0
+
+
+def write_edge_benchmark_receipt(runs_dir: str | Path, profile_id: str = "local_edge_worker") -> dict[str, Any]:
+    registry = LifecycleContractRegistry.default()
+    profile = registry.edge_profile(profile_id)
+    root = Path(runs_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "schema": "hermes_edge_benchmark_receipt_v1",
+        "profile_id": profile.id,
+        "ts": _now(),
+        "runtime_effect": "local_write_receipt_only",
+        "measurements": {
+            "memory_rss_mb": _memory_rss_mb(),
+            "boot_ms": round((time.perf_counter() - _MODULE_START) * 1000, 3),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+        },
+        "gates": {
+            "device_control": "closed",
+            "external_dispatch": "closed",
+            "mcp_write_authority": "closed",
+            "publish_deploy_push": "closed",
+            "destructive_operation": "closed",
+            "credential_entry": "closed",
+        },
+        "resource_budget": profile.resource_budget,
+        "allowed_capabilities": profile.allowed_capabilities,
+        "forbidden_by_default": profile.forbidden_by_default,
+        "authority_boundary": profile.authority_boundary,
+    }
+    receipt_path = root / f"edge-benchmark-{profile.id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    receipt["receipt_path"] = str(receipt_path)
+    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    return receipt
+
+
 def bundled_cases_dir() -> Path:
     """Return the packaged seed eval cases directory.
 
@@ -925,6 +975,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     capabilities = sub.add_parser("capabilities", help="Print the local skill-pack + lifecycle command contract")
     capabilities.add_argument("--json", action="store_true")
+
+    edge_benchmark = sub.add_parser("edge-benchmark", help="Write a local-only edge runtime benchmark receipt")
+    edge_benchmark.add_argument("--runs-dir", required=True)
+    edge_benchmark.add_argument("--profile", default="local_edge_worker")
+    edge_benchmark.add_argument("--json", action="store_true")
     return parser
 
 
@@ -956,6 +1011,17 @@ def main(argv: list[str] | None = None) -> int:
             print("edge_runtime_profiles:")
             for profile in payload["edge_runtime_profiles"]:
                 print(f"- {profile['id']}: {profile['responsibility']}")
+        return 0
+
+    if args.command == "edge-benchmark":
+        try:
+            receipt = write_edge_benchmark_receipt(args.runs_dir, args.profile)
+        except KeyError as exc:
+            parser.error(f"unknown edge runtime profile: {exc.args[0]}")
+        if args.json:
+            print(json.dumps({"ok": True, "profile_id": receipt["profile_id"], "receipt_path": receipt["receipt_path"]}, ensure_ascii=False))
+        else:
+            print(f"profile={receipt['profile_id']} receipt={receipt['receipt_path']}")
         return 0
 
     if args.command == "run":
