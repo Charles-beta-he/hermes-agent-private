@@ -1506,6 +1506,9 @@ class TestObjectiveModelPathGuidance:
         prompt = agent._build_system_prompt()
         assert OBJECTIVE_MODEL_PATH_GUIDANCE in prompt
         assert "objective-model-path-verification" in prompt
+        assert "Spec Brief" in prompt
+        assert "Converge check" in prompt
+        assert "spec-stateful-sdd-workflow" in prompt
 
     def test_false_disables(self):
         from agent.prompt_builder import OBJECTIVE_MODEL_PATH_GUIDANCE
