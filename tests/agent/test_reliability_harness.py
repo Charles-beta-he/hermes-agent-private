@@ -9,6 +9,7 @@ from agent.reliability_harness import (
     CaseRegistry,
     EvalHarness,
     FeedbackLedger,
+    LifecycleContractRegistry,
     RegressionDB,
     SandboxPolicy,
     ShadowWorkflowRouter,
@@ -55,6 +56,36 @@ def test_sandbox_policy_blocks_real_side_effect_tools_by_default():
     assert policy.is_allowed_tool("send_message") is False
     assert policy.is_allowed_tool("memory") is False
     assert policy.is_allowed_tool("cronjob") is False
+
+
+def test_lifecycle_contract_registry_models_skill_packs_and_commands():
+    registry = LifecycleContractRegistry.default()
+    manifest = registry.as_dict()
+
+    assert manifest["schema"] == "hermes_agent_lifecycle_contract_v1"
+    assert [pack["id"] for pack in manifest["skill_packs"]] == [
+        "workflow",
+        "implementation",
+        "evaluation",
+        "delivery",
+        "observability",
+        "governance",
+        "experience_ratchet",
+    ]
+    assert [command["id"] for command in manifest["commands"]] == [
+        "intake",
+        "scaffold",
+        "implement",
+        "eval-generate",
+        "eval-grade",
+        "deploy-proposal",
+        "observe",
+        "ratchet",
+    ]
+    deploy = registry.command("deploy-proposal")
+    assert deploy.side_effect_level == "local_write"
+    assert "external deploy/publish remains human-gated" in deploy.authority_boundary
+    assert "evaluation" in deploy.requires
 
 
 def test_shadow_router_classifies_without_enforcement():
@@ -187,3 +218,20 @@ def test_module_cli_dry_run_outputs_json(tmp_path):
     assert payload["case_id"] == "cli-pass"
     assert payload["passed"] is True
     assert Path(payload["report_path"]).exists()
+
+
+def test_module_cli_capabilities_outputs_lifecycle_manifest():
+    proc = subprocess.run(
+        [sys.executable, "-m", "agent.reliability_harness", "capabilities", "--json"],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["schema"] == "hermes_agent_lifecycle_contract_v1"
+    assert any(pack["id"] == "evaluation" for pack in payload["skill_packs"])
+    assert any(command["id"] == "eval-grade" for command in payload["commands"])

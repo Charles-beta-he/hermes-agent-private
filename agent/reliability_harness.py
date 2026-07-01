@@ -33,6 +33,191 @@ DEFAULT_BLOCKED_TOOLS = {
 
 
 @dataclass(frozen=True)
+class SkillPackContract:
+    """Agent-consumable skill-pack capability, not a loaded runtime skill."""
+
+    id: str
+    responsibility: str
+    teaches: list[str]
+    verifies: list[str]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "responsibility": self.responsibility,
+            "teaches": self.teaches,
+            "verifies": self.verifies,
+        }
+
+
+@dataclass(frozen=True)
+class LifecycleCommandContract:
+    """CLI-style command contract that makes a workflow stage auditable."""
+
+    id: str
+    responsibility: str
+    requires: list[str]
+    produces: list[str]
+    verifies: list[str]
+    side_effect_level: str = "none"
+    authority_boundary: str = "local/offline only"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "responsibility": self.responsibility,
+            "requires": self.requires,
+            "produces": self.produces,
+            "verifies": self.verifies,
+            "side_effect_level": self.side_effect_level,
+            "authority_boundary": self.authority_boundary,
+        }
+
+
+class LifecycleContractRegistry:
+    """Google agents-cli-inspired skill-pack + command lifecycle manifest.
+
+    This is a local/default-off contract surface.  It gives Hermes evals and
+    future agents a stable vocabulary for lifecycle stages without wiring any
+    cloud deploy, taskpool mutation, memory write, or external dispatch.
+    """
+
+    def __init__(self, skill_packs: list[SkillPackContract], commands: list[LifecycleCommandContract]):
+        self.skill_packs = skill_packs
+        self.commands = commands
+
+    @classmethod
+    def default(cls) -> "LifecycleContractRegistry":
+        return cls(
+            skill_packs=[
+                SkillPackContract(
+                    "workflow",
+                    "Route the request, preserve objective/path gates, and select the smallest safe stage.",
+                    ["objective gate", "dynamic workflow route", "boundary classification"],
+                    ["route decision", "human-gate packet when blocked"],
+                ),
+                SkillPackContract(
+                    "implementation",
+                    "Turn an accepted stage into scoped code/docs/config changes without widening the core waist.",
+                    ["incremental implementation", "narrow-waist extension", "scoped diff discipline"],
+                    ["focused tests", "diff/readback"],
+                ),
+                SkillPackContract(
+                    "evaluation",
+                    "Generate and grade replayable cases before claiming reliability improvement.",
+                    ["case registry", "trajectory capture", "tool/code graders", "rubric contracts"],
+                    ["eval run report", "regression database"],
+                ),
+                SkillPackContract(
+                    "delivery",
+                    "Package local artifacts and deployment proposals while keeping real publish/deploy gated.",
+                    ["artifact manifest", "rollback plan", "deploy proposal"],
+                    ["local receipt", "authority boundary readback"],
+                ),
+                SkillPackContract(
+                    "observability",
+                    "Record trajectory, dashboard, and ledger signals for post-update regression.",
+                    ["dashboard", "feedback ledger", "failure taxonomy"],
+                    ["dashboard.md", "feedback.jsonl"],
+                ),
+                SkillPackContract(
+                    "governance",
+                    "Keep taskpool, memory, cron, gateway, and external effects behind exact authority gates.",
+                    ["side-effect policy", "sandbox policy", "receipt/readback"],
+                    ["blocked side-effect proof", "policy finding"],
+                ),
+                SkillPackContract(
+                    "experience_ratchet",
+                    "Promote repeated verified lessons into skills/docs/issues without saving task progress as memory.",
+                    ["landing-zone classifier", "skill patch candidate", "runtime issue candidate"],
+                    ["deduped feedback item", "scoped proposal"],
+                ),
+            ],
+            commands=[
+                LifecycleCommandContract(
+                    "intake",
+                    "Capture source, claims, constraints, red lines, and SSOT path.",
+                    [],
+                    ["intake note", "source evidence refs"],
+                    ["canonical source recorded", "scope and anti-claims stated"],
+                ),
+                LifecycleCommandContract(
+                    "scaffold",
+                    "Create or select the minimal local artifact skeleton for the workflow stage.",
+                    ["workflow"],
+                    ["case/spec/contract skeleton"],
+                    ["schema/readback"],
+                    side_effect_level="local_write",
+                ),
+                LifecycleCommandContract(
+                    "implement",
+                    "Apply the smallest scoped implementation slice against the selected contract.",
+                    ["workflow", "implementation"],
+                    ["patch", "updated artifact"],
+                    ["focused test", "diff review"],
+                    side_effect_level="local_write",
+                ),
+                LifecycleCommandContract(
+                    "eval-generate",
+                    "Create replayable eval cases or trajectory fixtures for the implemented slice.",
+                    ["evaluation"],
+                    ["eval case", "trajectory fixture"],
+                    ["case hash", "forbidden side effects listed"],
+                    side_effect_level="local_write",
+                ),
+                LifecycleCommandContract(
+                    "eval-grade",
+                    "Run deterministic graders and optional rubric contracts against a case.",
+                    ["evaluation"],
+                    ["report.json", "regression.sqlite"],
+                    ["pass/fail score", "failure type when failed"],
+                    side_effect_level="local_write",
+                ),
+                LifecycleCommandContract(
+                    "deploy-proposal",
+                    "Produce a deployment/publish proposal and rollback plan without executing external deploy.",
+                    ["delivery", "evaluation"],
+                    ["proposal", "rollback plan", "authority packet"],
+                    ["external deploy/publish remains human-gated"],
+                    side_effect_level="local_write",
+                    authority_boundary="external deploy/publish remains human-gated",
+                ),
+                LifecycleCommandContract(
+                    "observe",
+                    "Write local observability/readback artifacts for regression and operator review.",
+                    ["observability"],
+                    ["dashboard", "feedback ledger"],
+                    ["no live gateway/taskpool mutation"],
+                    side_effect_level="local_write",
+                ),
+                LifecycleCommandContract(
+                    "ratchet",
+                    "Convert repeated verified failures into scoped skill/docs/runtime-issue proposals.",
+                    ["experience_ratchet", "governance"],
+                    ["ratchet proposal"],
+                    ["no direct memory/config/runtime mutation"],
+                    side_effect_level="local_write",
+                ),
+            ],
+        )
+
+    def command(self, command_id: str) -> LifecycleCommandContract:
+        for command in self.commands:
+            if command.id == command_id:
+                return command
+        raise KeyError(command_id)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema": "hermes_agent_lifecycle_contract_v1",
+            "source": "google-agents-cli pattern adapted for Hermes local/offline reliability harness",
+            "runtime_effect": "none; contract manifest only",
+            "skill_packs": [pack.as_dict() for pack in self.skill_packs],
+            "commands": [command.as_dict() for command in self.commands],
+        }
+
+
+@dataclass(frozen=True)
 class EvalCase:
     id: str
     input: str
@@ -86,7 +271,16 @@ class CaseRegistry:
         return EvalCase.from_mapping(data)
 
     def list_cases(self) -> list[EvalCase]:
-        return [self.load_file(path) for path in sorted(self.root.glob("*.json"))]
+        cases: list[EvalCase] = []
+        for path in sorted(self.root.glob("*.json")):
+            try:
+                cases.append(self.load_file(path))
+            except ValueError:
+                # evals/cases may also carry adjacent benchmark fixtures with
+                # their own schema.  The reliability harness lists only the
+                # simple EvalCase schema instead of failing the whole CLI.
+                continue
+        return cases
 
 
 @dataclass(frozen=True)
@@ -465,6 +659,7 @@ class EvalHarness:
             target.write_text(str(content), encoding="utf-8")
 
         route = self.router.route(case.input, risk=case.risk)
+        lifecycle_contract = LifecycleContractRegistry.default().as_dict()
         if case.workflow and route.workflow == "direct" and case.workflow != "direct":
             route = RouteDecision(
                 workflow=case.workflow,
@@ -500,6 +695,12 @@ class EvalHarness:
             "ts": ts,
             "case": {"id": case.id, "hash": case.case_hash, "workflow": case.workflow, "risk": case.risk},
             "route": route.as_dict(),
+            "lifecycle_contract": {
+                "schema": lifecycle_contract["schema"],
+                "runtime_effect": lifecycle_contract["runtime_effect"],
+                "skill_pack_ids": [pack["id"] for pack in lifecycle_contract["skill_packs"]],
+                "command_ids": [command["id"] for command in lifecycle_contract["commands"]],
+            },
             "sandbox": {"blocked_tools": sorted(self.sandbox_policy.blocked_tools)},
             "tool_events": tool_events or [],
             "response_text": response_text,
@@ -617,6 +818,9 @@ def _build_parser() -> argparse.ArgumentParser:
     list_cases = sub.add_parser("list", help="List eval cases")
     list_cases.add_argument("--cases-dir", help="Eval cases directory; defaults to bundled evals/cases")
     list_cases.add_argument("--json", action="store_true")
+
+    capabilities = sub.add_parser("capabilities", help="Print the local skill-pack + lifecycle command contract")
+    capabilities.add_argument("--json", action="store_true")
     return parser
 
 
@@ -631,6 +835,20 @@ def main(argv: list[str] | None = None) -> int:
         else:
             for case in payload:
                 print(f"{case['id']}\t{case['workflow']}\t{case['risk']}\t{case['case_hash'][:12]}")
+        return 0
+
+    if args.command == "capabilities":
+        payload = LifecycleContractRegistry.default().as_dict()
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print("# Hermes Agent Lifecycle Capabilities")
+            print("skill_packs:")
+            for pack in payload["skill_packs"]:
+                print(f"- {pack['id']}: {pack['responsibility']}")
+            print("commands:")
+            for command in payload["commands"]:
+                print(f"- {command['id']}: {command['responsibility']}")
         return 0
 
     if args.command == "run":
