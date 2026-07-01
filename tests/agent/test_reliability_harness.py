@@ -83,6 +83,7 @@ def test_lifecycle_contract_registry_models_skill_packs_and_commands():
         "edge-benchmark",
         "edge-verify",
         "edge-activation-packet",
+        "edge-kill-switch-dry-run",
         "deploy-proposal",
         "observe",
         "ratchet",
@@ -530,3 +531,105 @@ def test_module_cli_edge_activation_packet_blocks_failed_verification(tmp_path):
     assert payload["status"] == "blocked"
     assert payload["runtime_effect"] == "read_only_preflight"
     assert payload["reason"] == "verification_not_passed"
+
+
+def test_module_cli_edge_kill_switch_dry_run_writes_disabled_receipt(tmp_path):
+    runs_dir = tmp_path / "edge-runs"
+    activation_path = tmp_path / "activation.json"
+    activation_path.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_activation_packet_v1",
+                "status": "authorization_required",
+                "profile_id": "local_edge_worker",
+                "execute": False,
+                "runtime_effect": "local_write_packet_only",
+                "target": {"id": "local-mac-fixture"},
+                "rollback": {"kill_switch_required": True, "rollback_receipt_required": True},
+                "readback": {"required": True},
+                "gates_remain_closed": {
+                    "device_control": "closed",
+                    "external_dispatch": "closed",
+                    "mcp_write_authority": "closed",
+                    "publish_deploy_push": "closed",
+                    "destructive_operation": "closed",
+                    "credential_entry": "closed",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-kill-switch-dry-run",
+            "--activation-packet",
+            str(activation_path),
+            "--runs-dir",
+            str(runs_dir),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    receipt_path = Path(payload["receipt_path"])
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["schema"] == "hermes_edge_kill_switch_dry_run_receipt_v1"
+    assert receipt["runtime_effect"] == "local_write_receipt_only"
+    assert receipt["execute"] is False
+    assert receipt["target"]["id"] == "local-mac-fixture"
+    assert receipt["status_after_dry_run"] == "disabled"
+    assert receipt["rollback_verified"] is True
+    assert receipt["readback"]["simulated_status"] == "disabled"
+    assert receipt["gates_remain_closed"]["device_control"] == "closed"
+    assert receipt["gates_remain_closed"]["external_dispatch"] == "closed"
+
+
+def test_module_cli_edge_kill_switch_dry_run_blocks_execute_true_packet(tmp_path):
+    activation_path = tmp_path / "activation-execute-true.json"
+    activation_path.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_activation_packet_v1",
+                "status": "authorization_required",
+                "profile_id": "local_edge_worker",
+                "execute": True,
+                "target": {"id": "local-mac-fixture"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-kill-switch-dry-run",
+            "--activation-packet",
+            str(activation_path),
+            "--runs-dir",
+            str(tmp_path),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["runtime_effect"] == "read_only_preflight"
+    assert payload["reason"] == "execute_true_not_allowed_for_dry_run"

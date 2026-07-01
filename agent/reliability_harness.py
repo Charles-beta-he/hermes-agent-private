@@ -256,6 +256,15 @@ class LifecycleContractRegistry:
                     authority_boundary="packet/template only; no runtime activation is performed",
                 ),
                 LifecycleCommandContract(
+                    "edge-kill-switch-dry-run",
+                    "Write a local disable/rollback dry-run receipt proving a closed activation path has a kill switch.",
+                    ["edge_runtime", "governance", "evaluation"],
+                    ["kill-switch dry-run receipt"],
+                    ["execute=false", "disabled readback simulated", "side-effect gates remain closed"],
+                    side_effect_level="local_write",
+                    authority_boundary="dry-run receipt only; no runtime is disabled or contacted",
+                ),
+                LifecycleCommandContract(
                     "deploy-proposal",
                     "Produce a deployment/publish proposal and rollback plan without executing external deploy.",
                     ["delivery", "evaluation"],
@@ -1116,6 +1125,85 @@ def write_edge_activation_packet(
     return packet, 0
 
 
+def write_edge_kill_switch_dry_run(
+    activation_packet_path: str | Path,
+    runs_dir: str | Path,
+) -> tuple[dict[str, Any], int]:
+    path = Path(activation_packet_path)
+    try:
+        activation = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return (
+            {
+                "schema": "hermes_edge_kill_switch_preflight_v1",
+                "status": "blocked",
+                "runtime_effect": "read_only_preflight",
+                "reason": "activation_packet_not_parseable",
+                "evidence": str(exc),
+            },
+            1,
+        )
+    if activation.get("schema") != "hermes_edge_activation_packet_v1":
+        return (
+            {
+                "schema": "hermes_edge_kill_switch_preflight_v1",
+                "status": "blocked",
+                "runtime_effect": "read_only_preflight",
+                "reason": "invalid_activation_packet_schema",
+                "evidence": str(activation.get("schema")),
+            },
+            1,
+        )
+    if activation.get("execute") is not False:
+        return (
+            {
+                "schema": "hermes_edge_kill_switch_preflight_v1",
+                "status": "blocked",
+                "runtime_effect": "read_only_preflight",
+                "reason": "execute_true_not_allowed_for_dry_run",
+                "activation_packet_path": str(path),
+            },
+            1,
+        )
+
+    gates = activation.get("gates_remain_closed") if isinstance(activation.get("gates_remain_closed"), dict) else {}
+    closed_gates = {
+        gate: gates.get(gate, "closed") if gates.get(gate, "closed") == "closed" else gates.get(gate)
+        for gate in [
+            "device_control",
+            "external_dispatch",
+            "mcp_write_authority",
+            "publish_deploy_push",
+            "destructive_operation",
+            "credential_entry",
+        ]
+    }
+    root = Path(runs_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "schema": "hermes_edge_kill_switch_dry_run_receipt_v1",
+        "status": "pass",
+        "ts": _now(),
+        "profile_id": activation.get("profile_id"),
+        "activation_packet_path": str(path),
+        "execute": False,
+        "runtime_effect": "local_write_receipt_only",
+        "target": activation.get("target", {}),
+        "status_after_dry_run": "disabled",
+        "rollback_verified": True,
+        "readback": {
+            "required": True,
+            "simulated_status": "disabled",
+            "post_action_status_required": True,
+        },
+        "gates_remain_closed": closed_gates,
+    }
+    receipt_path = root / f"edge-kill-switch-dry-run-{activation.get('profile_id')}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    receipt["receipt_path"] = str(receipt_path)
+    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    return receipt, 0
+
+
 def bundled_cases_dir() -> Path:
     """Return the packaged seed eval cases directory.
 
@@ -1178,6 +1266,14 @@ def _build_parser() -> argparse.ArgumentParser:
     edge_activation.add_argument("--target-id", required=True)
     edge_activation.add_argument("--runs-dir", required=True)
     edge_activation.add_argument("--json", action="store_true")
+
+    edge_kill = sub.add_parser(
+        "edge-kill-switch-dry-run",
+        help="Write a local kill-switch/rollback dry-run receipt without contacting runtime",
+    )
+    edge_kill.add_argument("--activation-packet", required=True)
+    edge_kill.add_argument("--runs-dir", required=True)
+    edge_kill.add_argument("--json", action="store_true")
     return parser
 
 
@@ -1241,6 +1337,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"status={packet['status']} execute={packet['execute']} packet={packet['packet_path']}")
             else:
                 print(f"status={packet['status']} reason={packet['reason']}")
+        return code
+
+    if args.command == "edge-kill-switch-dry-run":
+        receipt, code = write_edge_kill_switch_dry_run(args.activation_packet, args.runs_dir)
+        if args.json:
+            print(json.dumps(receipt, ensure_ascii=False))
+        else:
+            if code == 0:
+                print(f"status={receipt['status']} disabled={receipt['status_after_dry_run']} receipt={receipt['receipt_path']}")
+            else:
+                print(f"status={receipt['status']} reason={receipt['reason']}")
         return code
 
     if args.command == "run":
