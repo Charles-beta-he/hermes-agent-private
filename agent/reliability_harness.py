@@ -265,6 +265,24 @@ class LifecycleContractRegistry:
                     authority_boundary="dry-run receipt only; no runtime is disabled or contacted",
                 ),
                 LifecycleCommandContract(
+                    "edge-status-readback",
+                    "Read the closed edge ladder artifacts and summarize readiness without opening runtime gates.",
+                    ["edge_runtime", "governance", "observability"],
+                    ["status readback"],
+                    ["read-only", "execute=false", "promotion_ready=false"],
+                    side_effect_level="local",
+                    authority_boundary="readback only; no artifact mutation or runtime activation",
+                ),
+                LifecycleCommandContract(
+                    "edge-open-boundary-checklist",
+                    "Write a non-executing human authority checklist for the remaining exact runtime activation boundary.",
+                    ["edge_runtime", "governance"],
+                    ["open-boundary checklist"],
+                    ["execute=false", "human authority required", "closed gates preserved"],
+                    side_effect_level="local_write",
+                    authority_boundary="checklist only; does not authorize or perform activation",
+                ),
+                LifecycleCommandContract(
                     "deploy-proposal",
                     "Produce a deployment/publish proposal and rollback plan without executing external deploy.",
                     ["delivery", "evaluation"],
@@ -1204,6 +1222,147 @@ def write_edge_kill_switch_dry_run(
     return receipt, 0
 
 
+def _load_json_artifact(path: str | Path) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    p = Path(path)
+    try:
+        payload = json.loads(p.read_text(encoding="utf-8"))
+        return payload, {"path": str(p), "status": "present", "schema": payload.get("schema")}
+    except Exception as exc:
+        return None, {"path": str(p), "status": "missing_or_invalid", "error": str(exc)}
+
+
+def _closed_gate_summary(*payloads: dict[str, Any] | None) -> dict[str, str]:
+    gates = {
+        "device_control": "closed",
+        "external_dispatch": "closed",
+        "mcp_write_authority": "closed",
+        "publish_deploy_push": "closed",
+        "destructive_operation": "closed",
+        "credential_entry": "closed",
+    }
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        source = payload.get("gates_remain_closed") or payload.get("gates") or payload.get("closed_gates")
+        if isinstance(source, dict):
+            for gate in gates:
+                gates[gate] = source.get(gate, gates[gate])
+    return gates
+
+
+def edge_status_readback(
+    benchmark_path: str | Path,
+    verification_path: str | Path,
+    activation_packet_path: str | Path,
+    kill_switch_receipt_path: str | Path,
+) -> tuple[dict[str, Any], int]:
+    benchmark, benchmark_info = _load_json_artifact(benchmark_path)
+    verification, verification_info = _load_json_artifact(verification_path)
+    activation, activation_info = _load_json_artifact(activation_packet_path)
+    kill_switch, kill_switch_info = _load_json_artifact(kill_switch_receipt_path)
+
+    artifacts = {
+        "benchmark": benchmark_info,
+        "verification": verification_info,
+        "activation_packet": activation_info,
+        "kill_switch_receipt": kill_switch_info,
+    }
+    if isinstance(activation, dict):
+        artifacts["activation_packet"].update(
+            {
+                "execute": activation.get("execute"),
+                "status": "present",
+                "target": activation.get("target"),
+            }
+        )
+    if isinstance(kill_switch, dict):
+        artifacts["kill_switch_receipt"].update(
+            {
+                "status": kill_switch.get("status"),
+                "status_after_dry_run": kill_switch.get("status_after_dry_run"),
+            }
+        )
+
+    required = [benchmark, verification, activation, kill_switch]
+    closed_gates = _closed_gate_summary(benchmark, verification, activation, kill_switch)
+    checks = [
+        benchmark and benchmark.get("schema") == "hermes_edge_benchmark_receipt_v1",
+        verification and verification.get("schema") == "hermes_edge_benchmark_verification_v1" and verification.get("status") == "pass",
+        activation and activation.get("schema") == "hermes_edge_activation_packet_v1" and activation.get("execute") is False,
+        kill_switch and kill_switch.get("schema") == "hermes_edge_kill_switch_dry_run_receipt_v1" and kill_switch.get("status_after_dry_run") == "disabled",
+        all(value == "closed" for value in closed_gates.values()),
+    ]
+    ok = all(checks)
+    status = "closed_ladder_ready_for_human_authority" if ok else "blocked"
+    payload = {
+        "schema": "hermes_edge_status_readback_v1",
+        "status": status,
+        "ts": _now(),
+        "profile_id": (verification or activation or benchmark or {}).get("profile_id"),
+        "runtime_effect": "read_only_status",
+        "execute": False,
+        "promotion_ready": False,
+        "artifacts": artifacts,
+        "closed_gates": closed_gates,
+        "next_authority_required": "exact_runtime_activation_packet_execute_true" if ok else "fix_closed_ladder_artifacts",
+    }
+    return payload, 0 if ok else 1
+
+
+def write_edge_open_boundary_checklist(
+    status_readback_path: str | Path,
+    runs_dir: str | Path,
+) -> tuple[dict[str, Any], int]:
+    status_readback, status_info = _load_json_artifact(status_readback_path)
+    if not status_readback or status_readback.get("schema") != "hermes_edge_status_readback_v1":
+        return (
+            {
+                "schema": "hermes_edge_open_boundary_checklist_preflight_v1",
+                "status": "blocked",
+                "runtime_effect": "read_only_preflight",
+                "reason": "invalid_status_readback",
+                "status_readback": status_info,
+            },
+            1,
+        )
+    if status_readback.get("status") != "closed_ladder_ready_for_human_authority":
+        return (
+            {
+                "schema": "hermes_edge_open_boundary_checklist_preflight_v1",
+                "status": "blocked",
+                "runtime_effect": "read_only_preflight",
+                "reason": "status_readback_not_ready",
+                "status": status_readback.get("status"),
+            },
+            1,
+        )
+
+    root = Path(runs_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    checklist = {
+        "schema": "hermes_edge_open_boundary_checklist_v1",
+        "status": "human_authority_required",
+        "ts": _now(),
+        "profile_id": status_readback.get("profile_id"),
+        "execute": False,
+        "runtime_effect": "local_write_checklist_only",
+        "status_readback_path": str(Path(status_readback_path)),
+        "authority_required": {
+            "exact_target": True,
+            "execute_true_packet": True,
+            "rollback_restore_path": True,
+            "post_action_readback": True,
+            "human_operator_ack": True,
+        },
+        "remaining_blockers": ["exact_runtime_activation_packet_execute_true"],
+        "closed_gates": status_readback.get("closed_gates", _closed_gate_summary(status_readback)),
+    }
+    checklist_path = root / f"edge-open-boundary-checklist-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    checklist["checklist_path"] = str(checklist_path)
+    checklist_path.write_text(json.dumps(checklist, ensure_ascii=False, indent=2), encoding="utf-8")
+    return checklist, 0
+
+
 def bundled_cases_dir() -> Path:
     """Return the packaged seed eval cases directory.
 
@@ -1274,6 +1433,24 @@ def _build_parser() -> argparse.ArgumentParser:
     edge_kill.add_argument("--activation-packet", required=True)
     edge_kill.add_argument("--runs-dir", required=True)
     edge_kill.add_argument("--json", action="store_true")
+
+    edge_status = sub.add_parser(
+        "edge-status-readback",
+        help="Read benchmark/verification/activation/kill-switch artifacts and summarize closed edge readiness",
+    )
+    edge_status.add_argument("--benchmark", required=True)
+    edge_status.add_argument("--verification", required=True)
+    edge_status.add_argument("--activation-packet", required=True)
+    edge_status.add_argument("--kill-switch-receipt", required=True)
+    edge_status.add_argument("--json", action="store_true")
+
+    edge_checklist = sub.add_parser(
+        "edge-open-boundary-checklist",
+        help="Write a non-executing authority checklist for the remaining edge activation boundary",
+    )
+    edge_checklist.add_argument("--status-readback", required=True)
+    edge_checklist.add_argument("--runs-dir", required=True)
+    edge_checklist.add_argument("--json", action="store_true")
     return parser
 
 
@@ -1348,6 +1525,30 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"status={receipt['status']} disabled={receipt['status_after_dry_run']} receipt={receipt['receipt_path']}")
             else:
                 print(f"status={receipt['status']} reason={receipt['reason']}")
+        return code
+
+    if args.command == "edge-status-readback":
+        status, code = edge_status_readback(
+            args.benchmark,
+            args.verification,
+            args.activation_packet,
+            args.kill_switch_receipt,
+        )
+        if args.json:
+            print(json.dumps(status, ensure_ascii=False))
+        else:
+            print(f"status={status['status']} execute={status['execute']} next={status['next_authority_required']}")
+        return code
+
+    if args.command == "edge-open-boundary-checklist":
+        checklist, code = write_edge_open_boundary_checklist(args.status_readback, args.runs_dir)
+        if args.json:
+            print(json.dumps(checklist, ensure_ascii=False))
+        else:
+            if code == 0:
+                print(f"status={checklist['status']} execute={checklist['execute']} checklist={checklist['checklist_path']}")
+            else:
+                print(f"status={checklist['status']} reason={checklist['reason']}")
         return code
 
     if args.command == "run":

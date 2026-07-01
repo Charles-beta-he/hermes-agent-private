@@ -84,6 +84,8 @@ def test_lifecycle_contract_registry_models_skill_packs_and_commands():
         "edge-verify",
         "edge-activation-packet",
         "edge-kill-switch-dry-run",
+        "edge-status-readback",
+        "edge-open-boundary-checklist",
         "deploy-proposal",
         "observe",
         "ratchet",
@@ -633,3 +635,188 @@ def test_module_cli_edge_kill_switch_dry_run_blocks_execute_true_packet(tmp_path
     assert payload["status"] == "blocked"
     assert payload["runtime_effect"] == "read_only_preflight"
     assert payload["reason"] == "execute_true_not_allowed_for_dry_run"
+
+
+def _write_edge_ladder_artifacts(tmp_path):
+    benchmark = tmp_path / "benchmark.json"
+    verification = tmp_path / "verification.json"
+    activation = tmp_path / "activation.json"
+    kill_switch = tmp_path / "kill-switch.json"
+    benchmark.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_benchmark_receipt_v1",
+                "profile_id": "local_edge_worker",
+                "runtime_effect": "local_write_receipt_only",
+                "measurements": {"memory_rss_mb": 42.0, "boot_ms": 12.0},
+                "gates": {
+                    "device_control": "closed",
+                    "external_dispatch": "closed",
+                    "mcp_write_authority": "closed",
+                    "publish_deploy_push": "closed",
+                    "destructive_operation": "closed",
+                    "credential_entry": "closed",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    verification.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_benchmark_verification_v1",
+                "profile_id": "local_edge_worker",
+                "status": "pass",
+                "promotion_ready": False,
+                "runtime_effect": "read_only_verification",
+            }
+        ),
+        encoding="utf-8",
+    )
+    activation.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_activation_packet_v1",
+                "profile_id": "local_edge_worker",
+                "status": "authorization_required",
+                "execute": False,
+                "runtime_effect": "local_write_packet_only",
+                "target": {"id": "local-mac-fixture"},
+                "gates_remain_closed": {
+                    "device_control": "closed",
+                    "external_dispatch": "closed",
+                    "mcp_write_authority": "closed",
+                    "publish_deploy_push": "closed",
+                    "destructive_operation": "closed",
+                    "credential_entry": "closed",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    kill_switch.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_kill_switch_dry_run_receipt_v1",
+                "profile_id": "local_edge_worker",
+                "status": "pass",
+                "execute": False,
+                "runtime_effect": "local_write_receipt_only",
+                "status_after_dry_run": "disabled",
+                "rollback_verified": True,
+                "readback": {"simulated_status": "disabled"},
+                "gates_remain_closed": {
+                    "device_control": "closed",
+                    "external_dispatch": "closed",
+                    "mcp_write_authority": "closed",
+                    "publish_deploy_push": "closed",
+                    "destructive_operation": "closed",
+                    "credential_entry": "closed",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return benchmark, verification, activation, kill_switch
+
+
+def test_module_cli_edge_status_readback_summarizes_closed_ladder(tmp_path):
+    benchmark, verification, activation, kill_switch = _write_edge_ladder_artifacts(tmp_path)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-status-readback",
+            "--benchmark",
+            str(benchmark),
+            "--verification",
+            str(verification),
+            "--activation-packet",
+            str(activation),
+            "--kill-switch-receipt",
+            str(kill_switch),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["schema"] == "hermes_edge_status_readback_v1"
+    assert payload["status"] == "closed_ladder_ready_for_human_authority"
+    assert payload["runtime_effect"] == "read_only_status"
+    assert payload["execute"] is False
+    assert payload["promotion_ready"] is False
+    assert payload["next_authority_required"] == "exact_runtime_activation_packet_execute_true"
+    assert payload["artifacts"]["benchmark"]["status"] == "present"
+    assert payload["artifacts"]["verification"]["status"] == "present"
+    assert payload["artifacts"]["activation_packet"]["execute"] is False
+    assert payload["artifacts"]["kill_switch_receipt"]["status_after_dry_run"] == "disabled"
+    assert payload["closed_gates"]["external_dispatch"] == "closed"
+
+
+def test_module_cli_edge_open_boundary_checklist_writes_non_executing_checklist(tmp_path):
+    benchmark, verification, activation, kill_switch = _write_edge_ladder_artifacts(tmp_path)
+    status_out = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-status-readback",
+            "--benchmark",
+            str(benchmark),
+            "--verification",
+            str(verification),
+            "--activation-packet",
+            str(activation),
+            "--kill-switch-receipt",
+            str(kill_switch),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    status_path = tmp_path / "status.json"
+    status_path.write_text(status_out.stdout, encoding="utf-8")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-open-boundary-checklist",
+            "--status-readback",
+            str(status_path),
+            "--runs-dir",
+            str(tmp_path / "runs"),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    checklist = json.loads(Path(payload["checklist_path"]).read_text(encoding="utf-8"))
+    assert checklist["schema"] == "hermes_edge_open_boundary_checklist_v1"
+    assert checklist["status"] == "human_authority_required"
+    assert checklist["execute"] is False
+    assert checklist["runtime_effect"] == "local_write_checklist_only"
+    assert checklist["authority_required"]["exact_target"] is True
+    assert checklist["authority_required"]["rollback_restore_path"] is True
+    assert checklist["authority_required"]["post_action_readback"] is True
+    assert checklist["remaining_blockers"] == ["exact_runtime_activation_packet_execute_true"]
+    assert checklist["closed_gates"]["device_control"] == "closed"
+    assert checklist["closed_gates"]["external_dispatch"] == "closed"
