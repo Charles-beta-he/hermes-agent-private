@@ -238,6 +238,15 @@ class LifecycleContractRegistry:
                     authority_boundary="local benchmark only; no hardware/device control without exact authorization",
                 ),
                 LifecycleCommandContract(
+                    "edge-verify",
+                    "Verify an edge benchmark receipt and classify promotion readiness without opening runtime gates.",
+                    ["edge_runtime", "evaluation", "governance"],
+                    ["verification report"],
+                    ["receipt schema", "resource budget", "closed side-effect gates", "next authority packet required"],
+                    side_effect_level="local_read",
+                    authority_boundary="read-only verification; runtime activation requires a later exact target gate",
+                ),
+                LifecycleCommandContract(
                     "deploy-proposal",
                     "Produce a deployment/publish proposal and rollback plan without executing external deploy.",
                     ["delivery", "evaluation"],
@@ -931,6 +940,94 @@ def write_edge_benchmark_receipt(runs_dir: str | Path, profile_id: str = "local_
     return receipt
 
 
+def _verification_check(name: str, passed: bool, evidence: str) -> dict[str, str]:
+    return {"name": name, "status": "pass" if passed else "fail", "evidence": evidence}
+
+
+def verify_edge_benchmark_receipt(receipt_path: str | Path) -> dict[str, Any]:
+    path = Path(receipt_path)
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {
+            "schema": "hermes_edge_benchmark_verification_v1",
+            "status": "blocked",
+            "profile_id": None,
+            "runtime_effect": "read_only_verification",
+            "promotion_ready": False,
+            "next_authority_required": "valid_benchmark_receipt",
+            "receipt_path": str(path),
+            "checks": [_verification_check("receipt_parseable", False, str(exc))],
+        }
+
+    registry = LifecycleContractRegistry.default()
+    profile_id = receipt.get("profile_id")
+    try:
+        registry.edge_profile(str(profile_id))
+        known_profile = True
+    except KeyError:
+        known_profile = False
+
+    measurements = receipt.get("measurements") if isinstance(receipt.get("measurements"), dict) else {}
+    gates = receipt.get("gates") if isinstance(receipt.get("gates"), dict) else {}
+    memory = measurements.get("memory_rss_mb")
+    boot = measurements.get("boot_ms")
+    checks = [
+        _verification_check(
+            "schema",
+            receipt.get("schema") == "hermes_edge_benchmark_receipt_v1",
+            str(receipt.get("schema")),
+        ),
+        _verification_check("profile_known", known_profile, str(profile_id)),
+        _verification_check(
+            "runtime_effect_local_write_only",
+            receipt.get("runtime_effect") == "local_write_receipt_only",
+            str(receipt.get("runtime_effect")),
+        ),
+        _verification_check(
+            "measurement_memory_rss_mb_present",
+            isinstance(memory, (int, float)) and memory >= 0,
+            str(memory),
+        ),
+        _verification_check(
+            "measurement_boot_ms_present",
+            isinstance(boot, (int, float)) and boot >= 0,
+            str(boot),
+        ),
+        _verification_check(
+            "measurement_memory_rss_mb_target",
+            isinstance(memory, (int, float)) and memory <= 64,
+            f"{memory} <= 64",
+        ),
+        _verification_check(
+            "measurement_boot_ms_target",
+            isinstance(boot, (int, float)) and boot <= 1000,
+            f"{boot} <= 1000",
+        ),
+    ]
+    for gate in [
+        "device_control",
+        "external_dispatch",
+        "mcp_write_authority",
+        "publish_deploy_push",
+        "destructive_operation",
+        "credential_entry",
+    ]:
+        checks.append(_verification_check(f"gate_{gate}_closed", gates.get(gate) == "closed", str(gates.get(gate))))
+
+    status = "pass" if all(check["status"] == "pass" for check in checks) else "blocked"
+    return {
+        "schema": "hermes_edge_benchmark_verification_v1",
+        "status": status,
+        "profile_id": profile_id,
+        "runtime_effect": "read_only_verification",
+        "promotion_ready": False,
+        "next_authority_required": "exact_runtime_activation_packet" if status == "pass" else "fix_benchmark_receipt_or_closed_gates",
+        "receipt_path": str(path),
+        "checks": checks,
+    }
+
+
 def bundled_cases_dir() -> Path:
     """Return the packaged seed eval cases directory.
 
@@ -980,6 +1077,10 @@ def _build_parser() -> argparse.ArgumentParser:
     edge_benchmark.add_argument("--runs-dir", required=True)
     edge_benchmark.add_argument("--profile", default="local_edge_worker")
     edge_benchmark.add_argument("--json", action="store_true")
+
+    edge_verify = sub.add_parser("edge-verify", help="Verify an edge benchmark receipt without opening runtime gates")
+    edge_verify.add_argument("--receipt", required=True)
+    edge_verify.add_argument("--json", action="store_true")
     return parser
 
 
@@ -1023,6 +1124,16 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"profile={receipt['profile_id']} receipt={receipt['receipt_path']}")
         return 0
+
+    if args.command == "edge-verify":
+        verification = verify_edge_benchmark_receipt(args.receipt)
+        if args.json:
+            print(json.dumps(verification, ensure_ascii=False))
+        else:
+            print(f"status={verification['status']} profile={verification.get('profile_id')} promotion_ready={verification['promotion_ready']}")
+            for check in verification["checks"]:
+                print(f"- {check['status']} {check['name']}: {check['evidence']}")
+        return 0 if verification["status"] == "pass" else 1
 
     if args.command == "run":
         harness = EvalHarness(cases_dir=_resolve_cases_dir(args.cases_dir), runs_dir=args.runs_dir, router_mode=args.router_mode)

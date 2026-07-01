@@ -81,6 +81,7 @@ def test_lifecycle_contract_registry_models_skill_packs_and_commands():
         "eval-grade",
         "edge-profile",
         "edge-benchmark",
+        "edge-verify",
         "deploy-proposal",
         "observe",
         "ratchet",
@@ -307,3 +308,101 @@ def test_module_cli_edge_benchmark_writes_local_receipt(tmp_path):
     assert receipt["gates"]["external_dispatch"] == "closed"
     assert receipt["gates"]["mcp_write_authority"] == "closed"
     assert receipt["forbidden_by_default"]
+
+
+def test_module_cli_edge_verify_accepts_closed_gate_receipt(tmp_path):
+    runs_dir = tmp_path / "edge-runs"
+    benchmark = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-benchmark",
+            "--runs-dir",
+            str(runs_dir),
+            "--profile",
+            "local_edge_worker",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert benchmark.returncode == 0, benchmark.stderr
+    receipt_path = json.loads(benchmark.stdout)["receipt_path"]
+
+    verify = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-verify",
+            "--receipt",
+            receipt_path,
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert verify.returncode == 0, verify.stderr
+    payload = json.loads(verify.stdout)
+    assert payload["schema"] == "hermes_edge_benchmark_verification_v1"
+    assert payload["status"] == "pass"
+    assert payload["profile_id"] == "local_edge_worker"
+    assert payload["runtime_effect"] == "read_only_verification"
+    assert payload["promotion_ready"] is False
+    assert payload["next_authority_required"] == "exact_runtime_activation_packet"
+    assert all(check["status"] == "pass" for check in payload["checks"])
+
+
+def test_module_cli_edge_verify_blocks_open_side_effect_gate(tmp_path):
+    receipt_path = tmp_path / "bad-receipt.json"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_benchmark_receipt_v1",
+                "profile_id": "local_edge_worker",
+                "runtime_effect": "local_write_receipt_only",
+                "measurements": {"memory_rss_mb": 10, "boot_ms": 20},
+                "gates": {
+                    "device_control": "closed",
+                    "external_dispatch": "open",
+                    "mcp_write_authority": "closed",
+                    "publish_deploy_push": "closed",
+                    "destructive_operation": "closed",
+                    "credential_entry": "closed",
+                },
+                "forbidden_by_default": ["external_dispatch"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    verify = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-verify",
+            "--receipt",
+            str(receipt_path),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert verify.returncode == 1
+    payload = json.loads(verify.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["promotion_ready"] is False
+    assert any(check["name"] == "gate_external_dispatch_closed" and check["status"] == "fail" for check in payload["checks"])
