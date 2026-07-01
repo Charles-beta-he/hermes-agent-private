@@ -2,7 +2,7 @@
 
 schema: hermes_decision_continuation_packet_v1
 id: hermes-edge-activation-preflight-certification-gate-20260701
-status: pending_independent_verifier_vote
+status: certified_read_only_fail_closed_preflight
 
 ## Objective
 
@@ -42,29 +42,49 @@ Continue the edge-runtime boundary work after `edge-activation-preflight` withou
 
 5. Machine-readable certification packet:
    - `docs/private/hermes-edge-activation-preflight-certification-20260701.json`
-   - status: `pending_independent_verifier_vote`
+   - status: `certified_read_only_fail_closed_preflight`
    - JSON lint: pass
+
+6. Independent verifier vote:
+   - delegation: `deleg_f7ce792b`
+   - vote: `approve`
+   - best_within_constraints: `true`
+   - certified scope: commit `b8e7f9704` scoped slice only
+   - certified as: read-only fail-closed preflight
+   - certified no runtime/device/external boundaries opened: `true`
+
+7. AcceptanceGovernance final readback:
+   - schema: `hermes_acceptance_governance_result_v1`
+   - status: `certified`
+   - failures: `[]`
+   - claim_count: `4`
+   - evidence_count: `4`
 
 ## Pending action
 
-Wait for independent verifier vote `deleg_f7ce792b`.
+No pending action remains for certification of commit `b8e7f9704` as a read-only/fail-closed preflight slice.
 
-Expected acceptable vote shape:
+The next pending action is a separate human-gated real activation boundary, if desired. It is not authorized or certified by this packet.
+
+Required future boundary before real activation:
 
 ```text
-vote: approve|amend|reject
-best_within_constraints: true|false
-evidence cited: commands/files inspected
-blockers: [] or concrete repairs
+exact runtime/device/external target
+fully bound execute=true activation packet
+rollback/restore path
+receipt path
+post-action readback command/source
+human/operator acknowledgement
+separate executor boundary
 ```
 
 ## Requested authority
 
-No additional runtime/device/external authority is requested for the current step.
+No additional runtime/device/external authority is requested or consumed for this certified slice.
 
-If the verifier approves, authority requested is limited to local docs update + scoped commit of certification packet and verifier result.
+The certification update consumed only local documentation authority for recording the independent verifier vote and AcceptanceGovernance result.
 
-If the verifier amends/rejects, authority requested is limited to safe local repair of the cited issue, rerun tests, rerun live preflight, and update certification packet.
+Future real activation remains separately gated and blocked until a new exact executor-boundary AuthorityGrant exists.
 
 ## Rollback / escape hatch
 
@@ -99,6 +119,12 @@ After verifier result is incorporated:
 
 ## Certification state
 
-Current state: not certified.
+Current state: certified for the read-only/fail-closed preflight slice only.
 
-Reason: objective evidence exists, but independent verifier vote has not yet been incorporated.
+This certification does not certify real runtime/device/external activation. Live activation remains blocked by:
+
+```text
+exact_runtime_activation_packet
+exact_runtime_activation_packet_execute_true
+fix_benchmark_receipt_or_closed_gates
+```
