@@ -86,6 +86,7 @@ def test_lifecycle_contract_registry_models_skill_packs_and_commands():
         "edge-kill-switch-dry-run",
         "edge-status-readback",
         "edge-open-boundary-checklist",
+        "edge-authority-discover",
         "deploy-proposal",
         "observe",
         "ratchet",
@@ -820,3 +821,64 @@ def test_module_cli_edge_open_boundary_checklist_writes_non_executing_checklist(
     assert checklist["remaining_blockers"] == ["exact_runtime_activation_packet_execute_true"]
     assert checklist["closed_gates"]["device_control"] == "closed"
     assert checklist["closed_gates"]["external_dispatch"] == "closed"
+
+
+def test_module_cli_edge_authority_discover_scans_existing_artifacts(tmp_path):
+    benchmark, verification, activation, kill_switch = _write_edge_ladder_artifacts(tmp_path)
+    status_path = tmp_path / "status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_status_readback_v1",
+                "status": "closed_ladder_ready_for_human_authority",
+                "profile_id": "local_edge_worker",
+                "execute": False,
+                "promotion_ready": False,
+                "next_authority_required": "exact_runtime_activation_packet_execute_true",
+                "closed_gates": {"device_control": "closed", "external_dispatch": "closed"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    checklist_path = tmp_path / "checklist.json"
+    checklist_path.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_open_boundary_checklist_v1",
+                "status": "human_authority_required",
+                "profile_id": "local_edge_worker",
+                "execute": False,
+                "remaining_blockers": ["exact_runtime_activation_packet_execute_true"],
+                "authority_required": {"exact_target": True, "post_action_readback": True},
+                "closed_gates": {"device_control": "closed", "external_dispatch": "closed"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-authority-discover",
+            "--scan-dir",
+            str(tmp_path),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["schema"] == "hermes_edge_authority_discovery_v1"
+    assert payload["opening_ready"] is False
+    assert payload["discovered"]["profiles"] == ["local_edge_worker"]
+    assert "local-mac-fixture" in payload["discovered"]["target_candidates"]
+    assert payload["discovered"]["execute_true_packets"] == []
+    assert "exact_runtime_activation_packet_execute_true" in payload["blockers"]
+    assert payload["recommendation"] == "remain_closed_until_execute_true_packet_and_exact_runtime_readback_exist"

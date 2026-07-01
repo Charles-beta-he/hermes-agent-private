@@ -283,6 +283,15 @@ class LifecycleContractRegistry:
                     authority_boundary="checklist only; does not authorize or perform activation",
                 ),
                 LifecycleCommandContract(
+                    "edge-authority-discover",
+                    "Scan existing local artifacts for edge authority candidates and blockers before asking the user.",
+                    ["edge_runtime", "governance", "observability"],
+                    ["authority discovery report"],
+                    ["read-only", "no runtime activation", "reports missing execute=true packet"],
+                    side_effect_level="local",
+                    authority_boundary="discovery only; does not create authority or execute activation",
+                ),
+                LifecycleCommandContract(
                     "deploy-proposal",
                     "Produce a deployment/publish proposal and rollback plan without executing external deploy.",
                     ["delivery", "evaluation"],
@@ -1363,6 +1372,60 @@ def write_edge_open_boundary_checklist(
     return checklist, 0
 
 
+def edge_authority_discover(scan_dirs: list[str | Path]) -> dict[str, Any]:
+    schemas: dict[str, list[str]] = {}
+    profiles: set[str] = set()
+    target_candidates: set[str] = set()
+    execute_true_packets: list[str] = []
+    blockers: set[str] = set()
+    for root_value in scan_dirs:
+        root = Path(root_value)
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix not in {".json", ".out"}:
+                continue
+            payload, _ = _load_json_artifact(path)
+            if not isinstance(payload, dict):
+                continue
+            schema = payload.get("schema")
+            if isinstance(schema, str) and schema.startswith("hermes_edge_"):
+                schemas.setdefault(schema, []).append(str(path))
+            profile_id = payload.get("profile_id")
+            if isinstance(profile_id, str):
+                profiles.add(profile_id)
+            target = payload.get("target")
+            if isinstance(target, dict) and isinstance(target.get("id"), str):
+                target_candidates.add(target["id"])
+            if payload.get("execute") is True:
+                execute_true_packets.append(str(path))
+            for key in ("remaining_blockers",):
+                values = payload.get(key)
+                if isinstance(values, list):
+                    blockers.update(str(value) for value in values)
+            next_auth = payload.get("next_authority_required")
+            if isinstance(next_auth, str):
+                blockers.add(next_auth)
+    opening_ready = bool(execute_true_packets) and not blockers
+    if not execute_true_packets:
+        blockers.add("exact_runtime_activation_packet_execute_true")
+    return {
+        "schema": "hermes_edge_authority_discovery_v1",
+        "ts": _now(),
+        "runtime_effect": "read_only_discovery",
+        "scan_dirs": [str(Path(p)) for p in scan_dirs],
+        "opening_ready": opening_ready,
+        "discovered": {
+            "schemas": {k: sorted(v) for k, v in sorted(schemas.items())},
+            "profiles": sorted(profiles),
+            "target_candidates": sorted(target_candidates),
+            "execute_true_packets": sorted(execute_true_packets),
+        },
+        "blockers": sorted(blockers),
+        "recommendation": "ready_for_exact_activation_readback" if opening_ready else "remain_closed_until_execute_true_packet_and_exact_runtime_readback_exist",
+    }
+
+
 def bundled_cases_dir() -> Path:
     """Return the packaged seed eval cases directory.
 
@@ -1451,6 +1514,13 @@ def _build_parser() -> argparse.ArgumentParser:
     edge_checklist.add_argument("--status-readback", required=True)
     edge_checklist.add_argument("--runs-dir", required=True)
     edge_checklist.add_argument("--json", action="store_true")
+
+    edge_discover = sub.add_parser(
+        "edge-authority-discover",
+        help="Scan existing local artifacts for edge authority candidates and blockers",
+    )
+    edge_discover.add_argument("--scan-dir", action="append", required=True)
+    edge_discover.add_argument("--json", action="store_true")
     return parser
 
 
@@ -1550,6 +1620,17 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"status={checklist['status']} reason={checklist['reason']}")
         return code
+
+    if args.command == "edge-authority-discover":
+        report = edge_authority_discover(args.scan_dir)
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False))
+        else:
+            print(f"opening_ready={report['opening_ready']} recommendation={report['recommendation']}")
+            print(f"profiles={','.join(report['discovered']['profiles'])}")
+            print(f"targets={','.join(report['discovered']['target_candidates'])}")
+            print(f"blockers={','.join(report['blockers'])}")
+        return 0
 
     if args.command == "run":
         harness = EvalHarness(cases_dir=_resolve_cases_dir(args.cases_dir), runs_dir=args.runs_dir, router_mode=args.router_mode)
