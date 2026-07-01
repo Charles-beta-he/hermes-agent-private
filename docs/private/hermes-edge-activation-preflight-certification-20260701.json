@@ -1,0 +1,134 @@
+{
+  "schema": "hermes_certification_packet_v1",
+  "id": "hermes-edge-activation-preflight-certification-20260701",
+  "status": "pending_independent_verifier_vote",
+  "subject": {
+    "repo": "/Users/charles/.hermes/hermes-agent",
+    "commit": "b8e7f9704",
+    "title": "feat(eval): add edge activation preflight",
+    "scope": [
+      "agent/reliability_harness.py",
+      "tests/agent/test_reliability_harness.py",
+      "skills/software-development/agent-eval-dynamic-workflow-harness/SKILL.md",
+      "docs/private/hermes-edge-activation-preflight-20260701.md"
+    ]
+  },
+  "claims": [
+    {
+      "id": "C1-tests",
+      "claim": "Relevant reliability harness and trajectory compressor regression tests pass after the edge activation preflight slice.",
+      "evidence_refs": [
+        "E1-pytest-regression"
+      ]
+    },
+    {
+      "id": "C2-static-checks",
+      "claim": "Python syntax and git whitespace checks pass for scoped files.",
+      "evidence_refs": [
+        "E2-pycompile-diffcheck"
+      ]
+    },
+    {
+      "id": "C3-fail-closed-live-preflight",
+      "claim": "Live authority discovery plus activation preflight blocks the current local-mac-fixture opening because discovery is not opening-ready.",
+      "evidence_refs": [
+        "E3-live-preflight-blocked"
+      ]
+    },
+    {
+      "id": "C4-read-only-boundary",
+      "claim": "The preflight surface is read-only and does not execute runtime/device/external activation.",
+      "evidence_refs": [
+        "E3-live-preflight-blocked",
+        "E4-commit-scope"
+      ]
+    }
+  ],
+  "objective_evidence": [
+    {
+      "id": "E1-pytest-regression",
+      "kind": "command_output",
+      "command": "./venv/bin/python -m pytest tests/agent/test_reliability_harness.py tests/agent/test_reliability_harness_distribution.py tests/test_trajectory_compressor.py tests/test_trajectory_compressor_async.py -q",
+      "result": "70 passed in 1.59s",
+      "supports": [
+        "C1-tests"
+      ]
+    },
+    {
+      "id": "E2-pycompile-diffcheck",
+      "kind": "command_output",
+      "command": "./venv/bin/python -m py_compile agent/reliability_harness.py tests/agent/test_reliability_harness.py && git diff --check -- agent/reliability_harness.py tests/agent/test_reliability_harness.py skills/software-development/agent-eval-dynamic-workflow-harness/SKILL.md docs/private/hermes-edge-activation-preflight-20260701.md",
+      "result": "exit 0; no output",
+      "supports": [
+        "C2-static-checks"
+      ]
+    },
+    {
+      "id": "E3-live-preflight-blocked",
+      "kind": "command_output",
+      "command": "edge-authority-discover over /tmp and docs/private, then edge-activation-preflight --target-id local-mac-fixture",
+      "result": {
+        "discovery_schema": "hermes_edge_authority_discovery_v1",
+        "discovery_opening_ready": false,
+        "discovery_recommendation": "remain_closed_until_execute_true_packet_and_exact_runtime_readback_exist",
+        "preflight_schema": "hermes_edge_activation_preflight_v1",
+        "preflight_status": "blocked",
+        "preflight_reason": "discovery_not_opening_ready",
+        "preflight_runtime_effect": "read_only_preflight",
+        "preflight_execute": false,
+        "exit_code": 1,
+        "blockers": [
+          "exact_runtime_activation_packet",
+          "exact_runtime_activation_packet_execute_true",
+          "fix_benchmark_receipt_or_closed_gates"
+        ]
+      },
+      "supports": [
+        "C3-fail-closed-live-preflight",
+        "C4-read-only-boundary"
+      ]
+    },
+    {
+      "id": "E4-commit-scope",
+      "kind": "git_readback",
+      "command": "git show --stat --oneline HEAD && git show --name-only --oneline HEAD",
+      "result": "b8e7f9704 feat(eval): add edge activation preflight; 4 files changed, 297 insertions(+), 1 deletion(-)",
+      "supports": [
+        "C4-read-only-boundary"
+      ]
+    }
+  ],
+  "independent_verifier": {
+    "status": "requested",
+    "delegation_id": "deleg_f7ce792b",
+    "vote": null,
+    "best_within_constraints": null,
+    "evidence_refs": []
+  },
+  "truth_gate": {
+    "objective_evidence_present": true,
+    "independent_verifier_vote_present": false,
+    "can_certify": false,
+    "reason": "independent_verifier_vote_missing",
+    "acceptance_status": "not_certified",
+    "failures": [
+      "independent_verifier_vote_missing"
+    ]
+  },
+  "boundary_state": {
+    "runtime_device_external_opened": false,
+    "runtime_effect": "read_only_preflight_and_local_docs_write",
+    "execute_true_consumed": false,
+    "real_executor_boundary_opened": false
+  },
+  "acceptance_governance_current": {
+    "schema": "hermes_acceptance_governance_result_v1",
+    "status": "not_certified",
+    "failures": [
+      "independent_verifier_vote_missing"
+    ],
+    "claim_count": 4,
+    "evidence_count": 4,
+    "model_judgment_policy": "advisory_only_without_evidence"
+  }
+}
