@@ -88,6 +88,9 @@ def test_lifecycle_contract_registry_models_skill_packs_and_commands():
         "edge-open-boundary-checklist",
         "edge-authority-discover",
         "edge-activation-preflight",
+        "edge-activation-authorize",
+        "edge-runtime-activate",
+        "edge-runtime-rollback",
         "deploy-proposal",
         "observe",
         "ratchet",
@@ -995,3 +998,193 @@ def test_module_cli_edge_activation_preflight_passes_only_fully_bound_discovery(
     assert payload["target_id"] == "local-mac-fixture"
     assert payload["matched_execute_true_packet"] == str(packet_path)
     assert payload["next_step"] == "operator_may_run_separate_exact_executor_boundary"
+
+
+def test_module_cli_edge_real_activation_local_fixture_roundtrip(tmp_path):
+    runs_dir = tmp_path / "runs"
+    packet_proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-activation-authorize",
+            "--target-id",
+            "local-mac-fixture",
+            "--runs-dir",
+            str(runs_dir),
+            "--rollback-restore-path",
+            "local-fixture-state:disabled",
+            "--post-action-readback",
+            "edge-runtime-readback:local-mac-fixture",
+            "--human-ack",
+            "human/operator acknowledgement: approve execute=true local runtime fixture activation for local-mac-fixture",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert packet_proc.returncode == 0, packet_proc.stderr
+    packet_payload = json.loads(packet_proc.stdout)
+    packet_path = Path(packet_payload["packet_path"])
+    packet = json.loads(packet_path.read_text(encoding="utf-8"))
+    assert packet["schema"] == "hermes_edge_activation_packet_v1"
+    assert packet["execute"] is True
+    assert packet["target"]["id"] == "local-mac-fixture"
+    assert packet["rollback"]["restore_path"] == "local-fixture-state:disabled"
+    assert packet["readback"]["source"] == "edge-runtime-readback:local-mac-fixture"
+    assert packet["human_operator_acknowledgement"]["present"] is True
+
+    discovery_path = tmp_path / "discovery.json"
+    discover = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-authority-discover",
+            "--scan-dir",
+            str(runs_dir),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert discover.returncode == 0, discover.stderr
+    discovery_path.write_text(discover.stdout, encoding="utf-8")
+
+    preflight = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-activation-preflight",
+            "--discovery",
+            str(discovery_path),
+            "--target-id",
+            "local-mac-fixture",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert preflight.returncode == 0, preflight.stdout + preflight.stderr
+    preflight_path = tmp_path / "preflight.json"
+    preflight_path.write_text(preflight.stdout, encoding="utf-8")
+
+    activate = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-runtime-activate",
+            "--preflight",
+            str(preflight_path),
+            "--activation-packet",
+            str(packet_path),
+            "--runs-dir",
+            str(runs_dir),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert activate.returncode == 0, activate.stdout + activate.stderr
+    activation = json.loads(activate.stdout)
+    receipt_path = Path(activation["receipt_path"])
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["schema"] == "hermes_edge_runtime_activation_receipt_v1"
+    assert receipt["runtime_effect"] == "local_runtime_fixture_state_write"
+    assert receipt["execute"] is True
+    assert receipt["target"]["id"] == "local-mac-fixture"
+    assert receipt["status_after_activation"] == "active"
+    assert receipt["readback"]["status"] == "active"
+    assert receipt["state_path"] and Path(receipt["state_path"]).exists()
+    assert receipt["gates_remain_closed"]["external_dispatch"] == "closed"
+    assert receipt["gates_remain_closed"]["device_control"] == "closed"
+
+    rollback = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-runtime-rollback",
+            "--activation-receipt",
+            str(receipt_path),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert rollback.returncode == 0, rollback.stdout + rollback.stderr
+    rollback_payload = json.loads(rollback.stdout)
+    rollback_receipt = json.loads(Path(rollback_payload["rollback_receipt_path"]).read_text(encoding="utf-8"))
+    assert rollback_receipt["schema"] == "hermes_edge_runtime_rollback_receipt_v1"
+    assert rollback_receipt["status_after_rollback"] == "disabled"
+    assert rollback_receipt["readback"]["status"] == "disabled"
+
+
+def test_module_cli_edge_runtime_activate_rejects_failed_preflight(tmp_path):
+    preflight_path = tmp_path / "preflight.json"
+    preflight_path.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_activation_preflight_v1",
+                "status": "blocked",
+                "target_id": "local-mac-fixture",
+                "execute": False,
+                "reason": "discovery_not_opening_ready",
+            }
+        ),
+        encoding="utf-8",
+    )
+    packet_path = tmp_path / "packet.json"
+    packet_path.write_text(
+        json.dumps(
+            {
+                "schema": "hermes_edge_activation_packet_v1",
+                "target": {"id": "local-mac-fixture"},
+                "execute": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agent.reliability_harness",
+            "edge-runtime-activate",
+            "--preflight",
+            str(preflight_path),
+            "--activation-packet",
+            str(packet_path),
+            "--runs-dir",
+            str(tmp_path / "runs"),
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    assert payload["schema"] == "hermes_edge_runtime_activation_preflight_v1"
+    assert payload["status"] == "blocked"
+    assert payload["reason"] == "activation_preflight_not_passed"

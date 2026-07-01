@@ -301,6 +301,33 @@ class LifecycleContractRegistry:
                     authority_boundary="preflight only; no runtime activation is performed",
                 ),
                 LifecycleCommandContract(
+                    "edge-activation-authorize",
+                    "Write a fully bound execute=true activation packet for the exact local runtime fixture target.",
+                    ["edge_runtime", "governance"],
+                    ["execute=true activation packet"],
+                    ["exact target", "rollback restore path", "post-action readback", "human acknowledgement"],
+                    side_effect_level="local_write",
+                    authority_boundary="local authority packet only; no runtime state mutation",
+                ),
+                LifecycleCommandContract(
+                    "edge-runtime-activate",
+                    "Execute the separate local runtime fixture activation boundary after preflight passes.",
+                    ["edge_runtime", "governance"],
+                    ["activation receipt", "runtime fixture state"],
+                    ["preflight passed", "receipt written", "post-action readback", "closed external/device gates"],
+                    side_effect_level="local_write",
+                    authority_boundary="local fixture state write only; no device/external adapter",
+                ),
+                LifecycleCommandContract(
+                    "edge-runtime-rollback",
+                    "Rollback a local runtime fixture activation receipt to disabled state and record readback.",
+                    ["edge_runtime", "governance"],
+                    ["rollback receipt"],
+                    ["restore path", "status disabled", "post-rollback readback"],
+                    side_effect_level="local_write",
+                    authority_boundary="local fixture rollback only; no device/external adapter",
+                ),
+                LifecycleCommandContract(
                     "deploy-proposal",
                     "Produce a deployment/publish proposal and rollback plan without executing external deploy.",
                     ["delivery", "evaluation"],
@@ -1489,6 +1516,176 @@ def edge_activation_preflight(discovery_path: str | Path, target_id: str) -> tup
     }, 1
 
 
+def _local_runtime_closed_gates() -> dict[str, str]:
+    return {
+        "device_control": "closed",
+        "external_dispatch": "closed",
+        "mcp_write_authority": "closed",
+        "publish_deploy_push": "closed",
+        "destructive_operation": "closed",
+        "credential_entry": "closed",
+    }
+
+
+def write_edge_activation_authorization(
+    runs_dir: str | Path,
+    target_id: str,
+    rollback_restore_path: str,
+    post_action_readback: str,
+    human_ack: str,
+) -> tuple[dict[str, Any], int]:
+    if target_id != "local-mac-fixture":
+        return {
+            "schema": "hermes_edge_activation_authorization_preflight_v1",
+            "status": "blocked",
+            "runtime_effect": "read_only_preflight",
+            "reason": "unsupported_target_for_local_runtime_fixture",
+            "target_id": target_id,
+        }, 1
+    if not human_ack or "ack" not in human_ack.lower() and "acknowledgement" not in human_ack.lower():
+        return {
+            "schema": "hermes_edge_activation_authorization_preflight_v1",
+            "status": "blocked",
+            "runtime_effect": "read_only_preflight",
+            "reason": "human_operator_acknowledgement_missing",
+            "target_id": target_id,
+        }, 1
+    root = Path(runs_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    receipt_path = root / f"edge-runtime-activation-receipt-{target_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    packet = {
+        "schema": "hermes_edge_activation_packet_v1",
+        "status": "authorized_for_separate_executor_boundary",
+        "ts": _now(),
+        "profile_id": "local_edge_worker",
+        "target": {"id": target_id, "kind": "local_runtime_fixture"},
+        "execute": True,
+        "runtime_effect": "local_write_authority_packet_only",
+        "rollback": {
+            "kill_switch_required": True,
+            "restore_path_required": True,
+            "restore_path": rollback_restore_path,
+        },
+        "readback": {
+            "required": True,
+            "post_action_status_required": True,
+            "source": post_action_readback,
+        },
+        "receipt_path": str(receipt_path),
+        "human_operator_acknowledgement": {
+            "present": True,
+            "text_sha256": hashlib.sha256(human_ack.encode("utf-8")).hexdigest(),
+        },
+        "gates_remain_closed": _local_runtime_closed_gates(),
+    }
+    packet_id = hashlib.sha256(json.dumps(packet, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+    packet_path = root / f"edge-activation-authorize-{target_id}-{packet_id}.json"
+    packet["packet_id"] = packet_id
+    packet["packet_path"] = str(packet_path)
+    packet_path.write_text(json.dumps(packet, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "packet_path": str(packet_path), "receipt_path": str(receipt_path), "packet_id": packet_id}, 0
+
+
+def _read_local_runtime_state(state_path: Path) -> str:
+    if not state_path.exists():
+        return "disabled"
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        return str(payload.get("status") or "disabled")
+    except Exception:
+        return "unknown"
+
+
+def edge_runtime_activate(preflight_path: str | Path, activation_packet_path: str | Path, runs_dir: str | Path) -> tuple[dict[str, Any], int]:
+    preflight, preflight_info = _load_json_artifact(preflight_path)
+    packet, packet_info = _load_json_artifact(activation_packet_path)
+    base = {"schema": "hermes_edge_runtime_activation_preflight_v1", "runtime_effect": "read_only_preflight"}
+    if not isinstance(preflight, dict) or preflight.get("schema") != "hermes_edge_activation_preflight_v1" or preflight.get("status") != "pass":
+        return {**base, "status": "blocked", "reason": "activation_preflight_not_passed", "preflight": preflight_info}, 1
+    if not isinstance(packet, dict) or packet.get("schema") != "hermes_edge_activation_packet_v1" or packet.get("execute") is not True:
+        return {**base, "status": "blocked", "reason": "invalid_execute_true_activation_packet", "activation_packet": packet_info}, 1
+    assert isinstance(preflight, dict)
+    assert isinstance(packet, dict)
+    target = packet.get("target") if isinstance(packet.get("target"), dict) else {}
+    if target.get("id") != preflight.get("target_id") or target.get("id") != "local-mac-fixture":
+        return {**base, "status": "blocked", "reason": "target_mismatch_or_unsupported", "target": target}, 1
+    if preflight.get("matched_execute_true_packet") != str(Path(activation_packet_path)):
+        return {**base, "status": "blocked", "reason": "preflight_packet_digest_mismatch", "expected": preflight.get("matched_execute_true_packet"), "actual": str(Path(activation_packet_path))}, 1
+
+    root = Path(runs_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    state_path = root / "edge-runtime-local-mac-fixture-state.json"
+    previous_status = _read_local_runtime_state(state_path)
+    state = {
+        "schema": "hermes_edge_runtime_fixture_state_v1",
+        "target": target,
+        "status": "active",
+        "activated_at": _now(),
+        "activation_packet_path": str(Path(activation_packet_path)),
+    }
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    readback_status = _read_local_runtime_state(state_path)
+    receipt_path = Path(str(packet.get("receipt_path") or root / "edge-runtime-activation-receipt.json"))
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "schema": "hermes_edge_runtime_activation_receipt_v1",
+        "status": "pass" if readback_status == "active" else "blocked",
+        "ts": _now(),
+        "profile_id": packet.get("profile_id"),
+        "target": target,
+        "execute": True,
+        "runtime_effect": "local_runtime_fixture_state_write",
+        "activation_packet_path": str(Path(activation_packet_path)),
+        "preflight_path": str(Path(preflight_path)),
+        "state_path": str(state_path),
+        "previous_status": previous_status,
+        "status_after_activation": readback_status,
+        "rollback": packet.get("rollback", {}),
+        "readback": {"source": packet.get("readback", {}).get("source"), "status": readback_status},
+        "gates_remain_closed": _local_runtime_closed_gates(),
+    }
+    receipt["receipt_path"] = str(receipt_path)
+    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": readback_status == "active", "receipt_path": str(receipt_path), "state_path": str(state_path)}, 0 if readback_status == "active" else 1
+
+
+def edge_runtime_rollback(activation_receipt_path: str | Path) -> tuple[dict[str, Any], int]:
+    receipt, info = _load_json_artifact(activation_receipt_path)
+    if not isinstance(receipt, dict) or receipt.get("schema") != "hermes_edge_runtime_activation_receipt_v1":
+        return {"schema": "hermes_edge_runtime_rollback_preflight_v1", "status": "blocked", "reason": "invalid_activation_receipt", "activation_receipt": info}, 1
+    state_path = Path(str(receipt.get("state_path") or ""))
+    if not state_path:
+        return {"schema": "hermes_edge_runtime_rollback_preflight_v1", "status": "blocked", "reason": "missing_state_path"}, 1
+    restore_status = "disabled"
+    state = {
+        "schema": "hermes_edge_runtime_fixture_state_v1",
+        "target": receipt.get("target", {}),
+        "status": restore_status,
+        "rolled_back_at": _now(),
+        "activation_receipt_path": str(Path(activation_receipt_path)),
+    }
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    readback_status = _read_local_runtime_state(state_path)
+    rollback_receipt = {
+        "schema": "hermes_edge_runtime_rollback_receipt_v1",
+        "status": "pass" if readback_status == restore_status else "blocked",
+        "ts": _now(),
+        "target": receipt.get("target", {}),
+        "execute": True,
+        "runtime_effect": "local_runtime_fixture_state_write",
+        "activation_receipt_path": str(Path(activation_receipt_path)),
+        "state_path": str(state_path),
+        "status_after_rollback": readback_status,
+        "readback": {"status": readback_status},
+        "gates_remain_closed": _local_runtime_closed_gates(),
+    }
+    rollback_receipt_path = state_path.parent / f"edge-runtime-rollback-receipt-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    rollback_receipt["rollback_receipt_path"] = str(rollback_receipt_path)
+    rollback_receipt_path.write_text(json.dumps(rollback_receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": readback_status == restore_status, "rollback_receipt_path": str(rollback_receipt_path)}, 0 if readback_status == restore_status else 1
+
+
 def bundled_cases_dir() -> Path:
     """Return the packaged seed eval cases directory.
 
@@ -1592,6 +1789,33 @@ def _build_parser() -> argparse.ArgumentParser:
     edge_preflight.add_argument("--discovery", required=True)
     edge_preflight.add_argument("--target-id", required=True)
     edge_preflight.add_argument("--json", action="store_true")
+
+    edge_authorize = sub.add_parser(
+        "edge-activation-authorize",
+        help="Write a fully bound execute=true packet for the exact local runtime fixture",
+    )
+    edge_authorize.add_argument("--target-id", required=True)
+    edge_authorize.add_argument("--runs-dir", required=True)
+    edge_authorize.add_argument("--rollback-restore-path", required=True)
+    edge_authorize.add_argument("--post-action-readback", required=True)
+    edge_authorize.add_argument("--human-ack", required=True)
+    edge_authorize.add_argument("--json", action="store_true")
+
+    edge_runtime_activate_parser = sub.add_parser(
+        "edge-runtime-activate",
+        help="Execute the local runtime fixture activation after preflight passes",
+    )
+    edge_runtime_activate_parser.add_argument("--preflight", required=True)
+    edge_runtime_activate_parser.add_argument("--activation-packet", required=True)
+    edge_runtime_activate_parser.add_argument("--runs-dir", required=True)
+    edge_runtime_activate_parser.add_argument("--json", action="store_true")
+
+    edge_runtime_rollback_parser = sub.add_parser(
+        "edge-runtime-rollback",
+        help="Rollback a local runtime fixture activation receipt to disabled state",
+    )
+    edge_runtime_rollback_parser.add_argument("--activation-receipt", required=True)
+    edge_runtime_rollback_parser.add_argument("--json", action="store_true")
     return parser
 
 
@@ -1712,6 +1936,45 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"status={report['status']} target={report['target_id']} next={report['next_step']}")
             else:
                 print(f"status={report['status']} target={report['target_id']} reason={report['reason']}")
+        return code
+
+    if args.command == "edge-activation-authorize":
+        packet, code = write_edge_activation_authorization(
+            args.runs_dir,
+            args.target_id,
+            args.rollback_restore_path,
+            args.post_action_readback,
+            args.human_ack,
+        )
+        if args.json:
+            print(json.dumps(packet, ensure_ascii=False))
+        else:
+            if code == 0:
+                print(f"status=authorized packet={packet['packet_path']} receipt={packet['receipt_path']}")
+            else:
+                print(f"status={packet['status']} reason={packet['reason']}")
+        return code
+
+    if args.command == "edge-runtime-activate":
+        receipt, code = edge_runtime_activate(args.preflight, args.activation_packet, args.runs_dir)
+        if args.json:
+            print(json.dumps(receipt, ensure_ascii=False))
+        else:
+            if code == 0:
+                print(f"status=activated receipt={receipt['receipt_path']} state={receipt['state_path']}")
+            else:
+                print(f"status={receipt['status']} reason={receipt['reason']}")
+        return code
+
+    if args.command == "edge-runtime-rollback":
+        rollback, code = edge_runtime_rollback(args.activation_receipt)
+        if args.json:
+            print(json.dumps(rollback, ensure_ascii=False))
+        else:
+            if code == 0:
+                print(f"status=rolled_back receipt={rollback['rollback_receipt_path']}")
+            else:
+                print(f"status={rollback['status']} reason={rollback['reason']}")
         return code
 
     if args.command == "run":
