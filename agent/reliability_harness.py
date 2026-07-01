@@ -292,6 +292,15 @@ class LifecycleContractRegistry:
                     authority_boundary="discovery only; does not create authority or execute activation",
                 ),
                 LifecycleCommandContract(
+                    "edge-activation-preflight",
+                    "Fail-closed preflight for a discovered execute=true packet before any real edge activation executor.",
+                    ["edge_runtime", "governance"],
+                    ["activation preflight report"],
+                    ["read-only", "validates exact target", "requires rollback/readback/receipt"],
+                    side_effect_level="local",
+                    authority_boundary="preflight only; no runtime activation is performed",
+                ),
+                LifecycleCommandContract(
                     "deploy-proposal",
                     "Produce a deployment/publish proposal and rollback plan without executing external deploy.",
                     ["delivery", "evaluation"],
@@ -1426,6 +1435,60 @@ def edge_authority_discover(scan_dirs: list[str | Path]) -> dict[str, Any]:
     }
 
 
+def edge_activation_preflight(discovery_path: str | Path, target_id: str) -> tuple[dict[str, Any], int]:
+    discovery, info = _load_json_artifact(discovery_path)
+    base = {
+        "schema": "hermes_edge_activation_preflight_v1",
+        "ts": _now(),
+        "runtime_effect": "read_only_preflight",
+        "target_id": target_id,
+        "execute": False,
+    }
+    if not discovery or discovery.get("schema") != "hermes_edge_authority_discovery_v1":
+        return {**base, "status": "blocked", "reason": "invalid_discovery", "discovery": info}, 1
+    if discovery.get("opening_ready") is not True:
+        return {
+            **base,
+            "status": "blocked",
+            "reason": "discovery_not_opening_ready",
+            "blockers": discovery.get("blockers", []),
+            "execute_true_packets": discovery.get("discovered", {}).get("execute_true_packets", []),
+        }, 1
+    discovered = discovery.get("discovered", {}) if isinstance(discovery.get("discovered"), dict) else {}
+    if target_id not in discovered.get("target_candidates", []):
+        return {**base, "status": "blocked", "reason": "target_not_discovered", "target_candidates": discovered.get("target_candidates", [])}, 1
+    for packet_path in discovered.get("execute_true_packets", []):
+        packet, packet_info = _load_json_artifact(packet_path)
+        if not isinstance(packet, dict):
+            continue
+        target = packet.get("target") if isinstance(packet.get("target"), dict) else {}
+        rollback = packet.get("rollback") if isinstance(packet.get("rollback"), dict) else {}
+        readback = packet.get("readback") if isinstance(packet.get("readback"), dict) else {}
+        if (
+            packet.get("schema") == "hermes_edge_activation_packet_v1"
+            and packet.get("execute") is True
+            and target.get("id") == target_id
+            and rollback.get("kill_switch_required") is True
+            and rollback.get("restore_path_required") is True
+            and readback.get("required") is True
+            and readback.get("post_action_status_required") is True
+            and isinstance(packet.get("receipt_path"), str)
+        ):
+            return {
+                **base,
+                "status": "pass",
+                "matched_execute_true_packet": str(packet_path),
+                "packet_schema": packet_info.get("schema"),
+                "next_step": "operator_may_run_separate_exact_executor_boundary",
+            }, 0
+    return {
+        **base,
+        "status": "blocked",
+        "reason": "no_execute_true_packet_with_required_rollback_readback_receipt",
+        "execute_true_packets": discovered.get("execute_true_packets", []),
+    }, 1
+
+
 def bundled_cases_dir() -> Path:
     """Return the packaged seed eval cases directory.
 
@@ -1521,6 +1584,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     edge_discover.add_argument("--scan-dir", action="append", required=True)
     edge_discover.add_argument("--json", action="store_true")
+
+    edge_preflight = sub.add_parser(
+        "edge-activation-preflight",
+        help="Fail-closed preflight for a discovered execute=true packet before real edge activation",
+    )
+    edge_preflight.add_argument("--discovery", required=True)
+    edge_preflight.add_argument("--target-id", required=True)
+    edge_preflight.add_argument("--json", action="store_true")
     return parser
 
 
@@ -1631,6 +1702,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"targets={','.join(report['discovered']['target_candidates'])}")
             print(f"blockers={','.join(report['blockers'])}")
         return 0
+
+    if args.command == "edge-activation-preflight":
+        report, code = edge_activation_preflight(args.discovery, args.target_id)
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False))
+        else:
+            if code == 0:
+                print(f"status={report['status']} target={report['target_id']} next={report['next_step']}")
+            else:
+                print(f"status={report['status']} target={report['target_id']} reason={report['reason']}")
+        return code
 
     if args.command == "run":
         harness = EvalHarness(cases_dir=_resolve_cases_dir(args.cases_dir), runs_dir=args.runs_dir, router_mode=args.router_mode)
