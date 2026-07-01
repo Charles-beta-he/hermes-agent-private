@@ -74,6 +74,36 @@ class LifecycleCommandContract:
         }
 
 
+@dataclass(frozen=True)
+class EdgeRuntimeProfileContract:
+    """Default-off local edge-worker profile inspired by low-footprint agents."""
+
+    id: str
+    responsibility: str
+    device_classes: list[str]
+    resource_budget: dict[str, str]
+    allowed_capabilities: list[str]
+    required_gates: list[str]
+    forbidden_by_default: list[str]
+    verifies: list[str]
+    side_effect_level: str = "local_write"
+    authority_boundary: str = "profile/readback only; no device control or external dispatch"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "responsibility": self.responsibility,
+            "device_classes": self.device_classes,
+            "resource_budget": self.resource_budget,
+            "allowed_capabilities": self.allowed_capabilities,
+            "required_gates": self.required_gates,
+            "forbidden_by_default": self.forbidden_by_default,
+            "verifies": self.verifies,
+            "side_effect_level": self.side_effect_level,
+            "authority_boundary": self.authority_boundary,
+        }
+
+
 class LifecycleContractRegistry:
     """Google agents-cli-inspired skill-pack + command lifecycle manifest.
 
@@ -82,9 +112,15 @@ class LifecycleContractRegistry:
     cloud deploy, taskpool mutation, memory write, or external dispatch.
     """
 
-    def __init__(self, skill_packs: list[SkillPackContract], commands: list[LifecycleCommandContract]):
+    def __init__(
+        self,
+        skill_packs: list[SkillPackContract],
+        commands: list[LifecycleCommandContract],
+        edge_runtime_profiles: list[EdgeRuntimeProfileContract] | None = None,
+    ):
         self.skill_packs = skill_packs
         self.commands = commands
+        self.edge_runtime_profiles = edge_runtime_profiles or []
 
     @classmethod
     def default(cls) -> "LifecycleContractRegistry":
@@ -113,6 +149,12 @@ class LifecycleContractRegistry:
                     "Package local artifacts and deployment proposals while keeping real publish/deploy gated.",
                     ["artifact manifest", "rollback plan", "deploy proposal"],
                     ["local receipt", "authority boundary readback"],
+                ),
+                SkillPackContract(
+                    "edge_runtime",
+                    "Model tiny/local agent execution as a constrained worker profile without enabling device actions.",
+                    ["device profile", "resource budget", "local executor contract", "kill switch"],
+                    ["profile readback", "benchmark receipt", "closed side-effect gates"],
                 ),
                 SkillPackContract(
                     "observability",
@@ -174,6 +216,24 @@ class LifecycleContractRegistry:
                     side_effect_level="local_write",
                 ),
                 LifecycleCommandContract(
+                    "edge-profile",
+                    "Emit a local edge-worker capability profile and keep execution/device gates closed.",
+                    ["edge_runtime", "governance"],
+                    ["edge profile manifest"],
+                    ["profile id", "resource budget", "no device control is enabled"],
+                    side_effect_level="local_write",
+                    authority_boundary="profile/readback only; execution requires a later exact target gate",
+                ),
+                LifecycleCommandContract(
+                    "edge-benchmark",
+                    "Run or record local-only footprint/boot/readback measurements for an edge-worker candidate.",
+                    ["edge_runtime", "evaluation"],
+                    ["benchmark receipt", "profile evidence"],
+                    ["memory_rss_mb", "boot_ms", "closed external/device gates"],
+                    side_effect_level="local_write",
+                    authority_boundary="local benchmark only; no hardware/device control without exact authorization",
+                ),
+                LifecycleCommandContract(
                     "deploy-proposal",
                     "Produce a deployment/publish proposal and rollback plan without executing external deploy.",
                     ["delivery", "evaluation"],
@@ -199,6 +259,42 @@ class LifecycleContractRegistry:
                     side_effect_level="local_write",
                 ),
             ],
+            edge_runtime_profiles=[
+                EdgeRuntimeProfileContract(
+                    id="local_edge_worker",
+                    responsibility=(
+                        "Represent PicoClaw-style tiny local automation as an owned Hermes worker contract "
+                        "that can be benchmarked before any real executor/device integration."
+                    ),
+                    device_classes=["local_mac", "linux_sbc", "android_termux", "kvm_or_camera_gateway"],
+                    resource_budget={
+                        "memory_rss_mb": "record_observed; target <= 64MB before edge promotion",
+                        "boot_ms": "record_observed; target <= 1000ms before edge promotion",
+                        "network": "offline/local by default",
+                    },
+                    allowed_capabilities=[
+                        "read-only profile readback",
+                        "local benchmark receipt",
+                        "fixture-based command simulation",
+                        "health/kill-switch dry run",
+                    ],
+                    required_gates=[
+                        "exact target device profile",
+                        "sandbox policy",
+                        "receipt/readback",
+                        "rollback or kill switch",
+                    ],
+                    forbidden_by_default=[
+                        "external dispatch",
+                        "credential entry",
+                        "device control",
+                        "MCP write authority",
+                        "publish/deploy/push",
+                        "destructive operation",
+                    ],
+                    verifies=["memory_rss_mb", "boot_ms", "profile_id", "closed_side_effect_gates"],
+                )
+            ],
         )
 
     def command(self, command_id: str) -> LifecycleCommandContract:
@@ -207,6 +303,12 @@ class LifecycleContractRegistry:
                 return command
         raise KeyError(command_id)
 
+    def edge_profile(self, profile_id: str) -> EdgeRuntimeProfileContract:
+        for profile in self.edge_runtime_profiles:
+            if profile.id == profile_id:
+                return profile
+        raise KeyError(profile_id)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "schema": "hermes_agent_lifecycle_contract_v1",
@@ -214,6 +316,7 @@ class LifecycleContractRegistry:
             "runtime_effect": "none; contract manifest only",
             "skill_packs": [pack.as_dict() for pack in self.skill_packs],
             "commands": [command.as_dict() for command in self.commands],
+            "edge_runtime_profiles": [profile.as_dict() for profile in self.edge_runtime_profiles],
         }
 
 
@@ -700,6 +803,7 @@ class EvalHarness:
                 "runtime_effect": lifecycle_contract["runtime_effect"],
                 "skill_pack_ids": [pack["id"] for pack in lifecycle_contract["skill_packs"]],
                 "command_ids": [command["id"] for command in lifecycle_contract["commands"]],
+                "edge_runtime_profile_ids": [profile["id"] for profile in lifecycle_contract["edge_runtime_profiles"]],
             },
             "sandbox": {"blocked_tools": sorted(self.sandbox_policy.blocked_tools)},
             "tool_events": tool_events or [],
@@ -849,6 +953,9 @@ def main(argv: list[str] | None = None) -> int:
             print("commands:")
             for command in payload["commands"]:
                 print(f"- {command['id']}: {command['responsibility']}")
+            print("edge_runtime_profiles:")
+            for profile in payload["edge_runtime_profiles"]:
+                print(f"- {profile['id']}: {profile['responsibility']}")
         return 0
 
     if args.command == "run":

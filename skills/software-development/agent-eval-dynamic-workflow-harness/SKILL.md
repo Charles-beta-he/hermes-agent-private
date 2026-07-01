@@ -152,7 +152,8 @@ Default-off/off-hot-path scaffold landed in Hermes Agent:
   python -m agent.reliability_harness capabilities --json
   python -m agent.reliability_harness run --cases-dir evals/cases --runs-dir /tmp/hermes-eval-smoke --case direct-basic-answer --response-text OK --json
   ```
-- `capabilities` prints the Google agents-cli-inspired local contract: skill-pack IDs plus lifecycle command IDs (`intake`, `scaffold`, `implement`, `eval-generate`, `eval-grade`, `deploy-proposal`, `observe`, `ratchet`). It is contract/readback only; it does not load skills, mutate taskpool/memory/cron, or deploy externally.
+- `capabilities` prints the Google agents-cli-inspired local contract: skill-pack IDs plus lifecycle command IDs (`intake`, `scaffold`, `implement`, `eval-generate`, `eval-grade`, `edge-profile`, `edge-benchmark`, `deploy-proposal`, `observe`, `ratchet`). It is contract/readback only; it does not load skills, mutate taskpool/memory/cron, or deploy externally.
+- `capabilities` also exposes the PicoClaw-inspired `local_edge_worker` edge-runtime profile. Treat it as a local/default-off profile and benchmark contract only: it may record device class, memory/boot budget, profile readback, fixture command simulation, and kill-switch dry run; it must not enable device control, MCP write authority, external dispatch, credential entry, publish/deploy/push, or destructive operations without a later exact authority gate.
 - Regression command:
   ```bash
   uv run --extra dev pytest tests/agent/test_reliability_harness.py tests/test_trajectory_compressor.py tests/test_trajectory_compressor_async.py -q

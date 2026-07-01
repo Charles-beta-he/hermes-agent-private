@@ -68,6 +68,7 @@ def test_lifecycle_contract_registry_models_skill_packs_and_commands():
         "implementation",
         "evaluation",
         "delivery",
+        "edge_runtime",
         "observability",
         "governance",
         "experience_ratchet",
@@ -78,10 +79,20 @@ def test_lifecycle_contract_registry_models_skill_packs_and_commands():
         "implement",
         "eval-generate",
         "eval-grade",
+        "edge-profile",
+        "edge-benchmark",
         "deploy-proposal",
         "observe",
         "ratchet",
     ]
+    assert [profile["id"] for profile in manifest["edge_runtime_profiles"]] == ["local_edge_worker"]
+    edge_profile = registry.edge_profile("local_edge_worker")
+    assert edge_profile.side_effect_level == "local_write"
+    assert "external dispatch" in edge_profile.forbidden_by_default
+    assert "memory_rss_mb" in edge_profile.verifies
+    edge_command = registry.command("edge-profile")
+    assert "edge_runtime" in edge_command.requires
+    assert "no device control is enabled" in edge_command.verifies
     deploy = registry.command("deploy-proposal")
     assert deploy.side_effect_level == "local_write"
     assert "external deploy/publish remains human-gated" in deploy.authority_boundary
@@ -218,6 +229,30 @@ def test_module_cli_dry_run_outputs_json(tmp_path):
     assert payload["case_id"] == "cli-pass"
     assert payload["passed"] is True
     assert Path(payload["report_path"]).exists()
+
+
+def test_eval_harness_trajectory_includes_edge_runtime_profile_ids(tmp_path):
+    cases_dir = tmp_path / "cases"
+    runs_dir = tmp_path / "runs"
+    cases_dir.mkdir()
+    _write_case(
+        cases_dir,
+        {
+            "id": "edge-trajectory-pass",
+            "input": "summarize local edge worker readiness",
+            "workflow": "direct",
+            "risk": "low",
+            "expected_artifacts": [],
+            "acceptance": {"contains": ["OK"]},
+            "graders": ["tool_code"],
+        },
+    )
+
+    harness = EvalHarness(cases_dir=cases_dir, runs_dir=runs_dir, db_path=tmp_path / "regression.sqlite")
+    result = harness.run_case("edge-trajectory-pass", response_text="OK")
+
+    trajectory = json.loads(result.trajectory_path.read_text(encoding="utf-8"))
+    assert trajectory["lifecycle_contract"]["edge_runtime_profile_ids"] == ["local_edge_worker"]
 
 
 def test_module_cli_capabilities_outputs_lifecycle_manifest():
