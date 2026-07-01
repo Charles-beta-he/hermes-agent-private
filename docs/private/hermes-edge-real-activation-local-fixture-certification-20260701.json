@@ -1,0 +1,94 @@
+{
+  "schema": "hermes_certification_packet_v1",
+  "id": "hermes-edge-real-activation-local-fixture-certification-20260701",
+  "status": "pending_independent_verifier_vote",
+  "subject": {
+    "repo": "/Users/charles/.hermes/hermes-agent",
+    "commit": "42b8d991b",
+    "title": "feat(eval): add edge runtime activation executor",
+    "scope": [
+      "agent/reliability_harness.py",
+      "tests/agent/test_reliability_harness.py",
+      "skills/software-development/agent-eval-dynamic-workflow-harness/SKILL.md",
+      "docs/private/hermes-edge-real-activation-local-fixture-20260701.md"
+    ]
+  },
+  "claims": [
+    {
+      "id": "C1-tests",
+      "claim": "Relevant reliability harness and trajectory compressor regression tests pass after the local runtime fixture activation slice.",
+      "evidence_refs": ["E1-pytest-regression"]
+    },
+    {
+      "id": "C2-live-activation-roundtrip",
+      "claim": "The live local runtime fixture path writes an execute=true packet, passes discovery/preflight, activates local-mac-fixture to active, then rolls it back to disabled.",
+      "evidence_refs": ["E2-live-roundtrip"]
+    },
+    {
+      "id": "C3-boundary-scope",
+      "claim": "The opened boundary is local runtime fixture state write only; physical device control, external dispatch, MCP write, publish/deploy/push, destructive operation, and credential entry remain closed.",
+      "evidence_refs": ["E2-live-roundtrip", "E3-commit-scope"]
+    }
+  ],
+  "objective_evidence": [
+    {
+      "id": "E1-pytest-regression",
+      "kind": "command_output",
+      "command": "./venv/bin/python -m pytest tests/agent/test_reliability_harness.py tests/agent/test_reliability_harness_distribution.py tests/test_trajectory_compressor.py tests/test_trajectory_compressor_async.py -q",
+      "result": "72 passed in 2.33s",
+      "supports": ["C1-tests"]
+    },
+    {
+      "id": "E2-live-roundtrip",
+      "kind": "command_output",
+      "command": "edge-activation-authorize -> edge-authority-discover -> edge-activation-preflight -> edge-runtime-activate -> edge-runtime-rollback in /tmp/hermes-edge-real-activation-postcommit-20260701",
+      "result": {
+        "opening_ready": true,
+        "preflight_status": "pass",
+        "activate_status_after": "active",
+        "activate_execute": true,
+        "activate_effect": "local_runtime_fixture_state_write",
+        "rollback_status_after": "disabled",
+        "closed_gates": {
+          "device_control": "closed",
+          "external_dispatch": "closed",
+          "mcp_write_authority": "closed",
+          "publish_deploy_push": "closed",
+          "destructive_operation": "closed",
+          "credential_entry": "closed"
+        }
+      },
+      "supports": ["C2-live-activation-roundtrip", "C3-boundary-scope"]
+    },
+    {
+      "id": "E3-commit-scope",
+      "kind": "git_readback",
+      "command": "git show --stat --oneline HEAD",
+      "result": "42b8d991b feat(eval): add edge runtime activation executor; 4 files changed, 612 insertions(+), 1 deletion(-)",
+      "supports": ["C3-boundary-scope"]
+    }
+  ],
+  "independent_verifier": {
+    "status": "requested",
+    "delegation_id": "deleg_37b00c49",
+    "vote": null,
+    "best_within_constraints": null,
+    "evidence_refs": []
+  },
+  "truth_gate": {
+    "objective_evidence_present": true,
+    "independent_verifier_vote_present": false,
+    "can_certify": false,
+    "reason": "waiting_for_independent_verifier_vote"
+  },
+  "boundary_state": {
+    "local_runtime_fixture_opened": true,
+    "local_runtime_fixture_rolled_back": true,
+    "physical_device_control_opened": false,
+    "external_dispatch_opened": false,
+    "mcp_write_authority_opened": false,
+    "publish_deploy_push_opened": false,
+    "destructive_operation_opened": false,
+    "credential_entry_opened": false
+  }
+}
