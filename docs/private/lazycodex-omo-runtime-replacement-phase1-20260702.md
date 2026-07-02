@@ -78,7 +78,7 @@ This slice was later landed into the main Hermes repo and enabled only for the l
 - Local ledger: `/Users/charles/.hermes/state/complex-task-harness/ledger.jsonl`
 - Live smoke recorded scan/checkpoint under `complex-scan-a8cbdc761677591e` with `allowed_to_mark_done=false` and `external_side_effects_enabled=false`.
 - Follow-up slice persisted `hermes_complex_task_verifier_packet_v1` packets into the local ledger and added `hermes complex-task-harness verifier` readback.
-- `runtime_mutation_authorized` was enabled only after explicit user authority; mark-done authority remains false.
+- `runtime_mutation_authorized` was enabled only after explicit user authority; scan readback now records `runtime_mutation_authorized=true` and `side_effect_ceiling=local_runtime_mutation_with_receipt`; mark-done authority remains false.
 
 Post-enable verification from main repo:
 
@@ -104,6 +104,9 @@ Follow-up local verification:
 ```bash
 /Users/charles/.hermes/hermes-agent/venv/bin/python -m pytest tests/agent/test_conductor_runtime.py::test_conversation_loop_persists_verifier_packet_when_complex_completion_claim_is_gated tests/hermes_cli/test_complex_task_harness.py -q
 # verifier-persistence focused tests passed
+
+/Users/charles/.hermes/hermes-agent/venv/bin/python -m pytest tests/agent/test_conductor_runtime.py tests/hermes_cli/test_complex_task_harness.py tests/agent/test_system_prompt.py tests/agent/test_system_prompt_restore.py -q
+# 57 passed, 3 warnings in 3.32s
 ```
 
 ## Boundary still closed

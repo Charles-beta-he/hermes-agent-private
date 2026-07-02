@@ -464,6 +464,9 @@ def _run_conductor_intent_router(agent: Any, user_message: str, *, active_tasks:
         harness_config = harness_config if isinstance(harness_config, dict) else {}
         if harness_config.get("enabled"):
             scan = IcebergComplexityScanner().scan(user_message or "", target_surface="hermes_conversation_loop")
+            if harness_config.get("runtime_mutation_authorized"):
+                scan["runtime_mutation_authorized"] = True
+                scan["side_effect_ceiling"] = "local_runtime_mutation_with_receipt"
             decision["iceberg_complexity_scan"] = scan
             if harness_config.get("ledger_enabled"):
                 from agent.conductor_runtime import ComplexTaskHarnessLedger

@@ -727,6 +727,29 @@ def test_conversation_loop_attaches_iceberg_scan_only_when_complex_harness_enabl
     assert enabled["iceberg_complexity_scan"]["runtime_mutation_authorized"] is False
 
 
+def test_conversation_loop_attaches_runtime_mutation_authority_when_explicitly_enabled():
+    from agent.conversation_loop import _run_conductor_intent_router
+
+    class AuthorizedHarnessAgent:
+        _conductor_config = {
+            "conductor": {
+                "intent_router": {"enabled": True},
+                "complex_task_harness": {"enabled": True, "runtime_mutation_authorized": True},
+            }
+        }
+        model = "test-model"
+
+    result = _run_conductor_intent_router(
+        AuthorizedHarnessAgent(),
+        user_message="继续学习 LazyCodex/OmO 并直接推进到 Hermes core/runtime 替换",
+    )
+
+    assert result is not None
+    assert result["iceberg_complexity_scan"]["classification"] == "complex"
+    assert result["iceberg_complexity_scan"]["runtime_mutation_authorized"] is True
+    assert result["iceberg_complexity_scan"]["side_effect_ceiling"] == "local_runtime_mutation_with_receipt"
+
+
 def test_conversation_loop_records_complex_harness_receipt_when_ledger_enabled(tmp_path):
     from agent.conversation_loop import _run_conductor_intent_router
 
