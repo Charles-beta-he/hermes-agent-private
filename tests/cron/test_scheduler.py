@@ -592,6 +592,44 @@ class TestDeliverResultWrapping:
         assert "Here is today's summary." in sent_content
         assert "To stop or manage this job" in sent_content
 
+    def test_delivery_failure_enqueues_pending_compensation(self, tmp_path, monkeypatch):
+        """If generation succeeds but Telegram send fails, preserve the payload for replay."""
+        from gateway.config import Platform
+        from cron import delivery_queue
+
+        queue_file = tmp_path / "cron" / "pending_deliveries.json"
+        receipts_file = tmp_path / "cron" / "delivery_receipts.jsonl"
+        monkeypatch.setattr(delivery_queue, "PENDING_DELIVERIES_FILE", queue_file)
+        monkeypatch.setattr(delivery_queue, "DELIVERY_RECEIPTS_FILE", receipts_file)
+
+        pconfig = MagicMock()
+        pconfig.enabled = True
+        mock_cfg = MagicMock()
+        mock_cfg.platforms = {Platform.TELEGRAM: pconfig}
+
+        with patch("gateway.config.load_gateway_config", return_value=mock_cfg), \
+             patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}), \
+             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": False, "error": "Timed out"})):
+            result = _deliver_result(
+                {
+                    "id": "delivery-fail-job",
+                    "name": "daily-report",
+                    "deliver": "origin",
+                    "origin": {"platform": "telegram", "chat_id": "123"},
+                    "_cron_output_file": "/tmp/report.md",
+                },
+                "Report body",
+            )
+
+        assert result is not None and "Timed out" in result
+        items = delivery_queue.list_pending_deliveries()
+        assert len(items) == 1
+        assert items[0]["job_id"] == "delivery-fail-job"
+        assert items[0]["target"]["platform"] == "telegram"
+        assert items[0]["target"]["chat_id"] == "123"
+        assert items[0]["content"] == "Report body"
+        assert items[0]["output_file"] == "/tmp/report.md"
+
     def test_delivery_uses_job_id_when_no_name(self):
         """When a job has no name, the wrapper should fall back to job id."""
         from gateway.config import Platform

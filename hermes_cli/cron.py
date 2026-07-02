@@ -170,6 +170,37 @@ def cron_tick():
     tick(verbose=True)
 
 
+def cron_delivery_queue(args) -> int:
+    """Inspect or drain pending cron delivery compensation queue."""
+    from cron.delivery_queue import drain_pending_deliveries, list_pending_deliveries
+
+    action = getattr(args, "delivery_queue_action", "list")
+    if action == "list":
+        items = list_pending_deliveries()
+        if not items:
+            print(color("No pending cron deliveries.", Colors.GREEN))
+            return 0
+        print(color(f"Pending cron deliveries: {len(items)}", Colors.YELLOW))
+        for item in items:
+            target = item.get("target") or {}
+            print(f"  {item.get('id')} job={item.get('job_id')} target={target.get('platform')}:{target.get('chat_id')} attempts={item.get('attempts', 0)}")
+            if item.get("last_error"):
+                print(f"    last_error: {item['last_error']}")
+        return 0
+    if action == "drain":
+        receipts = drain_pending_deliveries(limit=getattr(args, "limit", 5), max_attempts=getattr(args, "max_attempts", 10))
+        if not receipts:
+            print(color("No pending cron deliveries attempted.", Colors.DIM))
+            return 0
+        for r in receipts:
+            status = r.get("status")
+            line = f"{status}: {r.get('pending_delivery_id')} -> message_id={r.get('message_id') or '-'}"
+            print(color(line, Colors.GREEN if status == "sent_verified" else Colors.YELLOW))
+        return 0
+    print(f"Unknown cron delivery-queue action: {action}")
+    return 1
+
+
 def cron_status():
     """Show cron execution status."""
     from cron.jobs import list_jobs
@@ -400,6 +431,9 @@ def cron_command(args):
     if subcmd == "tick":
         cron_tick()
         return 0
+
+    if subcmd == "delivery-queue":
+        return cron_delivery_queue(args)
 
     if subcmd in {"create", "add"}:
         return cron_create(args)

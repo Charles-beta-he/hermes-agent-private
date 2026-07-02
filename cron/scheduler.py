@@ -1590,6 +1590,23 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 )
 
         if not delivered:
+            def _queue_failed_delivery(error_text: str) -> None:
+                try:
+                    from cron.delivery_queue import enqueue_pending_delivery
+
+                    enqueue_pending_delivery(
+                        job=job,
+                        target={"platform": platform_name, "chat_id": chat_id, "thread_id": thread_id},
+                        content=cleaned_delivery_content,
+                        error=error_text,
+                        output_file=job.get("_cron_output_file"),
+                    )
+                except Exception as qe:  # noqa: BLE001 - compensation must not mask the original delivery error
+                    logger.warning(
+                        "Job '%s': failed to queue pending delivery for %s:%s: %s",
+                        job.get("id", "?"), platform_name, chat_id, qe,
+                    )
+
             # Standalone path: run the async send in a fresh event loop (safe from any thread)
             coro = _send_to_platform(platform, pconfig, chat_id, cleaned_delivery_content, thread_id=thread_id, media_files=media_files)
             try:
@@ -1608,6 +1625,7 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 logger.error("Job '%s': %s", job["id"], msg)
                 target_errors.extend([msg])
                 delivery_errors.extend(target_errors)
+                _queue_failed_delivery("; ".join(target_errors))
                 continue
 
             if result and result.get("error"):
@@ -1615,6 +1633,7 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 logger.error("Job '%s': %s", job["id"], msg)
                 target_errors.extend([msg])
                 delivery_errors.extend(target_errors)
+                _queue_failed_delivery("; ".join(target_errors))
                 continue
 
             logger.info("Job '%s': delivered to %s:%s", job["id"], platform_name, chat_id)
@@ -2919,7 +2938,9 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
         delivery_error = None
         if should_deliver:
             try:
-                delivery_error = _deliver_result(job, deliver_content, adapters=adapters, loop=loop)
+                delivery_job = dict(job)
+                delivery_job["_cron_output_file"] = str(output_file)
+                delivery_error = _deliver_result(delivery_job, deliver_content, adapters=adapters, loop=loop)
             except Exception as de:
                 delivery_error = str(de)
                 logger.error("Delivery failed for job %s: %s", job["id"], de)
@@ -2995,6 +3016,33 @@ def _notify_provider_jobs_changed() -> None:
         logger.debug("on_jobs_changed notify failed: %s", e)
 
 
+def _drain_pending_delivery_queue_once() -> int:
+    """Best-effort cron delivery compensation sweep.
+
+    Runs inside the scheduler tick so a later healthy network automatically
+    replays payloads that were queued after generation succeeded but platform
+    delivery failed.  Never raises: fresh due jobs must not be blocked by queue
+    maintenance.
+    """
+    raw_enabled = os.getenv("HERMES_CRON_DELIVERY_QUEUE_DRAIN", "1").strip().lower()
+    if raw_enabled in {"0", "false", "off", "no", "disabled"}:
+        return 0
+    try:
+        limit = int(os.getenv("HERMES_CRON_DELIVERY_QUEUE_DRAIN_LIMIT", "3") or "3")
+    except ValueError:
+        limit = 3
+    try:
+        from cron.delivery_queue import drain_pending_deliveries
+
+        receipts = drain_pending_deliveries(limit=max(1, min(limit, 20)))
+        if receipts:
+            logger.info("Cron delivery compensation attempted %d pending item(s)", len(receipts))
+        return len(receipts)
+    except Exception as exc:  # noqa: BLE001 - compensation must be fail-soft
+        logger.debug("Cron delivery compensation sweep failed: %s", exc)
+        return 0
+
+
 def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> int:
     """
     Check and run all due jobs.
@@ -3028,6 +3076,7 @@ def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> i
         return 0
 
     try:
+        _drain_pending_delivery_queue_once()
         due_jobs = get_due_jobs()
 
         if verbose and not due_jobs:

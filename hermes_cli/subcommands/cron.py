@@ -156,6 +156,23 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
     # cron status
     cron_subparsers.add_parser("status", help="Check if cron scheduler is running")
 
+    # cron delivery compensation queue
+    cron_delivery_queue = cron_subparsers.add_parser(
+        "delivery-queue",
+        help="Inspect or drain pending cron delivery compensation records",
+    )
+    delivery_queue_subparsers = cron_delivery_queue.add_subparsers(
+        dest="delivery_queue_action",
+        required=False,
+    )
+    delivery_queue_subparsers.add_parser("list", help="List pending cron deliveries")
+    delivery_queue_drain = delivery_queue_subparsers.add_parser(
+        "drain",
+        help="Attempt pending cron deliveries once and record receipts",
+    )
+    delivery_queue_drain.add_argument("--limit", type=int, default=5, help="Maximum pending deliveries to attempt")
+    delivery_queue_drain.add_argument("--max-attempts", type=int, default=10, help="Do not attempt items at or above this attempt count")
+
     # cron tick (mostly for debugging)
     cron_tick = cron_subparsers.add_parser("tick", help="Run due jobs once and exit")
     add_accept_hooks_flag(cron_tick)

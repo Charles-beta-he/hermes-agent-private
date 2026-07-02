@@ -1324,6 +1324,14 @@ def _telegram_delivery_batch_limit() -> int:
         return 5
 
 
+def _telegram_delivery_max_attempts() -> int:
+    raw = os.environ.get("HERMES_SELFCHECK_TELEGRAM_MAX_ATTEMPTS", "5").strip()
+    try:
+        return max(1, min(int(raw), 20))
+    except ValueError:
+        return 5
+
+
 def _load_outbox_by_id(root: Path, outbox_id: str) -> dict[str, Any] | None:
     for rec in reversed(_read_jsonl_tail(root / "notification_outbox.jsonl", limit=2000)):
         if str(rec.get("id")) == outbox_id:
@@ -1347,14 +1355,21 @@ def run_telegram_delivery_tick(*, sender: Any | None = None) -> list[dict[str, A
         raise ValueError("Telegram target must be an explicit telegram: allowlist reference")
     ts = _now()
     receipts = _read_jsonl_tail(root / "delivery_receipts.jsonl", limit=2000)
-    # Treat every recorded receipt as terminal for the automatic sender.  A
-    # failed platform send should not be retried every cron tick forever; any
-    # replay must be a fresh governed action with new evidence/authorization.
-    processed_dry_ids = {
+    # Successful receipts are terminal. Failed sends are retryable up to a small
+    # bounded attempt cap so post-outage recovery can compensate after Telegram
+    # comes back without hammering a broken channel forever.
+    sent_dry_ids = {
         str(r.get("delivery_dry_run_id"))
         for r in receipts
-        if r.get("status") in {"sent_verified", "send_failed"}
+        if r.get("status") == "sent_verified"
     }
+    failed_attempts_by_dry_id: dict[str, int] = {}
+    for r in receipts:
+        if r.get("status") == "send_failed":
+            dry_id = str(r.get("delivery_dry_run_id") or "")
+            if dry_id:
+                failed_attempts_by_dry_id[dry_id] = failed_attempts_by_dry_id.get(dry_id, 0) + 1
+    max_attempts = _telegram_delivery_max_attempts()
     batch_limit = _telegram_delivery_batch_limit()
     dry_runs = _read_jsonl_tail(root / "delivery_dry_runs.jsonl", limit=2000)
     emitted: list[dict[str, Any]] = []
@@ -1365,7 +1380,9 @@ def run_telegram_delivery_tick(*, sender: Any | None = None) -> list[dict[str, A
             if len(emitted) >= batch_limit:
                 break
             dry_id = str(dry.get("id") or "")
-            if not dry_id or dry_id in processed_dry_ids:
+            if not dry_id or dry_id in sent_dry_ids:
+                continue
+            if failed_attempts_by_dry_id.get(dry_id, 0) >= max_attempts:
                 continue
             if dry.get("status") != "telegram_delivery_dry_run_verified":
                 continue
@@ -1384,9 +1401,10 @@ def run_telegram_delivery_tick(*, sender: Any | None = None) -> list[dict[str, A
             except Exception:
                 result = {"error": "unparseable sender result"}
             success = bool(result.get("success")) and not result.get("error")
+            attempt_no = failed_attempts_by_dry_id.get(dry_id, 0) + 1
             receipt = {
                 "schema_version": _SCHEMA_VERSION,
-                "id": "delivery-receipt-" + hashlib.sha256(json.dumps({"dry_run_id": dry_id, "target": target}, sort_keys=True).encode("utf-8")).hexdigest()[:16],
+                "id": "delivery-receipt-" + hashlib.sha256(json.dumps({"dry_run_id": dry_id, "target": target, "attempt": attempt_no}, sort_keys=True).encode("utf-8")).hexdigest()[:16],
                 "delivery_dry_run_id": dry_id,
                 "delivery_authorization_id": dry.get("delivery_authorization_id"),
                 "outbox_id": dry.get("outbox_id"),

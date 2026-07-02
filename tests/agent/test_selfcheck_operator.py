@@ -483,27 +483,52 @@ def test_repeated_fingerprint_wakeup_ignores_sentinel_debounce_bookkeeping(tmp_p
     assert not [w for w in wakeups if w.get("kind") == "repeated_fingerprint"]
 
 
-def test_telegram_delivery_tick_does_not_auto_retry_failed_receipt(tmp_path, monkeypatch):
+def test_telegram_delivery_tick_retries_failed_receipt_until_success(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_TARGET", "telegram:he cheng")
     monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_LIVE_SEND", "1")
-    observe_gateway_delivery(platform="telegram", success=False, error="send failed")
+    monkeypatch.setenv("HERMES_SELFCHECK_TELEGRAM_MAX_ATTEMPTS", "3")
+    root = tmp_path / "state" / "selfcheck"
+    root.mkdir(parents=True)
+    with (root / "notification_outbox.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "id": "outbox-1",
+            "channel": "telegram",
+            "target_id": "telegram:he cheng",
+            "source_alert_id": "wakeup-1",
+            "payload_hash": "payload-1",
+            "payload_summary": "gateway send failed",
+        }) + "\n")
+    with (root / "delivery_dry_runs.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "id": "delivery-dry-run-1",
+            "status": "telegram_delivery_dry_run_verified",
+            "channel": "telegram",
+            "target_id": "telegram:he cheng",
+            "outbox_id": "outbox-1",
+            "payload_hash": "payload-1",
+            "delivery_authorization_id": "delivery-auth-1",
+        }) + "\n")
 
     calls = []
 
-    def failing_sender(payload):
+    def flaky_sender(payload):
         calls.append(payload)
-        return '{"success": false, "error": "rate limited"}'
+        if len(calls) == 1:
+            return '{"success": false, "error": "rate limited"}'
+        return '{"success": true, "message_id": 42}'
 
-    first = run_telegram_delivery_tick(sender=failing_sender)
-    second = run_telegram_delivery_tick(sender=failing_sender)
+    first = run_telegram_delivery_tick(sender=flaky_sender)
+    second = run_telegram_delivery_tick(sender=flaky_sender)
+    third = run_telegram_delivery_tick(sender=flaky_sender)
 
-    assert first
-    assert not second
-    assert len(calls) == len(first)
+    assert first[0]["status"] == "send_failed"
+    assert second[0]["status"] == "sent_verified"
+    assert third == []
+    assert len(calls) == len(first) + len(second)
     receipts = _jsonl(tmp_path / "state" / "selfcheck" / "delivery_receipts.jsonl")
-    assert receipts[0]["status"] == "send_failed"
-    assert receipts[0]["external_send_executed"] is False
+    assert [r["status"] for r in receipts] == ["send_failed", "sent_verified"]
+    assert receipts[-1]["external_send_executed"] is True
 
 
 def test_telegram_delivery_tick_respects_batch_limit(tmp_path, monkeypatch):

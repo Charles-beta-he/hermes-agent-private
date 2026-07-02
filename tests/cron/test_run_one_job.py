@@ -54,6 +54,20 @@ def test_tick_process_job_sequence(monkeypatch):
     assert calls[-1] == ("mark", "j1", True)
 
 
+def test_tick_drains_pending_delivery_queue_before_due_jobs(monkeypatch):
+    """A scheduler tick should sweep the delivery compensation queue even when
+    normal jobs are due, so post-outage recovery does not wait for manual CLI
+    intervention."""
+    calls = _patch_pipeline(monkeypatch)
+    monkeypatch.setattr(s, "get_due_jobs", lambda: [{"id": "j1", "name": "t"}])
+    monkeypatch.setattr(s, "advance_next_run", lambda jid: True)
+    monkeypatch.setattr(s, "_drain_pending_delivery_queue_once", lambda: calls.append(("drain",)) or 1)
+
+    s.tick(verbose=False, sync=True)
+
+    assert [c[0] for c in calls] == ["drain", "run_job", "save", "deliver", "mark"]
+
+
 def test_run_one_job_success_sequence(monkeypatch):
     """The extracted helper runs the same execute→save→deliver→mark sequence
     for a successful job."""
