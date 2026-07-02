@@ -343,6 +343,62 @@ class ComplexTaskHarnessLedger:
         }
         return self._append(event)
 
+    def append_taskpool_lifecycle_adapter(
+        self,
+        scan_id: str,
+        adapter: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        payload = {"scan_id": scan_id, "adapter": adapter}
+        if self._has_authority_smuggling(payload):
+            return {
+                "schema": "hermes_complex_task_harness_receipt_v1",
+                "event_type": "taskpool_lifecycle_adapter",
+                "scan_id": scan_id,
+                "status": "rejected",
+                "reason": "authority_smuggling_detected",
+                "external_side_effects_enabled": False,
+                "allowed_to_mark_done": False,
+            }
+        event = {
+            "schema": "hermes_complex_task_harness_receipt_v1",
+            "event_type": "taskpool_lifecycle_adapter",
+            "scan_id": scan_id,
+            "status": "recorded",
+            "created_at": _now(),
+            "adapter": adapter,
+            "external_side_effects_enabled": False,
+            "allowed_to_mark_done": bool(adapter.get("execute_requested") and adapter.get("to_status") == "done"),
+        }
+        return self._append(event)
+
+    def append_external_dispatch_adapter(
+        self,
+        scan_id: str,
+        adapter: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        payload = {"scan_id": scan_id, "adapter": adapter}
+        if self._has_authority_smuggling(payload):
+            return {
+                "schema": "hermes_complex_task_harness_receipt_v1",
+                "event_type": "external_dispatch_adapter",
+                "scan_id": scan_id,
+                "status": "rejected",
+                "reason": "authority_smuggling_detected",
+                "external_side_effects_enabled": False,
+                "allowed_to_mark_done": False,
+            }
+        event = {
+            "schema": "hermes_complex_task_harness_receipt_v1",
+            "event_type": "external_dispatch_adapter",
+            "scan_id": scan_id,
+            "status": "recorded",
+            "created_at": _now(),
+            "adapter": adapter,
+            "external_side_effects_enabled": bool(adapter.get("send_executed")),
+            "allowed_to_mark_done": False,
+        }
+        return self._append(event)
+
     def read_events(self, *, scan_id: str = "") -> List[Dict[str, Any]]:
         if not self.path.exists():
             return []

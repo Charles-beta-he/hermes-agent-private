@@ -79,6 +79,7 @@ This slice was later landed into the main Hermes repo and enabled only for the l
 - Live smoke recorded scan/checkpoint under `complex-scan-a8cbdc761677591e` with `allowed_to_mark_done=false` and `external_side_effects_enabled=false`.
 - Follow-up slice persisted `hermes_complex_task_verifier_packet_v1` packets into the local ledger and added `hermes complex-task-harness verifier` readback.
 - `runtime_mutation_authorized` was enabled only after explicit user authority; scan readback now records `runtime_mutation_authorized=true` and `side_effect_ceiling=local_runtime_mutation_with_receipt`; mark-done authority remains false.
+- Follow-up adapter slice added `hermes complex-task-harness taskpool-lifecycle` and `external-dispatch` exact adapter commands. The taskpool adapter requires scan/task/status/evidence/readback and defaults to receipt-only unless `--execute` runs the fixed brain transition command. The external adapter requires platform/target/payload digest/readback, stores only digest/preview, rejects hash drift/secrets, and only executes the `local_harness` boundary without real platform send.
 
 Post-enable verification from main repo:
 
@@ -107,6 +108,19 @@ Follow-up local verification:
 
 /Users/charles/.hermes/hermes-agent/venv/bin/python -m pytest tests/agent/test_conductor_runtime.py tests/hermes_cli/test_complex_task_harness.py tests/agent/test_system_prompt.py tests/agent/test_system_prompt_restore.py -q
 # 57 passed, 3 warnings in 3.32s
+
+/Users/charles/.hermes/hermes-agent/venv/bin/python -m pytest tests/hermes_cli/test_complex_task_harness.py -q
+# exact adapter tests passed for taskpool lifecycle receipt, evidence rejection, external digest-bound outbox, hash mismatch rejection
+```
+
+Adapter smoke readback:
+
+```bash
+hermes complex-task-harness taskpool-lifecycle --scan-id complex-scan-eda306bda874af10 --task-id taskpool-adapter-smoke-no-write --from-status review --to-status done --evidence-ref proof:complex-task-harness-adapter-smoke --reason 'exact taskpool lifecycle adapter smoke without canonical transition' --readback-ref 'command:hermes complex-task-harness status --json' --json
+# recorded event_type=taskpool_lifecycle_adapter, execute_requested=false, allowed_to_mark_done=false
+
+hermes complex-task-harness external-dispatch --scan-id complex-scan-eda306bda874af10 --platform local_harness --target local://complex-task-harness/smoke --payload 'local harness smoke' --payload-sha256 sha256:8e56844b774193e7440332a547518d2592f692988e806cbfdc092be1c4be22a9 --readback-ref 'command:hermes complex-task-harness status --json' --execute --json
+# recorded event_type=external_dispatch_adapter, send_executed=true, platform_message_id=local-harness-dispatch-8e56844b774193e7, allowed_to_mark_done=false
 ```
 
 ## Boundary still closed
@@ -123,8 +137,6 @@ Follow-up local verification:
 
 ## Remaining slices
 
-1. Add an exact taskpool lifecycle adapter that consumes only named complex-task harness receipts and writes only to the canonical taskpool with proof/readback.
-2. Add an exact external-dispatch adapter with allowlisted platform/target/payload and post-send readback; do not infer broad fan-out.
-3. Add a runtime mutation executor contract that names allowed local mutation classes, rollback, and receipt schema; keep destructive/credential/payment closed.
-4. Push/PR current scoped commits to `origin/private/main` after final verification.
-5. No `allowed_to_mark_done=true` until independent verifier evidence and taskpool proof gate agree on a specific task/scan id.
+1. For a real taskpool lifecycle write, provide/use a specific canonical task id whose current status matches `--from-status`; then run `taskpool-lifecycle --execute` and read back `brain_task_orchestrator.py list --include-done --json`.
+2. For a real platform external dispatch, add a platform-specific sender boundary that consumes an existing `external_dispatch_adapter` receipt and requires exact channel/target/token-source reference/post-send readback; current generic adapter intentionally blocks real non-`local_harness` sends.
+3. No `allowed_to_mark_done=true` until independent verifier evidence and taskpool proof gate agree on a specific task/scan id.

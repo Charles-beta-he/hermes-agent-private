@@ -9,7 +9,14 @@ import argparse
 import json
 from typing import Any
 
-from hermes_cli.complex_task_harness import checkpoint, config_status, status, verifier_packets
+from hermes_cli.complex_task_harness import (
+    checkpoint,
+    config_status,
+    external_dispatch,
+    status,
+    taskpool_lifecycle,
+    verifier_packets,
+)
 
 
 def _emit(payload: dict[str, Any], *, as_json: bool) -> int:
@@ -55,6 +62,35 @@ def cmd_complex_task_harness(args: argparse.Namespace) -> int:
                 ledger_path=ledger_path,
                 scan_id=getattr(args, "scan_id", "") or "",
                 limit=getattr(args, "limit", 20),
+            ),
+            as_json=as_json,
+        )
+    if action == "taskpool-lifecycle":
+        return _emit(
+            taskpool_lifecycle(
+                scan_id=getattr(args, "scan_id", ""),
+                task_id=getattr(args, "task_id", ""),
+                from_status=getattr(args, "from_status", ""),
+                to_status=getattr(args, "to_status", ""),
+                evidence_ref=getattr(args, "evidence_ref", ""),
+                reason=getattr(args, "reason", ""),
+                readback_ref=getattr(args, "readback_ref", ""),
+                execute=bool(getattr(args, "execute", False)),
+                ledger_path=ledger_path,
+            ),
+            as_json=as_json,
+        )
+    if action == "external-dispatch":
+        return _emit(
+            external_dispatch(
+                scan_id=getattr(args, "scan_id", ""),
+                platform=getattr(args, "platform", ""),
+                target=getattr(args, "target", ""),
+                payload=getattr(args, "payload", ""),
+                payload_sha256=getattr(args, "payload_sha256", ""),
+                readback_ref=getattr(args, "readback_ref", ""),
+                execute=bool(getattr(args, "execute", False)),
+                ledger_path=ledger_path,
             ),
             as_json=as_json,
         )
@@ -106,3 +142,28 @@ def build_complex_task_harness_parser(subparsers) -> None:
     p_checkpoint.add_argument("--rollback", default="", help="Rollback / escape hatch text")
     p_checkpoint.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_checkpoint.set_defaults(func=cmd_complex_task_harness)
+
+    p_taskpool = subs.add_parser("taskpool-lifecycle", help="Record or execute one exact taskpool lifecycle adapter intent")
+    p_taskpool.add_argument("--ledger", default=None, help="Ledger JSONL path")
+    p_taskpool.add_argument("--scan-id", required=True, help="Existing complex scan id")
+    p_taskpool.add_argument("--task-id", required=True, help="Exact canonical task id")
+    p_taskpool.add_argument("--from-status", required=True, help="Expected current status")
+    p_taskpool.add_argument("--to-status", required=True, help="Exact target status")
+    p_taskpool.add_argument("--evidence-ref", required=True, help="Evidence ref with proof:/artifact:/command:/file:/url: prefix")
+    p_taskpool.add_argument("--reason", required=True, help="Lifecycle transition reason")
+    p_taskpool.add_argument("--readback-ref", required=True, help="Readback evidence ref")
+    p_taskpool.add_argument("--execute", action="store_true", help="Run the fixed brain_task_orchestrator.py transition command")
+    p_taskpool.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_taskpool.set_defaults(func=cmd_complex_task_harness)
+
+    p_external = subs.add_parser("external-dispatch", help="Record or execute one exact external-dispatch adapter intent")
+    p_external.add_argument("--ledger", default=None, help="Ledger JSONL path")
+    p_external.add_argument("--scan-id", required=True, help="Existing complex scan id")
+    p_external.add_argument("--platform", required=True, help="Allowlisted platform, e.g. local_harness")
+    p_external.add_argument("--target", required=True, help="Exact platform target")
+    p_external.add_argument("--payload", required=True, help="Payload body; not persisted, only hashed")
+    p_external.add_argument("--payload-sha256", required=True, help="sha256:<hex> digest of payload")
+    p_external.add_argument("--readback-ref", required=True, help="Readback evidence ref")
+    p_external.add_argument("--execute", action="store_true", help="Execute only the local_harness sender boundary")
+    p_external.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_external.set_defaults(func=cmd_complex_task_harness)

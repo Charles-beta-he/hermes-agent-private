@@ -4,7 +4,14 @@ import json
 from pathlib import Path
 
 from agent.conductor_runtime import ComplexTaskHarnessLedger, IcebergComplexityScanner
-from hermes_cli.complex_task_harness import checkpoint, config_status, status, verifier_packets
+from hermes_cli.complex_task_harness import (
+    checkpoint,
+    config_status,
+    external_dispatch,
+    status,
+    taskpool_lifecycle,
+    verifier_packets,
+)
 
 
 def test_complex_task_harness_config_status_reports_default_closed() -> None:
@@ -134,3 +141,98 @@ def test_complex_task_harness_checkpoint_appends_resume_packet(tmp_path: Path) -
     assert payload["receipt"]["event_type"] == "checkpoint"
     assert payload["receipt"]["allowed_to_mark_done"] is False
     assert events[-1]["checkpoint"]["objective"] == "continue LazyCodex runtime replacement"
+
+
+def test_complex_task_harness_taskpool_lifecycle_requires_exact_fields_and_records_receipt(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "ledger.jsonl"
+    receipt = ComplexTaskHarnessLedger(ledger_path).record_scan(
+        scan={"schema": "hermes_iceberg_complexity_scan_v1", "classification": "complex"},
+        user_message="continue exact taskpool adapter",
+        origin="unit-test",
+    )
+
+    payload = taskpool_lifecycle(
+        scan_id=receipt["scan_id"],
+        task_id="task-123",
+        from_status="review",
+        to_status="done",
+        evidence_ref="proof:pytest:57-passed",
+        reason="exact adapter smoke",
+        readback_ref="command:brain_task_orchestrator.py list --include-done --json",
+        execute=False,
+        ledger_path=ledger_path,
+    )
+
+    assert payload["ok"] is True
+    assert payload["mode"] == "taskpool_lifecycle_adapter_receipt_only"
+    assert payload["receipt"]["event_type"] == "taskpool_lifecycle_adapter"
+    assert payload["receipt"]["adapter"]["task_id"] == "task-123"
+    assert payload["receipt"]["adapter"]["from_status"] == "review"
+    assert payload["receipt"]["adapter"]["to_status"] == "done"
+    assert payload["receipt"]["adapter"]["execute_requested"] is False
+    assert payload["receipt"]["allowed_to_mark_done"] is False
+
+
+def test_complex_task_harness_taskpool_lifecycle_rejects_missing_evidence_prefix(tmp_path: Path) -> None:
+    payload = taskpool_lifecycle(
+        scan_id="complex-scan-test",
+        task_id="task-123",
+        from_status="review",
+        to_status="done",
+        evidence_ref="pytest passed",
+        reason="bad evidence",
+        readback_ref="command:readback",
+        execute=False,
+        ledger_path=tmp_path / "ledger.jsonl",
+    )
+
+    assert payload["ok"] is False
+    assert payload["receipt"]["status"] == "rejected"
+    assert payload["receipt"]["reason"] == "invalid_evidence_ref"
+
+
+def test_complex_task_harness_external_dispatch_records_digest_bound_outbox(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "ledger.jsonl"
+    receipt = ComplexTaskHarnessLedger(ledger_path).record_scan(
+        scan={"schema": "hermes_iceberg_complexity_scan_v1", "classification": "complex"},
+        user_message="continue exact external dispatch adapter",
+        origin="unit-test",
+    )
+    payload_text = "local harness smoke"
+
+    payload = external_dispatch(
+        scan_id=receipt["scan_id"],
+        platform="local_harness",
+        target="local://complex-task-harness/smoke",
+        payload=payload_text,
+        payload_sha256="sha256:8e56844b774193e7440332a547518d2592f692988e806cbfdc092be1c4be22a9",
+        readback_ref="command:hermes complex-task-harness status --json",
+        execute=False,
+        ledger_path=ledger_path,
+    )
+
+    assert payload["ok"] is True
+    assert payload["mode"] == "external_dispatch_adapter_outbox_only"
+    assert payload["receipt"]["event_type"] == "external_dispatch_adapter"
+    assert payload["receipt"]["adapter"]["platform"] == "local_harness"
+    assert payload["receipt"]["adapter"]["target"] == "local://complex-task-harness/smoke"
+    assert payload["receipt"]["adapter"]["payload_sha256"] == "sha256:8e56844b774193e7440332a547518d2592f692988e806cbfdc092be1c4be22a9"
+    assert payload["receipt"]["adapter"]["payload_stored"] is False
+    assert payload["receipt"]["adapter"]["send_executed"] is False
+
+
+def test_complex_task_harness_external_dispatch_rejects_payload_hash_mismatch(tmp_path: Path) -> None:
+    payload = external_dispatch(
+        scan_id="complex-scan-test",
+        platform="local_harness",
+        target="local://complex-task-harness/smoke",
+        payload="local harness smoke",
+        payload_sha256="sha256:not-the-real-hash",
+        readback_ref="command:readback",
+        execute=False,
+        ledger_path=tmp_path / "ledger.jsonl",
+    )
+
+    assert payload["ok"] is False
+    assert payload["receipt"]["status"] == "rejected"
+    assert payload["receipt"]["reason"] == "payload_hash_mismatch"
