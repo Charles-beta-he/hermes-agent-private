@@ -312,6 +312,37 @@ class ComplexTaskHarnessLedger:
         }
         return self._append(event)
 
+    def append_verifier_packet(
+        self,
+        scan_id: str,
+        verifier_packet: Dict[str, Any],
+        *,
+        origin: str = "",
+    ) -> Dict[str, Any]:
+        payload = {"scan_id": scan_id, "verifier_packet": verifier_packet, "origin": origin}
+        if self._has_authority_smuggling(payload):
+            return {
+                "schema": "hermes_complex_task_harness_receipt_v1",
+                "event_type": "verifier_packet",
+                "scan_id": scan_id,
+                "status": "rejected",
+                "reason": "authority_smuggling_detected",
+                "external_side_effects_enabled": False,
+                "allowed_to_mark_done": False,
+            }
+        event = {
+            "schema": "hermes_complex_task_harness_receipt_v1",
+            "event_type": "verifier_packet",
+            "scan_id": scan_id,
+            "status": "recorded",
+            "created_at": _now(),
+            "origin": origin,
+            "verifier_packet": verifier_packet,
+            "external_side_effects_enabled": False,
+            "allowed_to_mark_done": False,
+        }
+        return self._append(event)
+
     def read_events(self, *, scan_id: str = "") -> List[Dict[str, Any]]:
         if not self.path.exists():
             return []

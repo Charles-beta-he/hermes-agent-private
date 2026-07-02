@@ -82,6 +82,29 @@ def status(*, ledger_path: str | Path | None = None, scan_id: str = "", limit: i
     }
 
 
+def verifier_packets(*, ledger_path: str | Path | None = None, scan_id: str = "", limit: int = 20) -> dict[str, Any]:
+    ledger = _ledger(ledger_path)
+    events = [event for event in ledger.read_events(scan_id=scan_id) if event.get("event_type") == "verifier_packet"]
+    limited = events[-max(1, min(int(limit or 20), 100)):]
+    latest_scan_id = ""
+    for event in reversed(events):
+        if event.get("scan_id"):
+            latest_scan_id = str(event["scan_id"])
+            break
+    return {
+        "ok": True,
+        "schema": "hermes_complex_task_harness_verifier_packets_v1",
+        "mode": "verifier_packet_readback_only",
+        "ledger_path": str(ledger.path),
+        "scan_id_filter": scan_id,
+        "event_count": len(events),
+        "latest_scan_id": latest_scan_id,
+        "events": limited,
+        "external_side_effects_enabled": False,
+        "allowed_to_mark_done": False,
+    }
+
+
 def checkpoint(
     *,
     scan_id: str,

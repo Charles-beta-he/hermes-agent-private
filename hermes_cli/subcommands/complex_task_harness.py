@@ -9,7 +9,7 @@ import argparse
 import json
 from typing import Any
 
-from hermes_cli.complex_task_harness import checkpoint, config_status, status
+from hermes_cli.complex_task_harness import checkpoint, config_status, status, verifier_packets
 
 
 def _emit(payload: dict[str, Any], *, as_json: bool) -> int:
@@ -49,6 +49,15 @@ def cmd_complex_task_harness(args: argparse.Namespace) -> int:
         from hermes_cli.config import load_config
 
         return _emit(config_status(load_config()), as_json=as_json)
+    if action == "verifier":
+        return _emit(
+            verifier_packets(
+                ledger_path=ledger_path,
+                scan_id=getattr(args, "scan_id", "") or "",
+                limit=getattr(args, "limit", 20),
+            ),
+            as_json=as_json,
+        )
     return _emit(
         status(
             ledger_path=ledger_path,
@@ -80,6 +89,13 @@ def build_complex_task_harness_parser(subparsers) -> None:
     p_config = subs.add_parser("config", help="Read back effective complex-task harness config")
     p_config.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_config.set_defaults(func=cmd_complex_task_harness)
+
+    p_verifier = subs.add_parser("verifier", help="Read back persisted verifier packets")
+    p_verifier.add_argument("--ledger", default=None, help="Ledger JSONL path")
+    p_verifier.add_argument("--scan-id", default="", help="Optional scan id filter")
+    p_verifier.add_argument("--limit", type=int, default=20, help="Recent verifier packets to include, capped at 100")
+    p_verifier.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_verifier.set_defaults(func=cmd_complex_task_harness)
 
     p_checkpoint = subs.add_parser("checkpoint", help="Append a local continuation/checkpoint receipt")
     p_checkpoint.add_argument("--ledger", default=None, help="Ledger JSONL path")

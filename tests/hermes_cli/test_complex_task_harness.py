@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from agent.conductor_runtime import ComplexTaskHarnessLedger, IcebergComplexityScanner
-from hermes_cli.complex_task_harness import checkpoint, config_status, status
+from hermes_cli.complex_task_harness import checkpoint, config_status, status, verifier_packets
 
 
 def test_complex_task_harness_config_status_reports_default_closed() -> None:
@@ -73,6 +73,41 @@ def test_complex_task_harness_status_reads_local_ledger(tmp_path: Path) -> None:
     assert payload["event_count"] == 2
     assert payload["latest_scan_id"] == receipt["scan_id"]
     assert payload["external_side_effects_enabled"] is False
+    assert payload["allowed_to_mark_done"] is False
+
+
+def test_complex_task_harness_verifier_packets_readback_filters_verifier_events(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "ledger.jsonl"
+    ledger = ComplexTaskHarnessLedger(ledger_path)
+    scan_receipt = ledger.record_scan(
+        scan={"schema": "hermes_iceberg_complexity_scan_v1", "classification": "complex"},
+        user_message="完成 Hermes core/runtime 替换",
+        origin="unit-test",
+    )
+    ledger.append_checkpoint(
+        scan_receipt["scan_id"],
+        objective="checkpoint noise",
+        completed_evidence=[],
+        pending_actions=[],
+        rollback="",
+    )
+    ledger.append_verifier_packet(
+        scan_receipt["scan_id"],
+        {
+            "schema": "hermes_complex_task_verifier_packet_v1",
+            "status": "not_certified",
+            "missing_evidence": ["independent_verifier_vote"],
+        },
+        origin="unit-test",
+    )
+
+    payload = verifier_packets(ledger_path=ledger_path, scan_id=scan_receipt["scan_id"])
+
+    assert payload["ok"] is True
+    assert payload["mode"] == "verifier_packet_readback_only"
+    assert payload["event_count"] == 1
+    assert payload["events"][0]["event_type"] == "verifier_packet"
+    assert payload["events"][0]["verifier_packet"]["schema"] == "hermes_complex_task_verifier_packet_v1"
     assert payload["allowed_to_mark_done"] is False
 
 

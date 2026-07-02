@@ -29,7 +29,7 @@ Interpretation: replace Hermes' prompt-only, implicit complex-task handling with
 - `_run_mainloop_verification_gate(...)` forwards the last conductor iceberg scan into final-response verification
 - `agent.conductor_runtime.ComplexTaskHarnessLedger`, an append-only local JSONL receipt ledger for scan/evidence/checkpoint continuation
 - `_run_conductor_intent_router(...)` records a local receipt only when `complex_task_harness.ledger_enabled` is explicitly true
-- `hermes_cli.complex_task_harness` plus `hermes complex-task-harness status|checkpoint|config` for local readback, continuation receipts, and opt-in config readback
+- `hermes_cli.complex_task_harness` plus `hermes complex-task-harness status|checkpoint|config|verifier` for local readback, continuation receipts, opt-in config readback, and persisted verifier packet replay
 - `conductor_defaults_enabled(...)` treats `complex_task_harness.enabled` / `ledger_enabled` as explicit opt-in while defaults remain closed
 - Tests in `tests/agent/test_conductor_runtime.py` and `tests/hermes_cli/test_complex_task_harness.py`
 
@@ -77,6 +77,8 @@ This slice was later landed into the main Hermes repo and enabled only for the l
   - `conductor.complex_task_harness.output_schema = hermes_iceberg_complexity_scan_v1`
 - Local ledger: `/Users/charles/.hermes/state/complex-task-harness/ledger.jsonl`
 - Live smoke recorded scan/checkpoint under `complex-scan-a8cbdc761677591e` with `allowed_to_mark_done=false` and `external_side_effects_enabled=false`.
+- Follow-up slice persisted `hermes_complex_task_verifier_packet_v1` packets into the local ledger and added `hermes complex-task-harness verifier` readback.
+- `runtime_mutation_authorized` was enabled only after explicit user authority; mark-done authority remains false.
 
 Post-enable verification from main repo:
 
@@ -92,6 +94,16 @@ hermes complex-task-harness config --json
 
 hermes complex-task-harness status --limit 10 --json
 # returned ok=true, event_count=2, latest_scan_id=complex-scan-a8cbdc761677591e, allowed_to_mark_done=false
+
+hermes complex-task-harness verifier --json
+# returns persisted verifier_packet events with mode=verifier_packet_readback_only and allowed_to_mark_done=false
+```
+
+Follow-up local verification:
+
+```bash
+/Users/charles/.hermes/hermes-agent/venv/bin/python -m pytest tests/agent/test_conductor_runtime.py::test_conversation_loop_persists_verifier_packet_when_complex_completion_claim_is_gated tests/hermes_cli/test_complex_task_harness.py -q
+# verifier-persistence focused tests passed
 ```
 
 ## Boundary still closed
@@ -102,14 +114,14 @@ hermes complex-task-harness status --limit 10 --json
 - No external dispatch.
 - No destructive operation.
 - No credential/payment path.
-- No runtime mutation authority: `runtime_mutation_authorized=false`.
-- No mark-done authority: `allowed_to_mark_done=false`.
-- No full Hermes core replacement claim yet; this is a local advisory runtime scaffold with ledger/checkpoint evidence.
+- No runtime mark-done authority: `allowed_to_mark_done=false`.
+- Runtime mutation authority is explicitly enabled in local config only after user authorization; external/taskpool/destructive/credential gates still require exact target receipts.
+- No full Hermes core replacement claim yet; this is a local advisory runtime scaffold with ledger/checkpoint/verifier evidence.
 
 ## Remaining slices
 
-1. Persist `hermes_complex_task_verifier_packet_v1` packets into the local complex-task harness ledger, not only in the in-memory gate decision.
-2. Add a `hermes complex-task-harness verifier` or `replay` readback command for verifier packets.
-3. Add regression tests proving a real enabled-session final-response gate emits/persists verifier packets for complex completion claims.
-4. Decide whether to push/PR `f01070375974f73e1c95e0cae7a805b1891ddc18` plus the post-enable doc update; requires explicit remote/branch authority.
-5. Keep external dispatch, taskpool lifecycle writes, cron/worker automation, destructive operations, credentials/payments, and `runtime_mutation_authorized=true` closed until separately authorized with exact rollback/readback.
+1. Add an exact taskpool lifecycle adapter that consumes only named complex-task harness receipts and writes only to the canonical taskpool with proof/readback.
+2. Add an exact external-dispatch adapter with allowlisted platform/target/payload and post-send readback; do not infer broad fan-out.
+3. Add a runtime mutation executor contract that names allowed local mutation classes, rollback, and receipt schema; keep destructive/credential/payment closed.
+4. Push/PR current scoped commits to `origin/private/main` after final verification.
+5. No `allowed_to_mark_done=true` until independent verifier evidence and taskpool proof gate agree on a specific task/scan id.

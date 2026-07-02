@@ -525,6 +525,27 @@ def _run_mainloop_verification_gate(
             complexity_scan=complexity_scan,
         )
         try:
+            cfg = getattr(agent, "_conductor_config", None) or {}
+            conductor = cfg.get("conductor") if isinstance(cfg, dict) else {}
+            conductor = conductor if isinstance(conductor, dict) else {}
+            harness = conductor.get("complex_task_harness") if isinstance(conductor, dict) else {}
+            harness = harness if isinstance(harness, dict) else {}
+            route_receipt = route.get("complex_task_harness_receipt") if isinstance(route, dict) else None
+            verifier_packet = decision.get("verifier_packet") if isinstance(decision, dict) else None
+            if harness.get("ledger_enabled") and isinstance(route_receipt, dict) and isinstance(verifier_packet, dict):
+                from agent.conductor_runtime import ComplexTaskHarnessLedger
+
+                ledger_path = harness.get("ledger_path") or None
+                ledger = ComplexTaskHarnessLedger(ledger_path) if ledger_path else ComplexTaskHarnessLedger()
+                receipt = ledger.append_verifier_packet(
+                    str(route_receipt.get("scan_id") or ""),
+                    verifier_packet,
+                    origin="mainloop_verification_gate",
+                )
+                decision["complex_task_harness_verifier_receipt"] = receipt
+        except Exception as ledger_exc:
+            decision["complex_task_harness_verifier_receipt"] = {"status": "record_failed", "error": str(ledger_exc)}
+        try:
             setattr(agent, "_last_mainloop_verification_gate", decision)
         except Exception:
             pass

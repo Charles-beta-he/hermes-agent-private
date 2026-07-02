@@ -4,6 +4,7 @@ from pathlib import Path
 
 from agent.conductor_runtime import (
     AcceptanceGovernance,
+    ComplexTaskHarnessLedger,
     ConversationIntentRouter,
     FuguAdapter,
     IcebergComplexityScanner,
@@ -754,6 +755,46 @@ def test_conversation_loop_records_complex_harness_receipt_when_ledger_enabled(t
     assert receipt["status"] == "recorded"
     assert receipt["allowed_to_mark_done"] is False
     assert ledger_path.exists()
+
+
+def test_conversation_loop_persists_verifier_packet_when_complex_completion_claim_is_gated(tmp_path):
+    from agent.conversation_loop import _run_conductor_intent_router, _run_mainloop_verification_gate
+
+    ledger_path = tmp_path / "harness.jsonl"
+
+    class EnabledLedgerAgent:
+        _conductor_config = {
+            "conductor": {
+                "intent_router": {"enabled": True},
+                "complex_task_harness": {
+                    "enabled": True,
+                    "ledger_enabled": True,
+                    "ledger_path": str(ledger_path),
+                },
+            }
+        }
+        model = "test-model"
+        _mainloop_verifier_votes = []
+
+    agent = EnabledLedgerAgent()
+    route = _run_conductor_intent_router(
+        agent,
+        user_message="继续学习 LazyCodex/OmO 并直接推进到 Hermes core/runtime 替换",
+    )
+    result = _run_mainloop_verification_gate(
+        agent,
+        user_message="继续学习 LazyCodex/OmO 并直接推进到 Hermes core/runtime 替换",
+        final_response="Hermes core/runtime 替换已完成并验证通过。",
+        messages=[{"role": "assistant", "content": "Hermes core/runtime 替换已完成并验证通过。"}],
+    )
+    events = ComplexTaskHarnessLedger(ledger_path).read_events(scan_id=route["complex_task_harness_receipt"]["scan_id"])
+    verifier_events = [event for event in events if event.get("event_type") == "verifier_packet"]
+
+    assert result is not None
+    assert result["verifier_packet"]["schema"] == "hermes_complex_task_verifier_packet_v1"
+    assert len(verifier_events) == 1
+    assert verifier_events[0]["verifier_packet"]["schema"] == "hermes_complex_task_verifier_packet_v1"
+    assert verifier_events[0]["allowed_to_mark_done"] is False
 
 
 def test_conversation_loop_mainloop_gate_appends_blocking_notice_for_uncertified_claim(tmp_path, monkeypatch):
