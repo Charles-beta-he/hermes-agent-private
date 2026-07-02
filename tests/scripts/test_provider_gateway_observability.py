@@ -243,3 +243,130 @@ def test_script_entrypoint_runs_main(tmp_path, monkeypatch, capsys):
     assert exc.value.code == 0
     loaded = json.loads(capsys.readouterr().out)
     assert loaded["status"] == "NO_DATA"
+
+
+
+def test_normalize_event_drops_unknown_top_level_sensitive_fields():
+    mod = load()
+    raw = {
+        "surface": "provider",
+        "status": "success",
+        "prompt": "fixture raw prompt text",
+        "messages": [{"content": "fixture raw message body"}],
+        "body": "fixture body",
+        "content": "fixture content",
+        "api_key": "fixture-top-secret",
+        "access_token": "fixture-access-token",
+        "password": "fixture-password",
+        "chat_id": "fixture-chat-id",
+        "thread_id": "fixture-thread-id",
+        "job_id": "fixture-job-id",
+    }
+
+    event = mod.normalize_event(raw, now="2026-07-02T00:00:00Z")
+    serialized = json.dumps(event, ensure_ascii=False, sort_keys=True)
+
+    assert set(event) == mod.ALLOWED_EVENT_KEYS
+    for forbidden_key in [
+        "prompt",
+        "messages",
+        "body",
+        "content",
+        "api_key",
+        "access_token",
+        "password",
+        "chat_id",
+        "thread_id",
+        "job_id",
+    ]:
+        assert forbidden_key not in event
+    for raw_value in [
+        "fixture raw prompt text",
+        "fixture raw message body",
+        "fixture body",
+        "fixture content",
+        "fixture-top-secret",
+        "fixture-access-token",
+        "fixture-password",
+        "fixture-chat-id",
+        "fixture-thread-id",
+        "fixture-job-id",
+    ]:
+        assert raw_value not in serialized
+
+
+def test_recorders_redact_sensitive_metadata_values(tmp_path):
+    mod = load()
+    event_log = tmp_path / "events.jsonl"
+    sensitive_metadata = {
+        "prompt": "fixture prompt",
+        "message": "fixture message",
+        "messages": [{"content": "fixture nested content"}],
+        "body": "fixture body",
+        "content": "fixture content",
+        "chat_id": "fixture raw chat",
+        "thread_id": "fixture raw thread",
+        "job_id": "fixture raw job",
+        "api_key": "fixture api key",
+        "Authorization": "Bearer fixture-auth-value",
+        "safe": "ok",
+    }
+
+    assert mod.record_provider_call_event(metadata=sensitive_metadata, path=event_log)
+    assert mod.record_gateway_delivery_event(
+        chat_id="fixture raw chat",
+        thread_id="fixture raw thread",
+        metadata=sensitive_metadata,
+        path=event_log,
+    )
+    assert mod.record_cron_delivery_event(
+        job_id="fixture raw job",
+        metadata=sensitive_metadata,
+        path=event_log,
+    )
+
+    raw = event_log.read_text(encoding="utf-8")
+    rows = [json.loads(line) for line in raw.splitlines()]
+    assert len(rows) == 3
+    assert all(row["metadata"]["safe"] == "ok" for row in rows)
+    assert rows[1]["metadata"]["chat_id_hash"].startswith("sha256:")
+    assert rows[1]["metadata"]["thread_id_hash"].startswith("sha256:")
+    assert rows[2]["metadata"]["job_id_hash"].startswith("sha256:")
+    for raw_value in [
+        "fixture prompt",
+        "fixture message",
+        "fixture nested content",
+        "fixture body",
+        "fixture content",
+        "fixture raw chat",
+        "fixture raw thread",
+        "fixture raw job",
+        "fixture api key",
+        "fixture-auth-value",
+    ]:
+        assert raw_value not in raw
+    assert "[REDACTED]" in raw
+
+
+def test_main_record_json_drops_sensitive_unknown_fields(tmp_path):
+    mod = load()
+    event_log = tmp_path / "events.jsonl"
+    payload = {
+        "surface": "provider",
+        "status": "success",
+        "prompt": "fixture prompt from cli",
+        "chat_id": "fixture cli chat",
+        "metadata": {"content": "fixture cli content", "safe": "ok"},
+    }
+
+    assert mod.main(["--event-log", str(event_log), "--record-json", json.dumps(payload)]) == 0
+
+    raw = event_log.read_text(encoding="utf-8")
+    row = json.loads(raw)
+    assert "prompt" not in row
+    assert "chat_id" not in row
+    assert row["metadata"]["content"] == "[REDACTED]"
+    assert row["metadata"]["safe"] == "ok"
+    assert "fixture prompt from cli" not in raw
+    assert "fixture cli chat" not in raw
+    assert "fixture cli content" not in raw

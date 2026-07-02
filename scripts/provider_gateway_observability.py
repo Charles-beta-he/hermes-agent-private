@@ -46,6 +46,38 @@ SECRET_KEY_FRAGMENTS = (
     "auth_file",
     "oauth",
 )
+SENSITIVE_METADATA_KEY_FRAGMENTS = (
+    "prompt",
+    "message",
+    "messages",
+    "body",
+    "content",
+    "text",
+    "chat_id",
+    "thread_id",
+    "job_id",
+)
+ALLOWED_EVENT_KEYS = {
+    "schema_version",
+    "created_at",
+    "surface",
+    "operation",
+    "status",
+    "provider",
+    "model",
+    "route",
+    "error_class",
+    "error_summary",
+    "latency_ms",
+    "input_tokens",
+    "output_tokens",
+    "reasoning_tokens",
+    "cached_tokens",
+    "estimated_cost_usd",
+    "metadata",
+    "manual_override",
+    "event_id",
+}
 SECRET_TEXT_PATTERNS = (
     re.compile(r"\b(Bearer\s+)[^\s,;]+", re.IGNORECASE),
     re.compile(r"\b(sk-[A-Za-z0-9_\-]{8,})"),
@@ -85,9 +117,16 @@ def _is_secret_key(key: str) -> bool:
     return any(fragment in normalized for fragment in SECRET_KEY_FRAGMENTS)
 
 
+def _is_sensitive_metadata_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    if normalized.endswith("_hash"):
+        return False
+    return any(fragment in normalized for fragment in SENSITIVE_METADATA_KEY_FRAGMENTS)
+
+
 def redact_value(value: Any, *, key: str = "") -> Any:
     """Recursively redact secret-bearing keys while preserving safe metadata."""
-    if _is_secret_key(key):
+    if _is_secret_key(key) or _is_sensitive_metadata_key(key):
         return "[REDACTED]"
     if isinstance(value, dict):
         return {str(k): redact_value(v, key=str(k)) for k, v in value.items()}
@@ -110,7 +149,7 @@ def redact_text(text: Any) -> str:
 
 def normalize_event(raw: dict[str, Any], *, now: str | None = None) -> dict[str, Any]:
     """Return a schema-valid, redacted provider/gateway observability event."""
-    event = dict(raw)
+    event = {key: raw[key] for key in ALLOWED_EVENT_KEYS if key in raw}
     event["schema_version"] = SCHEMA_VERSION
     event["created_at"] = str(event.get("created_at") or now or utc_now())
     event["surface"] = str(event.get("surface") or "provider").strip().lower()
