@@ -69,6 +69,14 @@ def default_conductor_config() -> Dict[str, Any]:
                 "max_context_chars": 4000,
                 "output_schema": "hermes_intent_decision_v1",
             },
+            "complex_task_harness": {
+                "enabled": False,
+                "mode": "iceberg_scan_advisory",
+                "output_schema": "hermes_iceberg_complexity_scan_v1",
+                "runtime_mutation_authorized": False,
+                "ledger_enabled": False,
+                "ledger_path": str(HOME / ".hermes" / "state" / "complex-task-harness" / "ledger.jsonl"),
+            },
             "profile_file": str(DEFAULT_MODEL_PROFILES),
             "role_plan": {},
         },
@@ -97,7 +105,227 @@ def conductor_defaults_enabled(config: Dict[str, Any] | None) -> bool:
     fugu: Dict[str, Any] = fugu_raw if isinstance(fugu_raw, dict) else {}
     router_raw = conductor.get("intent_router")
     router: Dict[str, Any] = router_raw if isinstance(router_raw, dict) else {}
-    return bool(conductor.get("enabled") or router.get("enabled") or fugu.get("enabled"))
+    harness_raw = conductor.get("complex_task_harness")
+    harness: Dict[str, Any] = harness_raw if isinstance(harness_raw, dict) else {}
+    return bool(
+        conductor.get("enabled")
+        or router.get("enabled")
+        or harness.get("enabled")
+        or harness.get("ledger_enabled")
+        or fugu.get("enabled")
+    )
+
+
+class IcebergComplexityScanner:
+    """Classify whether a request needs the complex-task harness boundary.
+
+    This is the first LazyCodex/OmO absorption primitive for Hermes core/runtime:
+    a deterministic, default-safe preflight that decides whether the next step is
+    a lightweight answer/minimal action or an SSOT-backed runtime scaffold.  It
+    does not execute work, mutate lifecycle state, or grant side-effect authority.
+    """
+
+    EXTERNAL_REFERENCE_TERMS = (
+        "lazycodex", "omo", "oh-my-openagent", "opencode", "codex", "reference", "借鉴", "学习", "吸收",
+    )
+    HERMES_SELF_TERMS = (
+        "hermes", "core", "runtime", "主循环", "自进化", "控制面", "taskpool", "workflow", "工作流",
+    )
+    DIRECT_ADVANCE_TERMS = (
+        "直接推进", "全盘推进", "继续推进", "落地", "替换", "生产级", "直到", "直至",
+    )
+    AUTHORITY_TERMS = (
+        "权限", "authority", "side effect", "副作用", "cron", "dispatch", "deploy", "publish", "删除", "外部",
+    )
+
+    def scan(self, user_message: str, *, target_surface: str = "") -> Dict[str, Any]:
+        text = f"{user_message or ''}\n{target_surface or ''}".lower()
+        above: List[str] = []
+        submerged: List[str] = []
+
+        if any(term.lower() in text for term in self.EXTERNAL_REFERENCE_TERMS):
+            above.append("external_reference_absorption")
+        if any(term.lower() in text for term in self.HERMES_SELF_TERMS):
+            above.append("hermes_self_architecture")
+        if any(term.lower() in text for term in self.DIRECT_ADVANCE_TERMS):
+            above.append("direct_advancement")
+        if "core" in text or "runtime" in text or "主循环" in text or "替换" in text:
+            above.append("core_runtime_replacement")
+        if any(term in text for term in ("memory", "skill", "docs", "taskpool", "gate", "hook", "runtime")):
+            above.append("multiple_landing_zones")
+
+        if any(term.lower() in text for term in self.AUTHORITY_TERMS) or "core_runtime_replacement" in above:
+            submerged.append("authority_side_effect_ambiguity")
+        if "external_reference_absorption" in above and "hermes_self_architecture" in above:
+            submerged.append("cargo_cult_risk")
+        if ("lazycodex" in text or "omo" in text) and ("hermes_self_architecture" in above or "direct_advancement" in above):
+            submerged.append("source_vs_marketing_evidence_boundary")
+        if ("完成" in text or "直至" in text or "until" in text) and ("direct_advancement" in above or "core_runtime_replacement" in above):
+            submerged.append("completion_claim_needs_objective_evidence")
+
+        # Deduplicate while preserving order.
+        above = list(dict.fromkeys(above))
+        submerged = list(dict.fromkeys(submerged))
+        classification = "complex" if len(above) >= 2 or bool(submerged) else "simple"
+        complex_path = classification == "complex"
+        return {
+            "schema": "hermes_iceberg_complexity_scan_v1",
+            "classification": classification,
+            "above_water_triggers": above,
+            "submerged_triggers": submerged,
+            "objective_gate_required": complex_path,
+            "ssot_required": complex_path,
+            "safe_next_boundary": "ssot_then_default_off_runtime_scaffold" if complex_path else "answer_or_minimal_action",
+            "side_effect_ceiling": "local_write_only_until_exact_runtime_gate" if complex_path else "none_or_minimal",
+            "runtime_mutation_authorized": False,
+        }
+
+
+class ComplexTaskHarnessLedger:
+    """Append-only local receipt ledger for complex-task harness scans.
+
+    The ledger is deliberately local and authority-negative: it can preserve the
+    scan/evidence trail needed for continuation and review, but every receipt
+    explicitly denies external side effects and lifecycle completion authority.
+    """
+
+    AUTHORITY_KEYS = {
+        "mark_done",
+        "task_status",
+        "lifecycle_status",
+        "external_write",
+        "external_writes",
+        "outbound_message",
+        "memory_write",
+        "skill_write",
+        "provider_config_change",
+    }
+
+    def __init__(self, path: str | Path = HOME / ".hermes" / "state" / "complex-task-harness" / "ledger.jsonl"):
+        self.path = Path(path).expanduser()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _digest(self, payload: Dict[str, Any]) -> str:
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _has_authority_smuggling(self, value: Any) -> bool:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if str(key) in self.AUTHORITY_KEYS:
+                    return True
+                if self._has_authority_smuggling(child):
+                    return True
+        elif isinstance(value, list):
+            return any(self._has_authority_smuggling(item) for item in value)
+        return False
+
+    def _append(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+        return event
+
+    def record_scan(self, *, scan: Dict[str, Any], user_message: str, origin: str = "") -> Dict[str, Any]:
+        payload = {"scan": scan, "user_message": user_message, "origin": origin}
+        if self._has_authority_smuggling(payload):
+            return {
+                "schema": "hermes_complex_task_harness_receipt_v1",
+                "status": "rejected",
+                "reason": "authority_smuggling_detected",
+                "external_side_effects_enabled": False,
+                "allowed_to_mark_done": False,
+            }
+        scan_id = f"complex-scan-{self._digest(payload)[:16]}"
+        event = {
+            "schema": "hermes_complex_task_harness_receipt_v1",
+            "event_type": "scan",
+            "scan_id": scan_id,
+            "status": "recorded",
+            "created_at": _now(),
+            "origin": origin,
+            "user_message": user_message,
+            "scan": scan,
+            "external_side_effects_enabled": False,
+            "allowed_to_mark_done": False,
+        }
+        return self._append(event)
+
+    def append_evidence(self, scan_id: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
+        payload = {"scan_id": scan_id, "evidence": evidence}
+        if self._has_authority_smuggling(payload):
+            return {
+                "schema": "hermes_complex_task_harness_receipt_v1",
+                "event_type": "evidence",
+                "scan_id": scan_id,
+                "status": "rejected",
+                "reason": "authority_smuggling_detected",
+                "external_side_effects_enabled": False,
+                "allowed_to_mark_done": False,
+            }
+        event = {
+            "schema": "hermes_complex_task_harness_receipt_v1",
+            "event_type": "evidence",
+            "scan_id": scan_id,
+            "status": "recorded",
+            "created_at": _now(),
+            "evidence": evidence,
+            "external_side_effects_enabled": False,
+            "allowed_to_mark_done": False,
+        }
+        return self._append(event)
+
+    def append_checkpoint(
+        self,
+        scan_id: str,
+        *,
+        objective: str,
+        completed_evidence: Optional[List[str]] = None,
+        pending_actions: Optional[List[str]] = None,
+        rollback: str = "",
+    ) -> Dict[str, Any]:
+        checkpoint = {
+            "objective": objective,
+            "completed_evidence": completed_evidence or [],
+            "pending_actions": pending_actions or [],
+            "rollback": rollback,
+        }
+        payload = {"scan_id": scan_id, "checkpoint": checkpoint}
+        if self._has_authority_smuggling(payload):
+            return {
+                "schema": "hermes_complex_task_harness_receipt_v1",
+                "event_type": "checkpoint",
+                "scan_id": scan_id,
+                "status": "rejected",
+                "reason": "authority_smuggling_detected",
+                "external_side_effects_enabled": False,
+                "allowed_to_mark_done": False,
+            }
+        event = {
+            "schema": "hermes_complex_task_harness_receipt_v1",
+            "event_type": "checkpoint",
+            "scan_id": scan_id,
+            "status": "recorded",
+            "created_at": _now(),
+            "checkpoint": checkpoint,
+            "external_side_effects_enabled": False,
+            "allowed_to_mark_done": False,
+        }
+        return self._append(event)
+
+    def read_events(self, *, scan_id: str = "") -> List[Dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        events: List[Dict[str, Any]] = []
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(event, dict) and (not scan_id or event.get("scan_id") == scan_id):
+                events.append(event)
+        return events
 
 
 class TaskLedger:
@@ -817,6 +1045,29 @@ class MainloopVerificationGate:
             "coverage": coverage,
         }
 
+    def _build_complex_verifier_packet(
+        self,
+        *,
+        complexity_scan: Dict[str, Any],
+        surfaces: List[str],
+        claims: List[Dict[str, Any]],
+        route_required_evidence: Dict[str, Any],
+        implementer_model: str,
+    ) -> Dict[str, Any]:
+        return {
+            "schema": "hermes_complex_task_verifier_packet_v1",
+            "status": "requires_independent_verification",
+            "complexity_scan": complexity_scan,
+            "surfaces": surfaces,
+            "claims": claims,
+            "required_evidence": route_required_evidence.get("required") or [],
+            "missing_evidence": route_required_evidence.get("missing") or [],
+            "implementer_model": implementer_model,
+            "forbid_self_certification": True,
+            "external_side_effects_enabled": False,
+            "allowed_to_mark_done": False,
+        }
+
     def evaluate_turn(
         self,
         user_message: str,
@@ -825,6 +1076,7 @@ class MainloopVerificationGate:
         implementer_model: str = "",
         available_models: Optional[List[str]] = None,
         votes: Optional[List[Dict[str, Any]]] = None,
+        complexity_scan: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if not self.cfg.get("enabled"):
             return {"schema": "hermes_mainloop_verification_gate_v1", "status": "disabled", "blocking": False}
@@ -833,6 +1085,11 @@ class MainloopVerificationGate:
             return {"schema": "hermes_mainloop_verification_gate_v1", "status": "skipped_internal_projection", "blocking": False}
         surfaces = self._surfaces(user_message or "", response)
         risk_tier = self._risk_tier(user_message or "", response)
+        complex_scan_active = isinstance(complexity_scan, dict) and complexity_scan.get("classification") == "complex"
+        if complex_scan_active and self._has_completion_claim(response):
+            surfaces.append("complex_task_harness")
+            risk_tier = "T3"
+        surfaces = _ordered_unique(surfaces)
         if not surfaces:
             return {"schema": "hermes_mainloop_verification_gate_v1", "status": "skipped_low_risk", "blocking": False, "risk_tier": risk_tier, "surfaces": []}
 
@@ -868,12 +1125,23 @@ class MainloopVerificationGate:
         elif acceptance.get("status") != "certified":
             notice = "门禁降级：当前只能作为 advisory，不能声明 certified。"
         gate_status = "not_certified" if blocking else acceptance.get("status")
+        verifier_packet = None
+        if complex_scan_active:
+            verifier_packet = self._build_complex_verifier_packet(
+                complexity_scan=complexity_scan or {},
+                surfaces=surfaces,
+                claims=claims,
+                route_required_evidence=route_required_evidence,
+                implementer_model=implementer_model,
+            )
         return {
             "schema": "hermes_mainloop_verification_gate_v1",
             "status": gate_status,
             "blocking": blocking,
             "risk_tier": risk_tier,
             "surfaces": surfaces,
+            "complexity_scan": complexity_scan if complex_scan_active else None,
+            "verifier_packet": verifier_packet,
             "claims": claims,
             "evidence": evidence,
             "route": route,

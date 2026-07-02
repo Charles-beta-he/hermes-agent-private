@@ -74,6 +74,17 @@ from utils import base_url_host_matches, env_var_enabled
 
 logger = logging.getLogger(__name__)
 
+
+def _observe_provider_call_event(**kwargs: Any) -> None:
+    """Best-effort local provider/gateway observability event emitter."""
+    try:
+        from scripts.provider_gateway_observability import record_provider_call_event
+
+        record_provider_call_event(**kwargs)
+    except Exception:
+        logger.debug("provider/gateway observability provider observer failed", exc_info=True)
+
+
 # Stable prefix of the local interrupt status string emitted when a turn is
 # cancelled while waiting on the provider. Surfaces (ACP, TUI) match on this
 # to treat it as cancellation metadata rather than assistant prose.
@@ -445,10 +456,22 @@ def _run_conductor_intent_router(agent: Any, user_message: str, *, active_tasks:
         return None
 
     try:
-        from agent.conductor_runtime import ConversationIntentRouter
+        from agent.conductor_runtime import ConversationIntentRouter, IcebergComplexityScanner
 
         router = ConversationIntentRouter(default_model_name=getattr(agent, "model", "") or "unknown")
         decision = router.classify(user_message or "", active_tasks=active_tasks or [])
+        harness_config = conductor.get("complex_task_harness") if isinstance(conductor, dict) else {}
+        harness_config = harness_config if isinstance(harness_config, dict) else {}
+        if harness_config.get("enabled"):
+            scan = IcebergComplexityScanner().scan(user_message or "", target_surface="hermes_conversation_loop")
+            decision["iceberg_complexity_scan"] = scan
+            if harness_config.get("ledger_enabled"):
+                from agent.conductor_runtime import ComplexTaskHarnessLedger
+
+                ledger_path = harness_config.get("ledger_path") or None
+                ledger = ComplexTaskHarnessLedger(ledger_path) if ledger_path else ComplexTaskHarnessLedger()
+                receipt = ledger.record_scan(scan=scan, user_message=user_message or "", origin="conversation_loop")
+                decision["complex_task_harness_receipt"] = receipt
         try:
             setattr(agent, "_last_conductor_intent_route", decision)
         except Exception:
@@ -490,6 +513,8 @@ def _run_mainloop_verification_gate(
                     available_models = list(raw.get("available") or raw.get("available_models") or [])
         except Exception:
             available_models = []
+        route = getattr(agent, "_last_conductor_intent_route", None) or {}
+        complexity_scan = route.get("iceberg_complexity_scan") if isinstance(route, dict) else None
         decision = gate.evaluate_turn(
             user_message=user_message or "",
             final_response=final_response,
@@ -497,6 +522,7 @@ def _run_mainloop_verification_gate(
             implementer_model=getattr(agent, "model", "") or "",
             available_models=available_models,
             votes=getattr(agent, "_mainloop_verifier_votes", None) or [],
+            complexity_scan=complexity_scan,
         )
         try:
             setattr(agent, "_last_mainloop_verification_gate", decision)
@@ -1767,6 +1793,20 @@ def run_conversation(
                             error_details.append("response.choices is empty")
 
                 if response_invalid:
+                    _observe_provider_call_event(
+                        provider=agent.provider,
+                        model=agent.model,
+                        api_mode=agent.api_mode,
+                        status="failure",
+                        latency_ms=int(max(0.0, api_duration) * 1000),
+                        error_class="InvalidAPIResponse",
+                        error_summary=", ".join(error_details) or "Invalid API response",
+                        metadata={
+                            "api_call_count": api_call_count,
+                            "retry_count": retry_count,
+                            "fallback_index": getattr(agent, "_fallback_index", 0),
+                        },
+                    )
                     agent._invoke_api_request_error_hook(
                         task_id=effective_task_id,
                         turn_id=turn_id,
@@ -2435,6 +2475,26 @@ def run_conversation(
                     agent.session_cost_status = cost_result.status
                     agent.session_cost_source = cost_result.source
 
+                    _observe_provider_call_event(
+                        provider=agent.provider,
+                        model=agent.model,
+                        api_mode=agent.api_mode,
+                        status="success",
+                        latency_ms=int(max(0.0, api_duration) * 1000),
+                        input_tokens=canonical_usage.input_tokens,
+                        output_tokens=canonical_usage.output_tokens,
+                        reasoning_tokens=canonical_usage.reasoning_tokens,
+                        cached_tokens=canonical_usage.cache_read_tokens,
+                        estimated_cost_usd=str(cost_result.amount_usd)
+                        if cost_result.amount_usd is not None else None,
+                        metadata={
+                            "api_call_count": api_call_count,
+                            "cost_status": cost_result.status,
+                            "cost_source": cost_result.source,
+                            "fallback_index": getattr(agent, "_fallback_index", 0),
+                        },
+                    )
+
                     # Persist token counts to session DB for /insights.
                     # Do this for every platform with a session_id so non-CLI
                     # sessions (gateway, cron, delegated runs) cannot lose
@@ -2833,6 +2893,23 @@ def run_conversation(
                     classified.retryable, classified.should_compress,
                     classified.should_rotate_credential, classified.should_fallback,
                 )
+                _observe_provider_call_event(
+                    provider=getattr(agent, "provider", "") or "",
+                    model=getattr(agent, "model", "") or "",
+                    api_mode=getattr(agent, "api_mode", "") or "",
+                    status="failure",
+                    latency_ms=int(max(0.0, time.time() - api_start_time) * 1000),
+                    error_class=type(api_error).__name__,
+                    error_summary=agent._clean_error_message(str(api_error)),
+                    metadata={
+                        "api_call_count": api_call_count,
+                        "retry_count": retry_count,
+                        "failover_reason": classified.reason.value,
+                        "status_code": classified.status_code,
+                        "retryable": classified.retryable,
+                        "fallback_index": getattr(agent, "_fallback_index", 0),
+                    },
+                )
                 agent._invoke_api_request_error_hook(
                     task_id=effective_task_id,
                     turn_id=turn_id,
@@ -3037,7 +3114,7 @@ def run_conversation(
                     else:
                         auth_method = "Bearer (OAuth/setup-token)" if _is_oauth_token(key) else "x-api-key (API key)"
                         print(f"{agent.log_prefix}   Auth method: {auth_method}")
-                        print(f"{agent.log_prefix}   Token prefix: {key[:12]}..." if isinstance(key, str) and len(key) > 12 else f"{agent.log_prefix}   Token: (empty or short)")
+                        print(f"{agent.log_prefix}   Token: configured (redacted)" if isinstance(key, str) and key else f"{agent.log_prefix}   Token: (empty)")
                     print(f"{agent.log_prefix}   Troubleshooting:")
                     from hermes_constants import display_hermes_home as _dhh_fn
                     _dhh = _dhh_fn()

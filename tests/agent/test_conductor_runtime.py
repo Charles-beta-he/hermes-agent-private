@@ -6,6 +6,7 @@ from agent.conductor_runtime import (
     AcceptanceGovernance,
     ConversationIntentRouter,
     FuguAdapter,
+    IcebergComplexityScanner,
     MainloopCertificationQueue,
     MainloopVerificationGate,
     ModelCapabilityRouter,
@@ -14,6 +15,124 @@ from agent.conductor_runtime import (
     default_conductor_config,
     normalize_fugu_response,
 )
+
+
+def test_complex_task_harness_defaults_are_opt_in_and_side_effect_closed():
+    cfg = default_conductor_config()
+    harness = cfg["conductor"]["complex_task_harness"]
+
+    assert conductor_defaults_enabled(cfg) is False
+    assert harness["enabled"] is False
+    assert harness["ledger_enabled"] is False
+    assert harness["runtime_mutation_authorized"] is False
+    assert harness["output_schema"] == "hermes_iceberg_complexity_scan_v1"
+
+
+def test_complex_task_harness_explicit_opt_in_counts_as_conductor_enabled():
+    cfg = default_conductor_config()
+    cfg["conductor"]["complex_task_harness"]["enabled"] = True
+
+    assert conductor_defaults_enabled(cfg) is True
+
+
+def test_complex_task_harness_ledger_opt_in_counts_as_conductor_enabled():
+    cfg = default_conductor_config()
+    cfg["conductor"]["complex_task_harness"]["ledger_enabled"] = True
+
+    assert conductor_defaults_enabled(cfg) is True
+
+
+def test_iceberg_complexity_scanner_classifies_lazycodex_core_replacement_as_complex():
+    scanner = IcebergComplexityScanner()
+
+    result = scanner.scan(
+        "继续学习 LazyCodex/OmO 并直接推进到 Hermes core/runtime 替换",
+        target_surface="hermes_core_runtime",
+    )
+
+    assert result["schema"] == "hermes_iceberg_complexity_scan_v1"
+    assert result["classification"] == "complex"
+    assert result["objective_gate_required"] is True
+    assert result["ssot_required"] is True
+    assert result["safe_next_boundary"] == "ssot_then_default_off_runtime_scaffold"
+    assert "external_reference_absorption" in result["above_water_triggers"]
+    assert "core_runtime_replacement" in result["above_water_triggers"]
+    assert "authority_side_effect_ambiguity" in result["submerged_triggers"]
+    assert result["side_effect_ceiling"] == "local_write_only_until_exact_runtime_gate"
+
+
+def test_iceberg_complexity_scanner_keeps_simple_low_risk_requests_lightweight():
+    scanner = IcebergComplexityScanner()
+
+    result = scanner.scan("解释一下 LazyCodex 是什么", target_surface="answer")
+
+    assert result["classification"] == "simple"
+    assert result["objective_gate_required"] is False
+    assert result["ssot_required"] is False
+    assert result["safe_next_boundary"] == "answer_or_minimal_action"
+
+
+def test_complex_task_harness_ledger_records_scan_and_evidence_without_authority(tmp_path):
+    from agent.conductor_runtime import ComplexTaskHarnessLedger
+
+    ledger = ComplexTaskHarnessLedger(tmp_path / "complex-task-harness.jsonl")
+    scan = IcebergComplexityScanner().scan(
+        "继续学习 LazyCodex/OmO 并直接推进到 Hermes core/runtime 替换",
+        target_surface="hermes_core_runtime",
+    )
+
+    receipt = ledger.record_scan(scan=scan, user_message="继续推进", origin="unit-test")
+    evidence = ledger.append_evidence(
+        receipt["scan_id"],
+        {"source": "pytest", "status": "pass", "summary": "41 passed"},
+    )
+    events = ledger.read_events(scan_id=receipt["scan_id"])
+
+    assert receipt["schema"] == "hermes_complex_task_harness_receipt_v1"
+    assert receipt["status"] == "recorded"
+    assert receipt["external_side_effects_enabled"] is False
+    assert receipt["allowed_to_mark_done"] is False
+    assert evidence["event_type"] == "evidence"
+    assert [event["event_type"] for event in events] == ["scan", "evidence"]
+
+
+def test_complex_task_harness_ledger_rejects_authority_smuggling(tmp_path):
+    from agent.conductor_runtime import ComplexTaskHarnessLedger
+
+    ledger = ComplexTaskHarnessLedger(tmp_path / "complex-task-harness.jsonl")
+    rejected = ledger.record_scan(
+        scan={"classification": "complex", "mark_done": True},
+        user_message="继续推进",
+        origin="unit-test",
+    )
+
+    assert rejected["status"] == "rejected"
+    assert rejected["reason"] == "authority_smuggling_detected"
+
+
+def test_complex_task_harness_ledger_records_checkpoint_receipt(tmp_path):
+    from agent.conductor_runtime import ComplexTaskHarnessLedger
+
+    ledger = ComplexTaskHarnessLedger(tmp_path / "complex-task-harness.jsonl")
+    scan = IcebergComplexityScanner().scan(
+        "继续学习 LazyCodex/OmO 并直接推进到 Hermes core/runtime 替换",
+        target_surface="hermes_core_runtime",
+    )
+    receipt = ledger.record_scan(scan=scan, user_message="继续推进", origin="unit-test")
+
+    checkpoint = ledger.append_checkpoint(
+        receipt["scan_id"],
+        objective="continue runtime replacement",
+        completed_evidence=["pytest:28 passed"],
+        pending_actions=["add replay CLI"],
+        rollback="git reset --hard HEAD~1 in isolated worktree",
+    )
+    events = ledger.read_events(scan_id=receipt["scan_id"])
+
+    assert checkpoint["event_type"] == "checkpoint"
+    assert checkpoint["allowed_to_mark_done"] is False
+    assert checkpoint["checkpoint"]["pending_actions"] == ["add replay CLI"]
+    assert [event["event_type"] for event in events] == ["scan", "checkpoint"]
 
 
 def test_task_ledger_creates_updates_and_queries_active_tasks(tmp_path):
@@ -306,6 +425,41 @@ def test_acceptance_governance_rejects_model_only_and_self_certification():
     assert certified["failures"] == []
 
 
+def test_mainloop_verification_gate_promotes_complex_scan_completion_to_t3():
+    profiles = {
+        "mainloop_verification": {"enabled": True, "advisory_only": False, "blocking_tiers": ["T3"]},
+        "acceptance_governance": {"require_objective_evidence": True, "require_independent_verifier_vote": True},
+        "surfaces": {
+            "completion_claim": {"final_evidence": ["fresh_tool_output"]},
+            "complex_task_harness": {"verifiers": ["deepseek-v4-pro"], "final_evidence": ["focused_pytest", "git_status"]},
+        },
+    }
+    gate = MainloopVerificationGate(profiles=profiles)
+    scan = IcebergComplexityScanner().scan(
+        "继续学习 LazyCodex/OmO 并直接推进到 Hermes core/runtime 替换",
+        target_surface="hermes_core_runtime",
+    )
+
+    result = gate.evaluate_turn(
+        user_message="继续推进",
+        final_response="已完成。",
+        messages=[],
+        implementer_model="gpt-5.5",
+        available_models=["gpt-5.5", "deepseek-v4-pro"],
+        complexity_scan=scan,
+    )
+
+    assert result["risk_tier"] == "T3"
+    assert "complex_task_harness" in result["surfaces"]
+    assert result["complexity_scan"]["classification"] == "complex"
+    assert result["verifier_packet"]["schema"] == "hermes_complex_task_verifier_packet_v1"
+    assert result["verifier_packet"]["allowed_to_mark_done"] is False
+    assert result["verifier_packet"]["required_evidence"] == ["fresh_tool_output", "focused_pytest", "git_status"]
+    assert result["status"] == "not_certified"
+    assert result["blocking"] is True
+    assert "objective_evidence_missing" in result["acceptance"]["failures"]
+
+
 def test_mainloop_verification_gate_degrades_completion_claim_without_objective_evidence():
     profiles = {
         "mainloop_verification": {"enabled": True, "advisory_only": False, "blocking_tiers": ["T3"]},
@@ -533,6 +687,73 @@ def test_conversation_loop_conductor_router_records_advisory_route_when_enabled(
     assert result["router_call"] is True
     assert result["participant_models"] == []
     assert getattr(agent, "_last_conductor_intent_route") == result
+
+
+def test_conversation_loop_attaches_iceberg_scan_only_when_complex_harness_enabled():
+    from agent.conversation_loop import _run_conductor_intent_router
+
+    class DisabledHarnessAgent:
+        _conductor_config = {
+            "conductor": {
+                "intent_router": {"enabled": True},
+                "complex_task_harness": {"enabled": False},
+            }
+        }
+        model = "test-model"
+
+    disabled = _run_conductor_intent_router(
+        DisabledHarnessAgent(),
+        user_message="继续学习 LazyCodex/OmO 并直接推进到 Hermes core/runtime 替换",
+    )
+    assert disabled is not None
+    assert "iceberg_complexity_scan" not in disabled
+
+    class EnabledHarnessAgent:
+        _conductor_config = {
+            "conductor": {
+                "intent_router": {"enabled": True},
+                "complex_task_harness": {"enabled": True},
+            }
+        }
+        model = "test-model"
+
+    enabled = _run_conductor_intent_router(
+        EnabledHarnessAgent(),
+        user_message="继续学习 LazyCodex/OmO 并直接推进到 Hermes core/runtime 替换",
+    )
+    assert enabled is not None
+    assert enabled["iceberg_complexity_scan"]["classification"] == "complex"
+    assert enabled["iceberg_complexity_scan"]["runtime_mutation_authorized"] is False
+
+
+def test_conversation_loop_records_complex_harness_receipt_when_ledger_enabled(tmp_path):
+    from agent.conversation_loop import _run_conductor_intent_router
+
+    ledger_path = tmp_path / "harness.jsonl"
+
+    class EnabledLedgerAgent:
+        _conductor_config = {
+            "conductor": {
+                "intent_router": {"enabled": True},
+                "complex_task_harness": {
+                    "enabled": True,
+                    "ledger_enabled": True,
+                    "ledger_path": str(ledger_path),
+                },
+            }
+        }
+        model = "test-model"
+
+    result = _run_conductor_intent_router(
+        EnabledLedgerAgent(),
+        user_message="继续学习 LazyCodex/OmO 并直接推进到 Hermes core/runtime 替换",
+    )
+
+    assert result is not None
+    receipt = result["complex_task_harness_receipt"]
+    assert receipt["status"] == "recorded"
+    assert receipt["allowed_to_mark_done"] is False
+    assert ledger_path.exists()
 
 
 def test_conversation_loop_mainloop_gate_appends_blocking_notice_for_uncertified_claim(tmp_path, monkeypatch):
