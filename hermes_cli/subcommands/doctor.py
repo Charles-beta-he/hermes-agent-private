@@ -23,6 +23,24 @@ def build_doctor_parser(subparsers, *, cmd_doctor: Callable) -> None:
         "--fix", action="store_true", help="Attempt to fix issues automatically"
     )
     doctor_parser.add_argument(
+        "--provider-gateway-observability",
+        action="store_true",
+        help=(
+            "Run only the side-effect-free local provider/gateway observability "
+            "doctor projection and exit"
+        ),
+    )
+    doctor_parser.add_argument(
+        "--provider-gateway-event-log",
+        default=None,
+        help="With --provider-gateway-observability, read this local JSONL event log",
+    )
+    doctor_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="With --provider-gateway-observability, emit the report as JSON",
+    )
+    doctor_parser.add_argument(
         "--ack",
         metavar="ADVISORY_ID",
         default=None,

@@ -487,6 +487,15 @@ def run_doctor(args):
     should_fix = getattr(args, 'fix', False)
     ack_target = getattr(args, 'ack', None)
 
+    if getattr(args, "provider_gateway_observability", False):
+        from hermes_cli.provider_gateway_observability import print_provider_gateway_observability_report
+
+        print_provider_gateway_observability_report(
+            as_json=bool(getattr(args, "json", False)),
+            event_log=getattr(args, "provider_gateway_event_log", None),
+        )
+        return
+
     # Doctor runs from the interactive CLI, so CLI-gated tool availability
     # checks (like cronjob management) should see the same context as `hermes`.
     os.environ.setdefault("HERMES_INTERACTIVE", "1")

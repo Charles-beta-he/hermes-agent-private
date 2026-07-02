@@ -1643,6 +1643,28 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 enabled=mirror_this_target and not thread_seeded,
             )
 
+    try:
+        from scripts.provider_gateway_observability import record_cron_delivery_event
+
+        if delivery_errors:
+            record_cron_delivery_event(
+                job_id=str(job.get("id") or ""),
+                status="failure",
+                delivery_target_count=len(targets),
+                error_class="CronDeliveryError",
+                error_summary="; ".join(delivery_errors),
+                metadata={"deliver": str(job.get("deliver") or "")},
+            )
+        else:
+            record_cron_delivery_event(
+                job_id=str(job.get("id") or ""),
+                status="success",
+                delivery_target_count=len(targets),
+                metadata={"deliver": str(job.get("deliver") or "")},
+            )
+    except Exception:
+        logger.debug("provider/gateway observability cron observer failed", exc_info=True)
+
     if delivery_errors:
         return "; ".join(delivery_errors)
     return None

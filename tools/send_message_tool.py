@@ -90,6 +90,7 @@ def _error(message: str) -> dict:
 
 def _observe_gateway_send_failure(platform_name: str, chat_id=None, thread_id=None, error=None, *, source="send_message_tool") -> None:
     """Best-effort selfcheck hook for native send_message/gateway failures."""
+    sanitized_error = _sanitize_error_text(error)
     try:
         from agent.selfcheck_operator import observe_gateway_delivery
 
@@ -98,11 +99,56 @@ def _observe_gateway_send_failure(platform_name: str, chat_id=None, thread_id=No
             chat_id=str(chat_id or ""),
             thread_id=str(thread_id or ""),
             success=False,
-            error=_sanitize_error_text(error),
+            error=sanitized_error,
             source=source,
         )
     except Exception:
         logger.debug("selfcheck operator gateway observer failed", exc_info=True)
+    try:
+        from scripts.provider_gateway_observability import record_gateway_delivery_event
+
+        record_gateway_delivery_event(
+            platform=platform_name,
+            status="failure",
+            source=source,
+            chat_id=chat_id,
+            thread_id=thread_id,
+            error_class="GatewayDeliveryError",
+            error_summary=sanitized_error,
+        )
+    except Exception:
+        logger.debug("provider/gateway observability failure observer failed", exc_info=True)
+
+
+def _observe_gateway_send_success(platform_name: str, chat_id=None, thread_id=None, *, source="send_message_tool") -> None:
+    """Best-effort local observer for native send_message/gateway success."""
+    try:
+        from agent.selfcheck_operator import observe_gateway_delivery
+
+        observe_gateway_delivery(
+            platform=platform_name,
+            chat_id=str(chat_id or ""),
+            thread_id=str(thread_id or ""),
+            success=True,
+            summary="gateway send completed",
+            source=source,
+        )
+    except Exception:
+        logger.debug("selfcheck operator gateway success observer failed", exc_info=True)
+    try:
+        from scripts.provider_gateway_observability import record_gateway_delivery_event
+
+        record_gateway_delivery_event(
+            platform=platform_name,
+            status="success",
+            source=source,
+            chat_id=chat_id,
+            thread_id=thread_id,
+        )
+    except Exception:
+        logger.debug("provider/gateway observability success observer failed", exc_info=True)
+
+
 def _display_chat_id(platform_name: str, chat_id: str) -> str:
     """Return a result-safe chat identifier for tool transcripts/log consumers."""
     if platform_name == "signal" and str(chat_id).startswith("group:"):
@@ -487,19 +533,7 @@ def _handle_send(args):
                 pass
 
         if isinstance(result, dict) and result.get("success"):
-            try:
-                from agent.selfcheck_operator import observe_gateway_delivery
-
-                observe_gateway_delivery(
-                    platform=platform_name,
-                    chat_id=str(chat_id or ""),
-                    thread_id=str(thread_id or ""),
-                    success=True,
-                    summary="gateway send completed",
-                    source="send_message_tool",
-                )
-            except Exception:
-                logger.debug("selfcheck operator gateway success observer failed", exc_info=True)
+            _observe_gateway_send_success(platform_name, chat_id, thread_id)
         if isinstance(result, dict) and "error" in result:
             result["error"] = _sanitize_error_text(result["error"])
             _observe_gateway_send_failure(platform_name, chat_id, thread_id, result["error"])
