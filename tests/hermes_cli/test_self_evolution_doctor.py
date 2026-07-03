@@ -35,6 +35,53 @@ def _write_sample_evidence(path, *, memory=True, agent_case=True, skill=False):
     )
 
 
+def test_self_evolution_modular_import_contracts_are_available():
+    from hermes_cli.self_evolution import (
+        apply_self_evolution_patch_to_fixture,
+        apply_self_evolution_patch_to_real_skill,
+        build_self_evolution_candidate_pack,
+        build_self_evolution_patch_packet,
+        build_self_evolution_promotion_gate,
+        build_self_evolution_report,
+        materialize_self_evolution_proposal,
+        verify_self_evolution_patch_packet,
+    )
+    from hermes_cli.self_evolution.proposal import build_self_evolution_report as proposal_report
+    from hermes_cli.self_evolution.patch_packet import verify_self_evolution_patch_packet as patch_verifier
+    from hermes_cli.self_evolution.promotion_gate import build_self_evolution_promotion_gate as gate_builder
+
+    assert build_self_evolution_report is proposal_report
+    assert verify_self_evolution_patch_packet is patch_verifier
+    assert build_self_evolution_promotion_gate is gate_builder
+    assert callable(build_self_evolution_candidate_pack)
+    assert callable(build_self_evolution_patch_packet)
+    assert callable(apply_self_evolution_patch_to_fixture)
+    assert callable(apply_self_evolution_patch_to_real_skill)
+    assert callable(materialize_self_evolution_proposal)
+
+
+def test_self_evolution_legacy_doctor_module_reexports_modular_api():
+    import hermes_cli.self_evolution as modular
+    import hermes_cli.self_evolution_doctor as legacy
+
+    exported = {
+        "build_self_evolution_report",
+        "materialize_self_evolution_proposal",
+        "build_self_evolution_candidate_pack",
+        "materialize_self_evolution_candidate_pack",
+        "build_self_evolution_patch_packet",
+        "verify_self_evolution_patch_packet",
+        "materialize_self_evolution_patch_packet",
+        "apply_self_evolution_patch_to_fixture",
+        "build_self_evolution_promotion_gate",
+        "materialize_self_evolution_promotion_gate",
+        "apply_self_evolution_patch_to_real_skill",
+        "print_self_evolution_report",
+    }
+    for name in exported:
+        assert getattr(legacy, name) is getattr(modular, name)
+
+
 def test_self_evolution_report_converts_upstream_evidence_to_proposal_only_packet(tmp_path):
     evidence = tmp_path / "upstream-self-evolution-benchmark.json"
     _write_sample_evidence(evidence)

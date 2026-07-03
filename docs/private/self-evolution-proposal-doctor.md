@@ -93,10 +93,24 @@ The patch packet is `mode=fixture_only`; real target writes remain disabled. The
 
 The promotion gate binds exact patch packet, target skill path, target hash, fixture receipt, rollback backup, and post-action readback. The blocked receipt proves missing `--execute-real-skill-write` keeps `real_target_touched=false`. The temp apply receipt proves the same real-apply harness can create a backup and append to a temporary exact target when the gate and execute flag are both present.
 
+## Modular landing
+
+The implementation is modularized under `hermes_cli/self_evolution/`:
+
+- `proposal.py` — evidence projection, proposal receipt, human-readable doctor output.
+- `candidate.py` — experience-ratchet candidate pack and dry-run skill diff.
+- `patch_packet.py` — fixture-only patch packet verification and fixture apply.
+- `promotion_gate.py` — exact promotion gate and default-off real-skill apply harness.
+- `common.py` — shared constants, hashes, and closed execution-boundary helper.
+- `__init__.py` — reusable public API for future safe local harnesses.
+
+`hermes_cli/self_evolution_doctor.py` remains as a compatibility wrapper that re-exports the modular API so older tests, scripts, and `doctor.py` imports keep working.
+
 ## Verification
 
 ```bash
 ./venv/bin/python -m pytest tests/hermes_cli/test_self_evolution_doctor.py -q
-./venv/bin/python -m py_compile hermes_cli/self_evolution_doctor.py hermes_cli/doctor.py hermes_cli/subcommands/doctor.py
-hermes doctor --self-evolution --self-evolution-evidence /Users/charles/wechat_video_analysis/project_absorption/raven-everos-absorption-ssot/evidence/upstream-self-evolution-benchmark.json --json
+./venv/bin/python -m pytest tests/hermes_cli/test_self_evolution_doctor.py tests/hermes_cli/test_external_data_doctor.py -q
+./venv/bin/python -m py_compile hermes_cli/self_evolution/*.py hermes_cli/self_evolution_doctor.py hermes_cli/doctor.py
+./venv/bin/hermes doctor --self-evolution --json
 ```
