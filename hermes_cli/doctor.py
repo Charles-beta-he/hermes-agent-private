@@ -487,12 +487,42 @@ def run_doctor(args):
     should_fix = getattr(args, 'fix', False)
     ack_target = getattr(args, 'ack', None)
 
+    if getattr(args, "external_data", False):
+        from hermes_cli.external_data_doctor import print_external_data_doctor_report
+
+        print_external_data_doctor_report(as_json=bool(getattr(args, "json", False)))
+        return
+
     if getattr(args, "provider_gateway_observability", False):
         from hermes_cli.provider_gateway_observability import print_provider_gateway_observability_report
 
         print_provider_gateway_observability_report(
             as_json=bool(getattr(args, "json", False)),
             event_log=getattr(args, "provider_gateway_event_log", None),
+        )
+        return
+
+    if getattr(args, "self_evolution", False):
+        if getattr(args, "self_evolution_output", None):
+            from hermes_cli.self_evolution_doctor import materialize_self_evolution_proposal
+
+            result = materialize_self_evolution_proposal(
+                evidence_path=getattr(args, "self_evolution_evidence", None),
+                output_path=getattr(args, "self_evolution_output"),
+            )
+            if bool(getattr(args, "json", False)):
+                import json
+
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(f"Self-evolution proposal receipt written: {result['output_path']}")
+            return
+
+        from hermes_cli.self_evolution_doctor import print_self_evolution_report
+
+        print_self_evolution_report(
+            as_json=bool(getattr(args, "json", False)),
+            evidence_path=getattr(args, "self_evolution_evidence", None),
         )
         return
 
