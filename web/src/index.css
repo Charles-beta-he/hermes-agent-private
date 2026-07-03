@@ -256,6 +256,152 @@ code { font-size: 0.875rem; }
     2px 2px;
 }
 
+/* Intelligence Workbench surface: graph-first command center inspired by
+   constellations / evidence DAGs. Kept in CSS so the visual language is
+   themeable and the TSX stays semantic. */
+.workbench-shell {
+  --workbench-core: var(--series-input-token, #ffe6cb);
+  --workbench-signal: var(--series-output-token, #34d399);
+  --workbench-violet: #b58cff;
+  --workbench-risk: #fb7185;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+.workbench-shell * {
+  min-width: 0;
+}
+
+.workbench-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.2;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 230, 203, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 230, 203, 0.08) 1px, transparent 1px),
+    radial-gradient(circle at center, rgba(52, 211, 153, 0.12), transparent 42%);
+  background-size: 56px 56px, 56px 56px, 100% 100%;
+  mask-image: radial-gradient(circle at 50% 40%, #000 0%, transparent 78%);
+}
+
+.workbench-orb {
+  position: absolute;
+  width: 22rem;
+  height: 22rem;
+  border-radius: 999px;
+  filter: blur(36px);
+  opacity: 0.24;
+  pointer-events: none;
+}
+.workbench-orb-one {
+  left: -8rem;
+  top: 8rem;
+  background: var(--workbench-signal);
+}
+.workbench-orb-two {
+  right: -7rem;
+  top: -8rem;
+  background: var(--workbench-core);
+}
+
+.workbench-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: var(--workbench-signal);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  isolation: isolate;
+}
+.workbench-node:focus-visible {
+  outline: 2px solid var(--workbench-core);
+  outline-offset: 4px;
+}
+.workbench-node-dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 18px currentColor, 0 0 42px color-mix(in srgb, currentColor 46%, transparent);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+.workbench-node-core { color: var(--workbench-core); }
+.workbench-node-gate { color: var(--workbench-violet); }
+.workbench-node-signal { color: var(--workbench-signal); }
+.workbench-node-risk { color: var(--workbench-risk); }
+.workbench-node.is-active .workbench-node-dot,
+.workbench-node:hover .workbench-node-dot {
+  transform: scale(1.38);
+  box-shadow: 0 0 24px currentColor, 0 0 70px color-mix(in srgb, currentColor 62%, transparent);
+}
+.workbench-node-pulse {
+  position: absolute;
+  width: 54px;
+  height: 54px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  opacity: 0.24;
+  animation: workbench-pulse 3s ease-out infinite;
+}
+.workbench-node.is-active .workbench-node-pulse {
+  opacity: 0.55;
+  animation-duration: 1.8s;
+}
+.workbench-node-label {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(9rem, 34vw);
+  padding: 0.22rem 0.5rem;
+  border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-base) 82%, transparent);
+  color: var(--midground);
+  font-family: var(--theme-font-mono);
+  font-size: 0.64rem;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(12px);
+}
+
+@keyframes workbench-pulse {
+  from {
+    transform: scale(0.62);
+    opacity: 0.42;
+  }
+  to {
+    transform: scale(1.38);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .workbench-node-label {
+    top: 16px;
+    padding-inline: 0.38rem;
+    font-size: 0.56rem;
+    white-space: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workbench-node-pulse {
+    animation: none;
+  }
+  .workbench-node-dot {
+    transition: none;
+  }
+}
+
 /* When a theme provides `assets.bg`, the backdrop's <div> renders it as
    a CSS background; the default filler <img> is hidden to prevent
    double-compositing. Unset → initial → empty, so the :not() selector
