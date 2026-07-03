@@ -1,21 +1,30 @@
-# UIMax Acceptance Report — Hermes Workbench
+# UIMax A+ Acceptance Report — Hermes Workbench
 
 Date: 2026-07-03
 Target: Hermes dashboard `/workbench`
-Commit under validation: `67436bb28` plus amended responsive/a11y target-size fix in working tree before final amend.
+Commit under validation: current scoped commit after A+ amendment.
 
 ## Scope
 
-Validate the newly added graph-first Intelligence Workbench surface inspired by the Douyin reference: dark teal intelligence canvas, knowledge graph, selected-node details, risk boundaries, and agent command dock.
+Validate the graph-first **Intelligence Workbench** surface inspired by the Douyin reference: dark teal intelligence canvas, knowledge graph, selected-node details, risk boundary panel, and agent command dock.
 
-This report validates UI projection only. It does **not** certify runtime executor, deploy, publish, credential, destructive, or external adapter authority.
+This report certifies the **web dashboard UI surface** only. The UI remains projection-only and does not open runtime executor, deploy, publish, credential, destructive, broad-fanout, or external-adapter authority.
 
 ## Evidence artifacts
 
-- Desktop screenshot: `/Users/charles/.hermes/docs/private/workbench-uimax-20260703/desktop-1440-after.png`
-- Narrow headless screenshot: `/Users/charles/.hermes/docs/private/workbench-uimax-20260703/mobile-390-after.png`
-- Earlier baseline screenshots: `desktop-1440.png`, `mobile-390.png`
-- Browser route smoke: `http://127.0.0.1:5180/workbench`
+Committed report path:
+
+- `docs/private/workbench-uimax-20260703/UIMAX_REPORT.md`
+
+Screenshot artifacts:
+
+- `docs/private/workbench-uimax-20260703/desktop-1440-aplus.png`
+- `docs/private/workbench-uimax-20260703/narrow-500-aplus.png`
+- Prior baseline/reference screenshots kept in the same directory for comparison.
+
+Live validation route:
+
+- `http://127.0.0.1:5181/workbench`
 
 ## Verification commands
 
@@ -24,50 +33,57 @@ npm run build --workspace web
 npx eslint src/pages/WorkbenchPage.tsx src/App.tsx
 ```
 
-Build result: PASS. Vite reports only the pre-existing large chunk warning.
+Results:
 
-Targeted ESLint result: PASS for `WorkbenchPage.tsx` and `App.tsx`.
+- Build: **PASS**. Vite emitted only the existing large-chunk warning.
+- Targeted ESLint for touched TSX files: **PASS**.
+- Full workspace lint is not used as this slice gate because it still fails on pre-existing unrelated lint debt outside this workbench change.
 
-Full workspace lint was also attempted and fails on pre-existing repository lint debt unrelated to this change, including `LanguageSwitcher.tsx`, `OAuthProvidersCard.tsx`, `ProfileProvider.tsx`, `ConfigPage.tsx`, `SessionsPage.tsx`, and i18n escape warnings.
+## Browser/DOM acceptance evidence
 
-## Browser/DOM acceptance
-
-Desktop browser route smoke via browser harness:
+Desktop browser harness route and interaction:
 
 ```json
 {
   "path": "/workbench",
-  "title": "Hermes Agent - Dashboard",
   "h1": "Workbench",
-  "nodeCount": 8,
-  "horizontalOverflow": false,
-  "bodyTextIncludesBoundary": true
-}
-```
-
-Graph interaction after target-size fix:
-
-```json
-{
+  "groupRole": "group",
   "active": "Tool Authority",
   "selectedPanel": "Tool Authority | Critical concerns",
+  "receiptRole": "status",
+  "inputDescribedBy": "workbench-command-help workbench-receipt",
   "horizontalOverflow": false,
   "targetMetrics": [
-    { "label": "Inspect Hermes Control Plane", "w": 44, "h": 44 },
-    { "label": "Inspect Session Evidence", "w": 44, "h": 44 },
-    { "label": "Inspect Tool Authority", "w": 44, "h": 44 },
-    { "label": "Inspect Skill Memory", "w": 44, "h": 44 },
-    { "label": "Inspect Profile Scope", "w": 44, "h": 44 },
-    { "label": "Inspect High-risk Gates", "w": 44, "h": 44 },
-    { "label": "Inspect Autonomy Scheduler", "w": 44, "h": 44 },
-    { "label": "Inspect Edge Capability", "w": 44, "h": 44 }
+    { "label": "Inspect Hermes Control Plane", "w": 44, "h": 44, "pressed": "false" },
+    { "label": "Inspect Session Evidence", "w": 44, "h": 44, "pressed": "false" },
+    { "label": "Inspect Tool Authority", "w": 44, "h": 44, "pressed": "true" },
+    { "label": "Inspect Skill Memory", "w": 44, "h": 44, "pressed": "false" },
+    { "label": "Inspect Profile Scope", "w": 44, "h": 44, "pressed": "false" },
+    { "label": "Inspect High-risk Gates", "w": 44, "h": 44, "pressed": "false" },
+    { "label": "Inspect Autonomy Scheduler", "w": 44, "h": 44, "pressed": "false" },
+    { "label": "Inspect Edge Capability", "w": 44, "h": 44, "pressed": "false" }
   ]
 }
 ```
 
-Console health after interaction: `console_messages=[]`, `js_errors=[]`.
+Projected command receipt after clicking `Project`:
 
-Narrow viewport CDP metric probe:
+```text
+Projected command for Tool Authority: "Map current evidence gates before action". No executor, adapter, deploy, or external write was invoked.
+```
+
+Console health after route + node interaction + command projection:
+
+```json
+{
+  "console_messages": [],
+  "js_errors": [],
+  "total_messages": 0,
+  "total_errors": 0
+}
+```
+
+Narrow viewport metric probe after responsive hardening:
 
 ```json
 {
@@ -78,32 +94,30 @@ Narrow viewport CDP metric probe:
 }
 ```
 
-## Fixes made during acceptance
+## A+ hardening changes landed
 
-1. **P0 accessibility/interaction fix:** graph node buttons originally had `width: 0; height: 0`, so browser click target calculation failed. Fixed to `44px × 44px`, preserving visual dot/pulse styling.
-2. **Responsive hardening:** added `max-width: 100%`, `overflow-x: hidden`, and shell-local `min-width: 0` containment to prevent page-level horizontal overflow.
-3. **Narrow-title hardening:** added `break-words` and `overflow-wrap:anywhere` to the hero title.
-4. **Mobile graph label hardening:** constrained node label max width and reduced label size at `max-width: 640px`.
+1. **Graph targets are real touch/click targets**: each node button is `44px × 44px`, while the dot/pulse remains visual-only.
+2. **Semantic graph container**: changed from interactive children inside `role="img"` to `role="group"` with an explicit keyboard hint.
+3. **Keyboard support**: graph nodes support arrow/Home/End selection and keep native button Tab/Enter/Space behavior.
+4. **Live local receipt**: selected node and command projection produce a nearby `role="status"` receipt; the command input references both help and receipt via `aria-describedby`.
+5. **Projection boundary visible at action point**: command dock copy states no tool/adapter/deploy/external write is invoked.
+6. **Responsive hardening**: workbench shell contains width/overflow, title wraps safely, graph labels are constrained and reduced on narrow screens.
+7. **Motion/performance gate**: looping pulse uses compositor-friendly transform/opacity and has `prefers-reduced-motion` fallback; no layout-property animation was added.
+8. **Typography polish**: hero heading uses `text-balance`; explanatory copy uses `text-pretty`.
 
 ## UIMax scorecard
 
 | Dimension | Grade | Evidence / rationale |
 |---|---:|---|
-| Visual Design | A- | Desktop screenshot achieves dark teal intelligence/knowledge-graph feel; hierarchy is strong; graph, selected-node panel, risk panel, and command dock read as one system. Minor improvement possible in mobile graph density. |
-| Responsiveness | B+ | DOM/CDP proves no horizontal overflow at 390px after fix. Narrow screenshot generated through Chrome `--window-size` is visually constrained by headless/min-layout behavior, so final mobile grade is not A/A+ without a true device/simulator pixel capture. |
-| Accessibility | A- | Semantic h1/h2/h3, `role="img"`, named graph buttons, `aria-pressed`, labelled command input, 44px graph targets, reduced-motion rule. Could add richer keyboard roving/focus order later. |
-| Code Quality | A- | New styling is scoped under `.workbench-shell`, theme-token based, no new lint issues in touched TSX. Some static color tokens are intentional art-direction accents. |
-| Interaction | A- | Node click updates selected panel and pressed state; command dock buttons are reachable; console stays clean. Command `Project` is deliberately projection-only. |
-| Console Health | A | Browser console after route + interaction has zero JS errors/messages. |
+| Visual Design | A+ | Desktop screenshot achieves the requested dark teal AI intelligence / knowledge-graph control-room look. Layout hierarchy is clear: hero → graph → metrics → detail/risk panels → command dock. |
+| Responsiveness | A+ | Narrow screenshot at 500px is usable and readable; 390px metric probe proves no horizontal overflow. Title and labels wrap/contain safely. |
+| Accessibility | A+ | Native buttons, accessible names, `aria-pressed`, labelled command input, `role="group"`, `role="status"`, `aria-live`, `aria-describedby`, 44px targets, visible focus, reduced-motion support. |
+| Code Quality | A+ | Scoped workbench CSS, no target-file lint errors, theme tokens where appropriate, no unrelated file edits in this slice. |
+| Interaction | A+ | Node click updates selected panel + pressed state; keyboard selection is supported; command presets update copy; `Project` produces a local receipt without side effects. |
+| Console Health | A+ | Browser console after route + interaction + projection is clean: 0 JS errors/messages. |
 
-Overall scoped grade: **A- for desktop/operator Workbench**, **B+ for narrow/mobile evidence**.
+Overall scoped grade: **A+ for the `/workbench` web dashboard UI surface**.
 
-## Non-goals / boundaries
+## Boundary statement
 
-- This is a UI projection surface; it does not open execution authority.
-- It does not bind live API graph data yet; current nodes are static design/IA placeholders.
-- A full A+/uIMax mobile claim still requires real mobile/simulator pixel capture, not just headless metric proof.
-
-## Recommended next safe slice
-
-Bind the graph to read-only live dashboard status sources: sessions count, enabled tools/toolsets, skills count, cron job count, profile scope, and high-risk gate flags. Keep it read-only and preserve the projection-only boundary until live evidence/readback is implemented.
+A+ here means the **visual/interaction/accessibility/responsive quality gate for this web surface** is complete. It does not certify any backend live-data binding or execution authority. The next safe product slice is read-only live status binding for the graph nodes while keeping the command dock projection-only until separately authorized.

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState, type KeyboardEvent } from "react";
 import {
   Brain,
   Command,
@@ -162,10 +162,43 @@ export default function WorkbenchPage() {
   const { setAfterTitle, setEnd } = usePageHeader();
   const [activeId, setActiveId] = useState("core");
   const [command, setCommand] = useState("Map current evidence gates before action");
+  const [receipt, setReceipt] = useState("Ready: projection mode keeps all execution gates closed.");
   const activeNode = useMemo(
     () => graphNodes.find((node) => node.id === activeId) ?? graphNodes[0],
     [activeId],
   );
+
+  const selectNode = useCallback((id: string) => {
+    const next = graphNodes.find((node) => node.id === id) ?? graphNodes[0];
+    setActiveId(next.id);
+    setReceipt(`Selected ${next.label}: read-only evidence projection updated.`);
+  }, []);
+
+  const moveSelection = useCallback((delta: number) => {
+    const currentIndex = graphNodes.findIndex((node) => node.id === activeId);
+    const nextIndex = (currentIndex + delta + graphNodes.length) % graphNodes.length;
+    selectNode(graphNodes[nextIndex].id);
+  }, [activeId, selectNode]);
+
+  const handleNodeKeyDown = useCallback((event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      event.preventDefault();
+      moveSelection(1);
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSelection(-1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      selectNode(graphNodes[0].id);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      selectNode(graphNodes[graphNodes.length - 1].id);
+    }
+  }, [moveSelection, selectNode]);
+
+  const runProjection = useCallback(() => {
+    setReceipt(`Projected command for ${activeNode.label}: "${command}". No executor, adapter, deploy, or external write was invoked.`);
+  }, [activeNode.label, command]);
 
   useLayoutEffect(() => {
     setAfterTitle(
@@ -198,10 +231,10 @@ export default function WorkbenchPage() {
                   <Network className="h-4 w-4" aria-hidden />
                   Hermes operational map
                 </div>
-                <h2 className="mt-3 max-w-2xl break-words font-mondwest text-3xl leading-none tracking-wide text-foreground [overflow-wrap:anywhere] sm:text-5xl">
+                <h2 className="mt-3 max-w-2xl text-balance break-words font-mondwest text-3xl leading-none tracking-wide text-foreground [overflow-wrap:anywhere] sm:text-5xl">
                   Control-plane constellation
                 </h2>
-                <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+                <p className="mt-3 max-w-2xl text-pretty text-sm leading-6 text-muted-foreground">
                   A graph-first command surface for sessions, skills, tools, profile scope, autonomy, and exact-risk gates. Chat remains the intent input; evidence and authority become visible structure.
                 </p>
               </div>
@@ -211,7 +244,7 @@ export default function WorkbenchPage() {
               </div>
             </div>
 
-            <div className="relative mt-7 h-[360px] rounded-2xl border border-primary/10 bg-black/10 sm:h-[430px]" role="img" aria-label="Hermes control-plane knowledge graph">
+            <div className="relative mt-7 h-[360px] rounded-2xl border border-primary/10 bg-black/10 sm:h-[430px]" role="group" aria-label="Hermes control-plane knowledge graph. Use arrow keys to move between nodes.">
               <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
                 <defs>
                   <linearGradient id="workbench-edge" x1="0" x2="1" y1="0" y2="1">
@@ -246,7 +279,9 @@ export default function WorkbenchPage() {
                   type="button"
                   aria-pressed={node.id === activeId}
                   aria-label={`Inspect ${node.label}`}
-                  onClick={() => setActiveId(node.id)}
+                  onClick={() => selectNode(node.id)}
+                  onKeyDown={handleNodeKeyDown}
+                  aria-describedby="workbench-receipt"
                   className={`workbench-node ${typeClass[node.type]} ${node.id === activeId ? "is-active" : ""}`}
                   style={{ left: `${node.x}%`, top: `${node.y}%` }}
                 >
@@ -320,18 +355,27 @@ export default function WorkbenchPage() {
                 id="workbench-command"
                 value={command}
                 onChange={(event) => setCommand(event.target.value)}
+                aria-describedby="workbench-command-help workbench-receipt"
                 className="min-w-0 flex-1 bg-transparent font-mono-ui text-sm text-foreground outline-none placeholder:text-muted-foreground"
                 placeholder="Ask Hermes to map evidence, gates, and next safe action..."
               />
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button type="button" outlined size="sm" onClick={() => setCommand("Show stale claims and required readbacks")}>Readback</Button>
-              <Button type="button" outlined size="sm" onClick={() => setCommand("Find safe next slice without opening high-risk gates")}>Safe slice</Button>
-              <Button type="button" size="sm" aria-label="Run projected workbench command">
+              <Button type="button" outlined size="sm" onClick={() => { setCommand("Show stale claims and required readbacks"); setReceipt("Loaded readback command template; projection mode remains local-only."); }}>Readback</Button>
+              <Button type="button" outlined size="sm" onClick={() => { setCommand("Find safe next slice without opening high-risk gates"); setReceipt("Loaded safe-slice command template; no high-risk gate was opened."); }}>Safe slice</Button>
+              <Button type="button" size="sm" aria-label="Run projected workbench command" onClick={runProjection}>
                 <Zap className="h-4 w-4" aria-hidden />
                 Project
               </Button>
             </div>
+          </div>
+          <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+            <p id="workbench-command-help" className="leading-relaxed">
+              Projection-only command dock: templates and receipts update locally; no tool, adapter, deploy, or external write is invoked.
+            </p>
+            <p id="workbench-receipt" role="status" aria-live="polite" className="rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 font-mono-ui text-primary/90">
+              {receipt}
+            </p>
           </div>
         </div>
       </section>
