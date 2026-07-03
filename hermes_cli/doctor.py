@@ -503,6 +503,51 @@ def run_doctor(args):
         return
 
     if getattr(args, "self_evolution", False):
+        if getattr(args, "self_evolution_real_apply_receipt_output", None):
+            import json
+
+            from hermes_cli.self_evolution_doctor import apply_self_evolution_patch_to_real_skill
+
+            with open(getattr(args, "self_evolution_patch_packet_input"), encoding="utf-8") as packet_file:
+                packet = json.load(packet_file)
+            with open(getattr(args, "self_evolution_promotion_gate_input"), encoding="utf-8") as gate_file:
+                gate = json.load(gate_file)
+            result = apply_self_evolution_patch_to_real_skill(
+                packet=packet,
+                gate=gate,
+                target_skill_dir=getattr(args, "self_evolution_target_skill_dir"),
+                execute_real_skill_write=bool(getattr(args, "execute_real_skill_write", False)),
+            )
+            output_path = getattr(args, "self_evolution_real_apply_receipt_output")
+            from pathlib import Path
+
+            output = Path(output_path).expanduser()
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(f"Self-evolution real apply receipt written: {output}")
+            return
+
+        if getattr(args, "self_evolution_promotion_gate_output", None):
+            from hermes_cli.self_evolution_doctor import materialize_self_evolution_promotion_gate
+
+            result = materialize_self_evolution_promotion_gate(
+                patch_packet_path=getattr(args, "self_evolution_patch_packet_input", None),
+                target_skill_dir=getattr(args, "self_evolution_target_skill_dir", None),
+                fixture_receipt_path=getattr(args, "self_evolution_fixture_receipt", None),
+                output_path=getattr(args, "self_evolution_promotion_gate_output"),
+                execute_real_skill_write=bool(getattr(args, "execute_real_skill_write", False)),
+            )
+            if bool(getattr(args, "json", False)):
+                import json
+
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(f"Self-evolution promotion gate written: {result['output_path']}")
+            return
+
         if getattr(args, "self_evolution_patch_packet_output", None):
             from hermes_cli.self_evolution_doctor import (
                 apply_self_evolution_patch_to_fixture,

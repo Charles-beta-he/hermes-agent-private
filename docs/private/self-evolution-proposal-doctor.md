@@ -23,6 +23,19 @@ hermes doctor --self-evolution \
   --self-evolution-patch-packet-output <patch-packet.json> \
   --self-evolution-fixture-skill-dir <temporary-skill-fixture-dir> \
   --json
+hermes doctor --self-evolution \
+  --self-evolution-patch-packet-input <patch-packet.json> \
+  --self-evolution-target-skill-dir <exact-target-skill-dir> \
+  --self-evolution-fixture-receipt <fixture-apply-receipt.json> \
+  --self-evolution-promotion-gate-output <promotion-gate.json> \
+  --json
+hermes doctor --self-evolution \
+  --self-evolution-patch-packet-input <patch-packet.json> \
+  --self-evolution-promotion-gate-input <promotion-gate.json> \
+  --self-evolution-target-skill-dir <exact-target-skill-dir> \
+  --self-evolution-real-apply-receipt-output <apply-receipt.json> \
+  --execute-real-skill-write \
+  --json
 ```
 
 ## Safety contract
@@ -69,6 +82,16 @@ The candidate pack includes an `experience_atom` in `promoted_candidate` status 
 `/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-fixture-apply-receipt.json`
 
 The patch packet is `mode=fixture_only`; real target writes remain disabled. The fixture apply receipt proves the generated patch applies to a temporary copy of the Hermes skill while `real_target_touched=false`.
+
+## Current promotion gate and temp real-apply receipts
+
+`/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-promotion-gate-cli.json`
+
+`/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-real-apply-blocked-receipt.json`
+
+`/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-real-apply-cli-temp-receipt.json`
+
+The promotion gate binds exact patch packet, target skill path, target hash, fixture receipt, rollback backup, and post-action readback. The blocked receipt proves missing `--execute-real-skill-write` keeps `real_target_touched=false`. The temp apply receipt proves the same real-apply harness can create a backup and append to a temporary exact target when the gate and execute flag are both present.
 
 ## Verification
 

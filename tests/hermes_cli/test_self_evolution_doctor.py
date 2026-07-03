@@ -324,3 +324,210 @@ def test_run_doctor_self_evolution_can_materialize_patch_packet(monkeypatch, tmp
 
     assert calls == [("candidate.json", str(output))]
     assert json.loads(capsys.readouterr().out)["kind"] == "patch_packet"
+
+
+def test_self_evolution_builds_exact_promotion_gate_packet(tmp_path):
+    fixture_dir = tmp_path / "fixture-skill"
+    fixture_dir.mkdir()
+    skill_md = fixture_dir / "SKILL.md"
+    skill_md.write_text("# Hermes Agent\n\nExisting body.\n", encoding="utf-8")
+    patch_packet = tmp_path / "patch-packet.json"
+    patch_packet.write_text(
+        json.dumps(
+            {
+                "schema_version": "hermes.self_evolution.patch_packet.v1",
+                "mode": "fixture_only",
+                "execution": {"direct_skill_write": False, "direct_memory_write": False},
+                "patch": {
+                    "target_skill": "hermes-agent",
+                    "target_reference": "references/self-evolution-proposal-boundary.md",
+                    "real_target_write_enabled": False,
+                    "operations": [
+                        {
+                            "op": "append_reference_addendum",
+                            "file": "SKILL.md",
+                            "text": "Reference addendum: self-evolution absorption boundary fixture gate.",
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    from hermes_cli.self_evolution_doctor import build_self_evolution_promotion_gate
+
+    gate = build_self_evolution_promotion_gate(
+        patch_packet_path=patch_packet,
+        target_skill_dir=fixture_dir,
+        fixture_receipt_path="fixture-receipt.json",
+    )
+
+    assert gate["schema_version"] == "hermes.self_evolution.promotion_gate.v1"
+    assert gate["target"]["skill_name"] == "hermes-agent"
+    assert gate["authority"]["execute_real_skill_write"] is False
+    assert gate["rollback"]["backup_required"] is True
+    assert gate["preconditions"]["patch_packet_sha256"]
+    assert gate["target"]["skill_md_sha256"]
+
+
+def test_self_evolution_real_apply_requires_execute_flag_and_gate(tmp_path):
+    from hermes_cli.self_evolution_doctor import apply_self_evolution_patch_to_real_skill
+
+    target = tmp_path / "target-skill"
+    target.mkdir()
+    (target / "SKILL.md").write_text("# Hermes Agent\n", encoding="utf-8")
+    patch_packet = {
+        "schema_version": "hermes.self_evolution.patch_packet.v1",
+        "mode": "fixture_only",
+        "execution": {"direct_skill_write": False, "direct_memory_write": False},
+        "patch": {
+            "target_skill": "hermes-agent",
+            "real_target_write_enabled": False,
+            "operations": [{"op": "append_reference_addendum", "file": "SKILL.md", "text": "Reference addendum: blocked."}],
+        },
+    }
+    gate = {"schema_version": "hermes.self_evolution.promotion_gate.v1", "authority": {"execute_real_skill_write": False}}
+
+    receipt = apply_self_evolution_patch_to_real_skill(
+        packet=patch_packet,
+        gate=gate,
+        target_skill_dir=target,
+        execute_real_skill_write=False,
+    )
+
+    assert receipt["status"] == "blocked"
+    assert receipt["real_target_touched"] is False
+    assert "execute_flag_missing" in receipt["reasons"]
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "# Hermes Agent\n"
+
+
+def test_self_evolution_real_apply_on_temp_target_creates_backup_and_readback(tmp_path):
+    from hermes_cli.self_evolution_doctor import (
+        build_self_evolution_promotion_gate,
+        apply_self_evolution_patch_to_real_skill,
+    )
+
+    target = tmp_path / "target-skill"
+    target.mkdir()
+    (target / "SKILL.md").write_text("# Hermes Agent\n\nExisting body.\n", encoding="utf-8")
+    patch_packet_path = tmp_path / "patch-packet.json"
+    patch_packet = {
+        "schema_version": "hermes.self_evolution.patch_packet.v1",
+        "mode": "fixture_only",
+        "execution": {"direct_skill_write": False, "direct_memory_write": False},
+        "patch": {
+            "target_skill": "hermes-agent",
+            "real_target_write_enabled": False,
+            "operations": [
+                {
+                    "op": "append_reference_addendum",
+                    "file": "SKILL.md",
+                    "text": "Reference addendum: self-evolution absorption boundary temp target.",
+                }
+            ],
+        },
+    }
+    patch_packet_path.write_text(json.dumps(patch_packet), encoding="utf-8")
+    gate = build_self_evolution_promotion_gate(
+        patch_packet_path=patch_packet_path,
+        target_skill_dir=target,
+        fixture_receipt_path="fixture-receipt.json",
+        execute_real_skill_write=True,
+    )
+
+    receipt = apply_self_evolution_patch_to_real_skill(
+        packet=patch_packet,
+        gate=gate,
+        target_skill_dir=target,
+        execute_real_skill_write=True,
+    )
+
+    assert receipt["schema_version"] == "hermes.self_evolution.real_skill_apply_receipt.v1"
+    assert receipt["status"] == "ok"
+    assert receipt["real_target_touched"] is True
+    assert receipt["backup_path"]
+    assert (target / "SKILL.md.bak").exists()
+    updated = (target / "SKILL.md").read_text(encoding="utf-8")
+    assert "Existing body." in updated
+    assert "temp target" in updated
+
+
+def test_run_doctor_self_evolution_can_materialize_promotion_gate(monkeypatch, tmp_path, capsys):
+    from hermes_cli import doctor as doctor_mod
+
+    output = tmp_path / "gate.json"
+    calls = []
+
+    def fake_materialize(*, patch_packet_path, target_skill_dir, fixture_receipt_path, output_path, execute_real_skill_write=False):
+        calls.append((patch_packet_path, target_skill_dir, fixture_receipt_path, str(output_path), execute_real_skill_write))
+        return {"written": True, "output_path": str(output_path), "kind": "promotion_gate"}
+
+    monkeypatch.setattr(
+        "hermes_cli.self_evolution_doctor.materialize_self_evolution_promotion_gate",
+        fake_materialize,
+    )
+
+    doctor_mod.run_doctor(
+        Namespace(
+            fix=False,
+            ack=None,
+            external_data=False,
+            provider_gateway_observability=False,
+            self_evolution=True,
+            self_evolution_evidence=None,
+            self_evolution_output=None,
+            self_evolution_candidate_output=None,
+            self_evolution_patch_packet_output=None,
+            self_evolution_candidate_input=None,
+            self_evolution_fixture_skill_dir=None,
+            self_evolution_promotion_gate_output=str(output),
+            self_evolution_patch_packet_input="patch.json",
+            self_evolution_target_skill_dir="skill-dir",
+            self_evolution_fixture_receipt="fixture.json",
+            execute_real_skill_write=False,
+            json=True,
+        )
+    )
+
+    assert calls == [("patch.json", "skill-dir", "fixture.json", str(output), False)]
+    assert json.loads(capsys.readouterr().out)["kind"] == "promotion_gate"
+
+
+def test_run_doctor_self_evolution_can_block_real_apply_without_execute(monkeypatch, tmp_path, capsys):
+    from hermes_cli import doctor as doctor_mod
+
+    output = tmp_path / "apply-receipt.json"
+    packet = tmp_path / "patch.json"
+    gate = tmp_path / "gate.json"
+    packet.write_text(json.dumps({"schema_version": "hermes.self_evolution.patch_packet.v1"}), encoding="utf-8")
+    gate.write_text(json.dumps({"schema_version": "hermes.self_evolution.promotion_gate.v1"}), encoding="utf-8")
+
+    doctor_mod.run_doctor(
+        Namespace(
+            fix=False,
+            ack=None,
+            external_data=False,
+            provider_gateway_observability=False,
+            self_evolution=True,
+            self_evolution_evidence=None,
+            self_evolution_output=None,
+            self_evolution_candidate_output=None,
+            self_evolution_patch_packet_output=None,
+            self_evolution_candidate_input=None,
+            self_evolution_fixture_skill_dir=None,
+            self_evolution_promotion_gate_output=None,
+            self_evolution_patch_packet_input=str(packet),
+            self_evolution_promotion_gate_input=str(gate),
+            self_evolution_target_skill_dir=str(tmp_path),
+            self_evolution_fixture_receipt=None,
+            self_evolution_real_apply_receipt_output=str(output),
+            execute_real_skill_write=False,
+            json=True,
+        )
+    )
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "blocked"
+    assert result["real_target_touched"] is False
+    assert output.exists()

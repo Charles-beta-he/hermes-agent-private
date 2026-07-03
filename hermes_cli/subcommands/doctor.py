@@ -88,6 +88,41 @@ def build_doctor_parser(subparsers, *, cmd_doctor: Callable) -> None:
         help="With --self-evolution and --self-evolution-patch-packet-output, apply packet to this fixture skill dir only",
     )
     doctor_parser.add_argument(
+        "--self-evolution-patch-packet-input",
+        default=None,
+        help="With promotion-gate/apply modes, read this patch packet JSON",
+    )
+    doctor_parser.add_argument(
+        "--self-evolution-promotion-gate-output",
+        default=None,
+        help="With --self-evolution, materialize an exact promotion gate packet JSON at this path",
+    )
+    doctor_parser.add_argument(
+        "--self-evolution-promotion-gate-input",
+        default=None,
+        help="With real-apply mode, read this exact promotion gate packet JSON",
+    )
+    doctor_parser.add_argument(
+        "--self-evolution-real-apply-receipt-output",
+        default=None,
+        help="With real-apply mode, write the apply/block receipt JSON at this path",
+    )
+    doctor_parser.add_argument(
+        "--self-evolution-target-skill-dir",
+        default=None,
+        help="Exact skill directory target for promotion gate/apply modes",
+    )
+    doctor_parser.add_argument(
+        "--self-evolution-fixture-receipt",
+        default=None,
+        help="Fixture apply receipt path referenced by the promotion gate",
+    )
+    doctor_parser.add_argument(
+        "--execute-real-skill-write",
+        action="store_true",
+        help="DANGEROUS: with exact gate, allow real target skill write; default is closed",
+    )
+    doctor_parser.add_argument(
         "--json",
         action="store_true",
         help=(
