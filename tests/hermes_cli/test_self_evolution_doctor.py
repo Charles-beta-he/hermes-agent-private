@@ -220,3 +220,107 @@ def test_run_doctor_self_evolution_can_materialize_candidate_pack(monkeypatch, t
 
     assert calls == [("evidence.json", str(output))]
     assert json.loads(capsys.readouterr().out)["kind"] == "candidate_pack"
+
+
+def test_self_evolution_builds_patch_packet_from_candidate_pack(tmp_path):
+    evidence = tmp_path / "evidence.json"
+    _write_sample_evidence(evidence)
+    candidate = tmp_path / "candidate.json"
+
+    from hermes_cli.self_evolution_doctor import (
+        materialize_self_evolution_candidate_pack,
+        build_self_evolution_patch_packet,
+    )
+
+    materialize_self_evolution_candidate_pack(evidence_path=evidence, output_path=candidate)
+    packet = build_self_evolution_patch_packet(candidate_pack_path=candidate)
+
+    assert packet["schema_version"] == "hermes.self_evolution.patch_packet.v1"
+    assert packet["mode"] == "fixture_only"
+    assert packet["execution"]["direct_skill_write"] is False
+    assert packet["patch"]["target_skill"] == "hermes-agent"
+    assert packet["patch"]["real_target_write_enabled"] is False
+    assert packet["patch"]["operations"][0]["op"] == "append_reference_addendum"
+    assert "Reference addendum" in packet["patch"]["operations"][0]["text"]
+
+
+def test_self_evolution_verifies_patch_packet_rejects_deletions(tmp_path):
+    from hermes_cli.self_evolution_doctor import verify_self_evolution_patch_packet
+
+    bad = {
+        "schema_version": "hermes.self_evolution.patch_packet.v1",
+        "mode": "fixture_only",
+        "execution": {"direct_skill_write": False, "direct_memory_write": False},
+        "patch": {
+            "target_skill": "hermes-agent",
+            "real_target_write_enabled": False,
+            "operations": [{"op": "delete", "text": "remove old content"}],
+        },
+    }
+
+    verdict = verify_self_evolution_patch_packet(bad)
+
+    assert verdict["ok"] is False
+    assert "unsupported_operation" in verdict["reasons"]
+
+
+def test_self_evolution_applies_patch_to_temp_skill_fixture_only(tmp_path):
+    evidence = tmp_path / "evidence.json"
+    _write_sample_evidence(evidence)
+    candidate = tmp_path / "candidate.json"
+    fixture_dir = tmp_path / "fixture-skill"
+    fixture_dir.mkdir()
+    (fixture_dir / "SKILL.md").write_text("# Hermes Agent\n\nExisting body.\n", encoding="utf-8")
+
+    from hermes_cli.self_evolution_doctor import (
+        materialize_self_evolution_candidate_pack,
+        build_self_evolution_patch_packet,
+        apply_self_evolution_patch_to_fixture,
+    )
+
+    materialize_self_evolution_candidate_pack(evidence_path=evidence, output_path=candidate)
+    packet = build_self_evolution_patch_packet(candidate_pack_path=candidate)
+    receipt = apply_self_evolution_patch_to_fixture(packet=packet, fixture_skill_dir=fixture_dir)
+
+    assert receipt["schema_version"] == "hermes.self_evolution.fixture_apply_receipt.v1"
+    assert receipt["real_target_touched"] is False
+    assert receipt["fixture_touched"] is True
+    updated = (fixture_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert "Existing body." in updated
+    assert "self-evolution absorption boundary" in updated
+
+
+def test_run_doctor_self_evolution_can_materialize_patch_packet(monkeypatch, tmp_path, capsys):
+    from hermes_cli import doctor as doctor_mod
+
+    output = tmp_path / "patch-packet.json"
+    calls = []
+
+    def fake_materialize(*, candidate_pack_path, output_path):
+        calls.append((candidate_pack_path, output_path))
+        return {"written": True, "output_path": str(output_path), "status": "ok", "kind": "patch_packet"}
+
+    monkeypatch.setattr(
+        "hermes_cli.self_evolution_doctor.materialize_self_evolution_patch_packet",
+        fake_materialize,
+    )
+
+    doctor_mod.run_doctor(
+        Namespace(
+            fix=False,
+            ack=None,
+            external_data=False,
+            provider_gateway_observability=False,
+            self_evolution=True,
+            self_evolution_evidence=None,
+            self_evolution_output=None,
+            self_evolution_candidate_output=None,
+            self_evolution_patch_packet_output=str(output),
+            self_evolution_candidate_input="candidate.json",
+            self_evolution_fixture_skill_dir=None,
+            json=True,
+        )
+    )
+
+    assert calls == [("candidate.json", str(output))]
+    assert json.loads(capsys.readouterr().out)["kind"] == "patch_packet"

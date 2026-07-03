@@ -503,6 +503,36 @@ def run_doctor(args):
         return
 
     if getattr(args, "self_evolution", False):
+        if getattr(args, "self_evolution_patch_packet_output", None):
+            from hermes_cli.self_evolution_doctor import (
+                apply_self_evolution_patch_to_fixture,
+                materialize_self_evolution_patch_packet,
+            )
+
+            result = materialize_self_evolution_patch_packet(
+                candidate_pack_path=getattr(args, "self_evolution_candidate_input", None),
+                output_path=getattr(args, "self_evolution_patch_packet_output"),
+            )
+            if getattr(args, "self_evolution_fixture_skill_dir", None):
+                import json
+
+                with open(getattr(args, "self_evolution_patch_packet_output"), encoding="utf-8") as packet_file:
+                    packet = json.load(packet_file)
+                result = {
+                    **result,
+                    "fixture_apply": apply_self_evolution_patch_to_fixture(
+                        packet=packet,
+                        fixture_skill_dir=getattr(args, "self_evolution_fixture_skill_dir"),
+                    ),
+                }
+            if bool(getattr(args, "json", False)):
+                import json
+
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(f"Self-evolution patch packet written: {result['output_path']}")
+            return
+
         if getattr(args, "self_evolution_candidate_output", None):
             from hermes_cli.self_evolution_doctor import materialize_self_evolution_candidate_pack
 

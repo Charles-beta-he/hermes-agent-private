@@ -73,6 +73,21 @@ def build_doctor_parser(subparsers, *, cmd_doctor: Callable) -> None:
         ),
     )
     doctor_parser.add_argument(
+        "--self-evolution-candidate-input",
+        default=None,
+        help="With --self-evolution patch-packet modes, read this candidate pack JSON",
+    )
+    doctor_parser.add_argument(
+        "--self-evolution-patch-packet-output",
+        default=None,
+        help="With --self-evolution, materialize a fixture-only patch packet JSON at this path",
+    )
+    doctor_parser.add_argument(
+        "--self-evolution-fixture-skill-dir",
+        default=None,
+        help="With --self-evolution and --self-evolution-patch-packet-output, apply packet to this fixture skill dir only",
+    )
+    doctor_parser.add_argument(
         "--json",
         action="store_true",
         help=(

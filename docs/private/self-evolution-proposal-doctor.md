@@ -18,6 +18,11 @@ hermes doctor --self-evolution \
   --self-evolution-evidence <upstream-self-evolution-benchmark.json> \
   --self-evolution-candidate-output <candidate-pack.json> \
   --json
+hermes doctor --self-evolution \
+  --self-evolution-candidate-input <candidate-pack.json> \
+  --self-evolution-patch-packet-output <patch-packet.json> \
+  --self-evolution-fixture-skill-dir <temporary-skill-fixture-dir> \
+  --json
 ```
 
 ## Safety contract
@@ -56,6 +61,14 @@ Therefore the current capability level is:
 `/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-candidate-pack.json`
 
 The candidate pack includes an `experience_atom` in `promoted_candidate` status and a dry-run skill diff preview with `write_enabled=false`.
+
+## Current patch packet and fixture receipt
+
+`/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-patch-packet.json`
+
+`/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-fixture-apply-receipt.json`
+
+The patch packet is `mode=fixture_only`; real target writes remain disabled. The fixture apply receipt proves the generated patch applies to a temporary copy of the Hermes skill while `real_target_touched=false`.
 
 ## Verification
 
