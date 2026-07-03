@@ -14,6 +14,10 @@ hermes doctor --self-evolution \
   --self-evolution-evidence <upstream-self-evolution-benchmark.json> \
   --self-evolution-output <proposal-receipt.json> \
   --json
+hermes doctor --self-evolution \
+  --self-evolution-evidence <upstream-self-evolution-benchmark.json> \
+  --self-evolution-candidate-output <candidate-pack.json> \
+  --json
 ```
 
 ## Safety contract
@@ -46,6 +50,12 @@ Therefore the current capability level is:
 ## Current receipt
 
 `/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-proposal-receipt.json`
+
+## Current candidate pack
+
+`/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-candidate-pack.json`
+
+The candidate pack includes an `experience_atom` in `promoted_candidate` status and a dry-run skill diff preview with `write_enabled=false`.
 
 ## Verification
 

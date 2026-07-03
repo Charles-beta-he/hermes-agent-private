@@ -65,6 +65,14 @@ def build_doctor_parser(subparsers, *, cmd_doctor: Callable) -> None:
         ),
     )
     doctor_parser.add_argument(
+        "--self-evolution-candidate-output",
+        default=None,
+        help=(
+            "With --self-evolution, materialize a proposal-only experience-ratchet "
+            "candidate pack and dry-run skill diff JSON at this path"
+        ),
+    )
+    doctor_parser.add_argument(
         "--json",
         action="store_true",
         help=(

@@ -503,6 +503,21 @@ def run_doctor(args):
         return
 
     if getattr(args, "self_evolution", False):
+        if getattr(args, "self_evolution_candidate_output", None):
+            from hermes_cli.self_evolution_doctor import materialize_self_evolution_candidate_pack
+
+            result = materialize_self_evolution_candidate_pack(
+                evidence_path=getattr(args, "self_evolution_evidence", None),
+                output_path=getattr(args, "self_evolution_candidate_output"),
+            )
+            if bool(getattr(args, "json", False)):
+                import json
+
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(f"Self-evolution candidate pack written: {result['output_path']}")
+            return
+
         if getattr(args, "self_evolution_output", None):
             from hermes_cli.self_evolution_doctor import materialize_self_evolution_proposal
 

@@ -150,3 +150,73 @@ def test_self_evolution_materializes_local_proposal_receipt_without_promotion(tm
     assert payload["execution"]["direct_memory_write"] is False
     assert payload["proposal_packet"]["auto_promote"] is False
     assert payload["proposal_packet"]["capability_level"] == "memory_roundtrip_and_agent_case_proven"
+
+
+def test_self_evolution_builds_experience_candidate_and_dry_run_skill_diff(tmp_path):
+    evidence = tmp_path / "evidence.json"
+    _write_sample_evidence(evidence)
+
+    from hermes_cli.self_evolution_doctor import build_self_evolution_candidate_pack
+
+    pack = build_self_evolution_candidate_pack(evidence_path=evidence)
+
+    assert pack["schema_version"] == "hermes.self_evolution.candidate_pack.v1"
+    assert pack["mode"] == "proposal_only"
+    assert pack["execution"]["direct_skill_write"] is False
+    assert pack["execution"]["direct_memory_write"] is False
+    assert pack["experience_atom"]["status"] == "promoted_candidate"
+    assert pack["experience_atom"]["landing_zone"] == "skill"
+    assert pack["experience_atom"]["claim"].startswith("Hermes can consume Raven/EverOS")
+    assert "agent skill SKILL.md" in pack["experience_atom"]["falsifiers"][0]
+    assert pack["dry_run_skill_diff"]["target_skill"] == "hermes-agent"
+    assert pack["dry_run_skill_diff"]["write_enabled"] is False
+    assert "```diff" in pack["dry_run_skill_diff"]["preview"]
+
+
+def test_self_evolution_materializes_candidate_pack_without_writing_skills(tmp_path):
+    evidence = tmp_path / "evidence.json"
+    _write_sample_evidence(evidence)
+    output = tmp_path / "candidate-pack.json"
+
+    from hermes_cli.self_evolution_doctor import materialize_self_evolution_candidate_pack
+
+    result = materialize_self_evolution_candidate_pack(evidence_path=evidence, output_path=output)
+
+    assert result["written"] is True
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "hermes.self_evolution.candidate_pack.v1"
+    assert payload["dry_run_skill_diff"]["write_enabled"] is False
+    assert payload["execution"]["direct_skill_write"] is False
+
+
+def test_run_doctor_self_evolution_can_materialize_candidate_pack(monkeypatch, tmp_path, capsys):
+    from hermes_cli import doctor as doctor_mod
+
+    output = tmp_path / "candidate-pack.json"
+    calls = []
+
+    def fake_materialize(*, evidence_path=None, output_path):
+        calls.append((evidence_path, output_path))
+        return {"written": True, "output_path": str(output_path), "status": "ok", "kind": "candidate_pack"}
+
+    monkeypatch.setattr(
+        "hermes_cli.self_evolution_doctor.materialize_self_evolution_candidate_pack",
+        fake_materialize,
+    )
+
+    doctor_mod.run_doctor(
+        Namespace(
+            fix=False,
+            ack=None,
+            external_data=False,
+            provider_gateway_observability=False,
+            self_evolution=True,
+            self_evolution_evidence="evidence.json",
+            self_evolution_output=None,
+            self_evolution_candidate_output=str(output),
+            json=True,
+        )
+    )
+
+    assert calls == [("evidence.json", str(output))]
+    assert json.loads(capsys.readouterr().out)["kind"] == "candidate_pack"
