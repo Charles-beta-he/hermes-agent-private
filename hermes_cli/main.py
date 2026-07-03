@@ -8306,6 +8306,71 @@ def _install_metadata_branch() -> Optional[str]:
     return None
 
 
+def _private_update_finalizer_command(metadata: Optional[dict] = None) -> Optional[list[str]]:
+    """Return the private-channel post-update finalizer command, if any.
+
+    Private installs stamp ``$HERMES_HOME/install.json`` with an installer script.
+    After ``hermes update`` pulls the private branch, run that finalizer in
+    skip-setup mode so new sanitized templates/checkers are copied into the
+    user's Hermes home without overwriting local edits.  Public installs and
+    unknown/private metadata stay untouched.
+    """
+    metadata = metadata if metadata is not None else _load_install_metadata()
+    if not isinstance(metadata, dict):
+        return None
+    channel = metadata.get("channel")
+    installer = metadata.get("installer")
+    is_private_channel = channel == "charles-private"
+    is_private_installer = installer == "scripts/install-private.sh"
+    if not (is_private_channel or is_private_installer):
+        return None
+    script = PROJECT_ROOT / "scripts" / "install-private.sh"
+    if not script.exists():
+        return None
+    return ["bash", str(script), "--yes", "--skip-setup"]
+
+
+def _run_private_update_finalizer() -> None:
+    """Best-effort private-channel post-update refresh.
+
+    This is intentionally non-fatal: code updates must not be rolled back just
+    because the sanitized experience pack copy step failed.  Failures are
+    printed visibly so the user can run ``scripts/install-private.sh --yes
+    --skip-setup`` manually.
+    """
+    cmd = _private_update_finalizer_command()
+    if not cmd:
+        return
+    try:
+        from hermes_constants import get_hermes_home
+
+        env = {**os.environ, "HERMES_HOME": str(get_hermes_home())}
+    except Exception:
+        env = os.environ.copy()
+    print()
+    print("→ Refreshing private experience pack...")
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=PROJECT_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+    except Exception as exc:
+        print(f"  ⚠ Private experience refresh failed to start: {exc}")
+        return
+    if result.returncode == 0:
+        print("  ✓ Private experience pack refreshed")
+        return
+    print("  ⚠ Private experience refresh failed (non-fatal)")
+    output = (result.stderr or result.stdout or "").strip()
+    if output:
+        for line in output.splitlines()[:6]:
+            print(f"    {line}")
+    print("  Retry manually: scripts/install-private.sh --yes --skip-setup")
+
+
 def _resolve_update_branch(args) -> str:
     """Normalize the update branch.
 
@@ -9401,6 +9466,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     text=True,
                     check=False,
                 )
+            _run_private_update_finalizer()
             print("✓ Already up to date!")
             _resume_windows_gateways_after_update(_windows_gateway_resume)
             return
@@ -9938,6 +10004,8 @@ def _cmd_update_impl(args, gateway_mode: bool):
             _print_curator_recent_run_notice()
         except Exception as e:
             logger.debug("Curator recent-run notice failed: %s", e)
+
+        _run_private_update_finalizer()
 
         # Repair RHEL-family root installs where /usr/local/bin isn't on PATH
         # for non-login interactive shells.  No-op on every other platform.

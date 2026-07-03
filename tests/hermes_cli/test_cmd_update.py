@@ -188,6 +188,46 @@ class TestCmdUpdateBranchFallback:
 
         assert hm._resolve_update_branch(SimpleNamespace(branch="main")) == "main"
 
+    def test_private_update_finalizer_command_detects_private_channel(self):
+        from hermes_cli import main as hm
+
+        cmd = hm._private_update_finalizer_command(
+            {"channel": "charles-private", "installer": "scripts/install-private.sh"}
+        )
+
+        assert cmd is not None
+        assert cmd[:2] == ["bash", str(PROJECT_ROOT / "scripts" / "install-private.sh")]
+        assert "--yes" in cmd
+        assert "--skip-setup" in cmd
+
+    def test_private_update_finalizer_command_ignores_public_install(self):
+        from hermes_cli import main as hm
+
+        assert hm._private_update_finalizer_command({"channel": "public", "branch": "main"}) is None
+
+    @patch("subprocess.run")
+    def test_private_update_finalizer_runs_best_effort(self, mock_run, tmp_path, monkeypatch, capsys):
+        hermes_home = tmp_path / "hermes-home"
+        hermes_home.mkdir()
+        (hermes_home / "install.json").write_text(
+            '{"channel":"charles-private","branch":"private/main","installer":"scripts/install-private.sh"}\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="ok", stderr="")
+
+        from hermes_cli import main as hm
+
+        hm._run_private_update_finalizer()
+
+        out = capsys.readouterr().out
+        assert "Refreshing private experience pack" in out
+        assert "Private experience pack refreshed" in out
+        cmd = mock_run.call_args.args[0]
+        assert cmd == ["bash", str(PROJECT_ROOT / "scripts" / "install-private.sh"), "--yes", "--skip-setup"]
+        assert mock_run.call_args.kwargs["cwd"] == PROJECT_ROOT
+        assert mock_run.call_args.kwargs["env"]["HERMES_HOME"] == str(hermes_home)
+
     @patch("shutil.which", return_value=None)
     @patch("subprocess.run")
     def test_update_uses_install_metadata_branch(
