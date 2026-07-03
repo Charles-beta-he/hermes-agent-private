@@ -40,24 +40,96 @@ def test_self_evolution_modular_import_contracts_are_available():
         apply_self_evolution_patch_to_fixture,
         apply_self_evolution_patch_to_real_skill,
         build_self_evolution_candidate_pack,
+        build_self_evolution_manifest,
         build_self_evolution_patch_packet,
         build_self_evolution_promotion_gate,
         build_self_evolution_report,
+        materialize_self_evolution_manifest,
         materialize_self_evolution_proposal,
         verify_self_evolution_patch_packet,
     )
     from hermes_cli.self_evolution.proposal import build_self_evolution_report as proposal_report
     from hermes_cli.self_evolution.patch_packet import verify_self_evolution_patch_packet as patch_verifier
     from hermes_cli.self_evolution.promotion_gate import build_self_evolution_promotion_gate as gate_builder
+    from hermes_cli.self_evolution.manifest import build_self_evolution_manifest as manifest_builder
 
     assert build_self_evolution_report is proposal_report
     assert verify_self_evolution_patch_packet is patch_verifier
     assert build_self_evolution_promotion_gate is gate_builder
+    assert build_self_evolution_manifest is manifest_builder
     assert callable(build_self_evolution_candidate_pack)
     assert callable(build_self_evolution_patch_packet)
     assert callable(apply_self_evolution_patch_to_fixture)
     assert callable(apply_self_evolution_patch_to_real_skill)
     assert callable(materialize_self_evolution_proposal)
+    assert callable(materialize_self_evolution_manifest)
+
+
+def test_self_evolution_builds_read_only_stage_manifest():
+    from hermes_cli.self_evolution import build_self_evolution_manifest
+
+    manifest = build_self_evolution_manifest()
+
+    assert manifest["schema_version"] == "hermes.self_evolution.stage_manifest.v1"
+    assert manifest["mode"] == "read_only_projection"
+    assert manifest["execution"]["direct_skill_write"] is False
+    assert manifest["execution"]["direct_memory_write"] is False
+    stage_ids = [stage["id"] for stage in manifest["stages"]]
+    assert stage_ids == [
+        "proposal",
+        "candidate_pack",
+        "patch_packet",
+        "fixture_apply",
+        "promotion_gate",
+        "real_skill_apply",
+    ]
+    assert manifest["stages"][-1]["default_enabled"] is False
+    assert manifest["stages"][-1]["required_gate"] == "exact_promotion_gate_and_execute_flag"
+    assert manifest["stages"][-1]["side_effect_class"] == "local_skill_write"
+    assert all(stage["module"].startswith("hermes_cli.self_evolution.") for stage in manifest["stages"])
+
+
+def test_self_evolution_materializes_stage_manifest(tmp_path):
+    from hermes_cli.self_evolution import materialize_self_evolution_manifest
+
+    output = tmp_path / "manifest.json"
+    result = materialize_self_evolution_manifest(output_path=output)
+
+    assert result == {"written": True, "output_path": str(output), "kind": "stage_manifest"}
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "hermes.self_evolution.stage_manifest.v1"
+    assert payload["execution"]["external_dispatch"] is False
+
+
+def test_run_doctor_self_evolution_can_materialize_stage_manifest(monkeypatch, tmp_path, capsys):
+    from hermes_cli import doctor as doctor_mod
+
+    output = tmp_path / "manifest.json"
+    calls = []
+
+    def fake_materialize(*, output_path):
+        calls.append(str(output_path))
+        return {"written": True, "output_path": str(output_path), "kind": "stage_manifest"}
+
+    monkeypatch.setattr(
+        "hermes_cli.self_evolution_doctor.materialize_self_evolution_manifest",
+        fake_materialize,
+    )
+
+    doctor_mod.run_doctor(
+        Namespace(
+            fix=False,
+            ack=None,
+            external_data=False,
+            provider_gateway_observability=False,
+            self_evolution=True,
+            self_evolution_stage_manifest_output=str(output),
+            json=True,
+        )
+    )
+
+    assert calls == [str(output)]
+    assert json.loads(capsys.readouterr().out)["kind"] == "stage_manifest"
 
 
 def test_self_evolution_legacy_doctor_module_reexports_modular_api():
@@ -66,7 +138,9 @@ def test_self_evolution_legacy_doctor_module_reexports_modular_api():
 
     exported = {
         "build_self_evolution_report",
+        "build_self_evolution_manifest",
         "materialize_self_evolution_proposal",
+        "materialize_self_evolution_manifest",
         "build_self_evolution_candidate_pack",
         "materialize_self_evolution_candidate_pack",
         "build_self_evolution_patch_packet",

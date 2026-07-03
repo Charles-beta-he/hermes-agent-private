@@ -65,6 +65,14 @@ def build_doctor_parser(subparsers, *, cmd_doctor: Callable) -> None:
         ),
     )
     doctor_parser.add_argument(
+        "--self-evolution-stage-manifest-output",
+        default=None,
+        help=(
+            "With --self-evolution, materialize a read-only stage manifest JSON "
+            "for downstream dashboard/taskpool projections"
+        ),
+    )
+    doctor_parser.add_argument(
         "--self-evolution-candidate-output",
         default=None,
         help=(

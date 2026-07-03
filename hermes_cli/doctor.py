@@ -503,6 +503,20 @@ def run_doctor(args):
         return
 
     if getattr(args, "self_evolution", False):
+        if getattr(args, "self_evolution_stage_manifest_output", None):
+            import json
+
+            from hermes_cli.self_evolution_doctor import materialize_self_evolution_manifest
+
+            result = materialize_self_evolution_manifest(
+                output_path=getattr(args, "self_evolution_stage_manifest_output"),
+            )
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(f"Self-evolution stage manifest written: {result['output_path']}")
+            return
+
         if getattr(args, "self_evolution_real_apply_receipt_output", None):
             import json
 

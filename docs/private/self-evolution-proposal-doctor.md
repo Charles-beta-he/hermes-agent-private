@@ -9,7 +9,9 @@ This slice gives Hermes a safe first self-evolution boundary for Raven/EverOS-st
 ## Command
 
 ```bash
-hermes doctor --self-evolution --json
+hermes doctor --self-evolution \
+  --self-evolution-stage-manifest-output <stage-manifest.json> \
+  --json
 hermes doctor --self-evolution \
   --self-evolution-evidence <upstream-self-evolution-benchmark.json> \
   --self-evolution-output <proposal-receipt.json> \
@@ -69,6 +71,25 @@ Therefore the current capability level is:
 
 `/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-proposal-receipt.json`
 
+## Stage manifest / capability registry
+
+`hermes_cli.self_evolution.manifest` exposes a read-only stage manifest for downstream dashboard/taskpool/experience-ratchet projections. It lists the six current stages:
+
+1. `proposal`
+2. `candidate_pack`
+3. `patch_packet`
+4. `fixture_apply`
+5. `promotion_gate`
+6. `real_skill_apply`
+
+The manifest keeps the same closed boundaries as the doctor report (`direct_skill_write=false`, `direct_memory_write=false`, `external_dispatch=false`, `runtime_mutation=false`) and marks `real_skill_apply.default_enabled=false` so downstream consumers cannot treat the existence of the harness as permission to write.
+
+Smoke command:
+
+```bash
+hermes doctor --self-evolution --self-evolution-stage-manifest-output /tmp/hermes-self-evolution-stage-manifest.json --json
+```
+
 ## Current candidate pack
 
 `/Users/charles/.hermes/workflows/projects/hermes-agent-os-control-plane/04-evidence/self-evolution-candidate-pack.json`
@@ -102,6 +123,7 @@ The implementation is modularized under `hermes_cli/self_evolution/`:
 - `patch_packet.py` — fixture-only patch packet verification and fixture apply.
 - `promotion_gate.py` — exact promotion gate and default-off real-skill apply harness.
 - `common.py` — shared constants, hashes, and closed execution-boundary helper.
+- `manifest.py` — read-only stage manifest/capability registry for downstream projections.
 - `__init__.py` — reusable public API for future safe local harnesses.
 
 `hermes_cli/self_evolution_doctor.py` remains as a compatibility wrapper that re-exports the modular API so older tests, scripts, and `doctor.py` imports keep working.
