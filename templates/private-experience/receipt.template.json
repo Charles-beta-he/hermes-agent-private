@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "action": "example-action",
+  "target": "exact target or local path",
+  "authority": "who authorized and when",
+  "rollback_or_escape": "how to reverse or stop",
+  "evidence_refs": [],
+  "readback": {
+    "command_or_source": "how the result was read back",
+    "result_summary": "what was observed"
+  }
+}

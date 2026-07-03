@@ -1,0 +1,30 @@
+{
+  "display_name": "example-user",
+  "communication": {
+    "primary_language": "English",
+    "tone": "concise, direct, evidence-backed",
+    "verbosity": "short by default; expand for architecture or risk"
+  },
+  "work_preferences": [
+    "Prefer verified execution over plan-only answers",
+    "For complex work, start with success criteria, constraints, chosen path, and verification evidence",
+    "Keep durable memory declarative and stable"
+  ],
+  "domains": ["software engineering", "product workflows"],
+  "red_lines": [
+    "Do not type credentials or payment details",
+    "Do not publish, deploy, push, delete, or send external messages without exact authorization",
+    "Do not save task progress into long-term memory"
+  ],
+  "acceptance": {
+    "code": ["scoped diff", "focused tests", "fresh command output"],
+    "ui": ["real screenshot or runtime readback", "no blocked header/toast/splash acceptance"],
+    "research": ["source citations", "claim/evidence separation"]
+  },
+  "authority_defaults": [
+    "local read/write allowed only in the current authorized project",
+    "external writes require exact target plus receipt/readback",
+    "destructive actions require backup or rollback path"
+  ],
+  "review_after": "Update after the first 5-10 real sessions"
+}

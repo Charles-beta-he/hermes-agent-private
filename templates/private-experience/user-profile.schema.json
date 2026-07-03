@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hermes user profile shape",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["display_name", "communication", "work_preferences", "red_lines", "acceptance"],
+  "properties": {
+    "display_name": {"type": "string"},
+    "communication": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "primary_language": {"type": "string"},
+        "tone": {"type": "string"},
+        "verbosity": {"type": "string"}
+      }
+    },
+    "work_preferences": {"type": "array", "items": {"type": "string"}},
+    "domains": {"type": "array", "items": {"type": "string"}},
+    "red_lines": {"type": "array", "items": {"type": "string"}},
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {"type": "array", "items": {"type": "string"}},
+        "ui": {"type": "array", "items": {"type": "string"}},
+        "research": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "authority_defaults": {"type": "array", "items": {"type": "string"}},
+    "review_after": {"type": "string"}
+  }
+}

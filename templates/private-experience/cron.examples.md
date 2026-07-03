@@ -14,7 +14,8 @@ hermes cron create \
 
 ## Origin-thread report
 
-Use only when the current chat/channel should receive the result:
+Use only when the current chat/channel should receive the result and the current
+platform supports delivery:
 
 ```bash
 hermes cron create \
@@ -32,4 +33,5 @@ Before any `--deliver telegram:...`, `discord:...`, or similar external target, 
 - expected audience;
 - payload class;
 - failure/rollback plan;
-- opt-out/removal command.
+- opt-out/removal command;
+- readback method.

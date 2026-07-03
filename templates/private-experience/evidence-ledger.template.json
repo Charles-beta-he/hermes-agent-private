@@ -1,0 +1,15 @@
+{
+  "project": "example-project",
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "ev-0001",
+      "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+      "claim": "What this evidence supports",
+      "source_type": "command_output|file_readback|screenshot|test_report|receipt|external_source",
+      "source_ref": "path, URL, command, or receipt id",
+      "summary": "Short human-readable summary",
+      "limitations": "What this evidence does not prove"
+    }
+  ]
+}

@@ -1,13 +1,19 @@
 {
-  "name": "charles-private-hermes-sanitized-experience-pack",
-  "version": 1,
+  "name": "private-hermes-sanitized-experience-pack",
+  "version": 2,
+  "package": "capability_shape",
+  "exclude": "lived_state",
+  "overwrite_existing": false,
+  "default_enabled": false,
   "policy": "templates_only_no_secrets_no_memory_no_runtime_state",
   "source_model": {
     "copied": [
       "safe templates",
       "capability-shape documentation",
       "post-install checklist",
-      "example config structures with placeholders"
+      "example config structures with placeholders",
+      "replaceable persona/profile/project schemas",
+      "default-off side-effect gates"
     ],
     "not_copied": [
       "live config.yaml or .env",
@@ -15,8 +21,20 @@
       "memory/user profile/session databases",
       "project-profiles with real client/project facts",
       "logs/checkpoints/runtime state/task evidence",
-      "local brain vault or private notes"
+      "local brain vault or private notes",
+      "gateway chat IDs or delivery targets"
     ]
+  },
+  "activation_gates": {
+    "cron": "manual_enable",
+    "gateway_delivery": "manual_configure",
+    "shell_hooks": "user_approval_required",
+    "taskpool_mutation": "explicit_authority",
+    "external_write": "exact_target_required",
+    "publish_deploy_push": "exact_target_rollback_receipt_required",
+    "destructive": "exact_target_backup_readback_required",
+    "credentials": "never_agent_typed",
+    "broad_fanout": "exact_allowlist_required"
   },
   "files": [
     {
@@ -35,9 +53,59 @@
       "installed_to": "$HERMES_HOME/templates/private-experience/hermes-agent-persona.example.md"
     },
     {
+      "path": "user-profile.schema.json",
+      "purpose": "user profile schema; not a profile export",
+      "installed_to": "$HERMES_HOME/templates/private-experience/user-profile.schema.json"
+    },
+    {
+      "path": "user-profile.example.json",
+      "purpose": "replaceable example user profile",
+      "installed_to": "$HERMES_HOME/templates/private-experience/user-profile.example.json"
+    },
+    {
+      "path": "project-profile.schema.json",
+      "purpose": "project-profile schema; no project facts",
+      "installed_to": "$HERMES_HOME/templates/private-experience/project-profile.schema.json"
+    },
+    {
       "path": "project-profile.example.json",
-      "purpose": "project-profile schema example without project facts",
+      "purpose": "project-profile example without project facts",
       "installed_to": "$HERMES_HOME/templates/private-experience/project-profile.example.json"
+    },
+    {
+      "path": "ssot.template.md",
+      "purpose": "project SSOT template",
+      "installed_to": "$HERMES_HOME/templates/private-experience/ssot.template.md"
+    },
+    {
+      "path": "evidence-ledger.template.json",
+      "purpose": "claim/evidence ledger template",
+      "installed_to": "$HERMES_HOME/templates/private-experience/evidence-ledger.template.json"
+    },
+    {
+      "path": "receipt.template.json",
+      "purpose": "side-effect receipt/readback template",
+      "installed_to": "$HERMES_HOME/templates/private-experience/receipt.template.json"
+    },
+    {
+      "path": "authority-matrix.template.yaml",
+      "purpose": "default-off authority matrix",
+      "installed_to": "$HERMES_HOME/templates/private-experience/authority-matrix.template.yaml"
+    },
+    {
+      "path": "side-effect-gates.template.yaml",
+      "purpose": "side-effect gate outcomes",
+      "installed_to": "$HERMES_HOME/templates/private-experience/side-effect-gates.template.yaml"
+    },
+    {
+      "path": "agent-template-profile.example.json",
+      "purpose": "governed local-only agent template profile",
+      "installed_to": "$HERMES_HOME/templates/private-experience/agent-template-profile.example.json"
+    },
+    {
+      "path": "taskpool-task.template.yaml",
+      "purpose": "taskpool task template with evidence gates",
+      "installed_to": "$HERMES_HOME/templates/private-experience/taskpool-task.template.yaml"
     },
     {
       "path": "cron.examples.md",
@@ -45,8 +113,28 @@
       "installed_to": "$HERMES_HOME/templates/private-experience/cron.examples.md"
     },
     {
+      "path": "gateway.example.yaml.disabled",
+      "purpose": "disabled external-delivery example",
+      "installed_to": "$HERMES_HOME/templates/private-experience/gateway.example.yaml.disabled"
+    },
+    {
+      "path": "memory-policy.md",
+      "purpose": "durable-memory landing-zone policy",
+      "installed_to": "$HERMES_HOME/templates/private-experience/memory-policy.md"
+    },
+    {
+      "path": "evidence-first-completion.md",
+      "purpose": "fresh-evidence completion rule",
+      "installed_to": "$HERMES_HOME/templates/private-experience/evidence-first-completion.md"
+    },
+    {
+      "path": "capability-graph-primer.md",
+      "purpose": "workflow/capability graph default abstraction",
+      "installed_to": "$HERMES_HOME/templates/private-experience/capability-graph-primer.md"
+    },
+    {
       "path": "post-install-checklist.md",
-      "purpose": "manual checklist to reach Charles-like capability coverage",
+      "purpose": "manual checklist to reach strong capability coverage",
       "installed_to": "$HERMES_HOME/templates/private-experience/post-install-checklist.md"
     }
   ]

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hermes project profile shape",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "repos", "verification", "red_lines"],
+  "properties": {
+    "name": {"type": "string"},
+    "description": {"type": "string"},
+    "repos": {"type": "array", "items": {"type": "object"}},
+    "environments": {"type": "object"},
+    "ssot": {"type": "object"},
+    "verification": {"type": "object"},
+    "red_lines": {"type": "array", "items": {"type": "string"}},
+    "authority": {"type": "object"}
+  }
+}

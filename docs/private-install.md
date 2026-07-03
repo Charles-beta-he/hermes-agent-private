@@ -99,10 +99,14 @@ copying Charles' private memory or runtime state. The pack contains:
 
 - `config.example.yaml` — non-secret provider/tool/dashboard/safety shape;
 - `hermes-agent-persona.example.md` — communication and operating-style template;
-- `project-profile.example.json` — project-profile schema example with placeholder URLs;
-- `cron.examples.md` — scheduled-job examples that start with local/origin delivery;
+- `user-profile.schema.json` / `user-profile.example.json` — replaceable user-profile shape, not an export;
+- `project-profile.schema.json` / `project-profile.example.json` — project-profile shape with placeholder URLs;
+- `ssot.template.md`, `evidence-ledger.template.json`, and `receipt.template.json` — project truth/evidence/readback scaffolds;
+- `authority-matrix.template.yaml` and `side-effect-gates.template.yaml` — default-off side-effect boundaries;
+- `memory-policy.md`, `evidence-first-completion.md`, and `capability-graph-primer.md` — transferable operating consensus;
+- `cron.examples.md`, `gateway.example.yaml.disabled`, and `taskpool-task.template.yaml` — automation templates that remain inert until explicitly enabled;
 - `post-install-checklist.md` — capability-verification checklist;
-- `manifest.json` — machine-readable list of copied and explicitly not-copied items.
+- `manifest.json` — machine-readable list of copied items, explicitly not-copied items, and activation gates.
 
 The pack intentionally does **not** include:
 

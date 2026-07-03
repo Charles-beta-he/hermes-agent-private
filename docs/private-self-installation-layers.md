@@ -54,8 +54,9 @@ Install role:
   `hermes update`.
 - The private installer also copies the sanitized experience pack to
   `$HERMES_HOME/templates/private-experience/` by default. This gives other
-  users the same setup checklist, persona/config/project-profile shapes, and
-  cron examples without transferring Charles' private state.
+  users the same setup checklist, replaceable persona/user-profile/project-profile
+  shapes, SSOT/evidence/receipt templates, default-off authority gates, and
+  automation examples without transferring private state.
 
 Do not store here:
 

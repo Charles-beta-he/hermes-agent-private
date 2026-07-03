@@ -1,0 +1,18 @@
+id: example-task
+status: proposed
+priority: P2
+title: Example evidence-backed task
+body: |
+  State the concrete objective. Do not include secrets.
+acceptance_criteria:
+  - exact artifact expected
+  - verification command or readback source
+red_lines:
+  - no external write without explicit authority
+  - no done status without evidence
+non_goals:
+  - unrelated cleanup
+evidence_refs: []
+workflow_contract:
+  claim_requires_fresh_evidence: true
+  done_requires_review_or_tests: true

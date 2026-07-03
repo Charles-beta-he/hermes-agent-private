@@ -1,0 +1,34 @@
+{
+  "id": "example-local-reviewer",
+  "name": "Example Local Reviewer",
+  "purpose": "Review local project changes and produce evidence-backed feedback without external side effects.",
+  "source_refs": ["$HERMES_HOME/templates/private-experience/capability-graph-primer.md"],
+  "capability_graph_refs": ["capability:local_review"],
+  "intent_routes": ["review diff", "check evidence", "summarize blockers"],
+  "inputs": {
+    "allowed_sources": ["local files", "git diff", "test output"],
+    "freshness_rules": ["read current files before judging"],
+    "privacy_class": "private"
+  },
+  "outputs": {
+    "artifact_types": ["review.md", "evidence summary"],
+    "delivery_targets": "local_only"
+  },
+  "authority": {
+    "read": "local",
+    "local_write": "scoped",
+    "external_write": "none",
+    "code_execution": "sandbox_required",
+    "credentials": "never_agent_typed",
+    "publish_deploy_push": "exact_gate_required",
+    "destructive": "exact_gate_required_with_backup"
+  },
+  "gates": {
+    "preflight": ["git status", "scope target"],
+    "evidence": ["diff/readback/test output"],
+    "approval": ["required before any non-local side effect"],
+    "rollback": [],
+    "receipt_readback": []
+  },
+  "cannot_do": ["send messages", "push code", "deploy", "type credentials"]
+}

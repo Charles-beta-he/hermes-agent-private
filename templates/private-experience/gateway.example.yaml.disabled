@@ -1,0 +1,14 @@
+# Disabled gateway delivery example. Rename/copy only after configuring exact targets.
+gateway:
+  enabled: false
+  platforms: {}
+
+delivery_policy:
+  default: local_only
+  external_dispatch_requires:
+    - exact_platform
+    - exact_channel_or_thread
+    - payload_digest
+    - receipt
+    - post_send_readback
+  broad_fanout: disabled

@@ -18,12 +18,23 @@
       "app_url": "https://staging.example.invalid"
     }
   },
+  "ssot": {
+    "profile_is_index_only": true,
+    "project_facts_live_in": "$HERMES_HOME/workflows/projects/example-project/",
+    "evidence_ledger": "$HERMES_HOME/workflows/projects/example-project/evidence-ledger.json"
+  },
   "verification": {
     "required_before_claiming_done": [
       "git diff scoped to intended files",
       "relevant tests/build pass",
-      "runtime or UI readback when user-visible"
+      "runtime or UI readback when user-visible",
+      "receipt or evidence ledger entry for high-risk actions"
     ]
+  },
+  "authority": {
+    "push": "exact_branch_required",
+    "deploy": "exact_target_and_rollback_required",
+    "external_messages": "exact_target_payload_receipt_required"
   },
   "red_lines": [
     "do not commit secrets",

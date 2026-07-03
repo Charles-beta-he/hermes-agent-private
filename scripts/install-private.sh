@@ -179,17 +179,9 @@ install_experience_pack() {
   if [[ "$DRY_RUN" == true ]]; then
     echo "DRY-RUN: mkdir -p $dst"
     echo "DRY-RUN: copy missing files from $src to $dst"
+    run python3 "$repo_root/scripts/private_experience_selfcheck.py" --write-manifest --install-to "$HERMES_HOME" --dry-run --json
   else
-    mkdir -p "$dst"
-    (cd "$src" && find . -type d -print) | while IFS= read -r dir; do
-      mkdir -p "$dst/$dir"
-    done
-    (cd "$src" && find . -type f -print) | while IFS= read -r file; do
-      if [[ -e "$dst/$file" ]]; then
-        continue
-      fi
-      cp "$src/$file" "$dst/$file"
-    done
+    python3 "$repo_root/scripts/private_experience_selfcheck.py" --write-manifest --install-to "$HERMES_HOME" --json >/dev/null
   fi
   success "Sanitized experience templates available at $dst"
 }

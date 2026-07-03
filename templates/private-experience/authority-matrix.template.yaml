@@ -1,0 +1,9 @@
+# Default-off side-effect authority matrix.
+read_local: allowed
+write_local: scoped_project_only
+external_read: allowed_when_source_is_public_or_user_authorized
+external_write: exact_target_payload_receipt_required
+publish_deploy_push: exact_target_rollback_receipt_required
+destructive: exact_target_backup_readback_required
+payment_credentials: never_agent_typed
+broad_fanout: exact_allowlist_required

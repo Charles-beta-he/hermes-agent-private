@@ -1,0 +1,25 @@
+gates:
+  S0_read_only:
+    default: allowed
+    evidence: source citation or readback
+  S1_local_write:
+    default: scoped
+    evidence: file diff and readback
+  S2_external_read:
+    default: allowed_when_authorized
+    evidence: URL/API response/source citation
+  S3_external_write:
+    default: disabled
+    requires: [exact_target, payload_digest, approval, receipt, readback]
+  S4_publish_deploy_push:
+    default: disabled
+    requires: [exact_target, rollback, approval, receipt, readback]
+  S5_destructive:
+    default: disabled
+    requires: [exact_resource, backup_or_restore_path, approval, receipt, readback]
+  S6_payment_credentials:
+    default: human_only
+    requires: [human_entry]
+  S7_broad_fanout:
+    default: disabled
+    requires: [allowlisted_targets, payload_digest, approval, receipt]
