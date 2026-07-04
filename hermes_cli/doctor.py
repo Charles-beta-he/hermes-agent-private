@@ -533,8 +533,6 @@ def run_doctor(args):
                 execute_real_skill_write=bool(getattr(args, "execute_real_skill_write", False)),
             )
             output_path = getattr(args, "self_evolution_real_apply_receipt_output")
-            from pathlib import Path
-
             output = Path(output_path).expanduser()
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
