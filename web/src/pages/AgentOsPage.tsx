@@ -43,6 +43,24 @@ function matchesQuery(value: unknown, query: string): boolean {
   return asText(value, "").toLowerCase().includes(trimmed);
 }
 
+function getQueryValue(key: string): string {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get(key) ?? "";
+}
+
+function syncQueryFilters(filters: Record<string, string>): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  for (const [key, value] of Object.entries(filters)) {
+    const trimmed = value.trim();
+    if (trimmed) url.searchParams.set(key, trimmed);
+    else url.searchParams.delete(key);
+  }
+  const next = `${url.pathname}${url.search}${url.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next !== current) window.history.replaceState(null, "", next);
+}
+
 function FilterBox({
   label,
   value,
@@ -114,10 +132,10 @@ export default function AgentOsPage() {
   const [state, setState] = useState<AgentOsStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [evidenceFilter, setEvidenceFilter] = useState("");
-  const [authorityFilter, setAuthorityFilter] = useState("");
-  const [proposalFilter, setProposalFilter] = useState("");
-  const [deviceFilter, setDeviceFilter] = useState("");
+  const [evidenceFilter, setEvidenceFilter] = useState(() => getQueryValue("evidence"));
+  const [authorityFilter, setAuthorityFilter] = useState(() => getQueryValue("authority"));
+  const [proposalFilter, setProposalFilter] = useState(() => getQueryValue("proposal"));
+  const [deviceFilter, setDeviceFilter] = useState(() => getQueryValue("device"));
   const [receipt, setReceipt] = useState<AgentOsReceiptResponse | null>(null);
   const [receiptError, setReceiptError] = useState<string | null>(null);
   const [receiptLoading, setReceiptLoading] = useState(false);
@@ -166,6 +184,26 @@ export default function AgentOsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    syncQueryFilters({
+      evidence: evidenceFilter,
+      authority: authorityFilter,
+      proposal: proposalFilter,
+      device: deviceFilter,
+    });
+  }, [authorityFilter, deviceFilter, evidenceFilter, proposalFilter]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      setEvidenceFilter(getQueryValue("evidence"));
+      setAuthorityFilter(getQueryValue("authority"));
+      setProposalFilter(getQueryValue("proposal"));
+      setDeviceFilter(getQueryValue("device"));
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   return (
     <div className="space-y-6 p-6">
