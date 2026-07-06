@@ -20,6 +20,7 @@ import {
   Activity,
   BarChart3,
   BookOpen,
+  BrainCircuit,
   Clock,
   Code,
   Cpu,
@@ -81,6 +82,7 @@ import PairingPage from "@/pages/PairingPage";
 import ChannelsPage from "@/pages/ChannelsPage";
 import WebhooksPage from "@/pages/WebhooksPage";
 import SystemPage from "@/pages/SystemPage";
+import AgentOsPage from "@/pages/AgentOsPage";
 import ChatPage from "@/pages/ChatPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -135,6 +137,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/channels": ChannelsPage,
   "/webhooks": WebhooksPage,
   "/system": SystemPage,
+  "/agent-os": AgentOsPage,
   "/profiles": ProfilesPage,
   "/config": ConfigPage,
   "/env": EnvPage,
@@ -180,6 +183,7 @@ const BUILTIN_NAV_REST: NavItem[] = [
   { path: "/config", labelKey: "config", label: "Config", icon: Settings },
   { path: "/env", labelKey: "keys", label: "Keys", icon: KeyRound },
   { path: "/system", label: "System", icon: Wrench },
+  { path: "/agent-os", label: "Agent OS", icon: BrainCircuit },
   {
     path: "/docs",
     labelKey: "documentation",

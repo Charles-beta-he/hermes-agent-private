@@ -18,7 +18,7 @@ def _seed_packet(root: Path) -> Path:
         {"id": "P0", "phase": "P0", "status": "completed"},
         {"id": "EXT", "phase": "external_dependency", "status": "external_dependency_open"},
     ]})
-    _write_json(packet / "10-capability-projection.json", {"ok": True, "node_count": 3, "source_counts": {"skill": 2}, "would_execute": False})
+    _write_json(packet / "10-capability-projection.json", {"ok": True, "node_count": 3, "source_counts": {"skill": 2}, "projected_nodes_would_execute": False})
     _write_json(packet / "11-authority-ledger-report.json", {"ok": True, "record_count": 1, "runtime_mutation": False, "external_side_effects_executed": False, "payment_or_credential_action_executed": False})
     (packet / "11-authority-ledger-projection.jsonl").write_text(json.dumps({"id": "r1"}) + "\n", encoding="utf-8")
     _write_json(packet / "12-data-vault-projection.json", {"ok": True, "item_count": 2, "sensitivity_counts": {"D1": 1}, "raw_secret_exported": False, "global_memory_wip_write": False})
@@ -36,6 +36,7 @@ def test_load_agent_os_state_is_read_only_projection(tmp_path):
 
     assert state["ok"] is True
     assert state["capabilities"]["node_count"] == 3
+    assert state["capabilities"]["would_execute"] is False
     assert state["authority"]["external_side_effects_executed"] is False
     assert state["data_vault"]["raw_secret_exported"] is False
     assert state["mission_runtime"]["runtime_mutation"] is False

@@ -251,6 +251,7 @@ export async function buildWsUrl(
 
 export const api = {
   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
+  getAgentOsStatus: () => fetchJSON<AgentOsStatusResponse>("/api/agent-os/status"),
   /**
    * Identity probe for the dashboard auth gate (Phase 7).
    *
@@ -1382,6 +1383,72 @@ export interface PlatformStatus {
   error_message?: string;
   state: string;
   updated_at: string;
+}
+
+export interface AgentOsStatusResponse {
+  ok: boolean;
+  project_id: string;
+  packet_dir: string;
+  doctor: {
+    ok?: boolean;
+    findings?: unknown[];
+    domain_entity_count?: number;
+    backlog_count?: number;
+  };
+  backlog: {
+    count: number;
+    by_status: Record<string, number>;
+    by_phase: Record<string, number>;
+    external_dependencies: unknown[];
+  };
+  capabilities: {
+    ok?: boolean;
+    node_count?: number;
+    source_counts?: Record<string, number>;
+    would_execute?: boolean;
+  };
+  authority: {
+    ok?: boolean;
+    record_count?: number;
+    runtime_mutation?: boolean;
+    external_side_effects_executed?: boolean;
+    payment_or_credential_action_executed?: boolean;
+  };
+  data_vault: {
+    ok?: boolean;
+    item_count?: number;
+    sensitivity_counts?: Record<string, number>;
+    raw_secret_exported?: boolean;
+    global_memory_wip_write?: boolean;
+  };
+  mission_runtime: {
+    ok?: boolean;
+    stage?: string;
+    evidence_node_count?: number;
+    runtime_mutation?: boolean;
+    external_side_effects_executed?: boolean;
+    taskpool_lifecycle_write_executed?: boolean;
+  };
+  model_review: {
+    ok?: boolean;
+    mode?: string;
+    automation_ceiling?: string;
+    live_model_fanout_executed?: boolean;
+    external_side_effects_executed?: boolean;
+  };
+  ux_shell: {
+    exists: boolean;
+    panels: string[];
+  };
+  device_agent: {
+    ok?: boolean;
+    mode?: string;
+    device_count?: number;
+    proposal_count?: number;
+    device_physical_effect_executed?: boolean;
+    agent_proposal_auto_executed?: boolean;
+  };
+  side_effects_executed: boolean;
 }
 
 export interface StatusResponse {

@@ -88,7 +88,7 @@ def load_agent_os_state(root: Path | None = None) -> dict[str, Any]:
             "ok": capabilities.get("ok"),
             "node_count": capabilities.get("node_count"),
             "source_counts": capabilities.get("source_counts"),
-            "would_execute": capabilities.get("would_execute"),
+            "would_execute": capabilities.get("would_execute", capabilities.get("projected_nodes_would_execute")),
         },
         "authority": {
             "ok": authority_report.get("ok"),
