@@ -128,6 +128,41 @@ function BoundaryRow({ label, value }: { label: string; value: boolean | undefin
   );
 }
 
+function buildHandoffSummary({
+  receipt,
+  filters,
+  href,
+}: {
+  receipt: AgentOsReceiptResponse;
+  filters: Record<string, string>;
+  href: string;
+}): string {
+  const activeFilters = Object.entries(filters)
+    .filter(([, value]) => value.trim())
+    .map(([key, value]) => `${key}=${value.trim()}`)
+    .join(" · ") || "none";
+  const counts = Object.entries(receipt.counts)
+    .map(([key, value]) => `${key}: ${value ?? "—"}`)
+    .join(" · ");
+  const boundaries = Object.entries(receipt.boundary)
+    .map(([key, value]) => `${key}: ${value ? "OPEN" : "closed"}`)
+    .join(" · ");
+  const external = receipt.open_external_dependencies
+    .map((item) => `${asText(item.id)} (${asText(item.status)})`)
+    .join(" · ") || "none";
+  return [
+    "Agent OS handoff summary",
+    `schema: ${receipt.schema}`,
+    `ok: ${receipt.ok}`,
+    `link: ${href}`,
+    `filters: ${activeFilters}`,
+    `counts: ${counts}`,
+    `boundaries: ${boundaries}`,
+    `open_external_dependencies: ${external}`,
+    `side_effects_executed: ${receipt.side_effects_executed}`,
+  ].join("\n");
+}
+
 export default function AgentOsPage() {
   const [state, setState] = useState<AgentOsStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -139,6 +174,8 @@ export default function AgentOsPage() {
   const [receipt, setReceipt] = useState<AgentOsReceiptResponse | null>(null);
   const [receiptError, setReceiptError] = useState<string | null>(null);
   const [receiptLoading, setReceiptLoading] = useState(false);
+  const [handoffSummary, setHandoffSummary] = useState("");
+  const [handoffLoading, setHandoffLoading] = useState(false);
 
   const evidenceNodes = useMemo(
     () => (state?.mission_runtime.evidence_nodes ?? []).filter((node) => matchesQuery(node, evidenceFilter)),
@@ -180,6 +217,29 @@ export default function AgentOsPage() {
       setReceiptLoading(false);
     }
   }, []);
+
+  const buildHandoff = useCallback(async () => {
+    setHandoffLoading(true);
+    setReceiptError(null);
+    try {
+      const nextReceipt = receipt ?? await api.getAgentOsReceipt();
+      setReceipt(nextReceipt);
+      setHandoffSummary(buildHandoffSummary({
+        receipt: nextReceipt,
+        href: typeof window === "undefined" ? "" : window.location.href,
+        filters: {
+          evidence: evidenceFilter,
+          authority: authorityFilter,
+          proposal: proposalFilter,
+          device: deviceFilter,
+        },
+      }));
+    } catch (err) {
+      setReceiptError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHandoffLoading(false);
+    }
+  }, [authorityFilter, deviceFilter, evidenceFilter, proposalFilter, receipt]);
 
   useEffect(() => {
     load();
@@ -453,15 +513,27 @@ export default function AgentOsPage() {
                   <ShieldCheck className="h-4 w-4 text-muted-foreground" />
                   <h3 className="font-semibold">Receipt export packet</h3>
                 </div>
-                <Button ghost onClick={loadReceipt} disabled={receiptLoading}>
+                <Button ghost onClick={loadReceipt} disabled={receiptLoading || handoffLoading}>
                   {receiptLoading ? <Spinner className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                   Build receipt
                 </Button>
+                <Button ghost onClick={buildHandoff} disabled={receiptLoading || handoffLoading}>
+                  {handoffLoading ? <Spinner className="mr-2 h-4 w-4" /> : <ListChecks className="mr-2 h-4 w-4" />}
+                  Build handoff
+                </Button>
               </div>
               <p className="text-sm text-muted-foreground">
-                Builds a local read-only receipt packet from the same projection data. It does not export files, dispatch messages, or unlock execution.
+                Builds a local read-only receipt packet or handoff summary from the same projection data. It does not export files, dispatch messages, write clipboard content, or unlock execution.
               </p>
               {receiptError && <p className="text-sm text-destructive">{receiptError}</p>}
+              {handoffSummary && (
+                <textarea
+                  readOnly
+                  value={handoffSummary}
+                  className="min-h-48 w-full resize-y rounded-lg border border-border bg-muted/30 p-3 font-mono text-xs text-muted-foreground outline-none"
+                  aria-label="Agent OS handoff summary"
+                />
+              )}
               {receipt && (
                 <pre className="max-h-80 overflow-auto rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
                   {JSON.stringify(receipt, null, 2)}
