@@ -185,6 +185,11 @@ export default function AgentOsPage() {
   const [handoffSummary, setHandoffSummary] = useState("");
   const [handoffHash, setHandoffHash] = useState("");
   const [handoffLoading, setHandoffLoading] = useState(false);
+  const [verificationInput, setVerificationInput] = useState("");
+  const [expectedHashInput, setExpectedHashInput] = useState("");
+  const [verificationStatus, setVerificationStatus] = useState<"idle" | "match" | "mismatch" | "error">("idle");
+  const [verificationComputedHash, setVerificationComputedHash] = useState("");
+  const [verificationLoading, setVerificationLoading] = useState(false);
 
   const evidenceNodes = useMemo(
     () => (state?.mission_runtime.evidence_nodes ?? []).filter((node) => matchesQuery(node, evidenceFilter)),
@@ -244,13 +249,34 @@ export default function AgentOsPage() {
         },
       });
       setHandoffSummary(summary);
-      setHandoffHash(await sha256Hex(summary));
+      const hash = await sha256Hex(summary);
+      setHandoffHash(hash);
+      setVerificationInput(summary);
+      setExpectedHashInput(hash);
+      setVerificationStatus("idle");
+      setVerificationComputedHash("");
     } catch (err) {
       setReceiptError(err instanceof Error ? err.message : String(err));
     } finally {
       setHandoffLoading(false);
     }
   }, [authorityFilter, deviceFilter, evidenceFilter, proposalFilter, receipt]);
+
+  const verifyHandoffHash = useCallback(async () => {
+    setVerificationLoading(true);
+    setReceiptError(null);
+    try {
+      const computed = await sha256Hex(verificationInput);
+      const expected = expectedHashInput.trim().toLowerCase();
+      setVerificationComputedHash(computed);
+      setVerificationStatus(expected && computed === expected ? "match" : "mismatch");
+    } catch (err) {
+      setReceiptError(err instanceof Error ? err.message : String(err));
+      setVerificationStatus("error");
+    } finally {
+      setVerificationLoading(false);
+    }
+  }, [expectedHashInput, verificationInput]);
 
   useEffect(() => {
     load();
@@ -265,6 +291,10 @@ export default function AgentOsPage() {
     });
     setHandoffSummary("");
     setHandoffHash("");
+    setVerificationInput("");
+    setExpectedHashInput("");
+    setVerificationStatus("idle");
+    setVerificationComputedHash("");
   }, [authorityFilter, deviceFilter, evidenceFilter, proposalFilter]);
 
   useEffect(() => {
@@ -553,6 +583,50 @@ export default function AgentOsPage() {
                   aria-label="Agent OS handoff summary"
                 />
               )}
+              <div className="space-y-3 rounded-lg border border-border bg-background/60 p-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Verify handoff hash</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Recompute SHA-256 locally from pasted or generated handoff text and compare it with the expected hash. This verification surface does not write clipboard content, export files, dispatch messages, or unlock execution.
+                  </p>
+                </div>
+                <textarea
+                  value={verificationInput}
+                  onChange={(event) => {
+                    setVerificationInput(event.target.value);
+                    setVerificationStatus("idle");
+                    setVerificationComputedHash("");
+                  }}
+                  className="min-h-32 w-full resize-y rounded-lg border border-border bg-muted/30 p-3 font-mono text-xs text-muted-foreground outline-none"
+                  placeholder="Paste Agent OS handoff summary here…"
+                  aria-label="Agent OS handoff verification input"
+                />
+                <input
+                  value={expectedHashInput}
+                  onChange={(event) => {
+                    setExpectedHashInput(event.target.value);
+                    setVerificationStatus("idle");
+                    setVerificationComputedHash("");
+                  }}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs text-foreground outline-none ring-offset-background placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
+                  placeholder="Expected SHA-256 hash"
+                  aria-label="Expected handoff SHA-256 hash"
+                />
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button ghost onClick={verifyHandoffHash} disabled={verificationLoading || !verificationInput || !expectedHashInput.trim()}>
+                    {verificationLoading ? <Spinner className="mr-2 h-4 w-4" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+                    Verify handoff hash
+                  </Button>
+                  <Badge tone={verificationStatus === "match" ? "success" : verificationStatus === "mismatch" || verificationStatus === "error" ? "destructive" : "secondary"}>
+                    verification_status: {verificationStatus}
+                  </Badge>
+                </div>
+                {verificationComputedHash && (
+                  <p className="break-all font-mono text-xs text-muted-foreground">
+                    computed_sha256: {verificationComputedHash}
+                  </p>
+                )}
+              </div>
               {receipt && (
                 <pre className="max-h-80 overflow-auto rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
                   {JSON.stringify(receipt, null, 2)}
