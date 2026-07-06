@@ -14,7 +14,7 @@ import { Button } from "@nous-research/ui/ui/components/button";
 import { Card, CardContent } from "@nous-research/ui/ui/components/card";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { H2 } from "@nous-research/ui/ui/components/typography/h2";
-import { api, type AgentOsStatusResponse } from "@/lib/api";
+import { api, type AgentOsReceiptResponse, type AgentOsStatusResponse } from "@/lib/api";
 import { cn, themedBody } from "@/lib/utils";
 
 function boolLabel(value: boolean | undefined): "yes" | "no" | "unknown" {
@@ -118,6 +118,9 @@ export default function AgentOsPage() {
   const [authorityFilter, setAuthorityFilter] = useState("");
   const [proposalFilter, setProposalFilter] = useState("");
   const [deviceFilter, setDeviceFilter] = useState("");
+  const [receipt, setReceipt] = useState<AgentOsReceiptResponse | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [receiptLoading, setReceiptLoading] = useState(false);
 
   const evidenceNodes = useMemo(
     () => (state?.mission_runtime.evidence_nodes ?? []).filter((node) => matchesQuery(node, evidenceFilter)),
@@ -145,6 +148,18 @@ export default function AgentOsPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadReceipt = useCallback(async () => {
+    setReceiptLoading(true);
+    setReceiptError(null);
+    try {
+      setReceipt(await api.getAgentOsReceipt());
+    } catch (err) {
+      setReceiptError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReceiptLoading(false);
     }
   }, []);
 
@@ -390,6 +405,30 @@ export default function AgentOsPage() {
                   <p className="mt-1 text-xs text-muted-foreground">{asText(dependency.boundary)}</p>
                 </div>
               ))}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="space-y-3 py-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="font-semibold">Receipt export packet</h3>
+                </div>
+                <Button ghost onClick={loadReceipt} disabled={receiptLoading}>
+                  {receiptLoading ? <Spinner className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                  Build receipt
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Builds a local read-only receipt packet from the same projection data. It does not export files, dispatch messages, or unlock execution.
+              </p>
+              {receiptError && <p className="text-sm text-destructive">{receiptError}</p>}
+              {receipt && (
+                <pre className="max-h-80 overflow-auto rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                  {JSON.stringify(receipt, null, 2)}
+                </pre>
+              )}
             </CardContent>
           </Card>
 

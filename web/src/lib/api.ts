@@ -252,6 +252,7 @@ export async function buildWsUrl(
 export const api = {
   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
   getAgentOsStatus: () => fetchJSON<AgentOsStatusResponse>("/api/agent-os/status"),
+  getAgentOsReceipt: () => fetchJSON<AgentOsReceiptResponse>("/api/agent-os/receipt"),
   /**
    * Identity probe for the dashboard auth gate (Phase 7).
    *
@@ -1383,6 +1384,18 @@ export interface PlatformStatus {
   error_message?: string;
   state: string;
   updated_at: string;
+}
+
+export interface AgentOsReceiptResponse {
+  schema: "PersonalAIOSReceipt.v0";
+  ok: boolean;
+  project_id?: string;
+  packet_dir?: string;
+  counts: Record<string, number | undefined>;
+  boundary: Record<string, boolean>;
+  open_external_dependencies: Array<Record<string, unknown>>;
+  doctor_findings: unknown[];
+  side_effects_executed: boolean;
 }
 
 export interface AgentOsStatusResponse {

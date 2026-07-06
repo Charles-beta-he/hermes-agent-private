@@ -989,9 +989,8 @@ async def get_status():
 async def get_agent_os_status():
     """Read-only Personal AI OS / Web4.0 Agent OS projection for dashboard use.
 
-    This endpoint mirrors `hermes agent-os status --json` and deliberately does
-    not invoke capabilities, mutate scheduler/taskpool lifecycle state, dispatch
-    external messages, read secrets, perform payment/legal actions, or touch
+    This endpoint mirrors `hermes agent-os status --json` and intentionally does
+    not invoke capabilities, mutate runtime state, dispatch messages, or control
     physical devices.
     """
     try:
@@ -1000,7 +999,19 @@ async def get_agent_os_status():
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=500, detail=f"Invalid Agent OS packet JSON: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"invalid Agent OS packet JSON: {exc}") from exc
+
+
+@app.get("/api/agent-os/receipt")
+async def get_agent_os_receipt():
+    """Read-only Personal AI OS receipt packet for dashboard export/copy flows."""
+    try:
+        from hermes_cli.agent_os import build_agent_os_receipt, load_agent_os_state
+        return build_agent_os_receipt(load_agent_os_state())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"invalid Agent OS packet JSON: {exc}") from exc
 
 
 @app.get("/api/system/stats")

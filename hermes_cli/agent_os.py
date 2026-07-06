@@ -143,6 +143,33 @@ def load_agent_os_state(root: Path | None = None) -> dict[str, Any]:
     }
 
 
+def build_agent_os_receipt(state: dict[str, Any]) -> dict[str, Any]:
+    """Build a read-only receipt packet from an already-loaded Agent OS state."""
+    return {
+        "schema": "PersonalAIOSReceipt.v0",
+        "ok": state.get("ok") is True,
+        "project_id": state.get("project_id"),
+        "packet_dir": state.get("packet_dir"),
+        "counts": {
+            "capabilities": state["capabilities"].get("node_count"),
+            "backlog": state["backlog"].get("count"),
+            "authority_records": state["authority"].get("record_count"),
+            "evidence_nodes": state["mission_runtime"].get("evidence_node_count"),
+            "external_dependencies": len(state["backlog"].get("external_dependencies", [])),
+        },
+        "boundary": {
+            "capability_execution": state["capabilities"].get("would_execute") is True,
+            "external_dispatch": state["authority"].get("external_side_effects_executed") is True,
+            "runtime_mutation": state["authority"].get("runtime_mutation") is True,
+            "payment_or_credential_action": state["authority"].get("payment_or_credential_action_executed") is True,
+            "physical_device_effect": state["device_agent"].get("device_physical_effect_executed") is True,
+        },
+        "open_external_dependencies": state["backlog"].get("external_dependencies", []),
+        "doctor_findings": state["doctor"].get("findings", []),
+        "side_effects_executed": False,
+    }
+
+
 def _emit(payload: Any, *, as_json: bool) -> None:
     if as_json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
@@ -181,6 +208,10 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
         payload = state["capabilities"]
         _emit(payload, as_json=True)
         return 0 if payload.get("ok") else 1
+    if action == "receipt":
+        payload = build_agent_os_receipt(state)
+        _emit(payload, as_json=bool(getattr(args, "json", False)))
+        return 0 if payload.get("ok") else 1
     raise SystemExit(f"unknown agent-os action: {action}")
 
 
@@ -205,6 +236,8 @@ def build_agent_os_parser(subparsers) -> argparse.ArgumentParser:
     sub.add_parser("backlog", help="Emit backlog summary as JSON")
     sub.add_parser("panels", help="Emit UX shell panel projection as JSON")
     sub.add_parser("capabilities", help="Emit capability projection summary as JSON")
+    receipt = sub.add_parser("receipt", help="Emit read-only receipt packet")
+    receipt.add_argument("--json", action="store_true", help="Emit JSON")
 
     parser.set_defaults(func=cmd_agent_os)
     return parser

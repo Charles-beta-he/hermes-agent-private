@@ -67,3 +67,32 @@ def test_agent_os_parser_dispatches_status_json(tmp_path, monkeypatch, capsys):
     assert out["ok"] is True
     assert out["backlog"]["by_status"]["external_dependency_open"] == 1
     assert out["ux_shell"]["panels"] == ["Today", "Model Console"]
+
+
+def test_agent_os_receipt_command_emits_read_only_packet(tmp_path, monkeypatch, capsys):
+    _seed_packet(tmp_path)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    parser = argparse.ArgumentParser(prog="hermes")
+    subparsers = parser.add_subparsers(dest="command")
+    build_agent_os_parser(subparsers)
+
+    args = parser.parse_args(["agent-os", "receipt", "--json"])
+    rc = args.func(args)
+
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["schema"] == "PersonalAIOSReceipt.v0"
+    assert out["ok"] is True
+    assert out["side_effects_executed"] is False
+    assert out["boundary"]["capability_execution"] is False
+    assert out["boundary"]["external_dispatch"] is False
+    assert out["boundary"]["runtime_mutation"] is False
+    assert out["boundary"]["payment_or_credential_action"] is False
+    assert out["boundary"]["physical_device_effect"] is False
+    assert out["counts"] == {
+        "capabilities": 3,
+        "backlog": 2,
+        "authority_records": 1,
+        "evidence_nodes": 1,
+        "external_dependencies": 1,
+    }

@@ -26,3 +26,32 @@ def test_dashboard_agent_os_status_endpoint_is_read_only_projection(tmp_path, mo
     assert body["device_agent"]["device_physical_effect_executed"] is False
     assert body["side_effects_executed"] is False
     assert body["ux_shell"]["panels"] == ["Today", "Model Console"]
+
+
+def test_dashboard_agent_os_receipt_endpoint_is_read_only_packet(tmp_path, monkeypatch):
+    _seed_packet(tmp_path)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    prev_required = getattr(web_server.app.state, "auth_required", None)
+    web_server.app.state.auth_required = False
+    client = TestClient(web_server.app, base_url="http://127.0.0.1:9119")
+
+    response = client.get(
+        "/api/agent-os/receipt",
+        headers={"X-Hermes-Session-Token": web_server._SESSION_TOKEN},
+    )
+    web_server.app.state.auth_required = prev_required
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema"] == "PersonalAIOSReceipt.v0"
+    assert body["ok"] is True
+    assert body["side_effects_executed"] is False
+    assert body["counts"]["capabilities"] == 3
+    assert body["counts"]["external_dependencies"] == 1
+    assert body["boundary"] == {
+        "capability_execution": False,
+        "external_dispatch": False,
+        "runtime_mutation": False,
+        "payment_or_credential_action": False,
+        "physical_device_effect": False,
+    }
