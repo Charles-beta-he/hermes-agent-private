@@ -128,6 +128,14 @@ function BoundaryRow({ label, value }: { label: string; value: boolean | undefin
   );
 }
 
+async function sha256Hex(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 function buildHandoffSummary({
   receipt,
   filters,
@@ -175,6 +183,7 @@ export default function AgentOsPage() {
   const [receiptError, setReceiptError] = useState<string | null>(null);
   const [receiptLoading, setReceiptLoading] = useState(false);
   const [handoffSummary, setHandoffSummary] = useState("");
+  const [handoffHash, setHandoffHash] = useState("");
   const [handoffLoading, setHandoffLoading] = useState(false);
 
   const evidenceNodes = useMemo(
@@ -224,7 +233,7 @@ export default function AgentOsPage() {
     try {
       const nextReceipt = receipt ?? await api.getAgentOsReceipt();
       setReceipt(nextReceipt);
-      setHandoffSummary(buildHandoffSummary({
+      const summary = buildHandoffSummary({
         receipt: nextReceipt,
         href: typeof window === "undefined" ? "" : window.location.href,
         filters: {
@@ -233,7 +242,9 @@ export default function AgentOsPage() {
           proposal: proposalFilter,
           device: deviceFilter,
         },
-      }));
+      });
+      setHandoffSummary(summary);
+      setHandoffHash(await sha256Hex(summary));
     } catch (err) {
       setReceiptError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -252,6 +263,8 @@ export default function AgentOsPage() {
       proposal: proposalFilter,
       device: deviceFilter,
     });
+    setHandoffSummary("");
+    setHandoffHash("");
   }, [authorityFilter, deviceFilter, evidenceFilter, proposalFilter]);
 
   useEffect(() => {
@@ -526,6 +539,12 @@ export default function AgentOsPage() {
                 Builds a local read-only receipt packet or handoff summary from the same projection data. It does not export files, dispatch messages, write clipboard content, or unlock execution.
               </p>
               {receiptError && <p className="text-sm text-destructive">{receiptError}</p>}
+              {handoffHash && (
+                <div className="rounded-lg border border-border bg-background/60 p-3 text-xs">
+                  <p className="font-medium text-foreground">handoff_sha256</p>
+                  <p className="mt-1 break-all font-mono text-muted-foreground">{handoffHash}</p>
+                </div>
+              )}
               {handoffSummary && (
                 <textarea
                   readOnly
