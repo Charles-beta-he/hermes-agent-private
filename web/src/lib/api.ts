@@ -1410,6 +1410,7 @@ export interface AgentOsStatusResponse {
   authority: {
     ok?: boolean;
     record_count?: number;
+    records?: Array<Record<string, unknown>>;
     runtime_mutation?: boolean;
     external_side_effects_executed?: boolean;
     payment_or_credential_action_executed?: boolean;
@@ -1424,6 +1425,10 @@ export interface AgentOsStatusResponse {
   mission_runtime: {
     ok?: boolean;
     stage?: string;
+    objective?: string;
+    evidence_nodes?: Array<Record<string, unknown>>;
+    open_boundaries?: Array<Record<string, unknown>>;
+    stop_conditions?: string[];
     evidence_node_count?: number;
     runtime_mutation?: boolean;
     external_side_effects_executed?: boolean;
@@ -1445,6 +1450,9 @@ export interface AgentOsStatusResponse {
     mode?: string;
     device_count?: number;
     proposal_count?: number;
+    device_nodes?: Array<Record<string, unknown>>;
+    agent_proposal_inbox?: Array<Record<string, unknown>>;
+    service_contract_stubs?: Array<Record<string, unknown>>;
     device_physical_effect_executed?: boolean;
     agent_proposal_auto_executed?: boolean;
   };

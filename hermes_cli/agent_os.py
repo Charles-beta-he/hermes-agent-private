@@ -93,6 +93,7 @@ def load_agent_os_state(root: Path | None = None) -> dict[str, Any]:
         "authority": {
             "ok": authority_report.get("ok"),
             "record_count": authority_report.get("record_count", len(authority_records)),
+            "records": authority_records,
             "runtime_mutation": authority_report.get("runtime_mutation"),
             "external_side_effects_executed": authority_report.get("external_side_effects_executed"),
             "payment_or_credential_action_executed": authority_report.get("payment_or_credential_action_executed"),
@@ -107,6 +108,10 @@ def load_agent_os_state(root: Path | None = None) -> dict[str, Any]:
         "mission_runtime": {
             "ok": mission.get("ok"),
             "stage": mission.get("stage"),
+            "objective": mission.get("objective"),
+            "evidence_nodes": mission.get("evidence_nodes", []),
+            "open_boundaries": mission.get("open_boundaries", []),
+            "stop_conditions": mission.get("stop_conditions", []),
             "evidence_node_count": len(mission.get("evidence_dag", [])) if isinstance(mission.get("evidence_dag"), list) else None,
             "runtime_mutation": mission.get("runtime_mutation"),
             "external_side_effects_executed": mission.get("external_side_effects_executed"),
@@ -128,6 +133,9 @@ def load_agent_os_state(root: Path | None = None) -> dict[str, Any]:
             "mode": device_agent.get("mode"),
             "device_count": len(device_agent.get("device_nodes", [])) if isinstance(device_agent.get("device_nodes"), list) else None,
             "proposal_count": len(device_agent.get("agent_proposal_inbox", [])) if isinstance(device_agent.get("agent_proposal_inbox"), list) else None,
+            "device_nodes": device_agent.get("device_nodes", []),
+            "agent_proposal_inbox": device_agent.get("agent_proposal_inbox", []),
+            "service_contract_stubs": device_agent.get("service_contract_stubs", []),
             "device_physical_effect_executed": device_agent.get("device_physical_effect_executed"),
             "agent_proposal_auto_executed": device_agent.get("agent_proposal_auto_executed"),
         },

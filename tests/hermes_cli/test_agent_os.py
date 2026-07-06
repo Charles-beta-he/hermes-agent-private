@@ -22,10 +22,10 @@ def _seed_packet(root: Path) -> Path:
     _write_json(packet / "11-authority-ledger-report.json", {"ok": True, "record_count": 1, "runtime_mutation": False, "external_side_effects_executed": False, "payment_or_credential_action_executed": False})
     (packet / "11-authority-ledger-projection.jsonl").write_text(json.dumps({"id": "r1"}) + "\n", encoding="utf-8")
     _write_json(packet / "12-data-vault-projection.json", {"ok": True, "item_count": 2, "sensitivity_counts": {"D1": 1}, "raw_secret_exported": False, "global_memory_wip_write": False})
-    _write_json(packet / "13-mission-runtime-state.json", {"ok": True, "stage": "executing", "evidence_dag": [{"id": "e1"}], "runtime_mutation": False, "external_side_effects_executed": False, "taskpool_lifecycle_write_executed": False})
+    _write_json(packet / "13-mission-runtime-state.json", {"ok": True, "stage": "executing", "objective": "advance safely", "evidence_dag": [{"id": "e1"}], "evidence_nodes": [{"id": "evidence.test", "claim": "works", "verdict": "pass"}], "open_boundaries": [{"id": "boundary.test", "status": "external"}], "stop_conditions": ["secret"], "runtime_mutation": False, "external_side_effects_executed": False, "taskpool_lifecycle_write_executed": False})
     _write_json(packet / "14-model-review-projection.json", {"ok": True, "mode": "projection", "model_review": {"automation_ceiling": "L3"}, "live_model_fanout_executed": False, "external_side_effects_executed": False})
     (packet / "15-ux-shell-projection.md").write_text("### Today\n### Model Console\n", encoding="utf-8")
-    _write_json(packet / "16-device-agent-proposal-projection.json", {"ok": True, "mode": "device_projection", "device_nodes": [{"id": "d"}], "agent_proposal_inbox": [{"id": "p"}], "device_physical_effect_executed": False, "agent_proposal_auto_executed": False})
+    _write_json(packet / "16-device-agent-proposal-projection.json", {"ok": True, "mode": "device_projection", "device_nodes": [{"id": "d"}], "agent_proposal_inbox": [{"id": "p"}], "service_contract_stubs": [{"id": "s"}], "device_physical_effect_executed": False, "agent_proposal_auto_executed": False})
     return packet
 
 
@@ -40,8 +40,14 @@ def test_load_agent_os_state_is_read_only_projection(tmp_path):
     assert state["authority"]["external_side_effects_executed"] is False
     assert state["data_vault"]["raw_secret_exported"] is False
     assert state["mission_runtime"]["runtime_mutation"] is False
+    assert state["mission_runtime"]["objective"] == "advance safely"
+    assert state["mission_runtime"]["evidence_nodes"][0]["id"] == "evidence.test"
+    assert state["mission_runtime"]["open_boundaries"][0]["id"] == "boundary.test"
     assert state["model_review"]["automation_ceiling"] == "L3"
     assert state["device_agent"]["device_physical_effect_executed"] is False
+    assert state["device_agent"]["device_nodes"][0]["id"] == "d"
+    assert state["device_agent"]["agent_proposal_inbox"][0]["id"] == "p"
+    assert state["device_agent"]["service_contract_stubs"][0]["id"] == "s"
     assert state["side_effects_executed"] is False
     assert state["ux_shell"]["panels"] == ["Today", "Model Console"]
 

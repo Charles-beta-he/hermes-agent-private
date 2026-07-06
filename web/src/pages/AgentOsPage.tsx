@@ -30,6 +30,13 @@ function countMap(map: Record<string, number> | undefined): string {
     .join(" · ");
 }
 
+function asText(value: unknown, fallback = "—"): string {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (Array.isArray(value)) return value.map((item) => asText(item)).join(" · ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
 function MetricCard({
   title,
   value,
@@ -216,6 +223,95 @@ export default function AgentOsPage() {
                     {state.ux_shell.panels.length ? state.ux_shell.panels.join(" · ") : "none"}
                   </p>
                 </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardContent className="space-y-3 py-4">
+                <div className="flex items-center gap-2">
+                  <Layers3 className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="font-semibold">Mission evidence DAG</h3>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {state.mission_runtime.objective ?? "Objective not projected"}
+                </p>
+                {(state.mission_runtime.evidence_nodes ?? []).slice(0, 6).map((node, index) => (
+                  <div key={asText(node.id, String(index))} className="rounded-lg border border-border bg-background/60 p-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium">{asText(node.id)}</span>
+                      <Badge tone={asText(node.verdict) === "pass" ? "success" : "warning"}>{asText(node.verdict)}</Badge>
+                    </div>
+                    <p className="mt-1 text-muted-foreground">{asText(node.claim)}</p>
+                    <p className="mt-1 break-all text-xs text-muted-foreground">{asText(node.artifact_path)}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="space-y-3 py-4">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="font-semibold">Authority ledger detail</h3>
+                </div>
+                {(state.authority.records ?? []).slice(0, 5).map((record, index) => (
+                  <div key={asText(record.id, String(index))} className="rounded-lg border border-border bg-background/60 p-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium">{asText(record.action)}</span>
+                      <Badge tone={asText(record.status) === "verified" ? "success" : "warning"}>{asText(record.status)}</Badge>
+                    </div>
+                    <p className="mt-1 text-muted-foreground">{asText(record.scope)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">risk {asText(record.risk_level)} · target {asText(record.target)}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardContent className="space-y-3 py-4">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="font-semibold">Proposal inbox</h3>
+                </div>
+                {(state.device_agent.agent_proposal_inbox ?? []).map((proposal, index) => (
+                  <div key={asText(proposal.id, String(index))} className="rounded-lg border border-border bg-background/60 p-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium">{asText(proposal.id)}</span>
+                      <Badge tone="secondary">{asText(proposal.status)}</Badge>
+                    </div>
+                    <p className="mt-1 text-muted-foreground">{asText(proposal.objective)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">action {asText(proposal.proposed_action)} · risk {asText(proposal.risk)}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="space-y-3 py-4">
+                <div className="flex items-center gap-2">
+                  <Network className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="font-semibold">Device / service contracts</h3>
+                </div>
+                {(state.device_agent.device_nodes ?? []).map((device, index) => (
+                  <div key={asText(device.id, String(index))} className="rounded-lg border border-border bg-background/60 p-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium">{asText(device.id)}</span>
+                      <Badge tone={device.physical_effect === false ? "success" : "warning"}>physical {boolLabel(device.physical_effect as boolean | undefined)}</Badge>
+                    </div>
+                    <p className="mt-1 text-muted-foreground">{asText(device.capabilities)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">mode {asText(device.mode)} · safety {asText(device.safety_level)}</p>
+                  </div>
+                ))}
+                {(state.device_agent.service_contract_stubs ?? []).map((service, index) => (
+                  <div key={asText(service.id, `service-${index}`)} className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                    <span className="font-medium">{asText(service.id)}</span>
+                    <p className="mt-1 text-muted-foreground">{asText(service.side_effects)} · {asText(service.verification)}</p>
+                  </div>
+                ))}
               </CardContent>
             </Card>
           </div>
