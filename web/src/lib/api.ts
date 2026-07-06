@@ -1399,7 +1399,7 @@ export interface AgentOsStatusResponse {
     count: number;
     by_status: Record<string, number>;
     by_phase: Record<string, number>;
-    external_dependencies: unknown[];
+    external_dependencies: Array<Record<string, unknown>>;
   };
   capabilities: {
     ok?: boolean;

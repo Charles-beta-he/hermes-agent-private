@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BrainCircuit,
   Database,
@@ -35,6 +35,34 @@ function asText(value: unknown, fallback = "—"): string {
   if (Array.isArray(value)) return value.map((item) => asText(item)).join(" · ");
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function matchesQuery(value: unknown, query: string): boolean {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return true;
+  return asText(value, "").toLowerCase().includes(trimmed);
+}
+
+function FilterBox({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      {label}
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm normal-case tracking-normal text-foreground outline-none ring-offset-background placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
+        placeholder="filter by id, action, risk, target…"
+      />
+    </label>
+  );
 }
 
 function MetricCard({
@@ -86,6 +114,27 @@ export default function AgentOsPage() {
   const [state, setState] = useState<AgentOsStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [evidenceFilter, setEvidenceFilter] = useState("");
+  const [authorityFilter, setAuthorityFilter] = useState("");
+  const [proposalFilter, setProposalFilter] = useState("");
+  const [deviceFilter, setDeviceFilter] = useState("");
+
+  const evidenceNodes = useMemo(
+    () => (state?.mission_runtime.evidence_nodes ?? []).filter((node) => matchesQuery(node, evidenceFilter)),
+    [evidenceFilter, state?.mission_runtime.evidence_nodes],
+  );
+  const authorityRecords = useMemo(
+    () => (state?.authority.records ?? []).filter((record) => matchesQuery(record, authorityFilter)),
+    [authorityFilter, state?.authority.records],
+  );
+  const proposals = useMemo(
+    () => (state?.device_agent.agent_proposal_inbox ?? []).filter((proposal) => matchesQuery(proposal, proposalFilter)),
+    [proposalFilter, state?.device_agent.agent_proposal_inbox],
+  );
+  const devices = useMemo(
+    () => (state?.device_agent.device_nodes ?? []).filter((device) => matchesQuery(device, deviceFilter)),
+    [deviceFilter, state?.device_agent.device_nodes],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -237,7 +286,9 @@ export default function AgentOsPage() {
                 <p className="text-sm text-muted-foreground">
                   {state.mission_runtime.objective ?? "Objective not projected"}
                 </p>
-                {(state.mission_runtime.evidence_nodes ?? []).slice(0, 6).map((node, index) => (
+                <FilterBox label="Filter evidence" value={evidenceFilter} onChange={setEvidenceFilter} />
+                <p className="text-xs text-muted-foreground">Showing {evidenceNodes.length} of {state.mission_runtime.evidence_nodes?.length ?? 0} evidence nodes.</p>
+                {evidenceNodes.slice(0, 6).map((node, index) => (
                   <div key={asText(node.id, String(index))} className="rounded-lg border border-border bg-background/60 p-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-medium">{asText(node.id)}</span>
@@ -256,7 +307,9 @@ export default function AgentOsPage() {
                   <ShieldCheck className="h-4 w-4 text-muted-foreground" />
                   <h3 className="font-semibold">Authority ledger detail</h3>
                 </div>
-                {(state.authority.records ?? []).slice(0, 5).map((record, index) => (
+                <FilterBox label="Filter authority" value={authorityFilter} onChange={setAuthorityFilter} />
+                <p className="text-xs text-muted-foreground">Showing {authorityRecords.length} of {state.authority.records?.length ?? 0} authority records.</p>
+                {authorityRecords.slice(0, 5).map((record, index) => (
                   <div key={asText(record.id, String(index))} className="rounded-lg border border-border bg-background/60 p-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-medium">{asText(record.action)}</span>
@@ -277,7 +330,9 @@ export default function AgentOsPage() {
                   <Sparkles className="h-4 w-4 text-muted-foreground" />
                   <h3 className="font-semibold">Proposal inbox</h3>
                 </div>
-                {(state.device_agent.agent_proposal_inbox ?? []).map((proposal, index) => (
+                <FilterBox label="Filter proposals" value={proposalFilter} onChange={setProposalFilter} />
+                <p className="text-xs text-muted-foreground">Showing {proposals.length} of {state.device_agent.agent_proposal_inbox?.length ?? 0} proposals.</p>
+                {proposals.map((proposal, index) => (
                   <div key={asText(proposal.id, String(index))} className="rounded-lg border border-border bg-background/60 p-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-medium">{asText(proposal.id)}</span>
@@ -296,7 +351,9 @@ export default function AgentOsPage() {
                   <Network className="h-4 w-4 text-muted-foreground" />
                   <h3 className="font-semibold">Device / service contracts</h3>
                 </div>
-                {(state.device_agent.device_nodes ?? []).map((device, index) => (
+                <FilterBox label="Filter devices" value={deviceFilter} onChange={setDeviceFilter} />
+                <p className="text-xs text-muted-foreground">Showing {devices.length} of {state.device_agent.device_nodes?.length ?? 0} device nodes.</p>
+                {devices.map((device, index) => (
                   <div key={asText(device.id, String(index))} className="rounded-lg border border-border bg-background/60 p-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-medium">{asText(device.id)}</span>
@@ -315,6 +372,26 @@ export default function AgentOsPage() {
               </CardContent>
             </Card>
           </div>
+
+          <Card>
+            <CardContent className="space-y-3 py-4">
+              <div className="flex items-center gap-2">
+                <ListChecks className="h-4 w-4 text-muted-foreground" />
+                <h3 className="font-semibold">External dependency inbox</h3>
+              </div>
+              {(state.backlog.external_dependencies ?? []).map((dependency, index) => (
+                <div key={asText(dependency.id, String(index))} className="rounded-lg border border-border bg-background/60 p-3 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{asText(dependency.id)}</span>
+                    <Badge tone="warning">{asText(dependency.status)}</Badge>
+                    <Badge tone="secondary">{asText(dependency.automation_level)}</Badge>
+                  </div>
+                  <p className="mt-1 text-muted-foreground">{asText(dependency.title)}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{asText(dependency.boundary)}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
 
           <Card>
             <CardContent className="py-4">
