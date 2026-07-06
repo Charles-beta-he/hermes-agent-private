@@ -985,6 +985,24 @@ async def get_status():
     }
 
 
+@app.get("/api/agent-os/status")
+async def get_agent_os_status():
+    """Read-only Personal AI OS / Web4.0 Agent OS projection for dashboard use.
+
+    This endpoint mirrors `hermes agent-os status --json` and deliberately does
+    not invoke capabilities, mutate scheduler/taskpool lifecycle state, dispatch
+    external messages, read secrets, perform payment/legal actions, or touch
+    physical devices.
+    """
+    try:
+        from hermes_cli.agent_os import load_agent_os_state
+        return load_agent_os_state()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"Invalid Agent OS packet JSON: {exc}") from exc
+
+
 @app.get("/api/system/stats")
 async def get_system_stats():
     """Host + process system stats for the System page.
