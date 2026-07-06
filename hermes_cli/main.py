@@ -292,6 +292,7 @@ from hermes_cli.subcommands.gui import build_gui_parser
 from hermes_cli.subcommands.logs import build_logs_parser
 from hermes_cli.subcommands.prompt_size import build_prompt_size_parser
 from hermes_cli.subcommands.mission import build_mission_parser
+from hermes_cli.agent_os import build_agent_os_parser
 from hermes_cli.subcommands.memory import build_memory_parser
 from hermes_cli.subcommands.acp import build_acp_parser
 from hermes_cli.subcommands.tools import build_tools_parser
@@ -10201,7 +10202,7 @@ def cmd_logs(args):
 # to parse.
 _BUILTIN_SUBCOMMANDS = frozenset(
     {
-        "acp", "auth", "backup", "bundles", "checkpoints", "claw", "completion",
+        "acp", "agent-os", "auth", "backup", "bundles", "checkpoints", "claw", "completion",
         "computer-use",
         "config", "cron", "curator", "dashboard", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
@@ -11088,6 +11089,11 @@ def main():
     # mission command — long-running objective contracts (default-off)
     # =========================================================================
     build_mission_parser(subparsers)
+
+    # =========================================================================
+    # agent-os command — read-only Personal AI OS / Web4.0 projections
+    # =========================================================================
+    build_agent_os_parser(subparsers)
 
     # =========================================================================
     # memory command  (parser built in hermes_cli/subcommands/memory.py)
