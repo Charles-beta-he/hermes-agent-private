@@ -131,6 +131,35 @@ def show_status(args):
     print(f"  Provider:     {_effective_provider_label()}")
 
     # =========================================================================
+    # Startup Handshake (single-source readiness projection)
+    # =========================================================================
+    try:
+        from hermes_cli.startup_handshake import collect_startup_handshake
+
+        startup_receipt = collect_startup_handshake(
+            write_receipt=False,
+            entrypoint="status",
+            update_reminders=False,
+        )
+    except Exception:
+        startup_receipt = None
+    if startup_receipt:
+        probes = startup_receipt.get("probes") or []
+        warning_count = sum(1 for p in probes if str(p.get("status")) in {"warn", "degraded", "blocked"})
+        print()
+        print(color("◆ Startup Handshake", Colors.CYAN, Colors.BOLD))
+        print(f"  Status:       {startup_receipt.get('status')} ({len(probes)} probes, {warning_count} warning(s))")
+        for probe in probes:
+            if str(probe.get("status")) == "ok":
+                continue
+            reminder = probe.get("reminder") or {}
+            next_reminder = reminder.get("next_reminder_at") or "n/a"
+            print(f"  {probe.get('id'):<14} {probe.get('status')}/{probe.get('severity')} — {probe.get('message')}")
+            print(f"    Reminder:  every {reminder.get('interval_seconds')}s; next {next_reminder}")
+            if probe.get("suggested_command"):
+                print(f"    Next:      {probe.get('suggested_command')}")
+
+    # =========================================================================
     # API Keys
     # =========================================================================
     print()

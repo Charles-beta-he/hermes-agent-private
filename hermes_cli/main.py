@@ -2219,6 +2219,29 @@ def _resolve_use_tui(args) -> bool:
         return False
 
 
+def _startup_handshake_entrypoint(args) -> str:
+    command = getattr(args, "command", None)
+    if getattr(args, "oneshot", None):
+        return "oneshot"
+    if command is None:
+        try:
+            return "chat.tui" if _resolve_use_tui(args) else "chat.cli"
+        except Exception:
+            return "chat"
+    sub = getattr(args, f"{command}_command", None)
+    return f"{command}.{sub}" if sub else str(command)
+
+
+def _trigger_startup_handshake(args, *, emit_reminder: bool = False) -> None:
+    from hermes_cli.startup_handshake import trigger_startup_handshake_for_entrypoint
+
+    trigger_startup_handshake_for_entrypoint(
+        _startup_handshake_entrypoint(args),
+        emit_reminder=emit_reminder,
+        write_receipt=True,
+    )
+
+
 def cmd_chat(args):
     """Run interactive chat CLI."""
     use_tui = _resolve_use_tui(args)
@@ -14338,6 +14361,11 @@ def main():
     # list, gateway status, mcp add, ...) don't pay discovery cost or
     # trigger consent prompts for hooks the user is still inspecting.
     _prepare_agent_startup(args)
+    _entrypoint = _startup_handshake_entrypoint(args)
+    _trigger_startup_handshake(
+        args,
+        emit_reminder=(_entrypoint == "chat.cli" and sys.stderr.isatty()),
+    )
 
     # Handle top-level --oneshot / -z: single-shot mode, stdout = final
     # response only, nothing else. Bypasses cli.py entirely.

@@ -98,3 +98,48 @@ def test_render_startup_handshake_json_and_text(tmp_path, monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
     assert payload["schema"] == "hermes_startup_handshake_v1"
+
+
+def test_reminder_policy_tracks_severity_intervals_per_entrypoint(tmp_path):
+    from hermes_cli import startup_handshake as mod
+
+    receipt = {
+        "summary": {"profile": "default"},
+        "probes": [
+            {"id": "blocked_probe", "status": "blocked", "severity": "blocked", "message": "blocked", "action_taken": False},
+            {"id": "warn_probe", "status": "warn", "severity": "warn", "message": "warn", "action_taken": False},
+        ],
+    }
+
+    first = mod.apply_reminder_policy(receipt, entrypoint="chat.cli", update_state=True, observed_at=1000.0, home=tmp_path)
+    assert all(p["reminder"]["should_remind"] for p in first["probes"])
+
+    second = mod.apply_reminder_policy(first, entrypoint="chat.cli", update_state=False, observed_at=1001.0, home=tmp_path)
+    blocked = next(p for p in second["probes"] if p["id"] == "blocked_probe")
+    warn = next(p for p in second["probes"] if p["id"] == "warn_probe")
+    assert blocked["reminder"]["interval_seconds"] == 0
+    assert blocked["reminder"]["should_remind"] is True
+    assert warn["reminder"]["interval_seconds"] == 86400
+    assert warn["reminder"]["should_remind"] is False
+
+
+def test_main_startup_handshake_entrypoint_covers_command_and_chat(monkeypatch):
+    from types import SimpleNamespace
+    import hermes_cli.main as main_mod
+
+    assert main_mod._startup_handshake_entrypoint(SimpleNamespace(command="status", oneshot=None)) == "status"
+    assert main_mod._startup_handshake_entrypoint(SimpleNamespace(command="selfcheck", selfcheck_command="health", oneshot=None)) == "selfcheck.health"
+    assert main_mod._startup_handshake_entrypoint(SimpleNamespace(command=None, oneshot="hello")) == "oneshot"
+
+    captured = {}
+
+    def fake_trigger(entrypoint, **kwargs):
+        captured["entrypoint"] = entrypoint
+        captured.update(kwargs)
+        return {"status": "ok"}
+
+    monkeypatch.setattr("hermes_cli.startup_handshake.trigger_startup_handshake_for_entrypoint", fake_trigger)
+    main_mod._trigger_startup_handshake(SimpleNamespace(command="status", oneshot=None), emit_reminder=True)
+    assert captured["entrypoint"] == "status"
+    assert captured["emit_reminder"] is True
+    assert captured["write_receipt"] is True
