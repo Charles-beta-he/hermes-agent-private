@@ -12,11 +12,11 @@ consumed by closeout execution in this slice.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from hermes_cli import control_tower
-from hermes_cli.missions import MissionStore
+from hermes_cli.missions import MissionBudget, MissionStore, decision_to_dict, mission_to_dict
 
 router = APIRouter()
 
@@ -147,6 +147,73 @@ class ExternalAdapterWriteExecutionRequest(BaseModel):
     reason: str = Field(default="", min_length=0)
 
 
+class MissionCreateRequest(BaseModel):
+    direction: str = Field(min_length=1, max_length=8000)
+    cadence: str = Field(default="every 6h", min_length=1, max_length=200)
+    deliver: str = Field(default="local", min_length=1, max_length=100)
+    max_ticks: int = Field(default=12, gt=0, le=100)
+    max_turns_per_tick: int = Field(default=8, gt=0, le=50)
+    max_total_usd: float | None = Field(default=None, gt=0)
+    constraints: list[str] = Field(default_factory=list, max_length=50)
+    non_goals: list[str] = Field(default_factory=list, max_length=50)
+    success_criteria: list[str] = Field(default_factory=list, max_length=50)
+    allowed_actions: list[str] = Field(default_factory=list, max_length=50)
+    blocked_actions: list[str] = Field(default_factory=list, max_length=50)
+
+
+class MissionReasonRequest(BaseModel):
+    reason: str = Field(default="", max_length=1000)
+
+
+class MissionDecisionAnswerRequest(BaseModel):
+    answer: str = Field(min_length=1, max_length=4000)
+
+
+class MissionStageReportRequest(BaseModel):
+    summary: str = Field(min_length=1, max_length=4000)
+    evidence: list[str] = Field(default_factory=list, max_length=20)
+    risks: list[str] = Field(default_factory=list, max_length=20)
+    next_step: str = Field(default="", max_length=2000)
+    needs_user: bool = False
+
+
+class MissionInstallCronRequest(BaseModel):
+    schedule: str | None = Field(default=None, max_length=200)
+    deliver: str | None = Field(default=None, max_length=100)
+    name: str | None = Field(default=None, max_length=200)
+    enabled_toolsets: list[str] | None = Field(default=None, max_length=20)
+    confirm: str = Field(default="", max_length=200)
+
+
+def _mission_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, KeyError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=409, detail=str(exc))
+    return HTTPException(status_code=500, detail="mission action failed")
+
+
+def _mission_projection(store: MissionStore) -> dict:
+    return {
+        "board": store.board(),
+        "inbox": store.inbox(),
+    }
+
+
+def _mission_detail(store: MissionStore, mission_id: str) -> dict:
+    mission = store.get_mission(mission_id)
+    if not mission:
+        raise KeyError(mission_id)
+    return {
+        "mission": mission_to_dict(mission),
+        "open_decisions": [decision_to_dict(d) for d in store.open_decisions(mission_id)],
+        "recent_events": store.list_events(mission_id, limit=50),
+        "doctor": store.doctor(mission_id),
+        "report": store.report(mission_id, limit=50),
+        "projection": _mission_projection(store),
+    }
+
+
 @router.get("/snapshot")
 def get_snapshot():
     """Return the read-only Control Tower Phase 1 snapshot."""
@@ -157,10 +224,148 @@ def get_snapshot():
 def get_missions():
     """Return Mission control-plane projections for the dashboard."""
     store = MissionStore()
-    return {
-        "board": store.board(),
-        "inbox": store.inbox(),
-    }
+    return _mission_projection(store)
+
+
+@router.post("/missions")
+def create_mission(req: MissionCreateRequest):
+    """Create a default-off Mission from the dashboard."""
+    store = MissionStore()
+    try:
+        budget = MissionBudget(
+            max_ticks=req.max_ticks,
+            max_turns_per_tick=req.max_turns_per_tick,
+            max_total_usd=req.max_total_usd,
+        )
+        mission = store.create_mission(
+            direction=req.direction,
+            cadence=req.cadence,
+            deliver=req.deliver,
+            budget=budget,
+            constraints=req.constraints,
+            non_goals=req.non_goals,
+            success_criteria=req.success_criteria or ["produce evidence-backed stage progress"],
+            allowed_actions=req.allowed_actions,
+            blocked_actions=req.blocked_actions,
+            enable=False,
+        )
+        return _mission_detail(store, mission.mission_id)
+    except (KeyError, ValueError) as exc:
+        raise _mission_http_error(exc) from exc
+
+
+@router.get("/missions/{mission_id}")
+def get_mission_detail(mission_id: str):
+    """Return one Mission with doctor checks, events, and report."""
+    store = MissionStore()
+    try:
+        return _mission_detail(store, mission_id)
+    except (KeyError, ValueError) as exc:
+        raise _mission_http_error(exc) from exc
+
+
+@router.post("/missions/{mission_id}/pause")
+def pause_mission(mission_id: str, req: MissionReasonRequest):
+    """Pause a Mission through the MissionStore ledger."""
+    store = MissionStore()
+    try:
+        store.set_status(mission_id, "paused", reason=req.reason or "dashboard pause")
+        return _mission_detail(store, mission_id)
+    except (KeyError, ValueError) as exc:
+        raise _mission_http_error(exc) from exc
+
+
+@router.post("/missions/{mission_id}/resume")
+def resume_mission(mission_id: str, req: MissionReasonRequest):
+    """Resume a Mission only when no human decisions are open."""
+    store = MissionStore()
+    try:
+        if store.open_decisions(mission_id):
+            raise ValueError("mission has open decisions; answer them before resuming")
+        store.set_status(mission_id, "active", reason=req.reason or "dashboard resume")
+        return _mission_detail(store, mission_id)
+    except (KeyError, ValueError) as exc:
+        raise _mission_http_error(exc) from exc
+
+
+@router.post("/missions/{mission_id}/cancel")
+def cancel_mission(mission_id: str, req: MissionReasonRequest):
+    """Cancel a Mission through the MissionStore ledger."""
+    store = MissionStore()
+    try:
+        store.set_status(mission_id, "cancelled", reason=req.reason or "dashboard cancel")
+        return _mission_detail(store, mission_id)
+    except (KeyError, ValueError) as exc:
+        raise _mission_http_error(exc) from exc
+
+
+@router.post("/missions/{mission_id}/tick-preview")
+def preview_mission_tick(mission_id: str):
+    """Generate a dry-run Mission tick preview without consuming tick budget."""
+    store = MissionStore()
+    try:
+        result = store.tick(mission_id, dry_run=True)
+        return {"tick": result, "detail": _mission_detail(store, mission_id)}
+    except (KeyError, ValueError) as exc:
+        raise _mission_http_error(exc) from exc
+
+
+@router.post("/missions/{mission_id}/stage-report")
+def append_mission_stage_report(mission_id: str, req: MissionStageReportRequest):
+    """Append a local Mission stage report event."""
+    store = MissionStore()
+    try:
+        event = store.append_stage_report(
+            mission_id,
+            summary=req.summary,
+            evidence=req.evidence,
+            risks=req.risks,
+            next_step=req.next_step,
+            needs_user=req.needs_user,
+        )
+        return {"event": event, "detail": _mission_detail(store, mission_id)}
+    except (KeyError, ValueError) as exc:
+        raise _mission_http_error(exc) from exc
+
+
+@router.post("/missions/{mission_id}/install-cron")
+def install_mission_cron(mission_id: str, req: MissionInstallCronRequest):
+    """Install Mission cron only after explicit dashboard confirmation."""
+    store = MissionStore()
+    try:
+        mission = store.get_mission(mission_id)
+        if not mission:
+            raise KeyError(mission_id)
+        if req.confirm != mission_id:
+            raise ValueError("explicit confirmation is required: confirm must equal the mission id")
+        if mission.status != "active":
+            raise ValueError(f"mission status is {mission.status}; resume before installing cron")
+        if store.open_decisions(mission_id):
+            raise ValueError("mission has open decisions; answer them before installing cron")
+        doctor = store.doctor(mission_id)
+        if doctor.get("cron_jobs"):
+            raise ValueError("mission cron is already installed")
+        result = store.install_cron(
+            mission_id,
+            schedule=req.schedule,
+            deliver=req.deliver,
+            name=req.name,
+            enabled_toolsets=req.enabled_toolsets,
+        )
+        return {"install": result, "detail": _mission_detail(store, mission_id)}
+    except (KeyError, ValueError) as exc:
+        raise _mission_http_error(exc) from exc
+
+
+@router.post("/mission-decisions/{decision_id}/answer")
+def answer_mission_decision(decision_id: str, req: MissionDecisionAnswerRequest):
+    """Answer a Mission decision; MissionStore resumes after the last open decision."""
+    store = MissionStore()
+    try:
+        decision = store.answer_decision(decision_id, req.answer)
+        return {"decision": decision_to_dict(decision), "detail": _mission_detail(store, decision.mission_id)}
+    except (KeyError, ValueError) as exc:
+        raise _mission_http_error(exc) from exc
 
 
 @router.post("/commands/propose")

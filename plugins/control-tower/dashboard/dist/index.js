@@ -77,7 +77,21 @@
         <p class="control-tower-eyebrow">Mission control</p>
         <h2>High-level directions</h2>
         <p>Tracks active long-running Missions, open human decisions, cron readiness, and the next operator action.</p>
+        <form id="control-tower-new-mission" class="control-tower-mission-form">
+          <label>
+            Direction
+            <textarea id="control-tower-new-mission-direction" rows="3" placeholder="Give Hermes a high-level direction to advance over time"></textarea>
+          </label>
+          <div class="control-tower-form-grid">
+            <label>Cadence <input id="control-tower-new-mission-cadence" value="every 6h" /></label>
+            <label>Max ticks <input id="control-tower-new-mission-max-ticks" type="number" min="1" max="100" value="12" /></label>
+            <label>Max turns/tick <input id="control-tower-new-mission-max-turns" type="number" min="1" max="50" value="8" /></label>
+            <label>Deliver <input id="control-tower-new-mission-deliver" value="local" /></label>
+          </div>
+          <button type="submit">Create default-off Mission</button>
+        </form>
         <div id="control-tower-missions">Loading missions…</div>
+        <pre id="control-tower-mission-result">Mission action output will appear here.</pre>
       </section>
       <pre id="control-tower-snapshot">Loading snapshot…</pre>
     </section>
