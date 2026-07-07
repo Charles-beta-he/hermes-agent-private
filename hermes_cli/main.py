@@ -4254,6 +4254,10 @@ def cmd_selfcheck(args):
                     f"failure_rate={rec.get('failure_rate')}"
                 )
         return 0
+    if sub == "startup":
+        from hermes_cli.startup_handshake import render_startup_handshake
+
+        return render_startup_handshake(args)
     print(f"Unknown selfcheck subcommand: {sub}", file=sys.stderr)
     return 1
 
@@ -13147,6 +13151,17 @@ def main():
     selfcheck_health.add_argument("--chain-type", help="Filter by chain type, e.g. cron or browser_automation")
     selfcheck_health.add_argument("--limit", type=int, default=100, help="Maximum records to return")
     selfcheck_health.set_defaults(func=cmd_selfcheck)
+    selfcheck_startup = selfcheck_subparsers.add_parser(
+        "startup",
+        help="Print a read-only CLI startup handshake receipt",
+    )
+    selfcheck_startup.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    selfcheck_startup.add_argument(
+        "--no-write",
+        action="store_true",
+        help="Do not persist the local selfcheck receipt or health observation",
+    )
+    selfcheck_startup.set_defaults(func=cmd_selfcheck)
     selfcheck_parser.set_defaults(func=cmd_selfcheck)
 
     # =========================================================================
