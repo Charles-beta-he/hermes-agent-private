@@ -1342,7 +1342,13 @@ class AIAgent:
             return
         
         trajectory = self._convert_to_trajectory_format(messages, user_query, completed)
-        _save_trajectory_to_file(trajectory, self.model, completed)
+        metadata = {}
+        try:
+            from agent.prompt_manifest import prompt_manifest_metadata
+            metadata = prompt_manifest_metadata(self)
+        except Exception:
+            metadata = {}
+        _save_trajectory_to_file(trajectory, self.model, completed, metadata=metadata or None)
 
     @staticmethod
     def _is_entitlement_failure(

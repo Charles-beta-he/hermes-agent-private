@@ -284,6 +284,7 @@ def build_system_prompt_content_blocks(
     agent: Any,
     system_prompt: Optional[str] = None,
     extra_blocks: Optional[List[str]] = None,
+    prompt_manifest: Optional[Dict[str, Any]] = None,
 ) -> str | List[Dict[str, Any]]:
     """Return a cache-friendly system content payload for API calls.
 
@@ -301,6 +302,10 @@ def build_system_prompt_content_blocks(
     base = system_prompt if system_prompt is not None else getattr(agent, "_cached_system_prompt", "")
     base = base or ""
     extras = [b.strip() for b in (extra_blocks or []) if isinstance(b, str) and b.strip()]
+    manifest = prompt_manifest or getattr(agent, "_prompt_manifest_v1", None)
+    if manifest:
+        from agent.prompt_manifest import render_prompt_manifest_block
+        extras.append(render_prompt_manifest_block(manifest))
     parts = getattr(agent, "_cached_system_prompt_parts", None)
     if not isinstance(parts, dict) or base != (getattr(agent, "_cached_system_prompt", "") or ""):
         effective = base
@@ -344,7 +349,17 @@ def build_system_prompt(agent: Any, system_message: Optional[str] = None) -> str
         agent._cached_system_prompt_parts = dict(parts)
     except Exception:
         pass
-    return "\n\n".join(p for p in (parts["stable"], parts["context"], parts["volatile"]) if p)
+    prompt = "\n\n".join(p for p in (parts["stable"], parts["context"], parts["volatile"]) if p)
+    try:
+        from agent.prompt_manifest import attach_prompt_manifest_metadata
+        try:
+            agent._cached_system_prompt = prompt
+        except Exception:
+            pass
+        attach_prompt_manifest_metadata(agent)
+    except Exception:
+        pass
+    return prompt
 
 
 def invalidate_system_prompt(agent: Any) -> None:

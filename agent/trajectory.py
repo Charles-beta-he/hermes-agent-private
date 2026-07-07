@@ -28,7 +28,8 @@ def has_incomplete_scratchpad(content: str) -> bool:
 
 
 def save_trajectory(trajectory: List[Dict[str, Any]], model: str,
-                    completed: bool, filename: str = None):
+                    completed: bool, filename: str = None,
+                    metadata: Dict[str, Any] | None = None):
     """Append a trajectory entry to a JSONL file.
 
     Args:
@@ -37,6 +38,8 @@ def save_trajectory(trajectory: List[Dict[str, Any]], model: str,
         completed: Whether the conversation completed successfully.
         filename: Override output filename. Defaults to trajectory_samples.jsonl
                   or failed_trajectories.jsonl based on ``completed``.
+        metadata: Optional run metadata (for example PromptManifestV1 hash
+                  pinning) to persist alongside the trajectory.
     """
     if filename is None:
         filename = "trajectory_samples.jsonl" if completed else "failed_trajectories.jsonl"
@@ -47,6 +50,8 @@ def save_trajectory(trajectory: List[Dict[str, Any]], model: str,
         "model": model,
         "completed": completed,
     }
+    if metadata:
+        entry["metadata"] = dict(metadata)
 
     try:
         with open(filename, "a", encoding="utf-8") as f:

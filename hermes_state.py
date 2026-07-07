@@ -750,6 +750,15 @@ class SessionDB:
             )
         self._execute_write(_do)
 
+    def update_model_config(self, session_id: str, model_config: Dict[str, Any]) -> None:
+        """Store updated model/run metadata for a session."""
+        def _do(conn):
+            conn.execute(
+                "UPDATE sessions SET model_config = ? WHERE id = ?",
+                (json.dumps(model_config) if model_config else None, session_id),
+            )
+        self._execute_write(_do)
+
     def update_token_counts(
         self,
         session_id: str,
