@@ -233,6 +233,12 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         api_key_env_vars=("GOOGLE_API_KEY", "GEMINI_API_KEY"),
         base_url_env_var="GEMINI_BASE_URL",
     ),
+    "google-gemini-cli": ProviderConfig(
+        id="google-gemini-cli",
+        name="Google Gemini (OAuth)",
+        auth_type="oauth_external",
+        inference_base_url="google-gemini-cli://oauth",
+    ),
     "zai": ProviderConfig(
         id="zai",
         name="Z.AI / GLM",
@@ -1536,6 +1542,7 @@ def resolve_provider(
     _PROVIDER_ALIASES = {
         "glm": "zai", "z-ai": "zai", "z.ai": "zai", "zhipu": "zai",
         "google": "gemini", "google-gemini": "gemini", "google-ai-studio": "gemini",
+        "google-gemini-cli": "google-gemini-cli", "gemini-cli": "google-gemini-cli", "google-gemini-oauth": "google-gemini-cli",
         "x-ai": "xai", "x.ai": "xai", "grok": "xai",
         "xai-oauth": "xai-oauth", "x-ai-oauth": "xai-oauth",
         "grok-oauth": "xai-oauth", "xai-grok-oauth": "xai-oauth",

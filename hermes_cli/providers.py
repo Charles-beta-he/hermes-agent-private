@@ -69,6 +69,11 @@ HERMES_OVERLAYS: Dict[str, HermesOverlay] = {
         base_url_override="https://api.openai.com/v1",
         base_url_env_var="OPENAI_BASE_URL",
     ),
+    "google-gemini-cli": HermesOverlay(
+        transport="openai_chat",
+        auth_type="oauth_external",
+        base_url_override="google-gemini-cli://oauth",
+    ),
     "xai-oauth": HermesOverlay(
         transport="codex_responses",
         auth_type="oauth_external",
@@ -329,6 +334,11 @@ ALIASES: Dict[str, str] = {
     "tencent-cloud": "tencent-tokenhub",
     "tencentmaas": "tencent-tokenhub",
 
+    # Google Gemini OAuth / CLI
+    "google-gemini-cli": "google-gemini-cli",
+    "gemini-cli": "google-gemini-cli",
+    "google-gemini-oauth": "google-gemini-cli",
+
     # bedrock
     "aws": "bedrock",
     "aws-bedrock": "bedrock",
@@ -363,6 +373,7 @@ _LABEL_OVERRIDES: Dict[str, str] = {
     "moa": "Mixture of Agents",
     "nous": "Nous Portal",
     "openai-codex": "OpenAI Codex",
+    "google-gemini-cli": "Google Gemini (OAuth)",
     "copilot-acp": "GitHub Copilot ACP",
     "stepfun": "StepFun Step Plan",
     "xiaomi": "Xiaomi MiMo",
