@@ -49,6 +49,34 @@ KANBAN_LIST_DEFAULT_LIMIT = 50
 KANBAN_LIST_MAX_LIMIT = 200
 
 
+def _merge_prompt_manifest_metadata(metadata: Optional[dict]) -> dict:
+    """Attach current prompt hash/manifest to kanban handoff metadata.
+
+    The prompt builder exports this env var once the system prompt is assembled.
+    Tool-level merging makes worker handoffs/proof rows carry prompt pinning
+    without requiring the model to remember to copy hashes manually.
+    """
+
+    merged = dict(metadata or {})
+    raw = os.environ.get("HERMES_PROMPT_MANIFEST_JSON")
+    if not raw:
+        prompt_hash = os.environ.get("HERMES_PROMPT_HASH")
+        if prompt_hash and "prompt_hash" not in merged:
+            merged["prompt_hash"] = prompt_hash
+        return merged
+    try:
+        manifest = json.loads(raw)
+    except Exception:
+        return merged
+    if not isinstance(manifest, dict):
+        return merged
+    content_hash = manifest.get("content_hash")
+    if content_hash and "prompt_hash" not in merged:
+        merged["prompt_hash"] = content_hash
+    merged.setdefault("prompt_manifest", manifest)
+    return merged
+
+
 def _profile_has_kanban_toolset() -> bool:
     # Uses load_config() which has mtime-based caching, so this adds
     # negligible overhead. The check_fn results are further TTL-cached
@@ -588,6 +616,7 @@ def _handle_complete(args: dict, **kw) -> str:
             f"metadata must be an object/dict, got {type(metadata).__name__}"
         )
     metadata = _stamp_worker_session_metadata(tid, metadata)
+    metadata = _merge_prompt_manifest_metadata(metadata)
     board = args.get("board")
     try:
         kb, conn = _connect(board=board)

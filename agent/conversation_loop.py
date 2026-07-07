@@ -899,6 +899,11 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
     if agent._session_db:
         try:
             agent._session_db.update_system_prompt(agent.session_id, agent._cached_system_prompt)
+            if hasattr(agent._session_db, "update_model_config"):
+                agent._session_db.update_model_config(
+                    agent.session_id,
+                    getattr(agent, "_session_init_model_config", {}) or {},
+                )
         except Exception as exc:
             logger.warning(
                 "Session DB update_system_prompt failed for session %s: "
