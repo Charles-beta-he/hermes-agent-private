@@ -18,6 +18,15 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+# Ensure /bin and /usr/bin are on PATH so launchctl/systemctl are discoverable
+# when running under UV's bundled Python which ships a minimal PATH (#3849).
+if os.name == "posix":
+    _sys_dirs = {"/bin", "/usr/bin", "/usr/sbin", "/sbin"}
+    _path_dirs = set(os.environ.get("PATH", "").split(os.pathsep))
+    _missing = _sys_dirs - _path_dirs
+    if _missing:
+        os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + os.pathsep.join(sorted(_missing))
+
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 from gateway.status import terminate_pid
@@ -180,7 +189,11 @@ def _get_parent_pid(pid: int) -> int | None:
         pass
     except Exception:
         return None
-    # Fallback: shell out to ps (POSIX only — bare ``ps`` doesn't exist on Windows).
+    # Fallback: shell out to ps (POSIX only).  Git Bash installs ``ps.exe`` on
+    # Windows; running it from the windowless desktop/gateway backend flashes a
+    # console, and psutil above is the authoritative Windows path anyway.
+    if is_windows():
+        return None
     if not shutil.which("ps"):
         return None
     try:
@@ -384,6 +397,12 @@ def _scan_gateway_pids(
             # removed as part of the WMIC deprecation — fall back to
             # PowerShell's Get-CimInstance.  Any OSError here (FileNotFoundError
             # on missing wmic) trips the fallback.
+            # Hide the console window: this scan runs inside the windowless
+            # pythonw.exe gateway/desktop backend, so a bare wmic/powershell
+            # spawn would flash a conhost window on every watchdog probe.
+            from hermes_cli._subprocess_compat import windows_hide_flags
+
+            _no_window = {"creationflags": windows_hide_flags()}
             wmic_path = shutil.which("wmic")
             used_fallback = False
             result = None
@@ -402,6 +421,7 @@ def _scan_gateway_pids(
                         encoding="utf-8",
                         errors="ignore",
                         timeout=10,
+                        **_no_window,
                     )
                 except (OSError, subprocess.TimeoutExpired):
                     result = None
@@ -427,6 +447,7 @@ def _scan_gateway_pids(
                         encoding="utf-8",
                         errors="ignore",
                         timeout=15,
+                        **_no_window,
                     )
                 except (OSError, subprocess.TimeoutExpired):
                     return []
@@ -2643,7 +2664,15 @@ def generate_systemd_unit(system: bool = False, run_as_user: str | None = None) 
     path_entries = _build_service_path_dirs()
     resolved_node = shutil.which("node")
     if resolved_node:
-        resolved_node_dir = str(Path(resolved_node).resolve().parent)
+        # Use the directory where ``node`` is *found on PATH*, NOT the
+        # symlink's resolved target. ``~/.local/bin/node`` is often a symlink
+        # into a specific profile's node install (e.g. profiles/jarvis/node/
+        # bin/node); calling .resolve() here would chase that symlink and bake
+        # one profile's node path into *every* profile's service unit. That
+        # cross-profile leak makes systemd_unit_is_current() perpetually false,
+        # so each gateway rewrites its unit + daemon-reload on every boot. Using
+        # the symlink's own parent keeps the generated unit profile-agnostic.
+        resolved_node_dir = str(Path(resolved_node).parent)
         if resolved_node_dir not in path_entries:
             path_entries.append(resolved_node_dir)
 
@@ -3044,6 +3073,7 @@ def systemd_install(
     system: bool = False,
     run_as_user: str | None = None,
     enable_on_startup: bool = True,
+    non_interactive: bool = False,
 ):
     if system:
         _require_root_for_system_service("install")
@@ -3057,7 +3087,7 @@ def systemd_install(
         print()
         print_legacy_unit_warning()
         print()
-        if prompt_yes_no("Remove the legacy unit(s) before installing?", True):
+        if non_interactive or prompt_yes_no("Remove the legacy unit(s) before installing?", True):
             remove_legacy_hermes_units(interactive=False)
             print()
 
@@ -3139,7 +3169,7 @@ def _require_service_installed(action: str, system: bool = False) -> None:
     unit_path = get_systemd_unit_path(system=system)
     if not unit_path.exists():
         scope_flag = " --system" if system else ""
-        print(f"✗ Gateway service is not installed")
+        print("✗ Gateway service is not installed")
         print(f"  Run: {'sudo ' if system else ''}hermes gateway install{scope_flag}")
         sys.exit(1)
 
@@ -3539,10 +3569,18 @@ def _launchd_control_domain(label: str | None = None) -> str:
 # the target domain, so start/restart should re-bootstrap the plist and retry.
 _LAUNCHD_JOB_UNLOADED_EXIT_CODES = frozenset({3, 113, 125})
 
-# When even a fresh bootstrap can't manage the domain, launchctl returns 5
-# ("Input/output error") or a persistent 125. On those hosts launchd cannot
-# supervise the gateway at all, so we degrade to a detached background process
-# (the documented `nohup hermes gateway run` workaround). See #23387.
+# launchctl returns 5 ("Input/output error") or a persistent 125 in two very
+# different situations, so exit 5 is NOT on its own proof the domain is broken:
+#   1. The target label is still *registered* in the domain (a stale load from
+#      an interrupted restart / a bootout that didn't settle). This is
+#      recoverable — boot the stale label out and bootstrap again. See #42914.
+#   2. The domain genuinely can't manage services (macOS 26+, neither
+#      `gui/<uid>` nor `user/<uid>` supports service management). Here launchd
+#      cannot supervise the gateway at all and we degrade to a detached
+#      background process (the `nohup hermes gateway run` workaround). See #23387.
+# `_launchctl_bootstrap()` disambiguates by trying the bootout+retry (case 1)
+# first; only when that retry ALSO returns 5/125 do callers treat the domain as
+# unsupported (case 2) via `_launchctl_domain_unsupported`.
 _LAUNCHCTL_DOMAIN_UNSUPPORTED_CODES = frozenset({5, 125})
 
 
@@ -3561,49 +3599,159 @@ def _launchctl_domain_unsupported(returncode: int) -> bool:
     return returncode in _LAUNCHCTL_DOMAIN_UNSUPPORTED_CODES
 
 
-def _launchd_bootstrap_service(
-    plist_path: Path, label: str, preferred_domain: str | None = None
-) -> str:
-    """Bootstrap the gateway LaunchAgent with domain/race recovery.
+# `launchctl bootstrap` returns this when the target label is *already*
+# registered in the domain — a stale load left by an interrupted restart or a
+# bootout that didn't fully settle. EIO here means "already loaded", which is
+# recoverable, NOT that the domain is unmanageable; only when a bootout + retry
+# also fails is the domain genuinely unsupported.
+_LAUNCHCTL_BOOTSTRAP_EIO = 5
 
-    A single bootstrap exit 5 can be a transient launchd teardown race (for
-    example "Operation already in progress") rather than permanent launchd
-    incapability.  Try candidate domains and a short retry before callers decide
-    whether detached fallback is justified.
+
+def _launchctl_bootstrap(
+    domain: str, plist_path, label: str, *, timeout: int = 30
+) -> None:
+    """Bootstrap a launchd job, recovering from a stale already-loaded label.
+
+    On modern macOS, ``launchctl bootstrap`` of a label that is still
+    registered in ``domain`` fails with ``5: Input/output error`` (EIO). That
+    is the *already loaded* case — distinct from the domain being unmanageable,
+    which callers handle via :func:`_launchctl_domain_unsupported`. A leftover
+    registration from an interrupted restart leaves the job
+    loaded-but-not-running, so the next bootstrap hits EIO; without this retry
+    we misclassify it as "launchd cannot manage this macOS version" and degrade
+    to a detached process, silently losing auto-start and crash-restart.
+
+    Recover by booting the stale label out and bootstrapping once more. If the
+    retry still fails, the ``CalledProcessError`` propagates so callers apply
+    their domain-unsupported fallback for a genuinely broken domain.
     """
-    domains = list(
-        dict.fromkeys(
-            ([preferred_domain] if preferred_domain else []) + _launchd_candidate_domains()
+    try:
+        subprocess.run(
+            ["launchctl", "bootstrap", domain, str(plist_path)],
+            check=True,
+            timeout=timeout,
         )
-    )
-    last_error: subprocess.CalledProcessError | None = None
+        return
+    except subprocess.CalledProcessError as exc:
+        if exc.returncode != _LAUNCHCTL_BOOTSTRAP_EIO:
+            raise
+        # Stale registration — drop the leftover label and bootstrap once more.
+        try:
+            subprocess.run(
+                ["launchctl", "bootout", f"{domain}/{label}"],
+                check=False,
+                timeout=timeout,
+            )
+        except Exception:
+            # Best-effort cleanup: a second bootstrap below still covers tests
+            # and hosts where the stale registration cleared between calls.
+            pass
+        subprocess.run(
+            ["launchctl", "bootstrap", domain, str(plist_path)],
+            check=True,
+            timeout=timeout,
+        )
 
-    for domain in domains:
-        for attempt in range(2):
-            try:
-                subprocess.run(
-                    ["launchctl", "bootstrap", domain, str(plist_path)],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                return domain
-            except subprocess.CalledProcessError as exc:
-                last_error = exc
-                loaded = _launchd_loaded_domains(label)
-                if loaded:
-                    return loaded[0]
-                if exc.returncode == 5 and attempt == 0:
-                    time.sleep(0.5)
-                    continue
-                if _launchctl_domain_unsupported(exc.returncode) or _launchd_error_indicates_unloaded(exc):
-                    break
-                raise
 
-    if last_error is not None:
-        raise last_error
-    raise subprocess.CalledProcessError(1, ["launchctl", "bootstrap", str(plist_path)])
+def _launchd_reload_log_path() -> Path:
+    """Path the launchd reload watchdog tails for persistent-orphan detection."""
+    return get_hermes_home() / "logs" / "launchd-reload.log"
+
+
+def _append_launchd_reload_log(message: str) -> None:
+    """Append a timestamped line to the launchd reload log (best-effort)."""
+    path = _launchd_reload_log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime as _dt
+
+        stamp = _dt.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(f"[{stamp}] {message}\n")
+    except OSError:
+        pass
+
+
+def _launchctl_label_registered(label: str, domain: str | None = None) -> bool:
+    """True when launchd reports the job as registered.
+
+    Prefer ``launchctl list <label>`` because it proves the label is visible to
+    launchd's job index. Fall back to ``launchctl print <domain>/<label>`` for
+    tests/hosts where ``list`` is unavailable or stubbed but the domain target is
+    still queryable.
+    """
+    try:
+        result = subprocess.run(
+            ["launchctl", "list", label],
+            check=False,
+            timeout=10,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode == 0:
+            return True
+    except Exception:
+        pass
+    if domain:
+        try:
+            result = subprocess.run(
+                ["launchctl", "print", f"{domain}/{label}"],
+                check=False,
+                timeout=10,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+    return False
+
+
+def _retry_launchctl_bootstrap_until_registered(
+    domain: str, plist_path, label: str, *, deadline: float
+) -> bool:
+    """Bootstrap with retry until the label is registered or ``deadline`` passes.
+
+    Wraps :func:`_launchctl_bootstrap` (which already recovers the EIO
+    "already loaded" case) in a wall-clock retry loop for the *transient*
+    failure mode: under high load or a launchd race the bootstrap can fail
+    even after ``bootout`` already tore down the prior registration, leaving
+    the service orphaned from ``KeepAlive`` supervision. The reported incident
+    happened during a graceful drain (default ``agent.restart_drain_timeout``
+    = 180s), so a fixed ~10s window is too short — retry until ``deadline``.
+
+    Both ``CalledProcessError`` and ``TimeoutExpired`` are treated as
+    retryable: a ``bootstrap`` that times out after ``bootout`` still leaves
+    the service unloaded, so it must be retried, not allowed to escape. On
+    each failure a timestamped line is appended to the reload log; success is
+    confirmed with ``launchctl list`` (not merely a zero bootstrap exit).
+    Returns True once the label is registered, False if the deadline is hit.
+    """
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            _launchctl_bootstrap(domain, plist_path, label, timeout=30)
+            if _launchctl_label_registered(label, domain):
+                return True
+            _append_launchd_reload_log(
+                f"bootstrap attempt {attempt} exited 0 but {domain}/{label} "
+                f"is not registered (launchctl list) — retrying"
+            )
+        except subprocess.CalledProcessError as exc:
+            _append_launchd_reload_log(
+                f"bootstrap attempt {attempt} failed (rc={exc.returncode}) "
+                f"for {domain}/{label} — retrying"
+            )
+        except subprocess.TimeoutExpired:
+            _append_launchd_reload_log(
+                f"bootstrap attempt {attempt} timed out for {domain}/{label} "
+                f"— retrying"
+            )
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(2)
+
 
 # ── launchd unsupported marker ─────────────────────────────────────────────
 # When launchd can't manage the domain on this host (error 5/125, macOS 26+),
@@ -3744,7 +3892,13 @@ def generate_launchd_plist() -> str:
     priority_dirs = _build_service_path_dirs()
     resolved_node = shutil.which("node")
     if resolved_node:
-        resolved_node_dir = str(Path(resolved_node).resolve().parent)
+        # Use the directory where ``node`` is *found on PATH*, NOT the symlink's
+        # resolved target. ``~/.local/bin/node`` is often a symlink into a
+        # specific profile's node install; calling .resolve() would chase it and
+        # bake one profile's path into every profile's service definition,
+        # breaking profile isolation and causing perpetual unit rewrites. See
+        # the matching fix in generate_systemd_unit().
+        resolved_node_dir = str(Path(resolved_node).parent)
         if resolved_node_dir not in priority_dirs:
             priority_dirs.append(resolved_node_dir)
     sane_path = ":".join(
@@ -3861,6 +4015,8 @@ def refresh_launchd_plist_if_needed() -> bool:
     label = get_launchd_label()
     loaded_domains = _launchd_loaded_domains(label)
     preferred_domain = loaded_domains[0] if loaded_domains else _launchd_domain()
+    domain = preferred_domain
+    target = f"{domain}/{label}"
     plist_path.write_text(new_plist, encoding="utf-8")
 
     gateway_pid = None
@@ -3875,13 +4031,45 @@ def refresh_launchd_plist_if_needed() -> bool:
         and _is_pid_ancestor_of_current_process(gateway_pid)
         and hasattr(os, "setsid")
     ):
-        domain = preferred_domain
-        target = f"{domain}/{label}"
+        # Delegate to a new session: `start_new_session=True` detaches the
+        # helper from the gateway's process group, so the bootout that kills
+        # the gateway (and us) does not kill the helper before it bootstraps.
+        #
+        # The bootstrap is retried up to 5 times with verification: under
+        # high load (loadavg observed >= 9) or a launchd race, the bootout
+        # can succeed (removing the service from launchd) while the
+        # follow-up bootstrap fails silently. Without retry+verify the
+        # service stays unregistered — KeepAlive can't revive a service
+        # launchd no longer knows about, so the gateway stays dark until a
+        # manual `launchctl bootstrap`. Failures append a timestamped line
+        # to ~/.hermes/logs/launchd-reload.log, which the health watchdog
+        # can tail to detect a persistent orphan. See hermes-restart
+        # rootcause handoff (2026-06-26 incident).
+        reload_log_path = get_hermes_home() / "logs" / "launchd-reload.log"
+        try:
+            reload_log_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        # Retry until launchctl LISTS the label (not merely a zero bootstrap
+        # exit) or the drain window elapses. The failure happens while the old
+        # gateway is still draining (default agent.restart_drain_timeout=180s),
+        # so a fixed ~10s window is too short — bound by that budget instead.
+        _reload_budget = int(max(30.0, _get_restart_drain_timeout()))
         reload_script = (
             f"sleep 2; "
             f"launchctl bootout {shlex.quote(target)} 2>/dev/null; "
             f"sleep 1; "
-            f"launchctl bootstrap {shlex.quote(domain)} {shlex.quote(str(plist_path))} 2>/dev/null"
+            f"_deadline=$(($(date +%s) + {_reload_budget})); "
+            f"while :; do "
+            f"  launchctl bootstrap {shlex.quote(domain)} {shlex.quote(str(plist_path))} 2>/dev/null; "
+            f"  if launchctl list {shlex.quote(label)} >/dev/null 2>&1; then break; fi; "
+            f"  echo \"[$(date '+%Y-%m-%d %H:%M:%S %z')] bootstrap not yet registered for {shlex.quote(target)} — retrying\" >> {shlex.quote(str(reload_log_path))}; "
+            f"  if [ $(date +%s) -ge $_deadline ]; then break; fi; "
+            f"  sleep 2; "
+            f"done; "
+            f"if ! launchctl list {shlex.quote(label)} >/dev/null 2>&1; then "
+            f"  echo \"[$(date '+%Y-%m-%d %H:%M:%S %z')] FAILED launchd reload for {shlex.quote(target)} — service NOT registered after {_reload_budget}s of retries\" >> {shlex.quote(str(reload_log_path))}; "
+            f"fi"
         )
         try:
             subprocess.Popen(["/bin/bash", "-c", reload_script], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -3891,10 +4079,39 @@ def refresh_launchd_plist_if_needed() -> bool:
         print("↻ Updated gateway launchd service definition; reload deferred to a detached helper (refresh ran inside the gateway process tree)")
         return True
 
-    for domain in loaded_domains or [preferred_domain]:
-        subprocess.run(["launchctl", "bootout", f"{domain}/{label}"], check=False, timeout=90)
-    _launchd_bootstrap_service(plist_path, label, preferred_domain)
-    _clear_launchd_unsupported_marker()
+    # Bootout/bootstrap so launchd picks up the new definition. The reported
+    # incident (2026-06-26) happened when bootout succeeded but bootstrap
+    # failed silently under load (loadavg 9.48) during a graceful /restart
+    # drain, leaving the service unregistered — KeepAlive can't revive a job
+    # launchd no longer knows about. Retry the bootstrap (via the shared
+    # _launchctl_bootstrap EIO-recovery helper) until the label is actually
+    # registered or the drain window elapses, verify with `launchctl list`,
+    # and log exhaustion so the reload watchdog can detect a persistent orphan.
+    subprocess.run(
+        ["launchctl", "bootout", target],
+        check=False,
+        timeout=90,
+    )
+    # Size the retry window to the restart drain timeout (default 180s), not a
+    # fixed ~10s: the failure mode occurs while the old gateway is still
+    # draining, so a short window can exhaust before launchd settles.
+    _reload_budget = max(30.0, _get_restart_drain_timeout())
+    _deadline = time.monotonic() + _reload_budget
+    if not _retry_launchctl_bootstrap_until_registered(
+        domain, plist_path, label, deadline=_deadline
+    ):
+        _append_launchd_reload_log(
+            f"FAILED launchd reload of {target} — service NOT registered after "
+            f"retrying for {int(_reload_budget)}s (refresh ran outside gateway "
+            f"process tree)"
+        )
+        logger.error(
+            "launchd reload of %s failed — service not registered after %ds of "
+            "retries; see %s",
+            target,
+            int(_reload_budget),
+            _launchd_reload_log_path(),
+        )
     print(
         "↻ Updated gateway launchd service definition to match the current Hermes install"
     )
@@ -3922,7 +4139,9 @@ def launchd_install(force: bool = False):
     plist_path.write_text(new_plist)
 
     try:
-        _launchd_bootstrap_service(plist_path, get_launchd_label(), _launchd_control_domain(get_launchd_label()))
+        _launchctl_bootstrap(
+            _launchd_domain(), plist_path, get_launchd_label(), timeout=30
+        )
     except subprocess.CalledProcessError as e:
         if not _launchctl_domain_unsupported(e.returncode):
             raise
@@ -3971,9 +4190,9 @@ def launchd_start():
         plist_path.parent.mkdir(parents=True, exist_ok=True)
         plist_path.write_text(new_plist, encoding="utf-8")
         try:
-            domain = _launchd_bootstrap_service(plist_path, label, _launchd_control_domain(label))
+            _launchctl_bootstrap(_launchd_domain(), plist_path, label, timeout=30)
             subprocess.run(
-                ["launchctl", "kickstart", f"{domain}/{label}"],
+                ["launchctl", "kickstart", f"{_launchd_domain()}/{label}"],
                 check=True,
                 timeout=30,
             )
@@ -4001,9 +4220,9 @@ def launchd_start():
         # re-bootstrap the plist through candidate domains and retry.
         print("↻ launchd job was unavailable; reloading service definition")
         try:
-            domain = _launchd_bootstrap_service(plist_path, label, domain)
+            _launchctl_bootstrap(_launchd_domain(), plist_path, label, timeout=30)
             subprocess.run(
-                ["launchctl", "kickstart", f"{domain}/{label}"],
+                ["launchctl", "kickstart", f"{_launchd_domain()}/{label}"],
                 check=True,
                 timeout=30,
             )
@@ -4150,7 +4369,7 @@ def launchd_restart():
             # fundamentally unmanageable, degrade to detached; otherwise re-raise.
             if _launchctl_domain_unsupported(e.returncode):
                 try:
-                    domain = _launchd_bootstrap_service(get_launchd_plist_path(), label, domain)
+                    _launchctl_bootstrap(domain, get_launchd_plist_path(), label, timeout=30)
                     subprocess.run(
                         ["launchctl", "kickstart", f"{domain}/{label}"],
                         check=True,
@@ -4166,7 +4385,21 @@ def launchd_restart():
         print("↻ launchd job was unloaded; reloading")
         plist_path = get_launchd_plist_path()
         try:
-            domain = _launchd_bootstrap_service(plist_path, label, domain)
+            # Restart is the one path where the job is almost always still
+            # registered (we just drained it), so a plain bootstrap would hit
+            # EIO on the common case. Boot the stale label out first — cheaper
+            # and clearer here than routing through _launchctl_bootstrap's
+            # bootstrap-first/retry-on-EIO flow. See #23387, #42914.
+            subprocess.run(
+                ["launchctl", "bootout", target],
+                check=False,
+                timeout=90,
+            )
+            subprocess.run(
+                ["launchctl", "bootstrap", domain, str(plist_path)],
+                check=True,
+                timeout=30,
+            )
             subprocess.run(
                 ["launchctl", "kickstart", f"{domain}/{label}"],
                 check=True,
@@ -6353,13 +6586,31 @@ def _gateway_command_inner(args):
                     "  Or use tmux/screen for persistence: tmux new -s hermes 'hermes gateway run'"
                 )
                 print()
-            start_now = prompt_yes_no("Start the gateway now after installing the service?", True)
-            start_on_login = prompt_yes_no("Start the gateway automatically on login/boot with systemd?", True)
+            # Honor CLI flags (--start-now / --no-start-now, --start-on-login /
+            # --no-start-on-login).  When not provided, prompt interactively or
+            # fall back to True for non-TTY / headless contexts (SSH, CI, pipes).
+            non_interactive = not (hasattr(sys.stdin, "isatty") and sys.stdin.isatty())
+            _sn = getattr(args, "start_now", None)
+            if _sn is not None:
+                start_now = _sn
+            elif not non_interactive:
+                start_now = prompt_yes_no("Start the gateway now after installing the service?", True)
+            else:
+                start_now = True
+
+            _sol = getattr(args, "start_on_login", None)
+            if _sol is not None:
+                start_on_login = _sol
+            elif not non_interactive:
+                start_on_login = prompt_yes_no("Start the gateway automatically on login/boot with systemd?", True)
+            else:
+                start_on_login = True
             systemd_install(
                 force=force,
                 system=system,
                 run_as_user=run_as_user,
                 enable_on_startup=start_on_login,
+                non_interactive=non_interactive,
             )
             if start_now:
                 systemd_start(system=system)

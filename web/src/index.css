@@ -43,10 +43,8 @@
 }
 
 /* ------------------------------------------------------------------ */
-/* Hermes Agent — Nous DS with the LENS_0 (Hermes teal) lens applied   */
-/* statically. Mirrors nousnet-web/(hermes-agent)/layout.tsx so the    */
-/* canonical Hermes palette is the default — teal canvas + cream      */
-/* accent — without relying on leva/gsap at runtime.                  */
+/* Hermes Agent — Nous DS with the LENS_0 (Hermes teal) palette applied
+   statically as the default dashboard theme. */
 /* ------------------------------------------------------------------ */
 
 :root {
@@ -62,10 +60,6 @@
   --background: color-mix(in srgb, #041c1c 100%, transparent);
   --background-base: #041c1c;
   --background-alpha: 1;
-
-  /* Consumed by <Backdrop />; also theme-switchable. */
-  --warm-glow: rgba(255, 189, 56, 0.35);
-  --noise-opacity-mul: 1;
 
   /* Typography tokens — rewritten by ThemeProvider. Defaults match the
      system stack so themes that don't override look native. */
@@ -226,11 +220,6 @@ code { font-size: 0.875rem; }
 }
 .scrollbar-none::-webkit-scrollbar {
   display: none;
-}
-
-/* Plus-lighter blend used by logos/titles for a subtle glow. */
-.blend-lighter {
-  mix-blend-mode: plus-lighter;
 }
 
 /* System UI-monospace stack — distinct from `font-courier` (Courier
