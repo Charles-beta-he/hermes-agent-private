@@ -338,6 +338,10 @@ export const api = {
     fetchJSON<AuthMeResponse>("/api/auth/me", undefined, {
       allowUnauthorized: true,
     }),
+  getContextPreflight: (packet?: string) => {
+    const suffix = packet ? `?packet=${encodeURIComponent(packet)}` : "";
+    return fetchJSON<ContextPreflightResponse>(`/api/context/preflight${suffix}`);
+  },
   logout: () =>
     fetch(`${BASE}/auth/logout`, {
       method: "POST",
@@ -1221,6 +1225,28 @@ export interface AuthMeResponse {
   org_id: string;
   provider: string;
   expires_at: number;
+}
+
+export interface ContextPreflightResponse {
+  schema: "hermes_context_preflight_v1";
+  gate: string;
+  enabled: boolean;
+  status: "disabled" | "ok" | "blocked";
+  message: string;
+  packet_checked: boolean;
+  packet_path: string | null;
+  runtime_prompt_injection: boolean;
+  side_effects: {
+    external: boolean;
+    llm: boolean;
+    writes: string[];
+  };
+  result?: {
+    sources: number;
+    evidence_ids: number;
+    checks: number;
+    closed_authority: number;
+  };
 }
 
 export interface ActionResponse {

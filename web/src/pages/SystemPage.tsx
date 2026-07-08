@@ -57,6 +57,7 @@ import type {
   CuratorStatus,
   PortalStatus,
   DebugShareResponse,
+  ContextPreflightResponse,
 } from "@/lib/api";
 
 function formatBytes(n: number): string {
@@ -234,6 +235,17 @@ export default function SystemPage() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
 
+  // ── Context Engineering preflight projection ───────────────────────
+  const [contextPacketPath, setContextPacketPath] = useState(
+    "/Users/charles/.hermes/workflows/projects/hermes-context-engineering-os/examples/sample-context-packet.json",
+  );
+  const [contextPreflight, setContextPreflight] =
+    useState<ContextPreflightResponse | null>(null);
+  const [contextPreflightError, setContextPreflightError] = useState<string | null>(
+    null,
+  );
+  const [checkingContextPreflight, setCheckingContextPreflight] = useState(false);
+
   const loadAll = useCallback(() => {
     Promise.allSettled([
       api.getStatus(),
@@ -265,6 +277,21 @@ export default function SystemPage() {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  const runContextPreflight = async () => {
+    setCheckingContextPreflight(true);
+    setContextPreflightError(null);
+    try {
+      const packet = contextPacketPath.trim();
+      const result = await api.getContextPreflight(packet || undefined);
+      setContextPreflight(result);
+    } catch (e) {
+      setContextPreflight(null);
+      setContextPreflightError(String(e));
+    } finally {
+      setCheckingContextPreflight(false);
+    }
+  };
 
   // ── Gateway lifecycle ──────────────────────────────────────────────
   const runGateway = async (verb: "start" | "stop" | "restart") => {
@@ -623,6 +650,11 @@ export default function SystemPage() {
   const validEvents = hooks?.valid_events?.length
     ? hooks.valid_events
     : HOOK_EVENTS_FALLBACK;
+  const contextPreflightTone = contextPreflight?.status === "ok"
+    ? "success"
+    : contextPreflight?.status === "blocked"
+      ? "destructive"
+      : "secondary";
 
   return (
     <div className="flex flex-col gap-8">
@@ -928,6 +960,94 @@ export default function SystemPage() {
                     {updateInfo.message}
                   </span>
                 )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ── Context Engineering preflight ───────────────────────────── */}
+      <section className="flex flex-col gap-3">
+        <H2 variant="sm" className="flex items-center gap-2 text-muted-foreground">
+          <ShieldCheck className="h-4 w-4" /> Context Engineering preflight
+        </H2>
+        <Card>
+          <CardContent className="flex flex-col gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="context-packet-path">Context Packet path</Label>
+              <div className="flex flex-col gap-2 lg:flex-row">
+                <Input
+                  id="context-packet-path"
+                  value={contextPacketPath}
+                  onChange={(e) => setContextPacketPath(e.target.value)}
+                  placeholder="$HERMES_HOME/workflows/projects/.../sample-context-packet.json"
+                  aria-describedby="context-preflight-help"
+                />
+                <Button
+                  size="sm"
+                  className="shrink-0 uppercase"
+                  disabled={checkingContextPreflight}
+                  prefix={
+                    checkingContextPreflight ? (
+                      <Spinner className="h-3.5 w-3.5" />
+                    ) : (
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                    )
+                  }
+                  onClick={() => void runContextPreflight()}
+                >
+                  Check preflight
+                </Button>
+              </div>
+              <p id="context-preflight-help" className="text-xs text-muted-foreground">
+                Read-only projection only: no LLM call, no writes, no taskpool lifecycle mutation, and no runtime prompt injection.
+              </p>
+            </div>
+
+            {contextPreflightError && (
+              <div className="border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive" role="status">
+                {contextPreflightError}
+              </div>
+            )}
+
+            {contextPreflight && (
+              <div className="grid gap-3 border-t border-border pt-4 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={contextPreflightTone}>{contextPreflight.status}</Badge>
+                  <Badge tone={contextPreflight.enabled ? "success" : "secondary"}>
+                    gate {contextPreflight.enabled ? "enabled" : "disabled"}
+                  </Badge>
+                  <Badge tone={contextPreflight.packet_checked ? "success" : "secondary"}>
+                    packet {contextPreflight.packet_checked ? "checked" : "not checked"}
+                  </Badge>
+                  <Badge tone={contextPreflight.runtime_prompt_injection ? "destructive" : "success"}>
+                    runtime prompt injection: {String(contextPreflight.runtime_prompt_injection)}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">{contextPreflight.message}</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">Sources</div>
+                    <div>{contextPreflight.result?.sources ?? "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">Evidence IDs</div>
+                    <div>{contextPreflight.result?.evidence_ids ?? "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">Checks</div>
+                    <div>{contextPreflight.result?.checks ?? "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">Closed authority</div>
+                    <div>{contextPreflight.result?.closed_authority ?? "—"}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+                  <span>external: {String(contextPreflight.side_effects.external)}</span>
+                  <span>llm: {String(contextPreflight.side_effects.llm)}</span>
+                  <span>writes: {contextPreflight.side_effects.writes.length}</span>
+                </div>
               </div>
             )}
           </CardContent>
