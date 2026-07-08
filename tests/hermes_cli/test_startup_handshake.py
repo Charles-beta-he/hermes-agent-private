@@ -15,6 +15,7 @@ def test_startup_handshake_collects_read_only_projection_and_writes_selfcheck_re
     monkeypatch.setattr(mod, "provider_label", lambda provider: "OpenAI Codex")
     monkeypatch.setattr(mod, "read_health_summary", lambda limit=20: {"status": "ok", "record_count": 0, "degraded_count": 0})
     monkeypatch.setattr(mod, "_update_target_probe", lambda: mod._probe("update_target", "ok", "public via origin/main"))
+    monkeypatch.setattr(mod, "_dependency_health_probe", lambda: mod._probe("dependency_health", "ok", "dependencies healthy"))
 
     receipt = mod.collect_startup_handshake(write_receipt=True, observed_at=123.0)
 
@@ -112,6 +113,7 @@ def test_collect_startup_handshake_includes_update_target_probe(monkeypatch, tmp
         lambda: ("model", "provider", mod._probe("provider_model", "ok", "model via provider")),
     )
     monkeypatch.setattr(mod, "_dynamic_selfcheck_probe", lambda: mod._probe("dynamic_selfcheck", "ok", "ok"))
+    monkeypatch.setattr(mod, "_dependency_health_probe", lambda: mod._probe("dependency_health", "ok", "dependencies healthy"))
     monkeypatch.setattr(
         "hermes_cli.update_target.load_install_metadata",
         lambda: {},
@@ -135,6 +137,88 @@ def test_collect_startup_handshake_includes_update_target_probe(monkeypatch, tmp
     assert probe["status"] == "warn"
     assert "origin/private/main" in probe["message"]
     assert probe["suggested_command"] == "scripts/install-private.sh --yes --skip-setup"
+
+
+def test_dependency_health_probe_warns_without_installing_when_core_deps_missing(tmp_path, monkeypatch):
+    from hermes_cli import startup_handshake as mod
+
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[project]
+dependencies = [
+  "present-core>=1",
+  "missing-core>=1",
+  "platform-skip>=1; sys_platform == 'never'",
+]
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mod, "_distribution_present", lambda name: name == "present-core")
+
+    probe = mod._dependency_health_probe(project_root=tmp_path)
+
+    assert probe["id"] == "dependency_health"
+    assert probe["status"] == "warn"
+    assert "missing-core" in probe["message"]
+    assert probe["suggested_command"] == "hermes update --force"
+    assert probe["action_taken"] is False
+
+
+def test_dependency_health_probe_reports_interrupted_update_marker(tmp_path, monkeypatch):
+    from hermes_cli import startup_handshake as mod
+
+    (tmp_path / "pyproject.toml").write_text("[project]\ndependencies = []\n", encoding="utf-8")
+    (tmp_path / ".update-incomplete").write_text("incomplete\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "_distribution_present", lambda name: True)
+
+    probe = mod._dependency_health_probe(project_root=tmp_path)
+
+    assert probe["status"] == "warn"
+    assert "interrupted update" in probe["message"]
+    assert probe["suggested_command"] == "hermes update --force"
+    assert probe["action_taken"] is False
+
+
+def test_dependency_health_probe_reports_active_lazy_backends_without_installing(tmp_path, monkeypatch):
+    from hermes_cli import startup_handshake as mod
+    from tools import lazy_deps
+
+    (tmp_path / "pyproject.toml").write_text("[project]\ndependencies = []\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "_distribution_present", lambda name: True)
+    monkeypatch.setattr(lazy_deps, "active_features", lambda: ["tool.dashboard"])
+    monkeypatch.setattr(lazy_deps, "feature_specs", lambda feature: ("fastapi==1.0",))
+    monkeypatch.setattr(lazy_deps, "_is_present", lambda spec: True)
+    monkeypatch.setattr(lazy_deps, "feature_missing", lambda feature: ("fastapi==1.0",))
+    monkeypatch.setattr(lazy_deps, "_allow_lazy_installs", lambda: False)
+
+    probe = mod._dependency_health_probe(project_root=tmp_path)
+
+    assert probe["status"] == "warn"
+    assert "tool.dashboard" in probe["message"]
+    assert "lazy installs disabled" in probe["message"]
+    assert "fastapi" in probe["message"]
+    assert probe["action_taken"] is False
+
+
+def test_collect_startup_handshake_includes_dependency_health_probe(monkeypatch, tmp_path):
+    from hermes_cli import startup_handshake as mod
+
+    monkeypatch.setattr(mod, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "_provider_summary",
+        lambda: ("model", "provider", mod._probe("provider_model", "ok", "model via provider")),
+    )
+    monkeypatch.setattr(mod, "_dynamic_selfcheck_probe", lambda: mod._probe("dynamic_selfcheck", "ok", "ok"))
+    monkeypatch.setattr(mod, "_update_target_probe", lambda: mod._probe("update_target", "ok", "public via origin/main"))
+    monkeypatch.setattr(mod, "_dependency_health_probe", lambda: mod._probe("dependency_health", "warn", "missing deps", suggested_command="hermes update --force"))
+
+    receipt = mod.collect_startup_handshake(write_receipt=False, entrypoint="test")
+    probe = next(p for p in receipt["probes"] if p["id"] == "dependency_health")
+
+    assert receipt["status"] == "warn"
+    assert probe["suggested_command"] == "hermes update --force"
+    assert probe["action_taken"] is False
 
 
 def test_reminder_policy_tracks_severity_intervals_per_entrypoint(tmp_path):

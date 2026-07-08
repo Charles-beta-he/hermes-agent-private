@@ -7,8 +7,10 @@ selfcheck directory, and never calls an LLM or performs external dispatch.
 
 from __future__ import annotations
 
+import importlib.metadata as importlib_metadata
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -236,6 +238,107 @@ def _update_target_probe() -> dict[str, Any]:
     return _probe("update_target", "ok", msg, suggested_command="hermes update --check")
 
 
+def _distribution_present(name: str) -> bool:
+    try:
+        importlib_metadata.version(name)
+        return True
+    except importlib_metadata.PackageNotFoundError:
+        return False
+    except Exception:
+        return False
+
+
+def _dependency_name_from_spec(spec: str) -> str | None:
+    head = str(spec).split(";", 1)[0].strip()
+    match = re.match(r"^([A-Za-z0-9_][A-Za-z0-9_.-]*)", head)
+    return match.group(1) if match else None
+
+
+def _dependency_marker_applies(spec: str) -> bool:
+    if ";" not in str(spec):
+        return True
+    try:
+        from packaging.requirements import Requirement
+
+        req = Requirement(str(spec))
+        return bool(req.marker.evaluate()) if req.marker is not None else True
+    except Exception:
+        return True
+
+
+def _declared_core_dependencies(project_root: Path) -> list[str]:
+    pyproject = project_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return []
+    try:
+        import tomllib
+
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        raw = data.get("project", {}).get("dependencies", []) or []
+    except Exception:
+        return []
+    names: list[str] = []
+    for spec in raw:
+        if not isinstance(spec, str) or not _dependency_marker_applies(spec):
+            continue
+        name = _dependency_name_from_spec(spec)
+        if name:
+            names.append(name)
+    return names
+
+
+def _active_lazy_dependency_warnings() -> list[str]:
+    try:
+        from tools import lazy_deps
+
+        warnings: list[str] = []
+        for feature in lazy_deps.active_features():
+            try:
+                specs = tuple(lazy_deps.feature_specs(feature))
+                if specs and not lazy_deps._is_present(specs[0]):  # type: ignore[attr-defined]
+                    continue
+                missing = tuple(lazy_deps.feature_missing(feature))
+            except Exception:
+                continue
+            if not missing:
+                continue
+            suffix = ""
+            try:
+                if not lazy_deps._allow_lazy_installs():  # type: ignore[attr-defined]
+                    suffix = " (lazy installs disabled)"
+            except Exception:
+                pass
+            warnings.append(f"{feature}: {', '.join(missing[:3])}{suffix}")
+        return warnings
+    except Exception:
+        return []
+
+
+def _dependency_health_probe(*, project_root: Path | None = None) -> dict[str, Any]:
+    """Report local dependency health without installing or importing heavy backends."""
+    root = project_root or Path(__file__).parent.parent.resolve()
+    warnings: list[str] = []
+    if (root / ".update-incomplete").exists():
+        warnings.append("interrupted update marker present")
+
+    missing_core = [name for name in _declared_core_dependencies(root) if not _distribution_present(name)]
+    if missing_core:
+        warnings.append(f"missing core deps: {', '.join(missing_core[:8])}")
+
+    lazy_warnings = _active_lazy_dependency_warnings()
+    if lazy_warnings:
+        warnings.append(f"active lazy backend drift: {'; '.join(lazy_warnings[:5])}")
+
+    if warnings:
+        return _probe(
+            "dependency_health",
+            "warn",
+            "; ".join(warnings),
+            suggested_command="hermes update --force",
+        )
+    return _probe("dependency_health", "ok", "core deps and active lazy backends healthy")
+
+
 def _reminder_key(profile: str, entrypoint: str, probe: Mapping[str, Any]) -> str:
     return f"{profile}:{entrypoint}:{probe.get('id')}:{probe.get('severity') or _severity_for_status(str(probe.get('status') or 'info'))}"
 
@@ -345,6 +448,7 @@ def collect_startup_handshake(
         _cron_probe(home),
         _dynamic_selfcheck_probe(),
         _update_target_probe(),
+        _dependency_health_probe(),
     ]
     status = _probe_status([str(p.get("status") or "ok") for p in probes])
     writes = ["selfcheck_receipt", "health_record"] if write_receipt else []
