@@ -193,6 +193,45 @@ def lint_packet_path(path: str | Path) -> tuple[int, dict[str, Any] | str]:
     return 0, summary
 
 
+def _context_preflight_enabled() -> bool:
+    try:
+        from hermes_cli.config import load_config_readonly
+
+        config = load_config_readonly()
+    except Exception:
+        config = {}
+    agent_cfg = config.get("agent") if isinstance(config, dict) else None
+    if not isinstance(agent_cfg, dict):
+        return False
+    return bool(agent_cfg.get("context_engineering_packet_preflight"))
+
+
+def collect_context_preflight(packet_path: str | Path | None) -> tuple[int, dict[str, Any]]:
+    enabled = _context_preflight_enabled()
+    base: dict[str, Any] = {
+        "schema": "hermes_context_preflight_v1",
+        "gate": "agent.context_engineering_packet_preflight",
+        "enabled": enabled,
+        "packet_path": str(packet_path) if packet_path else None,
+        "packet_checked": False,
+        "side_effects": {"external": False, "llm": False, "writes": []},
+        "runtime_prompt_injection": False,
+    }
+    if not enabled:
+        base.update({"status": "disabled", "message": "preflight gate disabled; no packet validation performed"})
+        return 0, base
+    if not packet_path:
+        base.update({"status": "blocked", "message": "enabled context preflight requires --packet"})
+        return 1, base
+    rc, result = lint_packet_path(packet_path)
+    base["packet_checked"] = True
+    if rc == 0:
+        base.update({"status": "ok", "message": "context packet validated", "result": result})
+        return 0, base
+    base.update({"status": "blocked", "message": str(result), "result": result})
+    return 1, base
+
+
 def _print_lint_result(path: str | Path, *, as_json: bool = False) -> int:
     rc, result = lint_packet_path(path)
     if as_json:
@@ -247,5 +286,14 @@ def cmd_context(args) -> int:  # noqa: ANN001
         return _print_lint_result(getattr(args, "packet_path"), as_json=getattr(args, "json", False))
     if sub == "eval" and getattr(args, "eval_command", None) == "run":
         return _run_eval(getattr(args, "root", "."), as_json=getattr(args, "json", False))
-    print("usage: hermes context {packet,eval} ...", file=sys.stderr)
+    if sub == "preflight":
+        rc, payload = collect_context_preflight(getattr(args, "packet_path", None))
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
+        elif rc == 0:
+            print(f"CONTEXT PREFLIGHT {payload['status']}: {payload['message']}")
+        else:
+            print(f"CONTEXT PREFLIGHT {payload['status']}: {payload['message']}", file=sys.stderr)
+        return rc
+    print("usage: hermes context {packet,eval,preflight} ...", file=sys.stderr)
     return 1

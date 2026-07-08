@@ -41,4 +41,12 @@ def build_context_parser(subparsers, *, cmd_context: Callable) -> None:
     eval_run.set_defaults(func=cmd_context)
     eval_parser.set_defaults(func=cmd_context)
 
+    preflight_parser = context_subparsers.add_parser(
+        "preflight",
+        help="Read-only default-off Context Packet runtime preflight projection",
+    )
+    preflight_parser.add_argument("--packet", dest="packet_path", default=None, help="Path to Context Packet JSON")
+    preflight_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    preflight_parser.set_defaults(func=cmd_context)
+
     context_parser.set_defaults(func=cmd_context)
