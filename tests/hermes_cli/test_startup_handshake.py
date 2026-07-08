@@ -14,6 +14,7 @@ def test_startup_handshake_collects_read_only_projection_and_writes_selfcheck_re
     monkeypatch.setattr(mod, "resolve_provider", lambda requested=None, **kwargs: "openai-codex")
     monkeypatch.setattr(mod, "provider_label", lambda provider: "OpenAI Codex")
     monkeypatch.setattr(mod, "read_health_summary", lambda limit=20: {"status": "ok", "record_count": 0, "degraded_count": 0})
+    monkeypatch.setattr(mod, "_update_target_probe", lambda: mod._probe("update_target", "ok", "public via origin/main"))
 
     receipt = mod.collect_startup_handshake(write_receipt=True, observed_at=123.0)
 
@@ -98,6 +99,42 @@ def test_render_startup_handshake_json_and_text(tmp_path, monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
     assert payload["schema"] == "hermes_startup_handshake_v1"
+
+
+def test_collect_startup_handshake_includes_update_target_probe(monkeypatch, tmp_path):
+    from hermes_cli import startup_handshake as mod
+    from hermes_cli.update_target import UpdateTarget
+
+    monkeypatch.setattr(mod, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "_provider_summary",
+        lambda: ("model", "provider", mod._probe("provider_model", "ok", "model via provider")),
+    )
+    monkeypatch.setattr(mod, "_dynamic_selfcheck_probe", lambda: mod._probe("dynamic_selfcheck", "ok", "ok"))
+    monkeypatch.setattr(
+        "hermes_cli.update_target.load_install_metadata",
+        lambda: {},
+    )
+    monkeypatch.setattr(
+        "hermes_cli.update_target.resolve_update_target",
+        lambda repo_dir=None: UpdateTarget(
+            channel="charles-private",
+            source="git-origin",
+            remote="origin",
+            branch="private/main",
+            compare_ref="origin/private/main",
+            update_command="hermes update",
+            origin="https://github.com/Charles-beta-he/hermes-agent-private.git",
+        ),
+    )
+
+    receipt = mod.collect_startup_handshake(write_receipt=False, entrypoint="test")
+    probe = next(p for p in receipt["probes"] if p["id"] == "update_target")
+
+    assert probe["status"] == "warn"
+    assert "origin/private/main" in probe["message"]
+    assert probe["suggested_command"] == "scripts/install-private.sh --yes --skip-setup"
 
 
 def test_reminder_policy_tracks_severity_intervals_per_entrypoint(tmp_path):

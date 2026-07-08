@@ -209,6 +209,33 @@ def _gateway_probe(home: Path) -> dict[str, Any]:
     return _probe("gateway_status", "deferred", "no cached gateway runtime status")
 
 
+def _update_target_probe() -> dict[str, Any]:
+    """Report the local update target without performing network checks."""
+    try:
+        from hermes_cli.update_target import load_install_metadata, resolve_update_target
+
+        repo_dir = Path(__file__).parent.parent.resolve()
+        metadata = load_install_metadata()
+        target = resolve_update_target(repo_dir=repo_dir if (repo_dir / ".git").exists() else None)
+    except Exception as exc:
+        return _probe(
+            "update_target",
+            "deferred",
+            f"update target unavailable: {str(exc)[:120]}",
+            suggested_command="hermes update --check",
+        )
+
+    msg = f"{target.channel} via {target.compare_ref} ({target.source})"
+    if target.channel == "charles-private" and target.source == "git-origin" and not metadata:
+        return _probe(
+            "update_target",
+            "warn",
+            f"{msg}; install metadata missing",
+            suggested_command="scripts/install-private.sh --yes --skip-setup",
+        )
+    return _probe("update_target", "ok", msg, suggested_command="hermes update --check")
+
+
 def _reminder_key(profile: str, entrypoint: str, probe: Mapping[str, Any]) -> str:
     return f"{profile}:{entrypoint}:{probe.get('id')}:{probe.get('severity') or _severity_for_status(str(probe.get('status') or 'info'))}"
 
@@ -317,6 +344,7 @@ def collect_startup_handshake(
         _gateway_probe(home),
         _cron_probe(home),
         _dynamic_selfcheck_probe(),
+        _update_target_probe(),
     ]
     status = _probe_status([str(p.get("status") or "ok") for p in probes])
     writes = ["selfcheck_receipt", "health_record"] if write_receipt else []

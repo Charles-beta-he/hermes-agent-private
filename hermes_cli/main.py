@@ -8523,24 +8523,19 @@ def _run_private_update_finalizer() -> None:
 
 
 def _resolve_update_branch(args) -> str:
-    """Normalize the update branch.
-
-    Precedence:
-    1. explicit ``--branch``;
-    2. installer metadata from ``$HERMES_HOME/install.json``;
-    3. public default ``main``.
-
-    The metadata layer lets private distributions install from e.g.
-    ``origin/private/main`` while keeping the user-facing update command as
-    simply ``hermes update``.
-    """
+    """Normalize the update branch via the shared UpdateTarget resolver."""
     explicit = getattr(args, "branch", None)
-    if explicit is not None and str(explicit).strip():
-        return str(explicit).strip()
-    metadata_branch = _install_metadata_branch()
-    if metadata_branch:
-        return metadata_branch
-    return "main"
+    try:
+        from hermes_cli.update_target import resolve_update_branch
+
+        return resolve_update_branch(explicit, repo_dir=PROJECT_ROOT)
+    except Exception:
+        if explicit is not None and str(explicit).strip():
+            return str(explicit).strip()
+        metadata_branch = _install_metadata_branch()
+        if metadata_branch:
+            return metadata_branch
+        return "main"
 
 
 def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):

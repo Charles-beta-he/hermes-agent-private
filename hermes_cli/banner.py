@@ -193,9 +193,42 @@ def _check_via_rev(local_rev: str) -> Optional[int]:
 
 
 def _check_via_local_git(repo_dir: Path) -> Optional[int]:
-    """Count commits behind origin/main in a local checkout."""
+    """Count commits behind the resolved install update target."""
+    from hermes_cli.update_target import (
+        PRIVATE_DEFAULT_BRANCH,
+        PRIVATE_REPO_CANONICAL,
+        UpdateTarget,
+        canonical_github_remote,
+        load_install_metadata,
+        resolve_update_target,
+    )
+
+    metadata = load_install_metadata()
     origin_url = _git_stdout(["remote", "get-url", "origin"], cwd=repo_dir)
-    if _is_official_ssh_remote(origin_url):
+    if metadata.get("branch"):
+        target = resolve_update_target(repo_dir=repo_dir)
+        origin_url = target.origin or origin_url
+    elif canonical_github_remote(origin_url) == PRIVATE_REPO_CANONICAL:
+        target = UpdateTarget(
+            channel="charles-private",
+            source="git-origin",
+            remote="origin",
+            branch=PRIVATE_DEFAULT_BRANCH,
+            compare_ref=f"origin/{PRIVATE_DEFAULT_BRANCH}",
+            update_command="hermes update",
+            origin=origin_url,
+        )
+    else:
+        target = UpdateTarget(
+            channel="public",
+            source="fallback",
+            remote="origin",
+            branch="main",
+            compare_ref="origin/main",
+            update_command="hermes update",
+            origin=origin_url,
+        )
+    if _is_official_ssh_remote(origin_url) and target.branch == "main":
         head_rev = _git_stdout(["rev-parse", "HEAD"], cwd=repo_dir)
         checked = _check_via_rev(head_rev) if head_rev else None
         if checked == UPDATE_AVAILABLE_NO_COUNT:
@@ -204,19 +237,21 @@ def _check_via_local_git(repo_dir: Path) -> Optional[int]:
 
     # Installer checkouts are shallow (`git clone --depth 1`). On a shallow
     # clone the history stops at a single commit, so a plain `git fetch` would
-    # unshallow the repo (dragging in the whole history) and
-    # `rev-list --count HEAD..origin/main` would report a huge bogus "behind"
-    # number (e.g. "12492 commits behind"). Detect shallow up front: fetch with
-    # --depth 1 to preserve the boundary and compare tip SHAs instead of
-    # counting. Full clones (developers, Docker dev images) keep the exact
-    # count path unchanged. Mirrors the desktop fix in apps/desktop/electron/main.cjs.
+    # unshallow the repo (dragging in the whole history) and a rev-list count
+    # across the shallow boundary may report a huge bogus "behind" number.
+    # Detect shallow up front: fetch with --depth 1 to preserve the boundary and
+    # compare tip SHAs instead of counting. Full clones keep the exact count
+    # path. The branch/compare ref come from UpdateTarget so private installs
+    # compare against origin/private/main instead of the public origin/main.
     shallow = _git_stdout(["rev-parse", "--is-shallow-repository"], cwd=repo_dir)
     is_shallow = shallow == "true"
 
     try:
-        fetch_args = ["git", "fetch", "origin"]
+        fetch_args = ["git", "fetch", target.remote]
         if is_shallow:
             fetch_args += ["--depth", "1"]
+        if target.branch != "main":
+            fetch_args.append(target.branch)
         fetch_args.append("--quiet")
         subprocess.run(
             fetch_args,
@@ -227,13 +262,13 @@ def _check_via_local_git(repo_dir: Path) -> Optional[int]:
         pass  # Offline or timeout — use stale refs, that's fine
 
     if is_shallow:
-        # No history to count across the shallow boundary. `origin/main` may not
-        # be a tracking ref in a `clone --depth 1`, so prefer FETCH_HEAD (just
-        # updated by the fetch above) and fall back to origin/main.
+        # No history to count across the shallow boundary. The tracking ref may
+        # not exist in a `clone --depth 1`, so prefer FETCH_HEAD (just updated by
+        # the fetch above) and fall back to the resolved compare ref.
         head_rev = _git_stdout(["rev-parse", "HEAD"], cwd=repo_dir)
         target_rev = (
             _git_stdout(["rev-parse", "FETCH_HEAD"], cwd=repo_dir)
-            or _git_stdout(["rev-parse", "origin/main"], cwd=repo_dir)
+            or _git_stdout(["rev-parse", target.compare_ref], cwd=repo_dir)
         )
         if not head_rev or not target_rev:
             return None
@@ -241,7 +276,7 @@ def _check_via_local_git(repo_dir: Path) -> Optional[int]:
 
     try:
         result = subprocess.run(
-            ["git", "rev-list", "--count", "HEAD..origin/main"],
+            ["git", "rev-list", "--count", f"HEAD..{target.compare_ref}"],
             capture_output=True, text=True, timeout=5,
             cwd=str(repo_dir),
         )
@@ -328,11 +363,30 @@ def check_for_updates() -> Optional[int]:
     except Exception:
         pass
 
-    # Read cache — invalidate if the embedded rev OR installed version has
-    # changed since the last check. The version guard matters for pip installs:
-    # `check_via_pypi()` compares against VERSION, so a `pip install --upgrade`
-    # changes VERSION but leaves rev unchanged (both None), and without this
-    # the stale "behind" count would survive the upgrade for up to 6h. See #34491.
+    update_target_key = None
+    metadata_present = False
+    if not embedded_rev:
+        try:
+            from hermes_cli.update_target import load_install_metadata, resolve_update_target
+
+            metadata_present = bool(load_install_metadata())
+            repo_for_target = Path(__file__).parent.parent.resolve()
+            if not (repo_for_target / ".git").exists():
+                repo_for_target = hermes_home / "hermes-agent"
+            if metadata_present and (repo_for_target / ".git").exists():
+                target = resolve_update_target(repo_dir=repo_for_target)
+                update_target_key = f"{target.remote}/{target.branch}:{target.source}:{target.channel}"
+        except Exception:
+            update_target_key = None
+            metadata_present = False
+
+    # Read cache — invalidate if the embedded rev, installed version, or known
+    # target has changed since the last check. The version guard matters for pip
+    # installs: `check_via_pypi()` compares against VERSION, so a
+    # `pip install --upgrade` changes VERSION but leaves rev unchanged (both
+    # None), and without this the stale "behind" count would survive the
+    # upgrade for up to 6h. The target guard prevents private/public channel
+    # transitions from reusing a stale origin/main result.
     now = time.time()
     try:
         if cache_file.exists():
@@ -341,6 +395,10 @@ def check_for_updates() -> Optional[int]:
                 now - cached.get("ts", 0) < _UPDATE_CHECK_CACHE_SECONDS
                 and cached.get("rev") == embedded_rev
                 and cached.get("ver") == VERSION
+                and (
+                    not metadata_present
+                    or cached.get("target") == update_target_key
+                )
             ):
                 return cached.get("behind")
     except Exception:
@@ -362,7 +420,15 @@ def check_for_updates() -> Optional[int]:
 
     try:
         cache_file.write_text(
-            json.dumps({"ts": now, "behind": behind, "rev": embedded_rev, "ver": VERSION})
+            json.dumps(
+                {
+                    "ts": now,
+                    "behind": behind,
+                    "rev": embedded_rev,
+                    "ver": VERSION,
+                    "target": update_target_key,
+                }
+            )
         )
     except Exception:
         pass
