@@ -600,6 +600,15 @@ async def _token_auth_seam(request: Request, call_next):
     return await token_auth_middleware(request, call_next)
 
 
+@app.get("/api/context/preflight")
+async def context_preflight_api(packet: Optional[str] = None):
+    """Read-only Context Engineering preflight projection for the dashboard."""
+    from hermes_cli.context_engineering import collect_context_preflight
+
+    rc, payload = collect_context_preflight(packet)
+    return JSONResponse(status_code=200 if rc == 0 else 400, content=payload)
+
+
 # ---------------------------------------------------------------------------
 # Config schema — auto-generated from DEFAULT_CONFIG
 # ---------------------------------------------------------------------------
