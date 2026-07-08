@@ -236,9 +236,7 @@ export default function SystemPage() {
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
 
   // ── Context Engineering preflight projection ───────────────────────
-  const [contextPacketPath, setContextPacketPath] = useState(
-    "/Users/charles/.hermes/workflows/projects/hermes-context-engineering-os/examples/sample-context-packet.json",
-  );
+  const [contextPacketPath, setContextPacketPath] = useState("");
   const [contextPreflight, setContextPreflight] =
     useState<ContextPreflightResponse | null>(null);
   const [contextPreflightError, setContextPreflightError] = useState<string | null>(
