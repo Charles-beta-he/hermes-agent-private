@@ -309,6 +309,7 @@ from hermes_cli.subcommands.agent_os import build_agent_os_parser
 from hermes_cli.subcommands.complex_task_harness import build_complex_task_harness_parser
 from hermes_cli.subcommands.mcp import build_mcp_parser
 from hermes_cli.subcommands.codegraph import build_codegraph_parser
+from hermes_cli.subcommands.context import build_context_parser
 from hermes_cli.subcommands.claw import build_claw_parser
 
 
@@ -4253,6 +4254,16 @@ def cmd_codegraph(args):
     rc = _cmd_codegraph(args)
     if isinstance(rc, int) and rc != 0:
         raise SystemExit(rc)
+
+
+def cmd_context(args):
+    """Context Engineering edge-check helpers."""
+    from hermes_cli.context_engineering import cmd_context as _cmd_context
+
+    rc = _cmd_context(args)
+    if isinstance(rc, int) and rc != 0:
+        raise SystemExit(rc)
+    return rc
 
 
 def cmd_selfcheck(args):
@@ -9424,6 +9435,90 @@ def _discard_lockfile_churn(git_cmd, repo_root):
         pass
 
 
+def _cmd_update_upstream_check(*, plan: bool = False) -> None:
+    """Read-only maintainer check: private release target versus upstream source."""
+    from hermes_cli.update_target import resolve_upstream_sync_target
+
+    target = resolve_upstream_sync_target(repo_dir=PROJECT_ROOT)
+    if not target.enabled:
+        print("ℹ Upstream sync check is not enabled for this install.")
+        print(f"  release target: {target.release_ref}")
+        print(f"  reason: {target.reason}")
+        return
+
+    git_cmd = ["git"]
+    if sys.platform == "win32":
+        git_cmd = ["git", "-c", "windows.appendAtomically=false"]
+
+    print("Hermes upstream sync check (read-only)")
+    if plan:
+        print("  mode: plan-only")
+    print(f"  role: {target.role}")
+    print(f"  channel: {target.channel}")
+    print(f"  release target: {target.release_ref}")
+    print(f"  sync source: {target.sync_ref}")
+
+    for remote, branch in (
+        (target.release_remote, target.release_branch),
+        (target.sync_remote, target.sync_branch),
+    ):
+        fetch = subprocess.run(
+            git_cmd + ["fetch", remote, branch, "--quiet"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if fetch.returncode != 0:
+            print(f"✗ Failed to fetch {remote}/{branch}.")
+            if fetch.stderr:
+                print(f"  {fetch.stderr.strip().splitlines()[0]}")
+            sys.exit(1)
+
+    for ref in (target.release_ref, target.sync_ref):
+        verify = subprocess.run(
+            git_cmd + ["rev-parse", "--verify", "--quiet", ref],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if verify.returncode != 0:
+            print(f"✗ Ref not found after fetch: {ref}")
+            sys.exit(1)
+
+    private_ahead_result = subprocess.run(
+        git_cmd + ["rev-list", f"{target.sync_ref}..{target.release_ref}", "--count"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    upstream_ahead_result = subprocess.run(
+        git_cmd + ["rev-list", f"{target.release_ref}..{target.sync_ref}", "--count"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    private_ahead = int((private_ahead_result.stdout or "0").strip() or "0")
+    upstream_ahead = int((upstream_ahead_result.stdout or "0").strip() or "0")
+
+    if upstream_ahead == 0:
+        print(f"✓ {target.release_ref} is aligned with {target.sync_ref}")
+    else:
+        print(f"⚕ {target.sync_ref} is {upstream_ahead} commit(s) ahead of {target.release_ref}.")
+        print(f"  next: {target.apply_command}")
+    if private_ahead:
+        print(f"ℹ private release has {private_ahead} commit(s) not in upstream.")
+    if plan:
+        print("  plan:")
+        print("    1. create isolated integrate branch from private release target")
+        print("    2. merge upstream/main into that branch")
+        print("    3. resolve conflicts while preserving private overlays")
+        print("    4. run tests + post-update-check")
+        print("    5. merge/push to private release only after verification")
+    print("  side effects: fetch only; no merge, no rebase, no push, no dependency install")
+
+
 def cmd_update(args):
     """Update Hermes Agent to the latest version.
 
@@ -9451,6 +9546,18 @@ def cmd_update(args):
     if detect_install_method(PROJECT_ROOT) == "docker":
         print(format_docker_update_message())
         sys.exit(1)
+
+    if getattr(args, "upstream_check", False):
+        _cmd_update_upstream_check()
+        return
+
+    if getattr(args, "upstream_sync", False):
+        if not getattr(args, "plan", False):
+            print("✗ --upstream-sync currently requires --plan (read-only).")
+            print("  Apply/merge is intentionally not implemented on the ordinary update path.")
+            sys.exit(2)
+        _cmd_update_upstream_check(plan=True)
+        return
 
     if getattr(args, "check", False):
         # --check honors --branch so the "any new commits?" answer matches
@@ -13653,6 +13760,11 @@ def main():
     # codegraph command  (parser built in hermes_cli/subcommands/codegraph.py)
     # =========================================================================
     build_codegraph_parser(subparsers, cmd_codegraph=cmd_codegraph)
+
+    # =========================================================================
+    # context command  (parser built in hermes_cli/subcommands/context.py)
+    # =========================================================================
+    build_context_parser(subparsers, cmd_context=cmd_context)
 
     # =========================================================================
     # sessions command

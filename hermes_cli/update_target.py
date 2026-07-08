@@ -41,6 +41,23 @@ class UpdateTarget:
     upstream: str | None = None
 
 
+@dataclass(frozen=True)
+class UpstreamSyncTarget:
+    """Read-only maintainer view: release target versus upstream sync source."""
+
+    role: str
+    channel: str
+    enabled: bool
+    release_ref: str
+    sync_ref: str
+    release_remote: str
+    release_branch: str
+    sync_remote: str
+    sync_branch: str
+    reason: str
+    apply_command: str
+
+
 def canonical_github_remote(url: str | None) -> str:
     """Return ``host/owner/repo`` for common GitHub remote URL forms."""
     if not url:
@@ -187,7 +204,7 @@ def resolve_update_target(
     tracking_ref = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
     if tracking_ref and "/" in tracking_ref:
         remote, branch = tracking_ref.split("/", 1)
-        if remote and branch:
+        if remote in {"origin", "upstream"} and branch:
             return UpdateTarget(
                 channel="public",
                 source="git-upstream",
@@ -212,3 +229,51 @@ def resolve_update_target(
 def resolve_update_branch(explicit_branch: str | None = None, *, repo_dir: Path | None = None) -> str:
     """Compatibility helper for CLI update code that still takes a branch."""
     return resolve_update_target(repo_dir=repo_dir, explicit_branch=explicit_branch).branch
+
+
+def resolve_upstream_sync_target(
+    *,
+    repo_dir: Path | None = None,
+    git_stdout: Callable[..., Optional[str]] | None = None,
+) -> UpstreamSyncTarget:
+    """Resolve a maintainer-only upstream sync projection.
+
+    Ordinary update targets answer "what should this install update to?".  This
+    function answers the separate owner/dev question: "what upstream source
+    should the private release be compared against before publishing?"  It is
+    read-only and returns a disabled target for public/non-private installs.
+    """
+    release = resolve_update_target(repo_dir=repo_dir, git_stdout=git_stdout)
+    upstream_url = release.upstream or ""
+    upstream_canonical = canonical_github_remote(upstream_url)
+    is_private_channel = release.channel == "charles-private" or release.branch == PRIVATE_DEFAULT_BRANCH
+    has_official_upstream = upstream_canonical == OFFICIAL_REPO_CANONICAL or bool(upstream_url)
+
+    if not (is_private_channel and has_official_upstream):
+        return UpstreamSyncTarget(
+            role="consumer",
+            channel=release.channel,
+            enabled=False,
+            release_ref=release.compare_ref,
+            sync_ref="",
+            release_remote=release.remote,
+            release_branch=release.branch,
+            sync_remote="",
+            sync_branch="",
+            reason="not a private maintainer checkout with an upstream source",
+            apply_command="",
+        )
+
+    return UpstreamSyncTarget(
+        role="maintainer",
+        channel=release.channel,
+        enabled=True,
+        release_ref=release.compare_ref,
+        sync_ref=f"upstream/{PUBLIC_DEFAULT_BRANCH}",
+        release_remote=release.remote,
+        release_branch=release.branch,
+        sync_remote="upstream",
+        sync_branch=PUBLIC_DEFAULT_BRANCH,
+        reason="private channel with upstream remote",
+        apply_command="hermes update --upstream-sync --plan",
+    )

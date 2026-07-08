@@ -32,6 +32,24 @@ def build_update_parser(subparsers, *, cmd_update: Callable) -> None:
         help="Check whether an update is available without installing anything",
     )
     update_parser.add_argument(
+        "--upstream-check",
+        action="store_true",
+        default=False,
+        help="Maintainer-only read-only check: compare private release target with upstream/main without merging or installing",
+    )
+    update_parser.add_argument(
+        "--upstream-sync",
+        action="store_true",
+        default=False,
+        help="Maintainer-only upstream sync workflow; currently supports --plan as a read-only plan",
+    )
+    update_parser.add_argument(
+        "--plan",
+        action="store_true",
+        default=False,
+        help="With --upstream-sync, print the read-only upstream sync plan without merging, rebasing, pushing, or installing",
+    )
+    update_parser.add_argument(
         "--no-backup",
         action="store_true",
         default=False,

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
+import subprocess
+from types import SimpleNamespace
 
 
 def test_resolve_update_target_prefers_install_metadata_branch(tmp_path, monkeypatch):
@@ -109,3 +111,84 @@ def test_dashboard_recent_commits_uses_resolved_target(tmp_path, monkeypatch):
 
     assert rows[0]["summary"] == "feat: private"
     assert all("HEAD..origin/main" not in cmd for cmd in calls)
+
+
+def test_resolve_upstream_sync_target_separates_private_release_and_upstream_source(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "install.json").write_text(
+        json.dumps(
+            {
+                "channel": "charles-private",
+                "origin": "https://github.com/Charles-beta-he/hermes-agent-private.git",
+                "upstream": "https://github.com/NousResearch/hermes-agent.git",
+                "branch": "private/main",
+            }
+        ),
+        encoding="utf-8",
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+
+    from hermes_cli.update_target import resolve_upstream_sync_target
+
+    target = resolve_upstream_sync_target(repo_dir=repo)
+
+    assert target.role == "maintainer"
+    assert target.release_ref == "origin/private/main"
+    assert target.sync_ref == "upstream/main"
+    assert target.release_branch == "private/main"
+    assert target.sync_branch == "main"
+    assert target.enabled is True
+    assert target.apply_command == "hermes update --upstream-sync --plan"
+
+
+def test_cmd_update_upstream_check_is_read_only_and_compares_upstream_to_private_release(monkeypatch, capsys):
+    import hermes_cli.main as hm
+
+    monkeypatch.setattr(hm, "PROJECT_ROOT", Path("/tmp/hermes-agent"))
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:2] == ["git", "fetch"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd == ["git", "rev-parse", "--verify", "--quiet", "origin/private/main"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd == ["git", "rev-parse", "--verify", "--quiet", "upstream/main"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd == ["git", "rev-list", "upstream/main..origin/private/main", "--count"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="4\n", stderr="")
+        if cmd == ["git", "rev-list", "origin/private/main..upstream/main", "--count"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        raise AssertionError(f"unexpected command: {cmd!r}")
+
+    monkeypatch.setattr(hm.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        "hermes_cli.update_target.resolve_upstream_sync_target",
+        lambda repo_dir=None: __import__("hermes_cli.update_target", fromlist=["UpstreamSyncTarget"]).UpstreamSyncTarget(
+            role="maintainer",
+            channel="charles-private",
+            enabled=True,
+            release_ref="origin/private/main",
+            sync_ref="upstream/main",
+            release_remote="origin",
+            release_branch="private/main",
+            sync_remote="upstream",
+            sync_branch="main",
+            reason="private channel with upstream remote",
+            apply_command="hermes update --upstream-sync --plan",
+        ),
+    )
+
+    hm.cmd_update(SimpleNamespace(upstream_check=True))
+
+    out = capsys.readouterr().out
+    assert "release target: origin/private/main" in out
+    assert "sync source: upstream/main" in out
+    assert "upstream/main is 9 commit(s) ahead" in out
+    assert "private release has 4 commit(s) not in upstream" in out
+    assert any(c == ["git", "fetch", "origin", "private/main", "--quiet"] for c in calls)
+    assert any(c == ["git", "fetch", "upstream", "main", "--quiet"] for c in calls)
+    assert not any("pull" in c for c in calls for c in c)
+    assert not any("push" in c for c in calls for c in c)
