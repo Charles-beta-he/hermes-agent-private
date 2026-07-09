@@ -144,19 +144,76 @@ def test_validate_critical_files_syntax_tolerates_missing_files(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Repo invariant — the production tree itself must always pass the guard.
-# This catches the case where ``main`` ships a syntax error before the next
-# release; if a future ``hermes update`` would brick users, this test fails
-# in CI first.
+# _validate_critical_imports
+# ---------------------------------------------------------------------------
+
+def test_validate_critical_imports_detects_missing_subcommand_module(tmp_path):
+    """Regression for issue #17: py_compile passes but CLI import fails."""
+    pkg = tmp_path / "hermes_cli"
+    subcommands = pkg / "subcommands"
+    subcommands.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (subcommands / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "main.py").write_text(
+        "from hermes_cli.subcommands.context import build_context_parser\n",
+        encoding="utf-8",
+    )
+
+    syntax_ok, _, _ = hermes_main._validate_critical_files_syntax(tmp_path)
+    import_ok, failing_module, error = hermes_main._validate_critical_imports(tmp_path)
+
+    assert syntax_ok is True
+    assert import_ok is False
+    assert failing_module == "hermes_cli.main"
+    assert "No module named" in str(error)
+    assert "hermes_cli.subcommands.context" in str(error)
+
+
+def test_validate_critical_imports_accepts_available_subcommand_module(tmp_path):
+    pkg = tmp_path / "hermes_cli"
+    subcommands = pkg / "subcommands"
+    subcommands.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (subcommands / "__init__.py").write_text("", encoding="utf-8")
+    (subcommands / "context.py").write_text("def build_context_parser(*a, **k): pass\n", encoding="utf-8")
+    (pkg / "main.py").write_text(
+        "from hermes_cli.subcommands.context import build_context_parser\n",
+        encoding="utf-8",
+    )
+
+    import_ok, failing_module, error = hermes_main._validate_critical_imports(tmp_path)
+
+    assert import_ok is True
+    assert failing_module is None
+    assert error is None
+
+
+# ---------------------------------------------------------------------------
+# Repo invariant — the production tree itself must always pass the guards.
+# This catches the case where ``main`` ships a syntax or import error before
+# the next release; if a future ``hermes update`` would brick users, this test
+# fails in CI first.
 # ---------------------------------------------------------------------------
 
 def test_production_tree_passes_syntax_guard():
-    """The repo itself must always satisfy the guard the update command runs."""
+    """The repo itself must always satisfy the syntax guard."""
     repo_root = Path(__file__).resolve().parents[2]
 
     ok, failing_path, error = hermes_main._validate_critical_files_syntax(repo_root)
 
     assert ok is True, (
         f"Critical-path file {failing_path} fails to parse on current main; "
+        f"hermes update would brick users. Error: {error}"
+    )
+
+
+def test_production_tree_passes_import_guard():
+    """The repo itself must import CLI bootstrap modules after update."""
+    repo_root = Path(__file__).resolve().parents[2]
+
+    ok, failing_module, error = hermes_main._validate_critical_imports(repo_root)
+
+    assert ok is True, (
+        f"Critical import {failing_module} failed on current main; "
         f"hermes update would brick users. Error: {error}"
     )

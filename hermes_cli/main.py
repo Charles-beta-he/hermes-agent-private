@@ -4546,6 +4546,15 @@ _UPDATE_CRITICAL_FILES = (
     "hermes_constants.py",
 )
 
+# Modules that must import in a fresh interpreter immediately after a pull.
+# ``py_compile`` only catches syntax errors; it does not execute imports, so a
+# missing subcommand module can still brick every ``hermes`` invocation. Keep
+# this narrow to bootstrap-critical modules so the guard remains fast and avoids
+# optional/provider side effects.
+_UPDATE_CRITICAL_IMPORTS = (
+    "hermes_cli.main",
+)
+
 
 def _capture_head_sha(git_cmd, cwd) -> str | None:
     """Return the current HEAD SHA, or None if it can't be resolved."""
@@ -4601,6 +4610,49 @@ def _validate_critical_files_syntax(root) -> tuple[bool, str | None, str | None]
                 return False, str(path), str(exc)
             except OSError as exc:
                 return False, str(path), f"could not read: {exc}"
+    return True, None, None
+
+
+def _validate_critical_imports(
+    root,
+    *,
+    python_executable: str | None = None,
+) -> tuple[bool, str | None, str | None]:
+    """Import bootstrap-critical modules in a fresh interpreter.
+
+    ``py_compile`` cannot catch import-time wiring errors such as
+    ``hermes_cli.main`` importing a subcommand module that is absent from the
+    pulled tree. Running a fresh interpreter with ``PYTHONPATH`` pointed at the
+    candidate root validates the exact source tree that ``hermes update`` just
+    installed, before dependency reinstall and before declaring success.
+    """
+    import os as _os
+
+    root = Path(root)
+    python = python_executable or sys.executable
+    env = dict(_os.environ)
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(root) if not existing else f"{root}{_os.pathsep}{existing}"
+    for module_name in _UPDATE_CRITICAL_IMPORTS:
+        code = (
+            "import importlib\n"
+            f"importlib.import_module({module_name!r})\n"
+            "print('OK')\n"
+        )
+        try:
+            result = subprocess.run(
+                [python, "-c", code],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        except Exception as exc:
+            return False, module_name, str(exc)
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout or "").strip()
+            return False, module_name, message or f"exit={result.returncode}"
     return True, None, None
 
 
@@ -10034,12 +10086,12 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     )
                     sys.exit(1)
 
-            # Post-pull syntax guard: validate critical-path files actually
-            # parse before declaring the update successful. If a bad commit
-            # made it through CI (e.g. admin-merge bypass of a failing
-            # ruff check), this catches it on the user side and rolls back
-            # so the CLI stays bootable. The user can then retry ``hermes
-            # update`` later once a fix lands upstream.
+            # Post-pull bootstrap guards: validate critical-path files parse and
+            # bootstrap-critical modules import before declaring the update
+            # successful. ``py_compile`` catches syntax/conflict-marker failures;
+            # the fresh-interpreter import smoke catches missing module wiring
+            # such as a subcommand registered in main.py but absent from the
+            # pulled tree.
             syntax_ok, failing_path, syntax_error = _validate_critical_files_syntax(
                 PROJECT_ROOT
             )
@@ -10051,6 +10103,39 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     # py_compile errors can be multi-line; show the first
                     # ~6 lines so the user sees the actual SyntaxError text.
                     for line in str(syntax_error).splitlines()[:6]:
+                        print(f"    {line}")
+                if pre_pull_sha:
+                    print()
+                    print(f"→ Rolling back to {pre_pull_sha[:10]}...")
+                    rollback_result = subprocess.run(
+                        git_cmd + ["reset", "--hard", pre_pull_sha],
+                        cwd=PROJECT_ROOT,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if rollback_result.returncode == 0:
+                        print("  ✓ Rollback complete — your install is unchanged.")
+                        print("  Try ``hermes update`` again later once a fix lands.")
+                    else:
+                        print("  ✗ Rollback failed. Recover manually with:")
+                        print(f"    cd {PROJECT_ROOT} && git reset --hard {pre_pull_sha}")
+                        if rollback_result.stderr.strip():
+                            print(f"    ({rollback_result.stderr.strip().splitlines()[0]})")
+                else:
+                    print()
+                    print("  Could not capture pre-pull SHA — recover manually with:")
+                    print(f"    cd {PROJECT_ROOT} && git reflog && git reset --hard <prev-sha>")
+                sys.exit(1)
+
+            import_ok, failing_module, import_error = _validate_critical_imports(
+                PROJECT_ROOT
+            )
+            if not import_ok:
+                print()
+                print("✗ Pulled code failed a critical CLI import smoke test:")
+                print(f"  {failing_module}")
+                if import_error:
+                    for line in str(import_error).splitlines()[:8]:
                         print(f"    {line}")
                 if pre_pull_sha:
                     print()
