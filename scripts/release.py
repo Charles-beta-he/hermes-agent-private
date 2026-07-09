@@ -2052,6 +2052,22 @@ def _update_acp_registry_versions(semver: str) -> None:
         )
 
 
+def run_release_gate() -> bool:
+    """Run the focused release gate before tagging/publishing.
+
+    The gate catches bootstrap/import regressions that normal py_compile or
+    changelog generation cannot see, and it refuses to publish from a dirty or
+    unsynced checkout.
+    """
+    cmd = [sys.executable, "scripts/release_gate.py"]
+    result = subprocess.run(cmd, cwd=str(REPO_ROOT), text=True)
+    if result.returncode != 0:
+        print("  ✗ Release gate failed; aborting before tag/publish.")
+        return False
+    print("  ✓ Release gate passed")
+    return True
+
+
 def build_release_artifacts(semver: str) -> list[Path]:
     """Build sdist/wheel artifacts for the current release.
 
@@ -2423,6 +2439,12 @@ def main():
         print(f"\n{'='*60}")
         print("  Publishing release...")
         print(f"{'='*60}")
+
+        # Run fail-closed release readiness gates before mutating version files,
+        # creating tags, or pushing. This catches update/bootstrap regressions
+        # like a registered CLI subcommand whose module is absent.
+        if not run_release_gate():
+            return
 
         # Update version files
         if args.bump:
