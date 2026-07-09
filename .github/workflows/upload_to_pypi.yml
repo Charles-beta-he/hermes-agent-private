@@ -88,6 +88,18 @@ jobs:
       - name: Build wheel and sdist
         run: uv build --sdist --wheel
 
+      - name: Smoke built wheel before publish
+        run: |
+          WHEEL=$(python3 - <<'PY'
+          from pathlib import Path
+          wheels = sorted(Path('dist').glob('*.whl'))
+          if not wheels:
+              raise SystemExit('no wheel artifact found')
+          print(wheels[0])
+          PY
+          )
+          python scripts/release_artifact_smoke.py "$WHEEL"
+
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

@@ -2068,6 +2068,25 @@ def run_release_gate() -> bool:
     return True
 
 
+def smoke_release_artifacts(artifacts: list[Path]) -> bool:
+    """Install the built wheel in a clean venv and run CLI smoke checks."""
+    wheels = [path for path in artifacts if path.suffix == ".whl"]
+    if not wheels:
+        print("  ✗ No wheel artifact found for release smoke.")
+        return False
+    wheel = wheels[0]
+    result = subprocess.run(
+        [sys.executable, "scripts/release_artifact_smoke.py", str(wheel)],
+        cwd=str(REPO_ROOT),
+        text=True,
+    )
+    if result.returncode != 0:
+        print("  ✗ Release artifact smoke failed; aborting before tag/push.")
+        return False
+    print("  ✓ Release artifact smoke passed")
+    return True
+
+
 def build_release_artifacts(semver: str) -> list[Path]:
     """Build sdist/wheel artifacts for the current release.
 
@@ -2468,7 +2487,21 @@ def main():
                 return
             print("  ✓ Committed version bump")
 
-        # Create annotated tag
+        # Build and smoke-test semver-named Python artifacts before creating
+        # tags or pushing. A broken wheel must never trigger the tag publish
+        # workflow or reach a GitHub Release.
+        artifacts = build_release_artifacts(new_version)
+        if not artifacts:
+            print("  ✗ Release artifact build failed; aborting before tag/push.")
+            return
+        print("  ✓ Built release artifacts:")
+        for artifact in artifacts:
+            print(f"    - {artifact.relative_to(REPO_ROOT)}")
+        if not smoke_release_artifacts(artifacts):
+            return
+
+        # Create annotated tag only after source, tests, build, and packaged
+        # artifact smoke have passed.
         tag_result = git_result(
             "tag", "-a", tag_name, "-m",
             f"Hermes Agent v{new_version} ({calver_date})\n\nWeekly release"
@@ -2478,7 +2511,7 @@ def main():
             return
         print(f"  ✓ Created tag {tag_name}")
 
-        # Push
+        # Push only after the complete local release gate has passed.
         push_result = git_result("push", "origin", "HEAD", "--tags")
         if push_result.returncode == 0:
             print("  ✓ Pushed to origin")
@@ -2486,14 +2519,7 @@ def main():
             print(f"  ✗ Failed to push to origin: {push_result.stderr.strip()}")
             print("    Continue manually after fixing access:")
             print("    git push origin HEAD --tags")
-
-        # Build semver-named Python artifacts so downstream packagers
-        # (e.g. Homebrew) can target them without relying on CalVer tag names.
-        artifacts = build_release_artifacts(new_version)
-        if artifacts:
-            print("  ✓ Built release artifacts:")
-            for artifact in artifacts:
-                print(f"    - {artifact.relative_to(REPO_ROOT)}")
+            return
 
         # Create GitHub release
         changelog_file = REPO_ROOT / ".release_notes.md"
