@@ -342,6 +342,7 @@ export const api = {
     const suffix = packet ? `?packet=${encodeURIComponent(packet)}` : "";
     return fetchJSON<ContextPreflightResponse>(`/api/context/preflight${suffix}`);
   },
+  getAgentOsStatus: () => fetchJSON<AgentOsStatusResponse>("/api/agent-os/status"),
   logout: () =>
     fetch(`${BASE}/auth/logout`, {
       method: "POST",
@@ -1225,6 +1226,57 @@ export interface AuthMeResponse {
   org_id: string;
   provider: string;
   expires_at: number;
+}
+
+export interface AgentOsProcedureEntry {
+  procedure_id: string;
+  system_id: string;
+  required: boolean;
+  implementation_state: string;
+  validation_state: string;
+  delivery_state: string;
+  latest_receipt_fresh: boolean;
+  findings: string[];
+}
+
+export interface AgentOsStatusResponse {
+  ok: boolean;
+  project: string;
+  mode: string;
+  runtime_effect: string;
+  procedure_validation: {
+    available: boolean;
+    trusted_read_only: boolean;
+    findings: string[];
+    axes: {
+      engineering_coverage?: {
+        systems: number;
+        missing_checks: number;
+        high_risk_systems: number;
+      };
+      operational_health?: {
+        state: string;
+        findings: number;
+      };
+      procedure_validation?: {
+        procedures: number;
+        required_procedures: number;
+        fully_connected: number;
+        blocked_by_authority: number;
+        pending: number;
+        stale: number;
+        failed: number;
+        inventory_complete: boolean;
+        can_claim_complete_procedure_validation: boolean;
+      };
+      certification?: {
+        certified_healthy: boolean;
+        eligible: boolean;
+        boundary: string;
+      };
+    };
+    procedures: AgentOsProcedureEntry[];
+  };
 }
 
 export interface ContextPreflightResponse {

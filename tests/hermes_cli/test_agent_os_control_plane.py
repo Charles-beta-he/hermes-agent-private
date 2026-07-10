@@ -112,6 +112,24 @@ def _seed_agent_os(home: Path, *, runtime_mutation: bool = False, shadow_execute
     )
     _write_json(root / "06-projection" / "doctor_report.json", {"ok": True, "findings": []})
     _write_json(
+        root / "06-projection" / "procedure_validation_projection.json",
+        {
+            "schema": "agent_os_procedure_validation_projection_v1",
+            "mode": "read_only_projection",
+            "axes": {
+                "procedure_validation": {
+                    "fully_connected": 6,
+                    "pending": 1,
+                    "blocked_by_authority": 5,
+                    "can_claim_complete_procedure_validation": False,
+                },
+                "certification": {"certified_healthy": False, "eligible": False},
+            },
+            "runtime_mutation": False,
+            "would_execute_anything": False,
+        },
+    )
+    _write_json(
         root / "07-shadow" / "router-shadow-report.json",
         {"ok": True, "records": 1, "blocked_by_policy": 0, "would_execute_anything": shadow_executes},
     )
@@ -124,6 +142,9 @@ def test_agent_os_status_reads_projection_without_runtime_mutation(tmp_path: Pat
     assert payload["ok"] is True
     assert payload["mode"] == "advisory_readback_only"
     assert payload["projection"]["node_count"] == 2
+    assert payload["procedure_validation"]["available"] is True
+    assert payload["procedure_validation"]["axes"]["procedure_validation"]["fully_connected"] == 6
+    assert payload["procedure_validation"]["axes"]["certification"]["certified_healthy"] is False
     assert payload["config"]["agent_os_advisory_guidance"] is True
     assert payload["config"]["real_runtime_routing"] is True
     assert payload["config"]["agent_os_multimodel_review"] is True
@@ -144,6 +165,32 @@ def test_agent_os_status_reads_projection_without_runtime_mutation(tmp_path: Pat
     assert payload["config"]["agent_os_broad_fanout"] is True
     assert payload["config"]["broad_fanout"] is True
     assert payload["runtime_effect"].startswith("broad fan-out enabled")
+
+
+def test_agent_os_status_fails_closed_on_malformed_procedure_projection(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    _write_json(
+        root / "06-projection" / "procedure_validation_projection.json",
+        {
+            "schema": "agent_os_procedure_validation_projection_v1",
+            "mode": "read_only_projection",
+            "axes": ["not-an-object"],
+            "procedures": {"not": "a-list"},
+            "runtime_mutation": False,
+            "would_execute_anything": False,
+        },
+    )
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    payload = status(tmp_path)
+
+    procedure = payload["procedure_validation"]
+    assert procedure["available"] is True
+    assert procedure["trusted_read_only"] is False
+    assert procedure["axes"] == {}
+    assert procedure["procedures"] == []
+    assert procedure["findings"] == ["invalid_axes", "invalid_procedures"]
 
 
 def test_agent_os_status_defaults_multimodel_review_and_execution_gates_closed(tmp_path: Path, monkeypatch) -> None:
@@ -463,6 +510,8 @@ def test_agent_os_report_writes_authority_packet_without_opening_gates(tmp_path:
     payload = generate_replay_quality_report(tmp_path, limit=5, write=True)
     assert payload["ok"] is True
     assert payload["would_execute_anything"] is False
+    assert payload["procedure_validation"]["available"] is True
+    assert payload["procedure_validation"]["axes"]["procedure_validation"]["fully_connected"] == 6
     packet = payload["authority_packet"]
     assert packet["status"] == "HUMAN_AUTHORIZATION_REQUIRED"
     assert packet["requested_authority"]["runtime_advisory_prompt_injection"] is True

@@ -2474,6 +2474,18 @@ async def get_status(profile: Optional[str] = None):
             status_scope.__exit__(*sys.exc_info())
 
 
+@app.get("/api/agent-os/status")
+async def get_agent_os_status():
+    """Authenticated dashboard projection of Agent OS procedure validation.
+
+    The source is the same read-only SSOT projection used by ``hermes agent-os
+    status``. This endpoint does not run selfcheck or any procedure.
+    """
+    from hermes_cli.agent_os_control_plane import status as _agent_os_status
+
+    return _agent_os_status(get_hermes_home())
+
+
 _WINDOWS_11_MIN_BUILD = 22000
 
 

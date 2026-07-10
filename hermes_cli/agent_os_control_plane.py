@@ -92,6 +92,7 @@ class AgentOsPaths:
     project_root: Path
     profile: Path
     projection: Path
+    procedure_validation_projection: Path
     doctor_report: Path
     shadow_report: Path
     shadow_replay: Path
@@ -114,6 +115,7 @@ def paths(home: str | Path | None = None) -> AgentOsPaths:
         project_root=project_root,
         profile=root / "project-profiles" / f"{PROJECT_ID}.json",
         projection=project_root / "06-projection" / "capability_graph_projection.json",
+        procedure_validation_projection=project_root / "06-projection" / "procedure_validation_projection.json",
         doctor_report=project_root / "06-projection" / "doctor_report.json",
         shadow_report=project_root / "07-shadow" / "router-shadow-report.json",
         shadow_replay=project_root / "07-shadow" / "router-shadow-replay.json",
@@ -134,6 +136,43 @@ def _read_json(path: Path, default: Any) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - doctor reports the failure, not callers
         return {"_load_error": str(exc), "_path": str(path)}
+
+
+def _procedure_validation_status(p: AgentOsPaths) -> dict[str, Any]:
+    payload = _read_json(p.procedure_validation_projection, None)
+    if not isinstance(payload, dict):
+        return {
+            "available": False,
+            "trusted_read_only": False,
+            "axes": {},
+            "procedures": [],
+            "findings": ["procedure_validation_projection_missing"],
+        }
+    findings: list[str] = []
+    if payload.get("schema") != "agent_os_procedure_validation_projection_v1":
+        findings.append("unexpected_schema")
+    if payload.get("mode") != "read_only_projection":
+        findings.append("unexpected_mode")
+    if payload.get("runtime_mutation") is not False:
+        findings.append("runtime_mutation_not_false")
+    if payload.get("would_execute_anything") is not False:
+        findings.append("would_execute_anything_not_false")
+    axes = payload.get("axes")
+    if not isinstance(axes, dict):
+        findings.append("invalid_axes")
+        axes = {}
+    procedures = payload.get("procedures")
+    if not isinstance(procedures, list):
+        findings.append("invalid_procedures")
+        procedures = []
+    return {
+        "available": True,
+        "trusted_read_only": not findings,
+        "generated_at": payload.get("generated_at"),
+        "axes": axes,
+        "procedures": procedures,
+        "findings": findings,
+    }
 
 
 def _agent_os_config_status(home: str | Path | None = None) -> dict[str, Any]:
@@ -197,6 +236,7 @@ def status(home: str | Path | None = None) -> dict[str, Any]:
     ]
     runtime_mutation = bool(projection.get("runtime_mutation")) if isinstance(projection, dict) else False
     config_status = _agent_os_config_status(home)
+    procedure_validation = _procedure_validation_status(p)
     payload = {
         "ok": not missing and not runtime_mutation,
         "project": PROJECT_ID,
@@ -223,6 +263,7 @@ def status(home: str | Path | None = None) -> dict[str, Any]:
             "blocked_by_policy": shadow.get("blocked_by_policy") if isinstance(shadow, dict) else None,
             "would_execute_anything": shadow.get("would_execute_anything") if isinstance(shadow, dict) else None,
         },
+        "procedure_validation": procedure_validation,
         "config": config_status,
         "runtime_effect": (
             "broad fan-out enabled; only exact named channel-set/payload fan-out with receipts may be owned"
@@ -1150,6 +1191,7 @@ def generate_replay_quality_report(home: str | Path | None = None, *, limit: int
         "would_execute_anything": False,
         "distributions": {"domain": by_domain, "risk": by_risk, "side_effect": by_side},
         "findings": findings,
+        "procedure_validation": _procedure_validation_status(p),
         "authority_packet": authority_packet,
         "runtime_effect": "none; report generation is local artifact/readback only",
     }

@@ -58,7 +58,9 @@ import type {
   PortalStatus,
   DebugShareResponse,
   ContextPreflightResponse,
+  AgentOsStatusResponse,
 } from "@/lib/api";
+import { buildAgentOsAxisCards, procedureTone } from "@/lib/agent-os-procedure";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -185,6 +187,7 @@ export default function SystemPage() {
   const [hooks, setHooks] = useState<HooksResponse | null>(null);
   const [curator, setCurator] = useState<CuratorStatus | null>(null);
   const [portal, setPortal] = useState<PortalStatus | null>(null);
+  const [agentOs, setAgentOs] = useState<AgentOsStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [activeAction, setActiveAction] = useState<string | null>(null);
@@ -254,11 +257,12 @@ export default function SystemPage() {
       api.getHooks(),
       api.getCurator(),
       api.getPortal(),
+      api.getAgentOsStatus(),
       // Cached (non-forced) check so the version row shows update status on
       // load without a separate effect / a forced network round-trip.
       api.checkHermesUpdate(false),
     ])
-      .then(([s, st, m, p, c, h, cur, prt, upd]) => {
+      .then(([s, st, m, p, c, h, cur, prt, aos, upd]) => {
         if (s.status === "fulfilled") setStatus(s.value);
         if (st.status === "fulfilled") setStats(st.value);
         if (m.status === "fulfilled") setMemory(m.value);
@@ -267,6 +271,7 @@ export default function SystemPage() {
         if (h.status === "fulfilled") setHooks(h.value);
         if (cur.status === "fulfilled") setCurator(cur.value);
         if (prt.status === "fulfilled") setPortal(prt.value);
+        if (aos.status === "fulfilled") setAgentOs(aos.value);
         if (upd.status === "fulfilled") setUpdateInfo(upd.value);
       })
       .finally(() => setLoading(false));
@@ -829,6 +834,93 @@ export default function SystemPage() {
           onClose={() => setActiveAction(null)}
         />
       )}
+
+      {/* ── Agent OS procedure governance (read-only) ──────────────── */}
+      <section className="flex flex-col gap-3" aria-labelledby="agent-os-governance-heading">
+        <div className="flex flex-col items-start gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <H2 id="agent-os-governance-heading" variant="sm" className="flex items-center gap-2 text-muted-foreground">
+            <ShieldCheck className="h-4 w-4" /> Agent OS governance
+          </H2>
+          <div className="flex max-w-full flex-wrap items-center gap-2">
+            <Badge tone={agentOs?.procedure_validation.trusted_read_only ? "success" : "secondary"}>
+              {agentOs?.procedure_validation.trusted_read_only ? "trusted read-only" : "projection unavailable"}
+            </Badge>
+            <Badge tone="secondary">no runtime mutation</Badge>
+          </div>
+        </div>
+        <Card>
+          <CardContent className="py-4">
+            {agentOs?.procedure_validation.available ? (
+              <div className="grid gap-5">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {buildAgentOsAxisCards(agentOs).map((axis) => (
+                    <div key={axis.key} className="min-w-0 border border-border bg-background/30 p-3">
+                      <div className="mb-2 flex flex-col items-start gap-2 sm:flex-row sm:flex-wrap sm:justify-between">
+                        <div className="min-w-0 text-xs uppercase tracking-wider text-muted-foreground">{axis.label}</div>
+                        <Badge tone={axis.tone}>{axis.value}</Badge>
+                      </div>
+                      <p className="break-words text-xs text-muted-foreground">{axis.detail}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden overflow-x-auto border border-border sm:block">
+                  <table className="w-full min-w-[720px] text-left text-xs" aria-label="Agent OS procedure validation states">
+                    <thead className="border-b border-border bg-muted/30 text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Procedure</th>
+                        <th className="px-3 py-2 font-medium">System</th>
+                        <th className="px-3 py-2 font-medium">Validation</th>
+                        <th className="px-3 py-2 font-medium">Delivery</th>
+                        <th className="px-3 py-2 font-medium">Fresh</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {agentOs.procedure_validation.procedures.map((procedure) => (
+                        <tr key={procedure.procedure_id} className="border-b border-border/60 last:border-b-0">
+                          <td className="px-3 py-2 font-mono text-foreground">{procedure.procedure_id}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{procedure.system_id}</td>
+                          <td className="px-3 py-2">
+                            <Badge tone={procedureTone(procedure.validation_state)}>{procedure.validation_state.replaceAll("_", " ")}</Badge>
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">{procedure.delivery_state.replaceAll("_", " ")}</td>
+                          <td className="px-3 py-2">
+                            <Badge tone={procedure.latest_receipt_fresh ? "success" : "secondary"}>
+                              {procedure.latest_receipt_fresh ? "fresh" : "no"}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="grid gap-2 sm:hidden" role="list" aria-label="Agent OS procedure validation states">
+                  {agentOs.procedure_validation.procedures.map((procedure) => (
+                    <article key={procedure.procedure_id} role="listitem" className="min-w-0 border border-border bg-background/20 p-3">
+                      <div className="break-all font-mono text-xs text-foreground">{procedure.procedure_id}</div>
+                      <div className="mt-1 break-all text-xs text-muted-foreground">{procedure.system_id}</div>
+                      <dl className="mt-3 grid min-w-0 grid-cols-1 gap-y-1 text-xs">
+                        <dt className="text-muted-foreground">Validation</dt>
+                        <dd className="mb-1 min-w-0 justify-self-start"><Badge tone={procedureTone(procedure.validation_state)}>{procedure.validation_state.replaceAll("_", " ")}</Badge></dd>
+                        <dt className="text-muted-foreground">Delivery</dt>
+                        <dd className="mb-1 min-w-0 break-words text-muted-foreground">{procedure.delivery_state.replaceAll("_", " ")}</dd>
+                        <dt className="text-muted-foreground">Receipt</dt>
+                        <dd className="min-w-0 justify-self-start"><Badge tone={procedure.latest_receipt_fresh ? "success" : "secondary"}>{procedure.latest_receipt_fresh ? "fresh" : "no"}</Badge></dd>
+                      </dl>
+                    </article>
+                  ))}
+                </div>
+                <p className="break-words text-xs text-muted-foreground">
+                  Engineering coverage, operational health, procedure E2E validation, and certification are independent axes. Authority-blocked procedures are not runtime failures, and this view never executes them.
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Agent OS procedure projection is unavailable. Certification remains fail-closed.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </section>
 
       {/* ── Host / system stats ───────────────────────────────────── */}
       <section className="flex flex-col gap-3">
