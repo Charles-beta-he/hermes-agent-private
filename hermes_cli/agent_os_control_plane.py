@@ -58,6 +58,15 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
         "证据",
         "权限",
         "workflow",
+        "工作流",
+        "流程",
+        "自检",
+        "工程化",
+        "覆盖率",
+        "loop engineering",
+        "闭环",
+        "自我优化",
+        "自身",
     ],
 }
 

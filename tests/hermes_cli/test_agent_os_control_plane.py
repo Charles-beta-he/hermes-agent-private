@@ -409,6 +409,17 @@ def test_agent_os_route_shadow_blocks_external_side_effects(tmp_path: Path) -> N
     assert any(f["gate"] == "default_off_external_side_effects" for f in payload["policy_findings"])
 
 
+def test_agent_os_route_shadow_recognizes_chinese_workflow_loop_engineering_intent(tmp_path: Path) -> None:
+    _seed_agent_os(tmp_path)
+
+    payload = route_shadow("推进自身工作流工程化覆盖至满分，检查 loop engineering 的作用与覆盖率评分", tmp_path)
+
+    assert payload["intent"]["domain"] == "hermes_self_architecture"
+    assert payload["intent"]["ambiguity"] == {"status": "acceptable_default", "unresolved_questions": []}
+    assert not any(f.get("gate") == "intent_ambiguity" for f in payload["policy_findings"])
+    assert payload["would_execute"] is False
+
+
 def test_agent_os_replay_recent_user_intents_is_read_only_and_redacted(tmp_path: Path) -> None:
     _seed_agent_os(tmp_path)
     con = sqlite3.connect(tmp_path / "state.db")
