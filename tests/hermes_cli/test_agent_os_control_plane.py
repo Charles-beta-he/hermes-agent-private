@@ -4,6 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+import hermes_cli.agent_os_control_plane as agent_os_control_plane
 from hermes_cli.agent_os_control_plane import (
     authorize_local_harness,
     bootstrap_erg_runtime_state,
@@ -117,14 +118,63 @@ def _seed_agent_os(home: Path, *, runtime_mutation: bool = False, shadow_execute
             "schema": "agent_os_procedure_validation_projection_v1",
             "mode": "read_only_projection",
             "axes": {
+                "engineering_coverage": {
+                    "systems": 27,
+                    "missing_checks": 0,
+                    "high_risk_systems": 0,
+                },
+                "operational_health": {"state": "degraded", "findings": 2},
                 "procedure_validation": {
+                    "procedures": 12,
+                    "required_procedures": 12,
                     "fully_connected": 6,
                     "pending": 1,
                     "blocked_by_authority": 5,
+                    "stale": 0,
+                    "failed": 0,
+                    "inventory_complete": True,
                     "can_claim_complete_procedure_validation": False,
                 },
-                "certification": {"certified_healthy": False, "eligible": False},
+                "certification": {
+                    "certified_healthy": False,
+                    "eligible": False,
+                    "boundary": "independent certification required",
+                },
             },
+            "procedures": [
+                {
+                    "procedure_id": f"connected-{index}",
+                    "system_id": f"system-{index}",
+                    "required": True,
+                    "implementation_state": "enabled",
+                    "validation_state": "e2e_passed",
+                    "delivery_state": "fully_connected",
+                    "latest_receipt_fresh": True,
+                    "findings": [],
+                }
+                for index in range(6)
+            ] + [
+                {
+                    "procedure_id": f"blocked-{index}",
+                    "system_id": f"blocked-system-{index}",
+                    "required": True,
+                    "implementation_state": "enabled",
+                    "validation_state": "blocked_by_authority",
+                    "delivery_state": "blocked",
+                    "latest_receipt_fresh": False,
+                    "findings": ["procedure_authority_blocked"],
+                }
+                for index in range(5)
+            ] + [{
+                "procedure_id": "pending-0",
+                "system_id": "pending-system-0",
+                "required": True,
+                "implementation_state": "missing",
+                "validation_state": "untested",
+                "delivery_state": "pending",
+                "latest_receipt_fresh": False,
+                "findings": ["procedure_implementation_pending"],
+            }],
             "runtime_mutation": False,
             "would_execute_anything": False,
         },
@@ -191,6 +241,380 @@ def test_agent_os_status_fails_closed_on_malformed_procedure_projection(tmp_path
     assert procedure["axes"] == {}
     assert procedure["procedures"] == []
     assert procedure["findings"] == ["invalid_axes", "invalid_procedures"]
+
+
+def test_agent_os_status_fails_closed_on_malformed_nested_projection(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["axes"]["operational_health"] = {}
+    projection["procedures"] = [{"procedure_id": "broken"}]
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    payload = status(tmp_path)
+
+    procedure = payload["procedure_validation"]
+    assert procedure["available"] is True
+    assert procedure["trusted_read_only"] is False
+    assert "operational_health" not in procedure["axes"]
+    assert procedure["procedures"] == []
+    assert procedure["findings"] == [
+        "invalid_axis:operational_health",
+        "invalid_procedure_entry:0",
+        "procedure_count_mismatch",
+    ]
+
+
+def test_agent_os_status_rejects_cross_axis_and_entry_semantic_contradictions(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["axes"]["operational_health"] = {"state": "healthy", "findings": 1}
+    projection["axes"]["procedure_validation"].update({
+        "fully_connected": 12,
+        "blocked_by_authority": 12,
+        "pending": 12,
+        "stale": 12,
+        "failed": 12,
+    })
+    projection["procedures"] = [{
+        "procedure_id": "failed-without-finding",
+        "system_id": "system",
+        "required": True,
+        "implementation_state": "enabled",
+        "validation_state": "e2e_failed",
+        "delivery_state": "pending",
+        "latest_receipt_fresh": True,
+        "findings": [],
+    }]
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "invalid_axis:operational_health" in procedure["findings"]
+    assert "invalid_axis:procedure_validation" in procedure["findings"]
+    assert "invalid_procedure_entry:0" in procedure["findings"]
+
+
+def test_agent_os_status_rejects_extra_keys_and_missing_implementation_test_claims(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["axes"]["engineering_coverage"]["unexpected"] = 1
+    projection["procedures"][0]["unexpected"] = "value"
+    projection["procedures"][1].update({
+        "implementation_state": "missing",
+        "validation_state": "e2e_failed",
+        "delivery_state": "partially_landed",
+        "latest_receipt_fresh": True,
+        "findings": ["failed"],
+    })
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "engineering_coverage" not in procedure["axes"]
+    assert "procedure_validation" not in procedure["axes"]
+    assert "invalid_axis:engineering_coverage" in procedure["findings"]
+    assert "invalid_procedure_entry:0" in procedure["findings"]
+    assert "invalid_procedure_entry:1" in procedure["findings"]
+
+
+def test_agent_os_status_rejects_unexpected_top_level_projection_fields(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["unexpected_top_level"] = "smuggled"
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "unexpected_projection_fields" in procedure["findings"]
+
+
+def test_agent_os_status_rejects_unknown_axis_keys(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["axes"]["unknown_axis"] = {"smuggled": True}
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "unexpected_axes" in procedure["findings"]
+
+
+def test_agent_os_status_rejects_malformed_optional_projection_fields(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["generated_at"] = {"coercible": "timestamp"}
+    projection["source_registry_path"] = ""
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "invalid_projection_field:generated_at" in procedure["findings"]
+    assert "invalid_projection_field:source_registry_path" in procedure["findings"]
+
+
+def test_agent_os_status_counts_valid_in_progress_required_entry_as_pending(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["procedures"] = [{
+        "procedure_id": "in-progress",
+        "system_id": "system",
+        "required": True,
+        "implementation_state": "landed",
+        "validation_state": "contract_passed",
+        "delivery_state": "in_progress",
+        "latest_receipt_fresh": False,
+        "findings": [],
+    }]
+    projection["axes"]["procedure_validation"] = {
+        "procedures": 1,
+        "required_procedures": 1,
+        "fully_connected": 0,
+        "pending": 1,
+        "blocked_by_authority": 0,
+        "stale": 0,
+        "failed": 0,
+        "inventory_complete": True,
+        "can_claim_complete_procedure_validation": False,
+    }
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is True
+    assert procedure["axes"]["procedure_validation"]["pending"] == 1
+
+
+def test_procedure_entry_rejects_missing_or_scaffolded_implementation_claimed_as_landed() -> None:
+    base = {
+        "procedure_id": "procedure",
+        "system_id": "system",
+        "required": True,
+        "validation_state": "untested",
+        "delivery_state": "landed_unverified",
+        "latest_receipt_fresh": False,
+        "findings": ["not yet tested"],
+    }
+    entry_valid = getattr(agent_os_control_plane, "_procedure_entry_valid")
+    for implementation in ("missing", "scaffolded"):
+        assert entry_valid({**base, "implementation_state": implementation}) is False
+    assert entry_valid({**base, "implementation_state": "landed"}) is True
+
+
+def test_agent_os_status_rejects_aggregate_to_entry_count_mismatch(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["axes"]["procedure_validation"]["procedures"] = 13
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "procedure_count_mismatch" in procedure["findings"]
+
+
+def test_agent_os_status_fails_closed_on_semantically_invalid_nested_projection(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["axes"]["engineering_coverage"]["systems"] = -1
+    projection["procedures"] = [{
+        "procedure_id": "broken",
+        "system_id": "system",
+        "required": True,
+        "implementation_state": "missing",
+        "validation_state": "healthy",
+        "delivery_state": "fully_connected",
+        "latest_receipt_fresh": True,
+        "findings": [""],
+    }]
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "engineering_coverage" not in procedure["axes"]
+    assert procedure["procedures"] == []
+    assert procedure["findings"] == [
+        "invalid_axis:engineering_coverage",
+        "invalid_procedure_entry:0",
+        "procedure_count_mismatch",
+    ]
+
+
+def test_agent_os_status_rejects_certification_overclaim_without_independent_receipt(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["axes"]["certification"] = {
+        "certified_healthy": True,
+        "eligible": True,
+        "boundary": "independent certification required",
+    }
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "certification" not in procedure["axes"]
+    assert "invalid_axis:certification" in procedure["findings"]
+
+
+def test_agent_os_status_accepts_temporally_fresh_failed_receipt_projection(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["procedures"] = [{
+        "procedure_id": "failed-but-fresh",
+        "system_id": "system",
+        "required": True,
+        "implementation_state": "enabled",
+        "validation_state": "e2e_failed",
+        "delivery_state": "partially_landed",
+        "latest_receipt_fresh": True,
+        "findings": ["procedure_e2e_failed"],
+    }]
+    projection["axes"]["procedure_validation"].update({
+        "procedures": 1,
+        "required_procedures": 1,
+        "fully_connected": 0,
+        "blocked_by_authority": 0,
+        "pending": 1,
+        "stale": 0,
+        "failed": 1,
+        "inventory_complete": True,
+        "can_claim_complete_procedure_validation": False,
+    })
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is True
+    assert procedure["procedures"][0]["validation_state"] == "e2e_failed"
+    assert procedure["procedures"][0]["latest_receipt_fresh"] is True
+
+
+def test_agent_os_status_rejects_cross_axis_certification_eligibility_overclaim(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["axes"]["certification"]["eligible"] = True
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "certification" not in procedure["axes"]
+    assert "invalid_axis:certification_cross_axis" in procedure["findings"]
+
+
+def test_agent_os_status_rechecks_certification_after_procedure_entry_reconciliation(tmp_path: Path, monkeypatch) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["axes"]["operational_health"] = {"state": "healthy", "findings": 0}
+    projection["axes"]["procedure_validation"].update({
+        "fully_connected": 12,
+        "blocked_by_authority": 0,
+        "pending": 0,
+        "can_claim_complete_procedure_validation": True,
+    })
+    projection["axes"]["certification"]["eligible"] = True
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "procedure_validation" not in procedure["axes"]
+    assert "certification" not in procedure["axes"]
+    assert "procedure_count_mismatch" in procedure["findings"]
+    assert "invalid_axis:certification_cross_axis" in procedure["findings"]
+
+
+def test_agent_os_status_drops_completion_and_certification_when_extra_entry_is_malformed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _seed_agent_os(tmp_path)
+    root = tmp_path / "workflows" / "projects" / "hermes-agent-os-control-plane"
+    projection_path = root / "06-projection" / "procedure_validation_projection.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    for item in projection["procedures"]:
+        item.update({
+            "required": True,
+            "implementation_state": "enabled",
+            "validation_state": "e2e_passed",
+            "delivery_state": "fully_connected",
+            "latest_receipt_fresh": True,
+            "findings": [],
+        })
+    projection["procedures"].append({"procedure_id": "malformed-only"})
+    projection["axes"]["engineering_coverage"] = {"systems": 12, "missing_checks": 0, "high_risk_systems": 0}
+    projection["axes"]["operational_health"] = {"state": "healthy", "findings": 0}
+    projection["axes"]["procedure_validation"] = {
+        "procedures": 12,
+        "required_procedures": 12,
+        "fully_connected": 12,
+        "blocked_by_authority": 0,
+        "pending": 0,
+        "stale": 0,
+        "failed": 0,
+        "inventory_complete": True,
+        "can_claim_complete_procedure_validation": True,
+    }
+    projection["axes"]["certification"] = {
+        "certified_healthy": False,
+        "eligible": True,
+        "boundary": "candidate_not_certified",
+    }
+    _write_json(projection_path, projection)
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
+
+    procedure = status(tmp_path)["procedure_validation"]
+
+    assert procedure["trusted_read_only"] is False
+    assert "procedure_validation" not in procedure["axes"]
+    assert "certification" not in procedure["axes"]
+    assert "invalid_procedure_entry:12" in procedure["findings"]
+    assert "procedure_count_mismatch" in procedure["findings"]
+    assert "invalid_axis:certification_cross_axis" in procedure["findings"]
 
 
 def test_agent_os_status_defaults_multimodel_review_and_execution_gates_closed(tmp_path: Path, monkeypatch) -> None:

@@ -138,6 +138,147 @@ def _read_json(path: Path, default: Any) -> Any:
         return {"_load_error": str(exc), "_path": str(path)}
 
 
+def _projection_value_matches(value: Any, expected: type) -> bool:
+    if expected is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, expected)
+
+
+_PROCEDURE_AXIS_FIELDS: dict[str, dict[str, type]] = {
+    "engineering_coverage": {"systems": int, "missing_checks": int, "high_risk_systems": int},
+    "operational_health": {"state": str, "findings": int},
+    "procedure_validation": {
+        "procedures": int,
+        "required_procedures": int,
+        "fully_connected": int,
+        "blocked_by_authority": int,
+        "pending": int,
+        "stale": int,
+        "failed": int,
+        "inventory_complete": bool,
+        "can_claim_complete_procedure_validation": bool,
+    },
+    "certification": {"certified_healthy": bool, "eligible": bool, "boundary": str},
+}
+_PROCEDURE_ENTRY_FIELDS: dict[str, type] = {
+    "procedure_id": str,
+    "system_id": str,
+    "required": bool,
+    "implementation_state": str,
+    "validation_state": str,
+    "delivery_state": str,
+    "latest_receipt_fresh": bool,
+    "findings": list,
+}
+_IMPLEMENTATION_STATES = {"missing", "scaffolded", "landed", "enabled"}
+_VALIDATION_STATES = {
+    "untested", "contract_passed", "integration_passed", "e2e_passed",
+    "e2e_failed", "stale", "blocked_by_authority",
+}
+_DELIVERY_STATES = {
+    "pending", "in_progress", "partially_landed", "landed_unverified",
+    "fully_connected", "blocked", "not_applicable",
+}
+_OPERATIONAL_HEALTH_STATES = {"unknown", "ready", "healthy", "degraded", "failed", "not_running"}
+_PROCEDURE_PROJECTION_REQUIRED_FIELDS = {
+    "schema", "mode", "axes", "procedures", "runtime_mutation", "would_execute_anything",
+}
+_PROCEDURE_PROJECTION_OPTIONAL_FIELDS = {"generated_at", "source_registry_path"}
+
+
+def _projection_object_valid(value: Any, fields: dict[str, type]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if set(value) != set(fields):
+        return False
+    for name, expected in fields.items():
+        field_value = value.get(name)
+        if not _projection_value_matches(field_value, expected):
+            return False
+        if expected is str and (not isinstance(field_value, str) or not field_value.strip()):
+            return False
+    return True
+
+
+def _procedure_axis_valid(axis_name: str, value: Any, fields: dict[str, type]) -> bool:
+    if not _projection_object_valid(value, fields):
+        return False
+    integer_values = [item for item in value.values() if isinstance(item, int) and not isinstance(item, bool)]
+    if any(item < 0 for item in integer_values):
+        return False
+    if axis_name == "engineering_coverage":
+        return value["missing_checks"] <= value["systems"] and value["high_risk_systems"] <= value["systems"]
+    if axis_name == "operational_health":
+        if value["state"] not in _OPERATIONAL_HEALTH_STATES:
+            return False
+        if value["state"] == "healthy":
+            return value["findings"] == 0
+        if value["state"] in {"degraded", "failed"}:
+            return value["findings"] > 0
+        return True
+    if axis_name == "procedure_validation":
+        procedures = value["procedures"]
+        required = value["required_procedures"]
+        if required > procedures:
+            return False
+        if any(value[name] > required for name in ("fully_connected", "blocked_by_authority", "pending", "stale", "failed")):
+            return False
+        if value["fully_connected"] + value["blocked_by_authority"] + value["pending"] != required:
+            return False
+        if value["stale"] > value["pending"] or value["failed"] > value["pending"]:
+            return False
+        if value["can_claim_complete_procedure_validation"]:
+            return bool(
+                required > 0
+                and value["inventory_complete"]
+                and value["fully_connected"] == required
+                and not any(value[name] for name in ("blocked_by_authority", "pending", "stale", "failed"))
+            )
+    if axis_name == "certification" and value["certified_healthy"]:
+        # This projection schema does not carry an independently verifiable
+        # certification receipt, so a positive certification claim is never
+        # trusted at this boundary.
+        return False
+    return True
+
+
+def _procedure_entry_valid(value: Any) -> bool:
+    if not _projection_object_valid(value, _PROCEDURE_ENTRY_FIELDS):
+        return False
+    findings = value["findings"]
+    if not all(isinstance(item, str) and item.strip() for item in findings):
+        return False
+    implementation = value["implementation_state"]
+    validation = value["validation_state"]
+    delivery = value["delivery_state"]
+    fresh = value["latest_receipt_fresh"]
+    if implementation not in _IMPLEMENTATION_STATES or validation not in _VALIDATION_STATES or delivery not in _DELIVERY_STATES:
+        return False
+    if implementation in {"missing", "scaffolded"} and validation != "untested":
+        return False
+    if validation == "e2e_passed" and not fresh:
+        return False
+    if validation in {"untested", "contract_passed", "integration_passed", "stale", "blocked_by_authority"} and fresh:
+        return False
+    if delivery == "fully_connected":
+        return implementation == "enabled" and validation == "e2e_passed" and not findings
+    if validation == "e2e_passed":
+        return delivery == "partially_landed" and bool(findings) and implementation in {"landed", "enabled"}
+    if validation == "e2e_failed":
+        return delivery == "partially_landed" and bool(findings)
+    if validation == "blocked_by_authority":
+        return delivery == "blocked" and bool(findings)
+    if validation == "stale":
+        return delivery == "landed_unverified" and bool(findings)
+    if validation == "untested":
+        if implementation in {"missing", "scaffolded"}:
+            return delivery == "pending" and bool(findings)
+        return delivery == "landed_unverified" and bool(findings)
+    if implementation in {"missing", "scaffolded"} and validation in {"contract_passed", "integration_passed"}:
+        return False
+    return delivery in {"in_progress", "partially_landed", "landed_unverified"}
+
+
 def _procedure_validation_status(p: AgentOsPaths) -> dict[str, Any]:
     payload = _read_json(p.procedure_validation_projection, None)
     if not isinstance(payload, dict):
@@ -149,6 +290,15 @@ def _procedure_validation_status(p: AgentOsPaths) -> dict[str, Any]:
             "findings": ["procedure_validation_projection_missing"],
         }
     findings: list[str] = []
+    if not _PROCEDURE_PROJECTION_REQUIRED_FIELDS.issubset(payload) or set(payload) - (
+        _PROCEDURE_PROJECTION_REQUIRED_FIELDS | _PROCEDURE_PROJECTION_OPTIONAL_FIELDS
+    ):
+        findings.append("unexpected_projection_fields")
+    for optional_field in _PROCEDURE_PROJECTION_OPTIONAL_FIELDS:
+        if optional_field in payload and (
+            not isinstance(payload[optional_field], str) or not payload[optional_field].strip()
+        ):
+            findings.append(f"invalid_projection_field:{optional_field}")
     if payload.get("schema") != "agent_os_procedure_validation_projection_v1":
         findings.append("unexpected_schema")
     if payload.get("mode") != "read_only_projection":
@@ -157,14 +307,72 @@ def _procedure_validation_status(p: AgentOsPaths) -> dict[str, Any]:
         findings.append("runtime_mutation_not_false")
     if payload.get("would_execute_anything") is not False:
         findings.append("would_execute_anything_not_false")
-    axes = payload.get("axes")
-    if not isinstance(axes, dict):
+    raw_axes = payload.get("axes")
+    axes: dict[str, Any] = {}
+    if not isinstance(raw_axes, dict):
         findings.append("invalid_axes")
-        axes = {}
-    procedures = payload.get("procedures")
-    if not isinstance(procedures, list):
+    else:
+        if set(raw_axes) != set(_PROCEDURE_AXIS_FIELDS):
+            findings.append("unexpected_axes")
+        for axis_name, field_types in _PROCEDURE_AXIS_FIELDS.items():
+            axis = raw_axes.get(axis_name)
+            if _procedure_axis_valid(axis_name, axis, field_types):
+                axes[axis_name] = axis
+            else:
+                findings.append(f"invalid_axis:{axis_name}")
+
+    raw_procedures = payload.get("procedures")
+    procedures: list[dict[str, Any]] = []
+    invalid_procedure_entries = False
+    if not isinstance(raw_procedures, list):
         findings.append("invalid_procedures")
-        procedures = []
+    else:
+        for index, procedure in enumerate(raw_procedures):
+            if _procedure_entry_valid(procedure):
+                procedures.append(procedure)
+            else:
+                invalid_procedure_entries = True
+                findings.append(f"invalid_procedure_entry:{index}")
+    procedure_axis = axes.get("procedure_validation")
+    if isinstance(raw_procedures, list) and isinstance(procedure_axis, dict):
+        procedure_ids = [item.get("procedure_id") for item in procedures]
+        required_entries = [item for item in procedures if item.get("required") is True]
+        recomputed = {
+            "procedures": len(procedures),
+            "required_procedures": len(required_entries),
+            "fully_connected": sum(1 for item in required_entries if item.get("delivery_state") == "fully_connected"),
+            "blocked_by_authority": sum(1 for item in required_entries if item.get("validation_state") == "blocked_by_authority"),
+            "pending": sum(
+                1 for item in required_entries
+                if item.get("delivery_state") != "fully_connected"
+                and item.get("validation_state") != "blocked_by_authority"
+            ),
+            "stale": sum(1 for item in required_entries if item.get("validation_state") == "stale"),
+            "failed": sum(1 for item in required_entries if item.get("validation_state") == "e2e_failed"),
+        }
+        if invalid_procedure_entries or len(procedure_ids) != len(set(procedure_ids)) or any(
+            procedure_axis.get(name) != count for name, count in recomputed.items()
+        ):
+            axes.pop("procedure_validation", None)
+            findings.append("procedure_count_mismatch")
+    certification = axes.get("certification")
+    if isinstance(certification, dict) and certification.get("eligible") is True:
+        engineering = axes.get("engineering_coverage")
+        operations = axes.get("operational_health")
+        validation = axes.get("procedure_validation")
+        eligible = bool(
+            isinstance(engineering, dict)
+            and engineering.get("missing_checks") == 0
+            and engineering.get("high_risk_systems") == 0
+            and isinstance(operations, dict)
+            and operations.get("state") == "healthy"
+            and operations.get("findings") == 0
+            and isinstance(validation, dict)
+            and validation.get("can_claim_complete_procedure_validation") is True
+        )
+        if not eligible:
+            axes.pop("certification", None)
+            findings.append("invalid_axis:certification_cross_axis")
     return {
         "available": True,
         "trusted_read_only": not findings,
