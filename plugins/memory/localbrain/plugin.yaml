@@ -1,0 +1,3 @@
+name: localbrain
+version: 0.1.0
+description: "Read-only, hash-bound automatic recall from the canonical Hermes Local Brain index."
