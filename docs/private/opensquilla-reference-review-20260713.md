@@ -304,8 +304,8 @@ Provider events now expose sanitized top-level scalars for:
 - `cache_write_tokens`;
 - `retry_count`;
 - `fallback_index` (explicitly not named or interpreted as hop count);
-- `cost_status` constrained to `estimated|included|unknown`;
-- bounded `cost_source`.
+- `cost_status` constrained to `actual|estimated|included|unknown`;
+- `cost_source` constrained to the canonical `agent.usage_pricing.CostSource` values, with invalid input normalized to `none`.
 
 Success observations receive values from the existing canonical usage, retry state, fallback index, and `CostResult`. Failure observations receive retry/fallback state and `cost_status=unknown`. No retry, fallback, routing, provider, model, credential, or prompt-cache behavior changes.
 
@@ -315,7 +315,8 @@ Doctor summaries add counts of retry-bearing events, maximum retry count observe
 
 - RED: the two provider-observability test files produced three expected failures for missing schema/signature/summary fields.
 - GREEN: the same two files passed: `18 passed`.
-- related accounting/fallback/cache/storage/state/finalizer/usage regression set: `490 passed in 23.50s`.
+- related accounting/fallback/cache/storage/state/finalizer/usage regression set: `490 passed in 23.50s` before the CLI doctor tests were included; reviewer-remediation verification, including expanded tool-result tests, finished at `501 passed in 22.84s`.
+- independent reviewer initially returned `BLOCK` for unconstrained `cost_source` and stale aggregate wording. The wording had already been corrected before review completion; `cost_source` was then restricted to canonical enum values, invalid values were normalized to `none`, and a failure → retry → fallback → success event-sequence test was added.
 - Event recording remains best-effort/fail-open; recorder failure cannot alter provider control flow.
 
 ### Residual boundaries

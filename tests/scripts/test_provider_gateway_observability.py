@@ -51,6 +51,16 @@ def test_normalize_event_redacts_secret_metadata_and_preserves_safe_fields():
     assert event["metadata"]["nested"]["status"] == "safe"
 
 
+def test_cost_enums_match_canonical_usage_pricing_contract():
+    from typing import get_args
+
+    from agent.usage_pricing import CostSource, CostStatus
+
+    mod = load()
+    assert mod.ALLOWED_COST_SOURCES == set(get_args(CostSource))
+    assert mod.ALLOWED_COST_STATUSES == set(get_args(CostStatus))
+
+
 def test_validate_event_rejects_unsupported_surface_and_status():
     mod = load()
     try:
@@ -132,7 +142,7 @@ def test_summarize_events_counts_tokens_latency_and_execution_economics():
                 "retry_count": 1,
                 "fallback_index": 1,
                 "cost_status": "estimated",
-                "cost_source": "fixture-pricing",
+                "cost_source": "official_docs_snapshot",
             }
         ),
         mod.normalize_event(
@@ -160,6 +170,23 @@ def test_summarize_events_counts_tokens_latency_and_execution_economics():
     assert summary["failure_class_counts"] == {"APIError": 1}
 
 
+def test_summarize_failure_retry_fallback_success_is_event_level_not_total():
+    mod = load()
+    events = [
+        mod.normalize_event({"surface": "provider", "status": "failure", "retry_count": 0, "fallback_index": 0}),
+        mod.normalize_event({"surface": "provider", "status": "failure", "retry_count": 1, "fallback_index": 0}),
+        mod.normalize_event({"surface": "provider", "status": "success", "retry_count": 2, "fallback_index": 1}),
+    ]
+
+    summary = mod.summarize_events(events)
+
+    assert summary["retry_event_count"] == 2
+    assert summary["max_retry_count_observed"] == 2
+    assert summary["fallback_event_count"] == 1
+    assert "retry_total" not in summary
+    assert "fallback_call_count" not in summary
+
+
 def test_normalize_event_sanitizes_execution_economics_fields():
     mod = load()
     legacy = mod.normalize_event({"surface": "provider", "status": "success", "cached_tokens": 4})
@@ -184,7 +211,8 @@ def test_normalize_event_sanitizes_execution_economics_fields():
     assert event["retry_count"] == 2
     assert event["fallback_index"] == 3
     assert event["cost_status"] == "unknown"
-    assert event["cost_source"] == "token=[REDACTED] " + "x" * 103
+    assert event["cost_source"] == "none"
+    assert "fixture-secret-value" not in json.dumps(event, ensure_ascii=False)
 
 
 

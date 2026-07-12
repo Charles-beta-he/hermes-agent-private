@@ -32,7 +32,7 @@ def test_provider_gateway_recorders_write_redacted_local_jsonl(tmp_path, monkeyp
         retry_count=2,
         fallback_index=1,
         cost_status="estimated",
-        cost_source="fixture-pricing",
+        cost_source="official_docs_snapshot",
         estimated_cost_usd="0.0001",
         metadata={"Authorization": "Bearer fixture-secret-value", "safe": "ok"},
     )
@@ -62,7 +62,7 @@ def test_provider_gateway_recorders_write_redacted_local_jsonl(tmp_path, monkeyp
     assert rows[0]["retry_count"] == 2
     assert rows[0]["fallback_index"] == 1
     assert rows[0]["cost_status"] == "estimated"
-    assert rows[0]["cost_source"] == "fixture-pricing"
+    assert rows[0]["cost_source"] == "official_docs_snapshot"
     assert rows[1]["metadata"]["chat_id_hash"].startswith("sha256:")
     assert rows[1]["metadata"]["thread_id_hash"].startswith("sha256:")
     assert "chat-fixture-id" not in event_log.read_text(encoding="utf-8")

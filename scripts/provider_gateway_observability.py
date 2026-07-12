@@ -95,7 +95,18 @@ SECRET_TEXT_PATTERNS = (
 
 ALLOWED_SURFACES = {"provider", "gateway", "cron", "tool", "scheduler"}
 ALLOWED_STATUSES = {"success", "failure", "timeout", "cancelled", "blocked", "degraded"}
-ALLOWED_COST_STATUSES = {"estimated", "included", "unknown"}
+ALLOWED_COST_STATUSES = {"actual", "estimated", "included", "unknown"}
+# Keep synchronized with agent.usage_pricing.CostSource. This standalone script
+# intentionally avoids importing the provider/pricing runtime.
+ALLOWED_COST_SOURCES = {
+    "provider_cost_api",
+    "provider_generation_api",
+    "provider_models_api",
+    "official_docs_snapshot",
+    "user_override",
+    "custom_contract",
+    "none",
+}
 
 
 def utc_now() -> str:
@@ -180,7 +191,8 @@ def normalize_event(raw: dict[str, Any], *, now: str | None = None) -> dict[str,
     event["fallback_index"] = _safe_nonnegative_int(event.get("fallback_index"))
     cost_status = str(event.get("cost_status") or "unknown").strip().lower()
     event["cost_status"] = cost_status if cost_status in ALLOWED_COST_STATUSES else "unknown"
-    event["cost_source"] = _safe_optional_text(redact_text(event.get("cost_source")), limit=120)
+    cost_source = str(event.get("cost_source") or "none").strip().lower()
+    event["cost_source"] = cost_source if cost_source in ALLOWED_COST_SOURCES else "none"
     event["estimated_cost_usd"] = _safe_decimal_string(event.get("estimated_cost_usd"))
     event["metadata"] = redact_value(event.get("metadata") or {})
     event["manual_override"] = bool(event.get("manual_override", False))
