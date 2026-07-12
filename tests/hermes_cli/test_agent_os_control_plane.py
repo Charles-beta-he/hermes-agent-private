@@ -133,7 +133,12 @@ def _seed_agent_os(home: Path, *, runtime_mutation: bool = False, shadow_execute
                     "stale": 0,
                     "failed": 0,
                     "inventory_complete": True,
+                    "inventory_gap_systems": 0,
+                    "unattested_systems": 0,
+                    "unknown_receipts": 0,
                     "can_claim_complete_procedure_validation": False,
+                    "global_certification_status": "not_certified",
+                    "score_semantics": "procedure E2E validation is separate from engineering coverage and current operational health",
                 },
                 "certification": {
                     "certified_healthy": False,
@@ -399,7 +404,12 @@ def test_agent_os_status_counts_valid_in_progress_required_entry_as_pending(tmp_
         "stale": 0,
         "failed": 0,
         "inventory_complete": True,
+        "inventory_gap_systems": 0,
+        "unattested_systems": 0,
+        "unknown_receipts": 0,
         "can_claim_complete_procedure_validation": False,
+        "global_certification_status": "not_certified",
+        "score_semantics": "procedure E2E validation is separate from engineering coverage and current operational health",
     }
     _write_json(projection_path, projection)
     monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
@@ -516,7 +526,12 @@ def test_agent_os_status_accepts_temporally_fresh_failed_receipt_projection(tmp_
         "stale": 0,
         "failed": 1,
         "inventory_complete": True,
+        "inventory_gap_systems": 0,
+        "unattested_systems": 0,
+        "unknown_receipts": 0,
         "can_claim_complete_procedure_validation": False,
+        "global_certification_status": "not_certified",
+        "score_semantics": "procedure E2E validation is separate from engineering coverage and current operational health",
     })
     _write_json(projection_path, projection)
     monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
@@ -555,6 +570,7 @@ def test_agent_os_status_rechecks_certification_after_procedure_entry_reconcilia
         "blocked_by_authority": 0,
         "pending": 0,
         "can_claim_complete_procedure_validation": True,
+        "global_certification_status": "candidate_not_certified",
     })
     projection["axes"]["certification"]["eligible"] = True
     _write_json(projection_path, projection)
@@ -597,7 +613,12 @@ def test_agent_os_status_drops_completion_and_certification_when_extra_entry_is_
         "stale": 0,
         "failed": 0,
         "inventory_complete": True,
+        "inventory_gap_systems": 0,
+        "unattested_systems": 0,
+        "unknown_receipts": 0,
         "can_claim_complete_procedure_validation": True,
+        "global_certification_status": "candidate_not_certified",
+        "score_semantics": "procedure E2E validation is separate from engineering coverage and current operational health",
     }
     projection["axes"]["certification"] = {
         "certified_healthy": False,

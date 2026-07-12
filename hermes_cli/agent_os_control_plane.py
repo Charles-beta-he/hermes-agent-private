@@ -156,7 +156,12 @@ _PROCEDURE_AXIS_FIELDS: dict[str, dict[str, type]] = {
         "stale": int,
         "failed": int,
         "inventory_complete": bool,
+        "inventory_gap_systems": int,
+        "unattested_systems": int,
+        "unknown_receipts": int,
         "can_claim_complete_procedure_validation": bool,
+        "global_certification_status": str,
+        "score_semantics": str,
     },
     "certification": {"certified_healthy": bool, "eligible": bool, "boundary": str},
 }
@@ -226,6 +231,19 @@ def _procedure_axis_valid(axis_name: str, value: Any, fields: dict[str, type]) -
         if value["fully_connected"] + value["blocked_by_authority"] + value["pending"] != required:
             return False
         if value["stale"] > value["pending"] or value["failed"] > value["pending"]:
+            return False
+        if value["inventory_complete"] != (
+            value["inventory_gap_systems"] == 0
+            and value["unattested_systems"] == 0
+            and value["unknown_receipts"] == 0
+        ):
+            return False
+        expected_certification_status = (
+            "candidate_not_certified"
+            if value["can_claim_complete_procedure_validation"]
+            else "not_certified"
+        )
+        if value["global_certification_status"] != expected_certification_status:
             return False
         if value["can_claim_complete_procedure_validation"]:
             return bool(
