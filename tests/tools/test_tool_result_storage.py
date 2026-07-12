@@ -248,6 +248,25 @@ class TestMaybePersistToolResult:
         assert len(result) < len(content)
         env.execute.assert_called_once()
 
+    def test_persisted_projection_identifies_exact_raw_evidence(self):
+        import hashlib
+
+        env = MagicMock()
+        env.execute.return_value = {"output": "", "returncode": 0}
+        content = "e" * 60_000
+
+        result = maybe_persist_tool_result(
+            content=content,
+            tool_name="terminal",
+            tool_use_id="tc_evidence",
+            env=env,
+            threshold=30_000,
+        )
+
+        assert "Projection: head-preview" in result
+        assert f"Raw SHA-256: {hashlib.sha256(content.encode('utf-8')).hexdigest()}" in result
+        assert f"Omitted characters: {len(content) - DEFAULT_PREVIEW_SIZE_CHARS:,}" in result
+
     def test_persists_full_content_as_is(self):
         """Content is persisted verbatim — no JSON extraction."""
         import json

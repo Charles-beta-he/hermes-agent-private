@@ -236,3 +236,55 @@ P2 — migration report convergence:
 - GitHub API and public preview metadata read on 2026-07-13 local session
 - model certification: `not_run`; low-risk docs/skill/proposal landing only
 - Agent OS route preflight: shadow-only, no capability execution
+
+## Continuation loop — 2026-07-13
+
+### Objective/path correction
+
+A proposed disconnected routing-economics schema/replay module was sent through Agent OS route preflight and independent multi-model review. Agent OS classified the intent as critical/S5 and kept execution blocked. The model round reached only two planners, reported `degraded_not_certified`, `no_action`, and no concrete patch authorization. Therefore the speculative route-ledger/replay surface was not implemented.
+
+The loop instead selected an existing real consumer: oversized tool-result persistence in `tools/tool_result_storage.py`. This path already replaces provider-visible content with a preview plus durable file handle, but the projection did not identify the exact raw bytes or quantify omission.
+
+### Implemented bounded slice
+
+The persisted-output projection now carries:
+
+- projection mode (`head-preview` or `full-preview`);
+- preview character count;
+- omitted character count;
+- SHA-256 of the exact UTF-8 raw result;
+- the existing durable sandbox file handle/readback instruction.
+
+The hash is emitted only after a successful durable write. Inline truncation after missing environment/write failure does not claim a recoverable exact artifact.
+
+### TDD evidence
+
+- RED: `uv run --python 3.12 pytest tests/tools/test_tool_result_storage.py::TestMaybePersistToolResult::test_persisted_projection_identifies_exact_raw_evidence -q` failed because `Projection: head-preview` was absent.
+- GREEN: the same test passed.
+- focused regression: `uv run --python 3.12 pytest tests/tools/test_tool_result_storage.py -q` → `53 passed`.
+- existing consumer integration: `uv run --python 3.12 pytest tests/run_agent/test_run_agent.py -q -k 'result_truncation_over_100k'` → `1 passed, 430 deselected`.
+- targeted lint: `uv run --python 3.12 ruff check tools/tool_result_storage.py tests/tools/test_tool_result_storage.py` → all checks passed.
+- broader `tests/tools` run was attempted but exceeded 300 seconds after surfacing pre-existing-looking failures outside the changed file; no broad-suite green claim is made.
+- system `python3` was Python <3.10 and could not parse `int | float`; verification uses the project-compatible Python 3.12 runtime.
+
+### Self-audit gap matrix
+
+| Gap | Current result | Residual boundary |
+|---|---|---|
+| Raw tool evidence recoverability | durable path already existed; exact raw SHA-256 and omission metadata now added | no automatic readback/hash verifier yet |
+| Shape-aware projection | preview is still generic head truncation | reducers for JSON/log/diff/test output need separate acceptance fixtures |
+| Routing predicted vs realized economics | contract documented only | no concrete ledger consumer; implementation vetoed as speculative |
+| Fallback/retry penalty | visible in design contract only | provider attempt chain is not normalized into one observation |
+| Cache continuity penalty | documented as required | provider cache-read/write usage is heterogeneous and not normalized |
+| Quality outcome | promotion veto documented | no stable privacy-bounded outcome signal exists |
+| Offline router replay | deferred | requires sanitized historical observations and an explicit consumer |
+| Migration report convergence | inventoried, not converged: `hermes_cli/migrate.py` uses CLI-only xAI dry-run/apply output; `hermes_cli/codex_runtime_plugin_migration.py` has a source-specific `MigrationReport`; `scripts/docker_config_migrate.py` has backup/restore/post-version verification | a shared additive schema would change several consumers and needs source-by-source contract fixtures first |
+| Cross-platform sandbox matrix | partially covered by existing tests | Windows ACL/native-runtime cases remain source-specific |
+| Multi-model certification | degraded, not certified | Claude/DeepSeek planners were unhealthy; 2-model fan-out was below minimum quorum 3 |
+
+### Negative-case readback
+
+- No OpenSquilla install or migration occurred.
+- No route selection, model/provider, scheduler, task lifecycle, external dispatch, deploy, push, destructive action, or credential path changed.
+- No prompt/free text is added to a routing ledger; no routing ledger was created.
+- Existing unrelated scheduler evidence-file modifications remain unstaged and outside this slice.

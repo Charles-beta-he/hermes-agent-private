@@ -121,8 +121,9 @@ def _build_persisted_message(
     has_more: bool,
     original_size: int,
     file_path: str,
+    original_sha256: str | None = None,
 ) -> str:
-    """Build the <persisted-output> replacement block."""
+    """Build the <persisted-output> replacement block with evidence metadata."""
     size_kb = original_size / 1024
     if size_kb >= 1024:
         size_str = f"{size_kb / 1024:.1f} MB"
@@ -132,6 +133,12 @@ def _build_persisted_message(
     msg = f"{PERSISTED_OUTPUT_TAG}\n"
     msg += f"This tool result was too large ({original_size:,} characters, {size_str}).\n"
     msg += f"Full output saved to: {file_path}\n"
+    if original_sha256:
+        projection = "head-preview" if has_more else "full-preview"
+        msg += f"Projection: {projection}\n"
+        msg += f"Preview characters: {len(preview):,}\n"
+        msg += f"Omitted characters: {max(0, original_size - len(preview)):,}\n"
+        msg += f"Raw SHA-256: {original_sha256}\n"
     msg += "Use the read_file tool with offset and limit to access specific sections of this output.\n\n"
     msg += f"Preview (first {len(preview)} chars):\n"
     msg += preview
@@ -185,7 +192,13 @@ def maybe_persist_tool_result(
                     "Persisted large tool result: %s (%s, %d chars -> %s)",
                     tool_name, tool_use_id, len(content), remote_path,
                 )
-                return _build_persisted_message(preview, has_more, len(content), remote_path)
+                return _build_persisted_message(
+                    preview,
+                    has_more,
+                    len(content),
+                    remote_path,
+                    original_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                )
         except Exception as exc:
             logger.warning("Sandbox write failed for %s: %s", tool_use_id, exc)
 
