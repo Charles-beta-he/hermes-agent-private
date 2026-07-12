@@ -252,16 +252,17 @@ The persisted-output projection now carries:
 - projection mode (`head-preview` or `full-preview`);
 - preview character count;
 - omitted character count;
-- SHA-256 of the exact UTF-8 raw result;
+- SHA-256 of the exact original in-memory result encoded as UTF-8 (`Raw UTF-8 SHA-256 (source)`); this fingerprints the source bytes supplied to the successful write, but does not claim post-write readback verification;
 - the existing durable sandbox file handle/readback instruction.
 
-The hash is emitted only after a successful durable write. Inline truncation after missing environment/write failure does not claim a recoverable exact artifact.
+The hash is emitted only after the sandbox write command reports success. It is a source-content fingerprint, not a persisted-file readback checksum. Inline truncation after missing environment/write failure does not claim a recoverable exact artifact.
 
 ### TDD evidence
 
 - RED: `uv run --python 3.12 pytest tests/tools/test_tool_result_storage.py::TestMaybePersistToolResult::test_persisted_projection_identifies_exact_raw_evidence -q` failed because `Projection: head-preview` was absent.
 - GREEN: the same test passed.
-- focused regression: `uv run --python 3.12 pytest tests/tools/test_tool_result_storage.py -q` → `53 passed`.
+- focused regression after reviewer-driven edge coverage: `uv run --python 3.12 pytest tests/tools/test_tool_result_storage.py -q` → `55 passed`.
+- independent read-only reviewer: `passed=true`, no security concerns or logic errors; non-blocking findings about source-vs-readback hash semantics and edge-case coverage were addressed by label/documentation clarification plus Unicode, newline-shortened preview, custom preview size, full-preview/zero-omission, and legacy-call tests.
 - existing consumer integration: `uv run --python 3.12 pytest tests/run_agent/test_run_agent.py -q -k 'result_truncation_over_100k'` → `1 passed, 430 deselected`.
 - targeted lint: `uv run --python 3.12 ruff check tools/tool_result_storage.py tests/tools/test_tool_result_storage.py` → all checks passed.
 - broader `tests/tools` run was attempted but exceeded 300 seconds after surfacing pre-existing-looking failures outside the changed file; no broad-suite green claim is made.

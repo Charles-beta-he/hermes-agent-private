@@ -196,6 +196,20 @@ class TestBuildPersistedMessage:
         assert "read_file" in msg
         assert "first 100 chars..." in msg
         assert "..." in msg  # has_more indicator
+        assert "Raw UTF-8 SHA-256" not in msg
+
+    def test_complete_projection_with_hash_reports_zero_omission(self):
+        msg = _build_persisted_message(
+            preview="完整内容",
+            has_more=False,
+            original_size=4,
+            file_path="/tmp/hermes-results/unicode.txt",
+            original_sha256="abc123",
+        )
+        assert "Projection: full-preview" in msg
+        assert "Preview characters: 4" in msg
+        assert "Omitted characters: 0" in msg
+        assert "Raw UTF-8 SHA-256 (source): abc123" in msg
 
     def test_no_ellipsis_when_complete(self):
         msg = _build_persisted_message(
@@ -264,8 +278,32 @@ class TestMaybePersistToolResult:
         )
 
         assert "Projection: head-preview" in result
-        assert f"Raw SHA-256: {hashlib.sha256(content.encode('utf-8')).hexdigest()}" in result
+        assert f"Raw UTF-8 SHA-256 (source): {hashlib.sha256(content.encode('utf-8')).hexdigest()}" in result
         assert f"Omitted characters: {len(content) - DEFAULT_PREVIEW_SIZE_CHARS:,}" in result
+
+    def test_projection_uses_actual_newline_shortened_preview_and_unicode_hash(self):
+        import hashlib
+
+        env = MagicMock()
+        env.execute.return_value = {"output": "", "returncode": 0}
+        content = ("汉字行\n" * 30) + "终"
+        config = BudgetConfig(preview_size=50)
+
+        result = maybe_persist_tool_result(
+            content=content,
+            tool_name="terminal",
+            tool_use_id="tc_unicode",
+            env=env,
+            config=config,
+            threshold=20,
+        )
+
+        preview, has_more = generate_preview(content, max_chars=50)
+        assert has_more is True
+        assert len(preview) < 50
+        assert f"Preview characters: {len(preview)}" in result
+        assert f"Omitted characters: {len(content) - len(preview)}" in result
+        assert f"Raw UTF-8 SHA-256 (source): {hashlib.sha256(content.encode('utf-8')).hexdigest()}" in result
 
     def test_persists_full_content_as_is(self):
         """Content is persisted verbatim — no JSON extraction."""

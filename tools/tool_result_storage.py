@@ -138,7 +138,7 @@ def _build_persisted_message(
         msg += f"Projection: {projection}\n"
         msg += f"Preview characters: {len(preview):,}\n"
         msg += f"Omitted characters: {max(0, original_size - len(preview)):,}\n"
-        msg += f"Raw SHA-256: {original_sha256}\n"
+        msg += f"Raw UTF-8 SHA-256 (source): {original_sha256}\n"
     msg += "Use the read_file tool with offset and limit to access specific sections of this output.\n\n"
     msg += f"Preview (first {len(preview)} chars):\n"
     msg += preview
