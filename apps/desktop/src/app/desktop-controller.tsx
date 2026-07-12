@@ -101,7 +101,7 @@ import { RemoteFolderPicker } from './right-sidebar/files/remote-picker'
 import { ReviewPane } from './right-sidebar/review'
 import { $terminalTakeover } from './right-sidebar/store'
 import { TerminalPaneChrome } from './right-sidebar/terminal/chrome'
-import { PersistentTerminal } from './right-sidebar/terminal/persistent'
+import { PersistentTerminal, TerminalSlot } from './right-sidebar/terminal/persistent'
 import { closeActiveTerminal } from './right-sidebar/terminal/terminals'
 import { CRON_ROUTE, NEW_CHAT_ROUTE, routeSessionId, sessionRoute, SETTINGS_ROUTE } from './routes'
 import { SessionPickerOverlay } from './session-picker-overlay'
@@ -1043,6 +1043,40 @@ export function DesktopController() {
   // never rebuilds or closes them; toggling the pane never rebuilds the shells.
   const mainOverlays = <PersistentTerminal onAddSelectionToChat={composer.addTerminalSelectionAttachment} />
 
+  const renderChatView = () => (
+    <ChatView
+      gateway={gatewayRef.current}
+      maxVoiceRecordingSeconds={voiceMaxRecordingSeconds}
+      modelMenuContent={modelMenuContent}
+      onAddContextRef={composer.addContextRefAttachment}
+      onAddUrl={url => composer.addContextRefAttachment(`@url:${formatRefValue(url)}`, url)}
+      onAttachDroppedItems={composer.attachDroppedItems}
+      onAttachImageBlob={composer.attachImageBlob}
+      onBranchInNewChat={branchInNewChat}
+      onCancel={cancelRun}
+      onDeleteSelectedSession={() => {
+        if (selectedStoredSessionId) {
+          void removeSession(selectedStoredSessionId)
+        }
+      }}
+      onDismissError={dismissError}
+      onEdit={editMessage}
+      onPasteClipboardImage={opts => composer.pasteClipboardImage(opts)}
+      onPickFiles={() => void composer.pickContextPaths('file')}
+      onPickFolders={() => void composer.pickContextPaths('folder')}
+      onPickImages={() => void composer.pickImages()}
+      onReload={reloadFromMessage}
+      onRemoveAttachment={id => void composer.removeAttachment(id)}
+      onRestoreToMessage={restoreToMessage}
+      onRetryResume={sessionId => void resumeSession(sessionId, true)}
+      onSteer={steerPrompt}
+      onSubmit={submitText}
+      onThreadMessagesChange={handleThreadMessagesChange}
+      onToggleSelectedPin={toggleSelectedPin}
+      onTranscribeAudio={transcribeVoiceAudio}
+    />
+  )
+
   const overlays = (
     <>
       <RemoteDisplayBanner />
@@ -1139,39 +1173,7 @@ export function DesktopController() {
     </div>
   )
 
-  const chatView = (
-    <ChatView
-      gateway={gatewayRef.current}
-      maxVoiceRecordingSeconds={voiceMaxRecordingSeconds}
-      modelMenuContent={modelMenuContent}
-      onAddContextRef={composer.addContextRefAttachment}
-      onAddUrl={url => composer.addContextRefAttachment(`@url:${formatRefValue(url)}`, url)}
-      onAttachDroppedItems={composer.attachDroppedItems}
-      onAttachImageBlob={composer.attachImageBlob}
-      onBranchInNewChat={branchInNewChat}
-      onCancel={cancelRun}
-      onDeleteSelectedSession={() => {
-        if (selectedStoredSessionId) {
-          void removeSession(selectedStoredSessionId)
-        }
-      }}
-      onDismissError={dismissError}
-      onEdit={editMessage}
-      onPasteClipboardImage={opts => composer.pasteClipboardImage(opts)}
-      onPickFiles={() => void composer.pickContextPaths('file')}
-      onPickFolders={() => void composer.pickContextPaths('folder')}
-      onPickImages={() => void composer.pickImages()}
-      onReload={reloadFromMessage}
-      onRemoveAttachment={id => void composer.removeAttachment(id)}
-      onRestoreToMessage={restoreToMessage}
-      onRetryResume={sessionId => void resumeSession(sessionId, true)}
-      onSteer={steerPrompt}
-      onSubmit={submitText}
-      onThreadMessagesChange={handleThreadMessagesChange}
-      onToggleSelectedPin={toggleSelectedPin}
-      onTranscribeAudio={transcribeVoiceAudio}
-    />
-  )
+  const chatView = renderChatView()
 
   // Flipped layout mirrors the default: sessions sidebar → right, file
   // browser + preview rail → left. Same panes, swapped sides.

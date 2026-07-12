@@ -29,7 +29,7 @@ def utc_now() -> str:
 
 
 def load_jobs(path: Path) -> list[dict[str, Any]]:
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     jobs = data.get("jobs", data if isinstance(data, list) else [])
     if not isinstance(jobs, list):
         raise SystemExit(f"invalid jobs file shape: {path}")

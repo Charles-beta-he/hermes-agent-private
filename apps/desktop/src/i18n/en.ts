@@ -1006,8 +1006,9 @@ export const en: Translations = {
     settingsFields: 'Settings fields',
     mcpServers: 'MCP servers',
     archivedChats: 'Archived chats',
-    sections: { maintenance: 'Maintenance', sessions: 'Sessions', system: 'System', usage: 'Usage' },
+    sections: { conversation: 'Conversation', maintenance: 'Maintenance', sessions: 'Sessions', system: 'System', usage: 'Usage' },
     sectionDescriptions: {
+      conversation: 'Chat with Hermes in the control console',
       maintenance: 'Diagnostics, backups, curator, and memory data',
       sessions: 'Search and manage sessions',
       system: 'Status, logs, and system actions',

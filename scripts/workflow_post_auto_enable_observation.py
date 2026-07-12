@@ -38,7 +38,7 @@ def iso(dt: datetime) -> str:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_report(*, projection_path: Path = DEFAULT_PROJECTION, correlation_path: Path = DEFAULT_CORRELATION, readiness_path: Path = DEFAULT_READINESS, drift_path: Path = DEFAULT_DRIFT) -> dict[str, Any]:

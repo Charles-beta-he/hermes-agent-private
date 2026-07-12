@@ -42,7 +42,7 @@ def sha256_text(text: str) -> str:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_receipt(*, send_result: dict[str, Any], message: str = DEFAULT_MESSAGE, adapter: str = DEFAULT_ADAPTER, mode: str = DEFAULT_MODE, idempotency_key: str = DEFAULT_IDEMPOTENCY_KEY) -> dict[str, Any]:

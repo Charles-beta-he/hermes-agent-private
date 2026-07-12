@@ -36,13 +36,13 @@ def iso(dt: datetime) -> str:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def read_ledger(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def append_ledger(path: Path, receipt: dict[str, Any]) -> None:

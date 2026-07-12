@@ -36,7 +36,7 @@ def iso(dt: datetime) -> str:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def classify_registry(workflow_pack: dict[str, Any], agent_pack: dict[str, Any]) -> dict[str, Any]:

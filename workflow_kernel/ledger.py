@@ -20,7 +20,7 @@ def read_events(path: str | Path) -> list[dict[str, Any]]:
     if not target.exists():
         return []
     events: list[dict[str, Any]] = []
-    for line in target.read_text().splitlines():
+    for line in target.read_text(encoding="utf-8").splitlines():
         if line.strip():
             events.append(json.loads(line))
     return events

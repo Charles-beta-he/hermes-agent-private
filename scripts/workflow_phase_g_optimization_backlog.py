@@ -19,7 +19,7 @@ INPUTS={
  'publication_terminal': ROOT/'docs/private/workflow-kernel-publication-governance-terminal-summary/workflow_kernel_publication_governance_terminal_summary_20260613_phase92.json',
 }
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
-def load(p:Path): return json.loads(p.read_text()) if p.exists() else None
+def load(p:Path): return json.loads(p.read_text(encoding='utf-8')) if p.exists() else None
 def digest(o:Any): return hashlib.sha256(json.dumps(o, ensure_ascii=False, sort_keys=True, separators=(',',':')).encode()).hexdigest()
 
 def build_report()->dict[str,Any]:

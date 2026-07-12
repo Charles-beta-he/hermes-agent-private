@@ -18,7 +18,7 @@ PATHS={
 }
 
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
-def load(p:Path): return json.loads(p.read_text()) if p.exists() else None
+def load(p:Path): return json.loads(p.read_text(encoding='utf-8')) if p.exists() else None
 def digest(o:Any)->str: return hashlib.sha256(json.dumps(o, ensure_ascii=False, sort_keys=True, separators=(',',':')).encode()).hexdigest()
 
 def build_report()->dict[str,Any]:

@@ -13,7 +13,7 @@ REPORT_DIR=Path('docs/private/workflow-kernel-publication-apply-implementation-c
 REPORT_JSON=REPORT_DIR/'workflow_kernel_publication_apply_implementation_choice_20260613_phase76.json'
 REPORT_MD=REPORT_DIR/'workflow_kernel_publication_apply_implementation_choice_20260613_phase76.md'
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
-def read(p:Path): return json.loads(p.read_text()) if p.exists() else {}
+def read(p:Path): return json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}
 def digest(o:Any): return hashlib.sha256(json.dumps(o,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 def build_choice(root:Path, choice:str='A_KEEP_PRIVATE_NO_APPLY')->dict[str,Any]:
     export=read(root/'docs/private/workflow-kernel-private-export-artifact-compiler/workflow_kernel_private_export_artifact_compiler_20260613_phase75.json')

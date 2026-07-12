@@ -20,7 +20,7 @@ OPTIONS=[
  {'option':'C_PUBLISH_TO_EXTERNAL_TARGET','mode':'external_publication_apply','side_effect':'external_delivery','authority':'fresh_exact_target_payload_required'},
 ]
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
-def read(p:Path): return json.loads(p.read_text()) if p.exists() else {}
+def read(p:Path): return json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}
 def digest(o:Any): return hashlib.sha256(json.dumps(o,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 def build_packet(root:Path)->dict[str,Any]:
     archive=read(root/'docs/private/workflow-kernel-manual-only-governance-archive/workflow_kernel_manual_only_governance_archive_20260613_phase68.json')

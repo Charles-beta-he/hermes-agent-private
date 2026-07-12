@@ -41,7 +41,7 @@ def iso(dt: datetime) -> str:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def loop_runtime_contract_projection(sequence: dict[str, Any], readiness: dict[str, Any]) -> dict[str, Any]:

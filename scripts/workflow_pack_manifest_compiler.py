@@ -39,7 +39,7 @@ def iso(dt: datetime) -> str:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def require_keys(obj: dict[str, Any], keys: list[str], label: str) -> list[str]:

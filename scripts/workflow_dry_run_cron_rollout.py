@@ -45,7 +45,7 @@ def backup_path(now: datetime) -> Path:
 
 
 def load_jobs(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_job(now: datetime) -> dict[str, Any]:

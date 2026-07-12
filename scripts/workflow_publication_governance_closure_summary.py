@@ -8,7 +8,7 @@ REPORT_DIR=Path('docs/private/workflow-kernel-publication-governance-closure-sum
 REPORT_JSON=REPORT_DIR/'workflow_kernel_publication_governance_closure_summary_20260613_phase86.json'
 REPORT_MD=REPORT_DIR/'workflow_kernel_publication_governance_closure_summary_20260613_phase86.md'
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
-def read(p:Path): return json.loads(p.read_text()) if p.exists() else {}
+def read(p:Path): return json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}
 def sha(p:Path): return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None
 def digest(o:Any): return hashlib.sha256(json.dumps(o,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 def build_summary(root:Path)->dict[str,Any]:
