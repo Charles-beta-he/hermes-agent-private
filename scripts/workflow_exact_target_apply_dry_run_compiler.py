@@ -14,7 +14,7 @@ REPORT_DIR=Path('docs/private/workflow-kernel-exact-target-apply-dry-run-compile
 REPORT_JSON=REPORT_DIR/'workflow_kernel_exact_target_apply_dry_run_compiler_20260613_phase73.json'
 REPORT_MD=REPORT_DIR/'workflow_kernel_exact_target_apply_dry_run_compiler_20260613_phase73.md'
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
-def read(p:Path): return json.loads(p.read_text()) if p.exists() else {}
+def read(p:Path): return json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}
 def digest(o:Any): return hashlib.sha256(json.dumps(o,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 def build_preview(root:Path)->dict[str,Any]:
     gate=read(root/'docs/private/workflow-kernel-publication-exact-target-gate/workflow_kernel_publication_exact_target_gate_20260613_phase72.json')

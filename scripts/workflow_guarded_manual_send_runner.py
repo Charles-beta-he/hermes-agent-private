@@ -39,7 +39,7 @@ def sha256_text(text: str) -> str:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text()) if path.exists() else {}
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
 def phase58_path(root: Path) -> Path:

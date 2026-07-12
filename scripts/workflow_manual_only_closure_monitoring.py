@@ -25,7 +25,7 @@ def iso_now() -> str:
 
 def read_json(path: Path) -> dict[str, Any]:
     try:
-        return json.loads(path.read_text()) if path.exists() else {}
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     except Exception as exc:
         return {"_read_error": str(exc), "_path": str(path)}
 

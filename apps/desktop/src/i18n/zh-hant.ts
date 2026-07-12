@@ -995,9 +995,10 @@ export const zhHant = defineLocale({
     settingsFields: '設定欄位',
     mcpServers: 'MCP 伺服器',
     archivedChats: '已封存聊天',
-    sections: { conversation: '對話', sessions: '工作階段', system: '系統', usage: '使用量' },
+    sections: { conversation: '對話', maintenance: '維護', sessions: '工作階段', system: '系統', usage: '使用量' },
     sectionDescriptions: {
       conversation: '在控制台內直接與 Hermes 對話',
+      maintenance: '診斷、備份、維護器與記憶資料',
       sessions: '搜尋和管理工作階段',
       system: '狀態、記錄和系統動作',
       usage: '一段時間內的詞元、費用和技能活動'

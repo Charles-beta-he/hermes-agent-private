@@ -9,7 +9,7 @@ REPORT_JSON=REPORT_DIR/'workflow_kernel_publication_apply_reopen_human_gate_pack
 REPORT_MD=REPORT_DIR/'workflow_kernel_publication_apply_reopen_human_gate_packet_20260613_phase88.md'
 SCHEMA_JSON=REPORT_DIR/'workflow_kernel_publication_apply_reopen_human_gate_decision_schema_20260613_phase88.json'
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
-def read(p:Path): return json.loads(p.read_text()) if p.exists() else {}
+def read(p:Path): return json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}
 def digest(o:Any): return hashlib.sha256(json.dumps(o,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 def build_packet(root:Path)->dict[str,Any]:
     watch=read(root/'docs/private/workflow-kernel-publication-closure-retention-watch/workflow_kernel_publication_closure_retention_watch_20260613_phase87.json')

@@ -44,7 +44,7 @@ def utc_now() -> str:
 
 
 def load_json(path: Path) -> Any:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def load_jobs(path: Path) -> list[dict[str, Any]]:

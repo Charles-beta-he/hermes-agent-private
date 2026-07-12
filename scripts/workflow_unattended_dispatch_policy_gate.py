@@ -40,7 +40,7 @@ def sha256_obj(obj: Any) -> str:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_policy(*, phase50_path: Path = PHASE50, phase52_path: Path = PHASE52) -> dict[str, Any]:

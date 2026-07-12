@@ -45,7 +45,7 @@ def sha256_obj(obj: Any) -> str:
 
 
 def read_policy(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_dry_run_receipt(policy_report: dict[str, Any], *, payload: str = DEFAULT_PREVIEW_PAYLOAD, now: datetime | None = None) -> dict[str, Any]:

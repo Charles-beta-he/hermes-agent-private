@@ -18,7 +18,7 @@ LEDGER=REPORT_DIR/'workflow_kernel_reopen_choices.jsonl'
 SAFE_CHOICE='A_NO_REOPEN_KEEP_MANUAL_ONLY'
 
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
-def read_json(p:Path)->dict[str,Any]: return json.loads(p.read_text()) if p.exists() else {}
+def read_json(p:Path)->dict[str,Any]: return json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}
 def digest(o:Any)->str: return hashlib.sha256(json.dumps(o,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 
 def build_choice(root:Path, choice:str=SAFE_CHOICE, reason:str='safe default: keep manual-only closure') -> dict[str,Any]:

@@ -8,7 +8,7 @@ REPORT_DIR=Path('docs/private/workflow-kernel-publication-export-review-packet')
 REPORT_JSON=REPORT_DIR/'workflow_kernel_publication_export_review_packet_20260613_phase82.json'
 REPORT_MD=REPORT_DIR/'workflow_kernel_publication_export_review_packet_20260613_phase82.md'
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
-def read(p:Path): return json.loads(p.read_text()) if p.exists() else {}
+def read(p:Path): return json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}
 def digest(o:Any): return hashlib.sha256(json.dumps(o,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 def build_packet(root:Path)->dict[str,Any]:
     watch=read(root/'docs/private/workflow-kernel-publication-archive-retention-watch/workflow_kernel_publication_archive_retention_watch_20260613_phase81.json')

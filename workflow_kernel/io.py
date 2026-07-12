@@ -22,7 +22,7 @@ def write_json_artifact(path: str | Path, payload: Any) -> dict[str, str]:
 def read_json_artifact(path: str | Path, *, missing_ok: bool = False) -> Any:
     target = Path(path)
     try:
-        return json.loads(target.read_text())
+        return json.loads(target.read_text(encoding="utf-8"))
     except FileNotFoundError:
         if missing_ok:
             return {"missing": True, "path": str(target)}

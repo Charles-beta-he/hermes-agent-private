@@ -53,7 +53,7 @@ def sha(path: Path) -> str:
 
 
 def load_jobs(path: Path) -> list[dict[str, Any]]:
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, dict) and isinstance(data.get("jobs"), list):
         return data["jobs"]
     if isinstance(data, list):
@@ -79,7 +79,7 @@ def apply_rollout(*, jobs_path: Path = JOBS, target: str = "every4h", dry_run: b
     old_script = cfg["old_script"]
     new_script = cfg["new_script"]
     phase = cfg["phase"]
-    before_text = jobs_path.read_text()
+    before_text = jobs_path.read_text(encoding="utf-8")
     before_sha = hashlib.sha256(before_text.encode()).hexdigest()
     needle = f'"script": "{old_script}"'
     repl = f'"script": "{new_script}"'
@@ -101,7 +101,7 @@ def apply_rollout(*, jobs_path: Path = JOBS, target: str = "every4h", dry_run: b
     if not dry_run:
         backup = backup_path(jobs_path, phase=phase)
         shutil.copy2(jobs_path, backup)
-        jobs_path.write_text(after_text)
+        jobs_path.write_text(after_text, encoding="utf-8")
     after_sha = hashlib.sha256(after_text.encode()).hexdigest()
     return {
         "report_id": f"workflow_kernel_scheduler_native_rollout_20260613_phase{phase}",

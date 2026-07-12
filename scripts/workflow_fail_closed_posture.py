@@ -41,7 +41,7 @@ def now() -> str:
 
 
 def load(path: Path) -> dict[str, Any] | None:
-    return json.loads(path.read_text()) if path.exists() else None
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
 def digest(payload: Any) -> str:

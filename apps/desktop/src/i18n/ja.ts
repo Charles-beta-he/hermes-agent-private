@@ -1023,9 +1023,10 @@ export const ja = defineLocale({
     settingsFields: '設定フィールド',
     mcpServers: 'MCP サーバー',
     archivedChats: 'アーカイブ済みチャット',
-    sections: { conversation: '会話', sessions: 'セッション', system: 'システム', usage: '使用状況' },
+    sections: { conversation: '会話', maintenance: 'メンテナンス', sessions: 'セッション', system: 'システム', usage: '使用状況' },
     sectionDescriptions: {
       conversation: 'コントロールコンソールから Hermes と直接会話',
+      maintenance: '診断、バックアップ、キュレーター、メモリーデータ',
       sessions: 'セッションの検索と管理',
       system: 'ステータス、ログ、システムアクション',
       usage: 'トークン、コスト、スキルの活動履歴'
