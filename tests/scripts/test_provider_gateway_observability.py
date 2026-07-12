@@ -44,6 +44,7 @@ def test_normalize_event_redacts_secret_metadata_and_preserves_safe_fields():
     assert event["latency_ms"] == 123
     assert event["input_tokens"] == 10
     assert event["estimated_cost_usd"] == "0.0012"
+    assert event["cache_read_tokens"] is None
     assert event["metadata"]["route"] == "fallback-a"
     assert event["metadata"]["Authorization"] == "[REDACTED]"
     assert event["metadata"]["nested"]["api_key"] == "[REDACTED]"
@@ -116,17 +117,74 @@ def test_doctor_projection_no_data_boundary(tmp_path):
     ]
 
 
-def test_summarize_events_counts_tokens_and_latency():
+def test_summarize_events_counts_tokens_latency_and_execution_economics():
     mod = load()
     events = [
-        mod.normalize_event({"surface": "provider", "status": "success", "latency_ms": 100, "input_tokens": 3}),
-        mod.normalize_event({"surface": "provider", "status": "failure", "latency_ms": 300, "output_tokens": 5, "error_class": "APIError"}),
+        mod.normalize_event(
+            {
+                "surface": "provider",
+                "status": "success",
+                "latency_ms": 100,
+                "input_tokens": 3,
+                "cached_tokens": 2,
+                "cache_read_tokens": 2,
+                "cache_write_tokens": 7,
+                "retry_count": 1,
+                "fallback_index": 1,
+                "cost_status": "estimated",
+                "cost_source": "fixture-pricing",
+            }
+        ),
+        mod.normalize_event(
+            {
+                "surface": "provider",
+                "status": "failure",
+                "latency_ms": 300,
+                "output_tokens": 5,
+                "error_class": "APIError",
+                "retry_count": 2,
+                "cost_status": "unknown",
+            }
+        ),
     ]
     summary = mod.summarize_events(events)
     assert summary["latency_ms_by_surface"]["provider"] == {"count": 2, "avg": 200, "max": 300}
     assert summary["token_totals"]["input_tokens"] == 3
     assert summary["token_totals"]["output_tokens"] == 5
+    assert summary["token_totals"]["cache_read_tokens"] == 2
+    assert summary["token_totals"]["cache_write_tokens"] == 7
+    assert summary["retry_event_count"] == 2
+    assert summary["max_retry_count_observed"] == 2
+    assert summary["fallback_event_count"] == 1
+    assert summary["cost_status_counts"] == {"estimated": 1, "unknown": 1}
     assert summary["failure_class_counts"] == {"APIError": 1}
+
+
+def test_normalize_event_sanitizes_execution_economics_fields():
+    mod = load()
+    legacy = mod.normalize_event({"surface": "provider", "status": "success", "cached_tokens": 4})
+    assert legacy["cached_tokens"] == 4
+    assert legacy["cache_read_tokens"] == 4
+
+    event = mod.normalize_event(
+        {
+            "surface": "provider",
+            "status": "success",
+            "cache_read_tokens": "5",
+            "cache_write_tokens": -1,
+            "retry_count": "2",
+            "fallback_index": "3",
+            "cost_status": "invented",
+            "cost_source": "token=fixture-secret-value " + "x" * 200,
+        }
+    )
+
+    assert event["cache_read_tokens"] == 5
+    assert event["cache_write_tokens"] is None
+    assert event["retry_count"] == 2
+    assert event["fallback_index"] == 3
+    assert event["cost_status"] == "unknown"
+    assert event["cost_source"] == "token=[REDACTED] " + "x" * 103
 
 
 

@@ -73,6 +73,12 @@ ALLOWED_EVENT_KEYS = {
     "output_tokens",
     "reasoning_tokens",
     "cached_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "retry_count",
+    "fallback_index",
+    "cost_status",
+    "cost_source",
     "estimated_cost_usd",
     "metadata",
     "manual_override",
@@ -89,6 +95,7 @@ SECRET_TEXT_PATTERNS = (
 
 ALLOWED_SURFACES = {"provider", "gateway", "cron", "tool", "scheduler"}
 ALLOWED_STATUSES = {"success", "failure", "timeout", "cancelled", "blocked", "degraded"}
+ALLOWED_COST_STATUSES = {"estimated", "included", "unknown"}
 
 
 def utc_now() -> str:
@@ -165,6 +172,15 @@ def normalize_event(raw: dict[str, Any], *, now: str | None = None) -> dict[str,
     event["output_tokens"] = _safe_nonnegative_int(event.get("output_tokens"))
     event["reasoning_tokens"] = _safe_nonnegative_int(event.get("reasoning_tokens"))
     event["cached_tokens"] = _safe_nonnegative_int(event.get("cached_tokens"))
+    event["cache_read_tokens"] = _safe_nonnegative_int(
+        event.get("cache_read_tokens", event.get("cached_tokens"))
+    )
+    event["cache_write_tokens"] = _safe_nonnegative_int(event.get("cache_write_tokens"))
+    event["retry_count"] = _safe_nonnegative_int(event.get("retry_count"))
+    event["fallback_index"] = _safe_nonnegative_int(event.get("fallback_index"))
+    cost_status = str(event.get("cost_status") or "unknown").strip().lower()
+    event["cost_status"] = cost_status if cost_status in ALLOWED_COST_STATUSES else "unknown"
+    event["cost_source"] = _safe_optional_text(redact_text(event.get("cost_source")), limit=120)
     event["estimated_cost_usd"] = _safe_decimal_string(event.get("estimated_cost_usd"))
     event["metadata"] = redact_value(event.get("metadata") or {})
     event["manual_override"] = bool(event.get("manual_override", False))
@@ -258,6 +274,12 @@ def record_provider_call_event(
     output_tokens: int | None = None,
     reasoning_tokens: int | None = None,
     cached_tokens: int | None = None,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
+    retry_count: int | None = None,
+    fallback_index: int | None = None,
+    cost_status: str | None = None,
+    cost_source: str | None = None,
     estimated_cost_usd: str | None = None,
     error_class: str | None = None,
     error_summary: str | None = None,
@@ -287,6 +309,12 @@ def record_provider_call_event(
             "output_tokens": output_tokens,
             "reasoning_tokens": reasoning_tokens,
             "cached_tokens": cached_tokens,
+            "cache_read_tokens": cache_read_tokens if cache_read_tokens is not None else cached_tokens,
+            "cache_write_tokens": cache_write_tokens,
+            "retry_count": retry_count,
+            "fallback_index": fallback_index,
+            "cost_status": cost_status,
+            "cost_source": cost_source,
             "estimated_cost_usd": estimated_cost_usd,
             "error_class": error_class,
             "error_summary": error_summary,
@@ -397,13 +425,31 @@ def summarize_events(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     provider_counts = Counter(str(e.get("provider") or "unknown") for e in rows)
     failure_class_counts = Counter(str(e.get("error_class") or "unknown") for e in rows if e.get("status") != "success")
     latency_by_surface: dict[str, list[int]] = defaultdict(list)
-    token_totals = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0, "cached_tokens": 0}
+    token_totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cached_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+    }
+    retry_event_count = 0
+    max_retry_count_observed = 0
+    fallback_event_count = 0
+    cost_status_counts: Counter[str] = Counter()
     for e in rows:
         if isinstance(e.get("latency_ms"), int):
             latency_by_surface[str(e.get("surface"))].append(int(e["latency_ms"]))
         for key in token_totals:
             if isinstance(e.get(key), int):
                 token_totals[key] += int(e[key])
+        if isinstance(e.get("retry_count"), int) and e["retry_count"] > 0:
+            retry_event_count += 1
+            max_retry_count_observed = max(max_retry_count_observed, int(e["retry_count"]))
+        if isinstance(e.get("fallback_index"), int) and e["fallback_index"] > 0:
+            fallback_event_count += 1
+        if e.get("surface") == "provider":
+            cost_status_counts[str(e.get("cost_status") or "unknown")] += 1
     return {
         "event_count": len(rows),
         "status_counts": dict(status_counts),
@@ -419,6 +465,10 @@ def summarize_events(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             for surface, values in sorted(latency_by_surface.items())
         },
         "token_totals": token_totals,
+        "retry_event_count": retry_event_count,
+        "max_retry_count_observed": max_retry_count_observed,
+        "fallback_event_count": fallback_event_count,
+        "cost_status_counts": dict(cost_status_counts),
     }
 
 

@@ -273,9 +273,9 @@ The hash is emitted only after a successful durable write. Inline truncation aft
 |---|---|---|
 | Raw tool evidence recoverability | durable path already existed; exact raw SHA-256 and omission metadata now added | no automatic readback/hash verifier yet |
 | Shape-aware projection | preview is still generic head truncation | reducers for JSON/log/diff/test output need separate acceptance fixtures |
-| Routing predicted vs realized economics | contract documented only | no concrete ledger consumer; implementation vetoed as speculative |
-| Fallback/retry penalty | visible in design contract only | provider attempt chain is not normalized into one observation |
-| Cache continuity penalty | documented as required | provider cache-read/write usage is heterogeneous and not normalized |
+| Routing predicted vs realized economics | execution-side provider observations now expose cache read/write, retry count, fallback index, and cost status/source | no concrete prediction consumer or proposed → final correlation; savings remain uncomputed |
+| Fallback/retry penalty | provider JSONL and doctor summary now expose retry-bearing event counts, maximum retry count observed, and event counts with non-zero fallback index | no request correlation key, so event counts cannot be promoted to unique-call/hop totals; credential rotations/skipped entries remain unclassified |
+| Cache continuity penalty | per-call cache read/write totals are now observable | provider/model-switch continuity remains unknown; OpenRouter response-cache hits are a separate signal |
 | Quality outcome | promotion veto documented | no stable privacy-bounded outcome signal exists |
 | Offline router replay | deferred | requires sanitized historical observations and an explicit consumer |
 | Migration report convergence | inventoried, not converged: `hermes_cli/migrate.py` uses CLI-only xAI dry-run/apply output; `hermes_cli/codex_runtime_plugin_migration.py` has a source-specific `MigrationReport`; `scripts/docker_config_migrate.py` has backup/restore/post-version verification | a shared additive schema would change several consumers and needs source-by-source contract fixtures first |
@@ -288,3 +288,38 @@ The hash is emitted only after a successful durable write. Inline truncation aft
 - No route selection, model/provider, scheduler, task lifecycle, external dispatch, deploy, push, destructive action, or credential path changed.
 - No prompt/free text is added to a routing ledger; no routing ledger was created.
 - Existing unrelated scheduler evidence-file modifications remain unstaged and outside this slice.
+
+## Continuation loop 2 — provider execution economics observation
+
+The independent repository audit confirmed that `agent/task_router.py` still has no production routing consumer. The next bounded slice therefore extends the already-live local chain:
+
+`agent/conversation_loop.py` → `record_provider_call_event()` → local JSONL → `summarize_events()` / doctor projection.
+
+### Additive event contract
+
+Provider events now expose sanitized top-level scalars for:
+
+- `cache_read_tokens` while preserving legacy `cached_tokens`;
+- `cache_write_tokens`;
+- `retry_count`;
+- `fallback_index` (explicitly not named or interpreted as hop count);
+- `cost_status` constrained to `estimated|included|unknown`;
+- bounded `cost_source`.
+
+Success observations receive values from the existing canonical usage, retry state, fallback index, and `CostResult`. Failure observations receive retry/fallback state and `cost_status=unknown`. No retry, fallback, routing, provider, model, credential, or prompt-cache behavior changes.
+
+Doctor summaries add counts of retry-bearing events, maximum retry count observed, counts of events with non-zero fallback index, cache read/write totals, and provider cost-status counts. Counts are intentionally event-level because the current schema has no privacy-bounded request correlation key. Prompt, messages, body, headers, credentials, raw provider payloads, and free-form routing reasons remain outside the event allowlist.
+
+### Verification
+
+- RED: the two provider-observability test files produced three expected failures for missing schema/signature/summary fields.
+- GREEN: the same two files passed: `18 passed`.
+- related accounting/fallback/cache/storage/state/finalizer/usage regression set: `490 passed in 23.50s`.
+- Event recording remains best-effort/fail-open; recorder failure cannot alter provider control flow.
+
+### Residual boundaries
+
+- Existing JSONL retention/rotation is still undefined. Rotation changes concurrent append semantics and needs a separately tested locking/atomicity contract before implementation.
+- `fallback_index > 0` means a configured fallback position was active; it does not prove the number of actual network hops or skipped invalid entries.
+- `estimated_cost_usd` remains estimated. No provider billing reconciliation or realized-cost claim was added.
+- No prediction record, routing ledger, offline replay, self-learning, or promotion path was introduced.

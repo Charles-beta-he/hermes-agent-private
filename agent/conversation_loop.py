@@ -2713,6 +2713,12 @@ def run_conversation(
                         output_tokens=canonical_usage.output_tokens,
                         reasoning_tokens=canonical_usage.reasoning_tokens,
                         cached_tokens=canonical_usage.cache_read_tokens,
+                        cache_read_tokens=canonical_usage.cache_read_tokens,
+                        cache_write_tokens=canonical_usage.cache_write_tokens,
+                        retry_count=retry_count,
+                        fallback_index=getattr(agent, "_fallback_index", 0),
+                        cost_status=cost_result.status,
+                        cost_source=cost_result.source,
                         estimated_cost_usd=str(cost_result.amount_usd)
                         if cost_result.amount_usd is not None else None,
                         metadata={
@@ -3140,6 +3146,9 @@ def run_conversation(
                     latency_ms=int(max(0.0, time.time() - api_start_time) * 1000),
                     error_class=type(api_error).__name__,
                     error_summary=agent._clean_error_message(str(api_error)),
+                    retry_count=retry_count,
+                    fallback_index=getattr(agent, "_fallback_index", 0),
+                    cost_status="unknown",
                     metadata={
                         "api_call_count": api_call_count,
                         "retry_count": retry_count,
