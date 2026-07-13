@@ -68,7 +68,9 @@ def parse_time(value: str | None) -> datetime | None:
 
 def newest_path(pattern: str | Path) -> Path | None:
     matches = [Path(p) for p in glob.glob(str(pattern))]
-    return max(matches, key=lambda p: p.stat().st_mtime) if matches else None
+    # Some CI filesystems expose equal mtimes for files written back-to-back.
+    # Keep selection deterministic rather than depending on glob iteration order.
+    return max(matches, key=lambda p: (p.stat().st_mtime_ns, str(p))) if matches else None
 
 
 def load_json(path: Path) -> Any:

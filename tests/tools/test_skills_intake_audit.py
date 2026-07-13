@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
+
 from tools.skills_hub import GitHubAuth, SkillBundle
 from tools.skills_intake_audit import _repo_evidence_for_bundle, audit_candidates, evaluate_bundle
+
+
+@pytest.fixture(autouse=True)
+def _evaluate_fixtures_on_their_declared_macos_platform(monkeypatch):
+    """These tests cover intake policy, not host-platform detection."""
+    monkeypatch.setattr("tools.skills_intake_audit.skill_matches_platform", lambda _metadata: True)
 
 
 class FakeGitHubSource:
