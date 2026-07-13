@@ -4327,7 +4327,8 @@ def _wait_for_gateway_exit(
 
 def launchd_restart():
     label = get_launchd_label()
-    domain = _launchd_domain()
+    domain: str | None = None
+    target = ""
     drain_timeout = _get_restart_drain_timeout()
     from gateway.status import get_running_pid
 
@@ -4364,6 +4365,9 @@ def launchd_restart():
         print("✓ Service restarted")
         _clear_launchd_unsupported_marker()
     except subprocess.CalledProcessError as e:
+        if domain is None:
+            domain = _launchd_domain()
+            target = f"{domain}/{label}"
         if not _launchd_error_indicates_unloaded(e):
             # Not a "job unloaded" code. If every candidate domain is
             # fundamentally unmanageable, degrade to detached; otherwise re-raise.
