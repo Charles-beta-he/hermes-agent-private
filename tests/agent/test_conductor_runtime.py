@@ -627,40 +627,26 @@ def test_mainloop_certification_queue_run_job_updates_status_with_fake_runner(tm
     assert stored["certification_result"]["artifact"] == "/tmp/fake"
 
 
-@pytest.mark.skipif(
-    not (Path.home() / ".hermes" / "scripts" / "hermes_background_task_worker.py").exists(),
-    reason="background worker overlay is not installed",
-)
 def test_background_worker_probe_and_dry_run(tmp_path):
-    from agent.conductor_runtime import TaskLedger
-
-    sys_path_backup = sys.path[:]
-    scripts = str(Path.home() / ".hermes" / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
-    from hermes_background_task_worker import BackgroundTaskWorker
-    sys.path[:] = sys_path_backup
+    from agent.background_task_worker import BackgroundTaskWorker
 
     ledger_path = tmp_path / "ledger.db"
     ledger = TaskLedger(ledger_path)
     task = ledger.create_task(title="Test task", current_goal="Verify worker", origin_session_id="s1")
 
     worker = BackgroundTaskWorker(task["task_id"], ledger_path)
-
-    # Probe
     probe = worker.probe()
     assert probe["task_id"] == task["task_id"]
     assert probe["status"] == "queued"
 
-    # Dry run
     result = worker.run(dry_run=True)
     assert result["status"] == "done"
     assert result["task_id"] == task["task_id"]
     assert len(result["checkpoints"]) == 1
     assert len(result["directives_received"]) == 1
 
-    # Verify task is now done
     final = ledger.get_task(task["task_id"])
+    assert final is not None
     assert final["status"] == "done"
 
 
@@ -786,13 +772,31 @@ def test_conversation_loop_records_complex_harness_receipt_when_ledger_enabled(t
     assert ledger_path.exists()
 
 
-@pytest.mark.skipif(
-    not (Path.home() / ".hermes" / "config" / "model_capability_profiles.yaml").exists(),
-    reason="mainloop verifier integration profile is not installed",
-)
-def test_conversation_loop_persists_verifier_packet_when_complex_completion_claim_is_gated(tmp_path):
+def _write_mainloop_verifier_profile(home: Path) -> None:
+    config = home / ".hermes" / "config"
+    config.mkdir(parents=True)
+    (config / "model_capability_profiles.yaml").write_text(
+        """mainloop_verification:
+  enabled: true
+  advisory_only: false
+  blocking_tiers: [T3]
+  background_certification: true
+  auto_start_background_certification: true
+acceptance_governance:
+  require_objective_evidence: true
+  require_independent_verifier_vote: true
+  forbid_model_only_certification: true
+""",
+        encoding="utf-8",
+    )
+
+
+def test_conversation_loop_persists_verifier_packet_when_complex_completion_claim_is_gated(tmp_path, monkeypatch):
     from agent.conversation_loop import _run_conductor_intent_router, _run_mainloop_verification_gate
 
+    home = tmp_path / "home"
+    _write_mainloop_verifier_profile(home)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     ledger_path = tmp_path / "harness.jsonl"
 
     class EnabledLedgerAgent:
@@ -830,13 +834,12 @@ def test_conversation_loop_persists_verifier_packet_when_complex_completion_clai
     assert verifier_events[0]["allowed_to_mark_done"] is False
 
 
-@pytest.mark.skipif(
-    not (Path.home() / ".hermes" / "config" / "model_capability_profiles.yaml").exists(),
-    reason="mainloop verifier integration profile is not installed",
-)
 def test_conversation_loop_mainloop_gate_appends_blocking_notice_for_uncertified_claim(tmp_path, monkeypatch):
     from agent.conversation_loop import _run_mainloop_verification_gate
 
+    home = tmp_path / "home"
+    _write_mainloop_verifier_profile(home)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     monkeypatch.setenv("HERMES_MAINLOOP_CERT_QUEUE_DIR", str(tmp_path))
 
     class FakeAgent:
