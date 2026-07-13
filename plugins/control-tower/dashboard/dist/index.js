@@ -132,10 +132,7 @@
   const authFetch = (url, options) => {
     const sdk = window.__HERMES_PLUGIN_SDK__;
     if (sdk?.authedFetch) return sdk.authedFetch(url, options);
-    const headers = new Headers(options?.headers || {});
-    const token = window.__HERMES_SESSION_TOKEN__;
-    if (token && !headers.has('X-Hermes-Session-Token')) headers.set('X-Hermes-Session-Token', token);
-    return window.fetch(url, { ...options, headers, credentials: options?.credentials || 'include' });
+    return window.fetch(url, { ...options, credentials: options?.credentials || 'include' });
   };
 
   const renderMissions = (data) => {

@@ -1,6 +1,10 @@
 """Regression tests for context compaction handoff role safety."""
 
-from agent.context_compressor import ContextCompressor, SUMMARY_PREFIX
+from agent.context_compressor import (
+    COMPRESSED_SUMMARY_METADATA_KEY,
+    ContextCompressor,
+    SUMMARY_PREFIX,
+)
 
 
 def _compressor() -> ContextCompressor:
@@ -18,7 +22,7 @@ def _compressor() -> ContextCompressor:
     return compressor
 
 
-def test_compaction_summary_never_becomes_latest_user_message():
+def test_compaction_does_not_replay_latest_user_message_when_no_tail_survives():
     messages = [
         {"role": "system", "content": "system"},
         {"role": "user", "content": "old request"},
@@ -30,13 +34,11 @@ def test_compaction_summary_never_becomes_latest_user_message():
 
     compressed = _compressor().compress(messages, current_tokens=100_000, force=True)
 
-    assert compressed[-1]["role"] == "assistant"
-    assert SUMMARY_PREFIX in compressed[-1]["content"]
-    assert "latest real user request" not in compressed[-1]["content"]
-    assert "latest real user message" in compressed[-1]["content"]
+    assert not any("latest real user request" in msg.get("content", "") for msg in compressed)
+    assert compressed[0]["role"] == "system"
 
 
-def test_compaction_summary_merges_into_assistant_tail_instead_of_user_turn():
+def test_user_role_summary_is_safe_when_latest_real_user_tail_survives():
     compressor = _compressor()
     compressor._find_tail_cut_by_tokens = lambda _messages, _start: 3  # type: ignore[method-assign]
     messages = [
@@ -51,8 +53,9 @@ def test_compaction_summary_merges_into_assistant_tail_instead_of_user_turn():
 
     compressed = compressor.compress(messages, current_tokens=100_000, force=True)
 
-    assert not any(msg["role"] == "user" and SUMMARY_PREFIX in msg.get("content", "") for msg in compressed)
-    assert compressed[1]["role"] == "assistant"
-    assert SUMMARY_PREFIX in compressed[1]["content"]
-    assert "live assistant tail" in compressed[1]["content"]
-    assert compressed[-1]["content"] == "latest real user request"
+    summaries = [msg for msg in compressed if msg.get(COMPRESSED_SUMMARY_METADATA_KEY)]
+    assert len(summaries) == 1
+    assert summaries[0]["role"] == "user"
+    assert SUMMARY_PREFIX in summaries[0]["content"]
+    assert "respond to the message below" in summaries[0]["content"]
+    assert compressed[-1] == {"role": "user", "content": "latest real user request"}

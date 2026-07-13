@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
+import pytest
+
 WRAPPER = Path.home() / ".hermes" / "scripts" / "multi-model-smoke-every4h-wrapper.py"
+pytestmark = pytest.mark.skipif(not WRAPPER.exists(), reason="local cron wrapper overlay is not installed")
 
 
 def load():

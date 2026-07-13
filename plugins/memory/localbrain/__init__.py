@@ -71,7 +71,13 @@ class LocalBrainMemoryProvider(MemoryProvider):
             str(limit),
         ]
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                stdin=subprocess.DEVNULL,
+            )
             if result.returncode != 0:
                 return ""
             hits = json.loads(result.stdout)

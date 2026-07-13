@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from agent.openclaw_control_plane import (
     activation_hints_for_text,
     benchmark,
@@ -13,7 +15,14 @@ from agent.openclaw_control_plane import (
 )
 from agent.task_router import TaskRouter
 
+OPENCLAW_OVERLAY = Path.home() / ".hermes" / "openclaw-gap" / "activation_plan.json"
+requires_openclaw_overlay = pytest.mark.skipif(
+    not OPENCLAW_OVERLAY.exists(),
+    reason="OpenClaw overlay integration artifacts are not installed",
+)
 
+
+@requires_openclaw_overlay
 def test_openclaw_activation_hints_from_generated_plan():
     hints = activation_hints_for_text("需要 provider tool memory gateway 能力")
     families = {item["family"] for item in hints}
@@ -41,6 +50,7 @@ def test_openclaw_schema_validator_rejects_unredacted_secret():
     assert any("unknown field" in err for err in strict.errors)
 
 
+@requires_openclaw_overlay
 def test_openclaw_scoped_policy_for_repo():
     repo = Path.home() / ".hermes" / "research" / "openclaw"
     policy = scoped_policy_for_path(repo, repo / "src" / "plugins")
@@ -73,12 +83,14 @@ def test_openclaw_memory_contract_sources():
     assert "write_with_gate" in contract["operations"]
 
 
+@requires_openclaw_overlay
 def test_task_router_activation_hints_opt_in():
     router = TaskRouter({"openclaw_activation_hints": True})
     result = router.route("需要 provider tool memory gateway 能力")
     assert "activation_hints" in result
 
 
+@requires_openclaw_overlay
 def test_openclaw_control_plane_benchmark_passes():
     result = benchmark()
     assert result["verdict"] == "pass", json.dumps(result, ensure_ascii=False, indent=2)

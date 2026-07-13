@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from agent.conductor_runtime import (
     AcceptanceGovernance,
     ComplexTaskHarnessLedger,
@@ -625,6 +627,10 @@ def test_mainloop_certification_queue_run_job_updates_status_with_fake_runner(tm
     assert stored["certification_result"]["artifact"] == "/tmp/fake"
 
 
+@pytest.mark.skipif(
+    not (Path.home() / ".hermes" / "scripts" / "hermes_background_task_worker.py").exists(),
+    reason="background worker overlay is not installed",
+)
 def test_background_worker_probe_and_dry_run(tmp_path):
     from agent.conductor_runtime import TaskLedger
 
@@ -780,6 +786,10 @@ def test_conversation_loop_records_complex_harness_receipt_when_ledger_enabled(t
     assert ledger_path.exists()
 
 
+@pytest.mark.skipif(
+    not (Path.home() / ".hermes" / "config" / "model_capability_profiles.yaml").exists(),
+    reason="mainloop verifier integration profile is not installed",
+)
 def test_conversation_loop_persists_verifier_packet_when_complex_completion_claim_is_gated(tmp_path):
     from agent.conversation_loop import _run_conductor_intent_router, _run_mainloop_verification_gate
 
@@ -820,6 +830,10 @@ def test_conversation_loop_persists_verifier_packet_when_complex_completion_clai
     assert verifier_events[0]["allowed_to_mark_done"] is False
 
 
+@pytest.mark.skipif(
+    not (Path.home() / ".hermes" / "config" / "model_capability_profiles.yaml").exists(),
+    reason="mainloop verifier integration profile is not installed",
+)
 def test_conversation_loop_mainloop_gate_appends_blocking_notice_for_uncertified_claim(tmp_path, monkeypatch):
     from agent.conversation_loop import _run_mainloop_verification_gate
 
