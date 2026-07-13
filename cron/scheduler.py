@@ -1941,6 +1941,15 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                         job.get("id", "?"), platform_name, chat_id, qe,
                     )
 
+            # Re-check adjacent to the side effect so compensation bookkeeping
+            # cannot widen the shutdown race window.
+            if _interpreter_shutting_down():
+                msg = f"delivery to {platform_name}:{chat_id} skipped — interpreter is shutting down"
+                logger.warning("Job '%s': %s", job["id"], msg)
+                target_errors.append(msg)
+                delivery_errors.extend(target_errors)
+                continue
+
             # Standalone path: run the async send in a fresh event loop (safe from any thread)
             coro = _send_to_platform(platform, pconfig, chat_id, cleaned_delivery_content, thread_id=thread_id, media_files=media_files)
             try:

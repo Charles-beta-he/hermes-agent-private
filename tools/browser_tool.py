@@ -2782,6 +2782,21 @@ def _merge_browser_validation_metadata(response: dict[str, Any], metadata: dict[
         response["degraded_reason"] = metadata["degraded_reason"]
 
 
+def _redact_browser_output(value: Any) -> Any:
+    """Redact secrets from browser-originated data before model exposure."""
+    from agent.redact import redact_sensitive_text
+
+    if isinstance(value, str):
+        return redact_sensitive_text(value, force=True)
+    if isinstance(value, list):
+        return [_redact_browser_output(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_browser_output(item) for item in value)
+    if isinstance(value, dict):
+        return {key: _redact_browser_output(item) for key, item in value.items()}
+    return value
+
+
 # ============================================================================
 # Browser Tool Functions
 # ============================================================================

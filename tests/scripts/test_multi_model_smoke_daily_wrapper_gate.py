@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 from pathlib import Path
 
-WRAPPER = Path.home() / ".hermes" / "scripts" / "multi-model-smoke-daily-full-wrapper.py"
+WRAPPER = Path(__file__).resolve().parents[2] / "scripts" / "multi-model-smoke-daily-full-wrapper.py"
 
 
 def load():

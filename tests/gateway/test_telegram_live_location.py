@@ -6,7 +6,7 @@ from gateway.config import Platform, PlatformConfig
 
 
 def _make_adapter(now=1_700_000_000.0):
-    from gateway.platforms.telegram import TelegramAdapter
+    from plugins.platforms.telegram.adapter import TelegramAdapter
 
     adapter = object.__new__(TelegramAdapter)
     adapter.platform = Platform.TELEGRAM

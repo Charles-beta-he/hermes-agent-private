@@ -4,7 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 
-WRAPPER = Path.home() / ".hermes" / "scripts" / "multi-model-smoke-every4h-wrapper.py"
+WRAPPER = Path(__file__).resolve().parents[2] / "scripts" / "multi-model-smoke-every4h-wrapper.py"
 
 
 def load():

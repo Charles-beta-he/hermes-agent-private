@@ -3687,7 +3687,10 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
             # while still publishing the caller context for elicitation callbacks.
             server._pending_call_context = contextvars.copy_context()
             try:
-                result = await session.call_tool(tool_name, arguments=args)
+                current_session = server.session
+                if current_session is None:
+                    raise RuntimeError("MCP session is not connected")
+                result = await current_session.call_tool(tool_name, arguments=args)
             finally:
                 server._pending_call_context = None
             # MCP CallToolResult has .content (list of content blocks) and .isError

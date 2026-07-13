@@ -745,6 +745,7 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
         futures = []
         future_to_index = {}
         timed_out_indices: set[int] = set()
+        _batch_timed_out = False
         timeout_s = _resolve_concurrent_tool_timeout()
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
         if runnable_calls:
@@ -810,6 +811,11 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                     if _batch_timeout is not None
                     else None
                 )
+                if _batch_deadline is not None and (
+                    deadline is None or _batch_deadline < deadline
+                ):
+                    deadline = _batch_deadline
+                    timeout_s = _batch_timeout
                 _interrupt_logged = False
                 _batch_timed_out = False
                 while True:
@@ -834,6 +840,9 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
 
                     if deadline is not None and time.monotonic() >= deadline:
                         abandon_executor = True
+                        _batch_timed_out = (
+                            _batch_deadline is not None and deadline == _batch_deadline
+                        )
                         timed_out_indices = {
                             future_to_index[f]
                             for f in not_done
@@ -921,7 +930,13 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
         # tool genuinely succeeded, just slightly late.
         if i in timed_out_indices and r is None:
             suffix = f"{timeout_s:.1f}s" if timeout_s is not None else "the configured timeout"
-            function_result = f"Error executing tool '{name}': timed out after {suffix}"
+            if _batch_timed_out:
+                function_result = (
+                    f"Error executing tool '{name}': concurrent tool batch "
+                    f"timeout after {suffix}"
+                )
+            else:
+                function_result = f"Error executing tool '{name}': timed out after {suffix}"
             _emit_terminal_post_tool_call(
                 agent,
                 function_name=name,

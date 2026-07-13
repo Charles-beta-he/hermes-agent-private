@@ -54,6 +54,19 @@ The bootstrap prints the recommended path, verifies private-repo access, clones 
 refreshes `~/.hermes/hermes-agent`, then runs `scripts/install-private.sh` to
 stamp the private update channel.
 
+### Windows PowerShell
+
+For native Windows installation, run the repository-owned PowerShell installer
+from an authenticated checkout:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
+Private-channel users should clone the `private/main` branch first so the
+installer and update metadata come from this repository rather than the public
+distribution.
+
 ### Manual SSH fallback
 
 ```bash

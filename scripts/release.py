@@ -219,6 +219,7 @@ AUTHOR_MAP = {
     "rratmansky@gmail.com": "rratmansky",
     "lkz-de@users.noreply.github.com": "lkz-de",
     "charles@salesondemand.io": "salesondemandio",
+    "charles@example.com": "Charles-beta-he",
     "IamSanchoPanza@users.noreply.github.com": "IamSanchoPanza",
     "victor@rocketfueldev.com": "victor-kyriazakos",
     "87440198+JoaoMarcos44@users.noreply.github.com": "JoaoMarcos44",

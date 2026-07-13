@@ -14,8 +14,42 @@ from agent.openclaw_control_plane import (
 from agent.task_router import TaskRouter
 
 
-def test_openclaw_activation_hints_from_generated_plan():
-    hints = activation_hints_for_text("需要 provider tool memory gateway 能力")
+def _write_openclaw_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    gap_dir = tmp_path / "openclaw-gap"
+    gap_dir.mkdir()
+    plan = {
+        "families": {
+            "provider": [{"id": "provider-fixture"}],
+            "tool": [{"id": "tool-fixture"}],
+            "memory": [{"id": "memory-fixture"}],
+            "gateway": [{"id": "gateway-fixture"}],
+        }
+    }
+    required = [
+        "manifest_index.json",
+        "activation_plan.json",
+        "scoped_rules.json",
+        "protocol_inventory.json",
+        "memory_contract.json",
+        "hermes_gap_matrix.json",
+        "hermes_missing_functions.md",
+        "dashboard.md",
+    ]
+    for name in required:
+        content = json.dumps(plan) if name == "activation_plan.json" else "fixture\n"
+        (gap_dir / name).write_text(content, encoding="utf-8")
+
+    repo = tmp_path / "openclaw"
+    plugins = repo / "src" / "plugins"
+    plugins.mkdir(parents=True)
+    (repo / "AGENTS.md").write_text("# OpenClaw Fixture\n- Preserve repository policy\n", encoding="utf-8")
+    (plugins / "AGENTS.md").write_text("# Plugins Boundary\n- Keep plugins isolated\n", encoding="utf-8")
+    return gap_dir, repo
+
+
+def test_openclaw_activation_hints_from_generated_plan(tmp_path):
+    gap_dir, _ = _write_openclaw_fixture(tmp_path)
+    hints = activation_hints_for_text("需要 provider tool memory gateway 能力", gap_dir=gap_dir)
     families = {item["family"] for item in hints}
     assert {"provider", "tool", "memory", "gateway"} & families
 
@@ -41,8 +75,8 @@ def test_openclaw_schema_validator_rejects_unredacted_secret():
     assert any("unknown field" in err for err in strict.errors)
 
 
-def test_openclaw_scoped_policy_for_repo():
-    repo = Path.home() / ".hermes" / "research" / "openclaw"
+def test_openclaw_scoped_policy_for_repo(tmp_path):
+    _, repo = _write_openclaw_fixture(tmp_path)
     policy = scoped_policy_for_path(repo, repo / "src" / "plugins")
     assert policy["count"] >= 1
     assert any(scope["file"].endswith("AGENTS.md") for scope in policy["scopes"])
@@ -73,12 +107,18 @@ def test_openclaw_memory_contract_sources():
     assert "write_with_gate" in contract["operations"]
 
 
-def test_task_router_activation_hints_opt_in():
+def test_task_router_activation_hints_opt_in(tmp_path, monkeypatch):
+    gap_dir, _ = _write_openclaw_fixture(tmp_path)
+    monkeypatch.setattr(
+        "agent.task_router.activation_hints_for_text",
+        lambda text: activation_hints_for_text(text, gap_dir=gap_dir),
+    )
     router = TaskRouter({"openclaw_activation_hints": True})
     result = router.route("需要 provider tool memory gateway 能力")
     assert "activation_hints" in result
 
 
-def test_openclaw_control_plane_benchmark_passes():
-    result = benchmark()
+def test_openclaw_control_plane_benchmark_passes(tmp_path):
+    gap_dir, repo = _write_openclaw_fixture(tmp_path)
+    result = benchmark(gap_dir=gap_dir, openclaw_repo=repo)
     assert result["verdict"] == "pass", json.dumps(result, ensure_ascii=False, indent=2)

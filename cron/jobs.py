@@ -1765,6 +1765,15 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
 
         if next_run_dt <= now:
 
+            # Malformed records without a stable identity cannot be safely
+            # claimed or advanced in jobs.json.
+            if not job.get("id"):
+                logger.warning(
+                    "Job '%s' has no id; refusing stale-run dispatch",
+                    job.get("name", "<unnamed>"),
+                )
+                continue
+
             # For recurring jobs, check if the scheduled time is stale
             # (gateway was down and missed the window). Fast-forward to
             # the next future occurrence instead of firing a stale run.

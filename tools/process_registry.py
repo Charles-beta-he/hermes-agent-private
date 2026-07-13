@@ -1483,10 +1483,6 @@ class ProcessRegistry:
                     }
             session.exited = True
             session.exit_code = observed_exit if observed_exit is not None else -15
-            self._move_to_finished(session)
-            self._write_checkpoint()
-            return {"status": "killed", "session_id": session.id, "exit_code": session.exit_code}
-            session.exit_code = -15  # SIGTERM
             session.completion_reason = "killed"
             session.termination_source = source
             self._move_to_finished(session)
@@ -1494,6 +1490,7 @@ class ProcessRegistry:
             return {
                 "status": "killed",
                 "session_id": session.id,
+                "exit_code": session.exit_code,
                 "completion_reason": session.completion_reason,
                 "termination_source": session.termination_source,
             }

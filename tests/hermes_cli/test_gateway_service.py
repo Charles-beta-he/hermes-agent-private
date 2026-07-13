@@ -611,6 +611,13 @@ class TestGatewayStopCleanup:
 
 
 class TestLaunchdServiceRecovery:
+    @pytest.fixture(autouse=True)
+    def _reset_launchd_domain_cache(self):
+        """Keep launchd-domain tests independent of process-global cache state."""
+        gateway_cli._resolved_launchd_domain = None
+        yield
+        gateway_cli._resolved_launchd_domain = None
+
     def test_get_restart_drain_timeout_prefers_env_then_config_then_default(self, monkeypatch):
         monkeypatch.delenv("HERMES_RESTART_DRAIN_TIMEOUT", raising=False)
         monkeypatch.setattr(gateway_cli, "read_raw_config", lambda: {})

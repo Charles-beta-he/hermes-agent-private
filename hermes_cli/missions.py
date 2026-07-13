@@ -1153,7 +1153,6 @@ class MissionStore:
             script=script_name,
             no_agent=False,
             enabled_toolsets=enabled_toolsets,
-            profile=profile,
         )
         self.append_event(
             mission_id,
