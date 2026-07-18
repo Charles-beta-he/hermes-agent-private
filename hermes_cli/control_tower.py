@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from hermes_constants import get_hermes_home
+from workflow_kernel.runtime_state import prefer_runtime_artifact, unattended_dry_run_report_path
 
 SCHEMA_VERSION = 1
 LEDGER_FILENAME = "control_tower.db"
@@ -6389,11 +6390,16 @@ def record_workflow_kernel_policy_editor_decision(
     return {"status": status, "event": event, "projection": projection, "ledger": str(paths["ledger"])}
 
 
+def _workflow_kernel_phase55_path(root: Path) -> Path:
+    snapshot = root / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+    return prefer_runtime_artifact(unattended_dry_run_report_path(get_hermes_home()), snapshot)
+
+
 def build_workflow_kernel_policy_editor_projection() -> dict[str, Any]:
     paths = _workflow_kernel_policy_editor_paths()
     root = Path(__file__).resolve().parents[1]
     policy_path = root / "docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json"
-    phase55_path = root / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+    phase55_path = _workflow_kernel_phase55_path(root)
     policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
     phase55 = json.loads(phase55_path.read_text()) if phase55_path.exists() else {}
     events: list[dict[str, Any]] = []
@@ -6433,7 +6439,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase50_path = root / "docs/private/workflow-kernel-guarded-external-send/workflow_kernel_guarded_external_send_20260613_phase50.json"
     phase52_path = root / "docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.json"
     policy_path = root / "docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json"
-    phase55_path = root / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+    phase55_path = _workflow_kernel_phase55_path(root)
     phase57_path = root / "docs/private/workflow-kernel-dry-run-cron-rollout/workflow_kernel_dry_run_cron_rollout_20260613_phase57.json"
     phase58_path = root / "docs/private/workflow-kernel-guarded-send-runner-activation/workflow_kernel_guarded_send_runner_activation_20260613_phase58.json"
     phase59_path = root / "docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_guarded_manual_send_runner_20260613_phase59.json"

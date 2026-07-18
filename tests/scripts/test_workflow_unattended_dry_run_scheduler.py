@@ -64,3 +64,20 @@ def test_append_receipt_and_write_report(tmp_path):
     artifacts = mod.write_report(report, tmp_path / "out")
     assert Path(artifacts["json"]).exists()
     assert "Unattended Dry-run Scheduler" in Path(artifacts["md"]).read_text()
+
+
+def test_default_runtime_paths_seed_frozen_ledger_without_writing_docs(tmp_path, monkeypatch):
+    mod = load()
+    legacy = tmp_path / "repo/docs/frozen.jsonl"
+    runtime_dir = tmp_path / "profile/state/workflow-kernel/unattended-dry-run-scheduler"
+    runtime_ledger = runtime_dir / "receipts.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('{"receipt":1}\n', encoding="utf-8")
+    monkeypatch.setattr(mod, "LEGACY_LEDGER", legacy)
+    monkeypatch.setattr(mod, "DEFAULT_OUT", runtime_dir)
+    monkeypatch.setattr(mod, "DEFAULT_LEDGER", runtime_ledger)
+
+    result = mod.prepare_default_ledger(runtime_ledger)
+
+    assert result["status"] == "seeded"
+    assert runtime_ledger.read_bytes() == legacy.read_bytes()

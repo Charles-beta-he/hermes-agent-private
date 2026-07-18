@@ -21,10 +21,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from workflow_kernel.io import write_json_artifact
+from workflow_kernel.runtime_state import seed_jsonl_once, unattended_dry_run_dir, unattended_dry_run_ledger_path
 
 DEFAULT_POLICY = ROOT / "docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json"
-DEFAULT_OUT = ROOT / "docs/private/workflow-kernel-unattended-dry-run-scheduler"
-DEFAULT_LEDGER = DEFAULT_OUT / "unattended_dispatch_dry_run_receipts.jsonl"
+LEGACY_OUT = ROOT / "docs/private/workflow-kernel-unattended-dry-run-scheduler"
+LEGACY_LEDGER = LEGACY_OUT / "unattended_dispatch_dry_run_receipts.jsonl"
+DEFAULT_OUT = unattended_dry_run_dir()
+DEFAULT_LEDGER = unattended_dry_run_ledger_path()
 DEFAULT_PREVIEW_PAYLOAD = "Workflow Kernel unattended dispatch dry-run preview: no external send executed."
 
 
@@ -112,6 +115,12 @@ def append_receipt(ledger_path: Path, receipt: dict[str, Any]) -> None:
         fh.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def prepare_default_ledger(ledger_path: Path) -> dict[str, object]:
+    if ledger_path != DEFAULT_LEDGER:
+        return {"status": "explicit_path", "path": str(ledger_path)}
+    return seed_jsonl_once(LEGACY_LEDGER, ledger_path)
+
+
 def build_report(receipt: dict[str, Any], *, ledger_path: Path, cadence: str) -> dict[str, Any]:
     return {
         "report_id": "workflow_kernel_unattended_dry_run_scheduler_20260613_phase55",
@@ -163,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--append-ledger", action="store_true")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
+    prepare_default_ledger(args.ledger)
     policy = read_policy(args.policy)
     receipt = build_dry_run_receipt(policy, payload=args.payload)
     if args.append_ledger:

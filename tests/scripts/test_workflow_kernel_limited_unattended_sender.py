@@ -52,6 +52,20 @@ def fake_registry():
     }
 
 
+def test_default_ledger_is_profile_scoped_and_seeds_frozen_history(tmp_path, monkeypatch):
+    mod = load()
+    legacy = tmp_path / "frozen.jsonl"
+    runtime = tmp_path / "profile/state/workflow-kernel/limited-unattended/receipts.jsonl"
+    legacy.write_text('{"receipt":1}\n', encoding="utf-8")
+    monkeypatch.setattr(mod, "LEGACY_LEDGER", legacy)
+    monkeypatch.setattr(mod, "DEFAULT_LEDGER", runtime)
+
+    result = mod.prepare_default_ledger(runtime)
+
+    assert result["status"] == "seeded"
+    assert runtime.read_bytes() == legacy.read_bytes()
+
+
 def test_execute_sends_once_when_manifest_registry_and_rate_limit_allow(tmp_path, monkeypatch):
     mod = load()
     monkeypatch.setattr(mod, "registry_snapshot", fake_registry)

@@ -21,10 +21,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from workflow_kernel.open_gate import validate_open_manifest  # noqa: E402
 from workflow_kernel.payload_guard import classify_payload  # noqa: E402
+from workflow_kernel.runtime_state import limited_unattended_ledger_path, seed_jsonl_once  # noqa: E402
 from workflow_kernel.target_registry import enabled_targets, find_target, registry_snapshot, validate_registry  # noqa: E402
 
 DEFAULT_MANIFEST = REPO_ROOT / "docs/private/workflow-kernel-open-gate/workflow_kernel_open_manifest_20260614.json"
-DEFAULT_LEDGER = REPO_ROOT / "docs/private/workflow-kernel-open-gate/workflow_kernel_limited_unattended_receipts.jsonl"
+LEGACY_LEDGER = REPO_ROOT / "docs/private/workflow-kernel-open-gate/workflow_kernel_limited_unattended_receipts.jsonl"
+DEFAULT_LEDGER = limited_unattended_ledger_path()
 
 
 def utc_now() -> datetime:
@@ -49,6 +51,12 @@ def append_ledger(path: Path, receipt: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def prepare_default_ledger(ledger_path: Path) -> dict[str, object]:
+    if ledger_path != DEFAULT_LEDGER:
+        return {"status": "explicit_path", "path": str(ledger_path)}
+    return seed_jsonl_once(LEGACY_LEDGER, ledger_path)
 
 
 def idempotency_key(*, target_id: str, purpose: str, payload_digest: str, manifest_digest: str, day_bucket: str) -> str:
@@ -240,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    prepare_default_ledger(args.ledger)
     result = build_or_execute(args.manifest, args.ledger, execute=args.execute, target_id=args.target_id, payload=args.payload, purpose=args.purpose)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
