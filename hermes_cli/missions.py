@@ -192,8 +192,19 @@ def main() -> int:
         print(result["prompt"])
         return 0
     if status == "blocked_on_human":
-        print("[Hermes Mission blocked on human decision]")
-        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        # The decision packet was already persisted and surfaced when the
+        # handoff was created. Re-emitting it every cadence wakes an agent that
+        # is forbidden to act and produces duplicate reports. A wake-gate
+        # payload keeps the tick healthy and silent until a decision is answered.
+        print(json.dumps({{
+            "wakeAgent": False,
+            "status": status,
+            "decision_ids": [
+                item.get("decision_id")
+                for item in result.get("open_decisions", [])
+                if item.get("decision_id")
+            ],
+        }}, ensure_ascii=False, sort_keys=True))
         return 0
     if status == "budget_exhausted":
         print("[Hermes Mission budget exhausted]")

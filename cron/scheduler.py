@@ -2720,6 +2720,11 @@ def run_job(
             )
             return True, silent_doc, SILENT_MARKER, None
 
+    # Default to failure until the agent path reaches a classified terminal
+    # response. The SQLite session end reason must reflect what happened; it
+    # must not say cron_complete for a timeout, model failure, or empty reply.
+    _cron_end_reason = "cron_failed"
+
     try:
         prompt = _build_job_prompt(job, prerun_script=prerun_script)
     except CronPromptInjectionBlocked as block_exc:
@@ -3298,6 +3303,12 @@ def run_job(
                     turn_exit_reason,
                 )
                 final_response = ""
+        if not final_response.strip():
+            _cron_end_reason = "cron_empty_response"
+        elif _is_cron_silence_response(final_response):
+            _cron_end_reason = "cron_silent"
+        else:
+            _cron_end_reason = "cron_complete"
         # Use a separate variable for log display; keep final_response clean
         # for delivery logic (empty response = no delivery).
         logged_response = final_response if final_response else "(No response generated)"
@@ -3375,7 +3386,7 @@ def run_job(
             except (Exception, KeyboardInterrupt) as e:
                 logger.debug("Job '%s': failed to set cron session title: %s", job_id, e)
             try:
-                _session_db.end_session(_cron_session_id, "cron_complete")
+                _session_db.end_session(_cron_session_id, _cron_end_reason)
             except (Exception, KeyboardInterrupt) as e:
                 logger.debug("Job '%s': failed to end session: %s", job_id, e)
             try:

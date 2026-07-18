@@ -1406,6 +1406,8 @@ class TestRunJobSessionPersistence:
         assert final_response == ""
         # But the output log should show the placeholder
         assert "(No response generated)" in output
+        fake_db.end_session.assert_called_once()
+        assert fake_db.end_session.call_args[0][1] == "cron_empty_response"
 
     @pytest.mark.parametrize(
         "agent_result,expected_err_substring",
@@ -1483,6 +1485,8 @@ class TestRunJobSessionPersistence:
         assert "(FAILED)" in output
         # Ephemeral cron agent must still be closed even on agent-flagged failure.
         mock_agent.close.assert_called_once()
+        fake_db.end_session.assert_called_once()
+        assert fake_db.end_session.call_args[0][1] == "cron_failed"
 
     def test_run_job_completed_true_without_failed_flag_succeeds(self, tmp_path):
         """Regression guard: a normal success result (``completed=True``,

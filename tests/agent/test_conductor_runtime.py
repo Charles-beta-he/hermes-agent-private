@@ -861,3 +861,51 @@ def test_conversation_loop_mainloop_gate_appends_blocking_notice_for_uncertified
     assert messages[-1]["content"] == result["final_response_override"]
     assert result["certification_job"]["status"] == "queued"
     assert (tmp_path / f"{result['certification_job']['job_id']}.json").exists()
+
+
+def test_mainloop_gate_ignores_high_risk_words_when_final_response_has_no_completion_claim():
+    """A request can mention Hermes/verification without turning a factual
+    status response into a completion claim that needs certification."""
+    from agent.conductor_runtime import MainloopVerificationGate
+
+    gate = MainloopVerificationGate(
+        {
+            "mainloop_verification": {
+                "enabled": True,
+                "advisory_only": False,
+                "blocking_tiers": ["T3"],
+            }
+        }
+    )
+    result = gate.evaluate_turn(
+        user_message="检查 Hermes 主循环门禁并说明当前状态，不要声明完成",
+        final_response="当前没有可调度任务。",
+        messages=[],
+    )
+
+    assert result["status"] == "skipped_low_risk"
+    assert result["blocking"] is False
+    assert result["surfaces"] == []
+
+
+def test_mainloop_gate_never_rewrites_exact_cron_silent_marker():
+    """Cron silence is a control response, not a completion claim."""
+    from agent.conductor_runtime import MainloopVerificationGate
+
+    gate = MainloopVerificationGate(
+        {
+            "mainloop_verification": {
+                "enabled": True,
+                "advisory_only": False,
+                "blocking_tiers": ["T3"],
+            }
+        }
+    )
+    result = gate.evaluate_turn(
+        user_message="Hermes 验收完成后保持静默",
+        final_response="[SILENT]",
+        messages=[],
+    )
+
+    assert result["status"] == "skipped_low_risk"
+    assert result["blocking"] is False

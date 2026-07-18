@@ -1170,6 +1170,19 @@ class MainloopVerificationGate:
         response = str(final_response or "")
         if self._is_internal_projection(user_message or "", response):
             return {"schema": "hermes_mainloop_verification_gate_v1", "status": "skipped_internal_projection", "blocking": False}
+        # This gate governs claims made by the assistant, not risk words in the
+        # request. Scanning the request alone made status-only cron replies (and
+        # even the [SILENT] control marker) look like uncertified completion
+        # claims whenever a prompt mentioned Hermes, verification, or acceptance.
+        # Keep the request below for classifying the surface of a real claim.
+        if not self._has_completion_claim(response):
+            return {
+                "schema": "hermes_mainloop_verification_gate_v1",
+                "status": "skipped_low_risk",
+                "blocking": False,
+                "risk_tier": "T0",
+                "surfaces": [],
+            }
         surfaces = self._surfaces(user_message or "", response)
         risk_tier = self._risk_tier(user_message or "", response)
         complex_scan_active = isinstance(complexity_scan, dict) and complexity_scan.get("classification") == "complex"

@@ -144,6 +144,44 @@ def test_stage_report_and_handoff_are_durable_ledger_gates(tmp_path: Path) -> No
     assert tick["prompt"] == ""
 
 
+def test_mission_cron_script_does_not_wake_agent_while_blocked_on_human(tmp_path: Path) -> None:
+    db = tmp_path / "missions.db"
+    scripts = tmp_path / "scripts"
+    store = MissionStore(db)
+    mission = store.create_mission(
+        direction="等待人工选择后继续",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=3),
+        enable=True,
+    )
+    decision = store.request_decision(
+        mission.mission_id,
+        "选择后续路线？",
+        ["A", "B"],
+        "A",
+    )
+    script = install_mission_tick_script(mission.mission_id, scripts_dir=scripts)
+
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(tmp_path),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**__import__("os").environ, "HERMES_HOME": str(tmp_path)},
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "decision_ids": [decision.decision_id],
+        "status": "blocked_on_human",
+        "wakeAgent": False,
+    }
+
+
 def test_mission_inbox_board_and_doctor_surface_next_actions(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     store = MissionStore(tmp_path / "missions.db")
