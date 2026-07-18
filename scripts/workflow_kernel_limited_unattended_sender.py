@@ -424,6 +424,115 @@ def _ledger_path_security_blocker(ledger_path: Path) -> str | None:
     return None
 
 
+def _valid_nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _valid_day_bucket(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 8 and value.isdigit()
+
+
+def _valid_target_receipt_v2(entry: dict[str, Any]) -> bool:
+    allowed_statuses = {
+        "LIMITED_UNATTENDED_SEND_READY",
+        "LIMITED_UNATTENDED_SEND_BLOCKED",
+        "LIMITED_UNATTENDED_SEND_EXECUTED",
+        "LIMITED_UNATTENDED_SEND_FAILED",
+    }
+    executed = entry.get("executed")
+    external = entry.get("external_side_effects_executed")
+    if entry.get("schema") != "workflow_kernel_limited_unattended_target_receipt_v2":
+        return False
+    if entry.get("status") not in allowed_statuses:
+        return False
+    if type(executed) is not bool or type(external) is not bool or external is not executed:
+        return False
+    if (entry.get("status") == "LIMITED_UNATTENDED_SEND_EXECUTED") is not executed:
+        return False
+    return all(
+        (
+            _valid_day_bucket(entry.get("day_bucket")),
+            _valid_nonempty_string(entry.get("idempotency_key")),
+            _valid_nonempty_string(entry.get("target_id")),
+            isinstance(entry.get("blockers"), list),
+        )
+    )
+
+
+def _valid_ledger_entry(entry: dict[str, Any]) -> bool:
+    schema = entry.get("schema")
+    executed = entry.get("executed")
+    external = entry.get("external_side_effects_executed")
+    if type(executed) is not bool:
+        return False
+    if schema == "workflow_kernel_limited_unattended_send_receipt_v1":
+        if external is not None and (type(external) is not bool or external is not executed):
+            return False
+        if entry.get("status") not in {
+            "LIMITED_UNATTENDED_SEND_READY",
+            "LIMITED_UNATTENDED_SEND_BLOCKED",
+            "LIMITED_UNATTENDED_SEND_EXECUTED",
+            "LIMITED_UNATTENDED_SEND_FAILED",
+        }:
+            return False
+        if (entry.get("status") == "LIMITED_UNATTENDED_SEND_EXECUTED") is not executed:
+            return False
+        return all(
+            (
+                _valid_day_bucket(entry.get("day_bucket")),
+                _valid_nonempty_string(entry.get("idempotency_key")),
+                isinstance(entry.get("blockers"), list),
+            )
+        )
+    if schema == "workflow_kernel_limited_unattended_reservation_v1":
+        if external is not None and (type(external) is not bool or external is not False):
+            return False
+        return all(
+            (
+                entry.get("status") == "LIMITED_UNATTENDED_SEND_PENDING",
+                entry.get("reservation_state") == "pending",
+                executed is False,
+                _valid_day_bucket(entry.get("day_bucket")),
+                _valid_nonempty_string(entry.get("idempotency_key")),
+                _valid_nonempty_string(entry.get("target_id")),
+            )
+        )
+    if schema == "workflow_kernel_limited_unattended_dispatch_receipt_v2":
+        if type(external) is not bool or external is not executed:
+            return False
+        target_receipts = entry.get("target_receipts")
+        if not isinstance(target_receipts, list) or not all(
+            isinstance(receipt, dict) and _valid_target_receipt_v2(receipt) for receipt in target_receipts
+        ):
+            return False
+        if entry.get("status") not in {
+            "LIMITED_UNATTENDED_DISPATCH_READY",
+            "LIMITED_UNATTENDED_DISPATCH_BLOCKED",
+            "LIMITED_UNATTENDED_DISPATCH_EXECUTED",
+        }:
+            return False
+        executed_count = entry.get("executed_count")
+        target_count = entry.get("target_count")
+        if type(executed_count) is not int or executed_count < 0:
+            return False
+        if type(target_count) is not int or target_count < 0:
+            return False
+        if target_count != len(target_receipts):
+            return False
+        actual_executed = sum(receipt["executed"] is True for receipt in target_receipts)
+        if executed_count != actual_executed or executed is not (executed_count > 0):
+            return False
+        if (entry.get("status") == "LIMITED_UNATTENDED_DISPATCH_EXECUTED") is not executed:
+            return False
+        return all(
+            (
+                _valid_day_bucket(entry.get("day_bucket")),
+                isinstance(entry.get("blockers"), list),
+            )
+        )
+    return False
+
+
 def _execute_ledger_blocker(
     ledger_path: Path,
     *,
@@ -484,7 +593,7 @@ def _execute_ledger_blocker(
         entries = [json.loads(line) for line in lines]
     except json.JSONDecodeError:
         return "production_ledger_invalid_json"
-    if not all(isinstance(entry, dict) for entry in entries):
+    if not all(isinstance(entry, dict) and _valid_ledger_entry(entry) for entry in entries):
         return "production_ledger_invalid_entry"
     return None
 

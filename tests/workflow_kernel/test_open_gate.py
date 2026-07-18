@@ -62,7 +62,21 @@ def test_limited_unattended_sender_executes_once_and_blocks_duplicate(tmp_path, 
     manifest_path = tmp_path / "manifest.json"
     ledger_path = tmp_path / "ledger.jsonl"
     write_json(manifest_path, manifest)
-    ledger_path.write_text('{"executed":false}\n', encoding="utf-8")
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "schema": "workflow_kernel_limited_unattended_send_receipt_v1",
+                "status": "LIMITED_UNATTENDED_SEND_BLOCKED",
+                "executed": False,
+                "external_side_effects_executed": False,
+                "day_bucket": "20260718",
+                "idempotency_key": "historical-blocked-key",
+                "blockers": ["historical_blocker"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     def fake_send(target: str, payload: str) -> dict:
         return {"command": ["hermes", "send"], "returncode": 0, "stdout": '{"success": true, "message_id": "unit"}', "stderr": "", "parsed": {"success": True, "message_id": "unit"}}

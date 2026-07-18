@@ -55,6 +55,20 @@ def fake_registry():
     }
 
 
+VALID_NEUTRAL_LEDGER_ENTRY = {
+    "schema": "workflow_kernel_limited_unattended_send_receipt_v1",
+    "status": "LIMITED_UNATTENDED_SEND_BLOCKED",
+    "executed": False,
+    "day_bucket": "20260718",
+    "idempotency_key": "historical-blocked-key",
+    "blockers": ["historical_blocker"],
+}
+
+
+def write_valid_neutral_ledger(path: Path) -> None:
+    path.write_text(json.dumps(VALID_NEUTRAL_LEDGER_ENTRY) + "\n", encoding="utf-8")
+
+
 def test_default_ledger_is_profile_scoped_and_seeds_frozen_history(tmp_path, monkeypatch):
     mod = load()
     legacy = tmp_path / "frozen.jsonl"
@@ -98,7 +112,7 @@ def test_execute_direct_call_seeds_default_legacy_before_rate_limit_check(tmp_pa
     monkeypatch.setattr(mod, "run_send", fake_send)
     mf_path = manifest(tmp_path)
     source_ledger = tmp_path / "source.jsonl"
-    source_ledger.write_text('{"executed":false}\n', encoding="utf-8")
+    write_valid_neutral_ledger(source_ledger)
     first = mod.build_or_execute(mf_path, source_ledger, execute=True, target_id="telegram_home")
     assert first["executed"] is True
 
@@ -166,10 +180,163 @@ def test_execute_fails_closed_when_runtime_ledger_is_malformed(tmp_path, monkeyp
     assert result["blockers"] == ["production_ledger_invalid_json"]
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {},
+        {"executed": False},
+        {"schema": "unknown_receipt_v99", "executed": False},
+        {
+            "schema": "workflow_kernel_limited_unattended_reservation_v1",
+            "status": "LIMITED_UNATTENDED_SEND_PENDING",
+            "reservation_state": "pending",
+            "executed": False,
+        },
+    ],
+)
+def test_execute_fails_closed_when_runtime_ledger_entry_schema_is_invalid(tmp_path, entry):
+    mod = load()
+    runtime = tmp_path / "receipts.jsonl"
+    runtime.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+    result = mod.build_or_execute(tmp_path / "manifest.json", runtime, execute=True)
+
+    assert result["status"] == "LIMITED_UNATTENDED_DISPATCH_BLOCKED"
+    assert result["blockers"] == ["production_ledger_invalid_entry"]
+
+
+def test_execute_accepts_known_valid_ledger_schemas(tmp_path, monkeypatch):
+    mod = load()
+    entries = [
+        VALID_NEUTRAL_LEDGER_ENTRY,
+        {
+            "schema": "workflow_kernel_limited_unattended_reservation_v1",
+            "status": "LIMITED_UNATTENDED_SEND_PENDING",
+            "reservation_state": "pending",
+            "executed": False,
+            "day_bucket": "20260718",
+            "idempotency_key": "pending-key",
+            "target_id": "telegram_home",
+        },
+        {
+            "schema": "workflow_kernel_limited_unattended_dispatch_receipt_v2",
+            "status": "LIMITED_UNATTENDED_DISPATCH_EXECUTED",
+            "executed": True,
+            "external_side_effects_executed": True,
+            "day_bucket": "20260718",
+            "executed_count": 1,
+            "target_count": 1,
+            "blockers": [],
+            "target_receipts": [
+                {
+                    "schema": "workflow_kernel_limited_unattended_target_receipt_v2",
+                    "status": "LIMITED_UNATTENDED_SEND_EXECUTED",
+                    "executed": True,
+                    "external_side_effects_executed": True,
+                    "day_bucket": "20260718",
+                    "idempotency_key": "executed-key",
+                    "target_id": "telegram_home",
+                    "blockers": [],
+                }
+            ],
+        },
+    ]
+    monkeypatch.setattr(
+        mod,
+        "_build_or_execute_unlocked",
+        lambda *args, **kwargs: {
+            "status": "LIMITED_UNATTENDED_DISPATCH_READY",
+            "executed": False,
+            "target_count": 0,
+        },
+    )
+
+    for index, entry in enumerate(entries):
+        runtime = tmp_path / f"receipts-{index}.jsonl"
+        runtime.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+        result = mod.build_or_execute(tmp_path / "manifest.json", runtime, execute=True)
+        assert result["status"] == "LIMITED_UNATTENDED_DISPATCH_READY"
+
+
+def test_execute_rejects_dispatch_receipt_with_inconsistent_target_count(tmp_path):
+    mod = load()
+    entry = {
+        "schema": "workflow_kernel_limited_unattended_dispatch_receipt_v2",
+        "status": "LIMITED_UNATTENDED_DISPATCH_EXECUTED",
+        "executed": True,
+        "external_side_effects_executed": True,
+        "day_bucket": "20260718",
+        "executed_count": 1,
+        "target_count": 0,
+        "blockers": [],
+        "target_receipts": [
+            {
+                "schema": "workflow_kernel_limited_unattended_target_receipt_v2",
+                "status": "LIMITED_UNATTENDED_SEND_EXECUTED",
+                "executed": True,
+                "external_side_effects_executed": True,
+                "day_bucket": "20260718",
+                "idempotency_key": "executed-key",
+                "target_id": "telegram_home",
+                "blockers": [],
+            }
+        ],
+    }
+    runtime = tmp_path / "receipts.jsonl"
+    runtime.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+    result = mod.build_or_execute(tmp_path / "manifest.json", runtime, execute=True)
+
+    assert result["blockers"] == ["production_ledger_invalid_entry"]
+
+
+def test_execute_rejects_dispatch_receipt_consistency_mismatches(tmp_path):
+    mod = load()
+    base = {
+        "schema": "workflow_kernel_limited_unattended_dispatch_receipt_v2",
+        "status": "LIMITED_UNATTENDED_DISPATCH_EXECUTED",
+        "executed": True,
+        "external_side_effects_executed": True,
+        "day_bucket": "20260718",
+        "executed_count": 1,
+        "target_count": 1,
+        "blockers": [],
+        "target_receipts": [
+            {
+                "schema": "workflow_kernel_limited_unattended_target_receipt_v2",
+                "status": "LIMITED_UNATTENDED_SEND_EXECUTED",
+                "executed": True,
+                "external_side_effects_executed": True,
+                "day_bucket": "20260718",
+                "idempotency_key": "executed-key",
+                "target_id": "telegram_home",
+                "blockers": [],
+            }
+        ],
+    }
+    variants = []
+    for mutation in (
+        lambda entry: entry.update(executed_count=0),
+        lambda entry: entry.update(executed=False, external_side_effects_executed=False),
+        lambda entry: entry.update(external_side_effects_executed=False),
+        lambda entry: entry.update(status="LIMITED_UNATTENDED_DISPATCH_BLOCKED"),
+        lambda entry: entry["target_receipts"][0].update(external_side_effects_executed=False),
+        lambda entry: entry["target_receipts"][0].update(status="LIMITED_UNATTENDED_SEND_BLOCKED"),
+    ):
+        variant = json.loads(json.dumps(base))
+        mutation(variant)
+        variants.append(variant)
+
+    for index, entry in enumerate(variants):
+        runtime = tmp_path / f"invalid-consistency-{index}.jsonl"
+        runtime.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+        assert mod._execute_ledger_blocker(runtime) == "production_ledger_invalid_entry"
+
+
 def test_execute_holds_exclusive_lock_across_dispatch(tmp_path, monkeypatch):
     mod = load()
     runtime = tmp_path / "receipts.jsonl"
-    runtime.write_text('{"executed":false}\n', encoding="utf-8")
+    write_valid_neutral_ledger(runtime)
     events: list[str] = []
 
     @contextmanager
@@ -199,7 +366,7 @@ def test_execute_sends_once_when_manifest_registry_and_rate_limit_allow(tmp_path
     monkeypatch.setattr(mod, "run_send", lambda target, payload: {"returncode": 0, "parsed": {"success": True, "platform": "telegram", "chat_id": "1", "message_id": "2"}, "stdout": "{}", "stderr": "", "command": ["hermes", "send"]})
 
     ledger = tmp_path / "ledger.jsonl"
-    ledger.write_text('{"executed":false}\n', encoding="utf-8")
+    write_valid_neutral_ledger(ledger)
     result = mod.build_or_execute(manifest(tmp_path), ledger, execute=True, target_id="telegram_home")
 
     assert result["status"] == "LIMITED_UNATTENDED_DISPATCH_EXECUTED"
@@ -225,7 +392,7 @@ def test_execute_is_blocked_by_duplicate_and_daily_limit_without_send(tmp_path, 
 
     mf_path = manifest(tmp_path)
     ledger = tmp_path / "ledger.jsonl"
-    ledger.write_text('{"executed":false}\n', encoding="utf-8")
+    write_valid_neutral_ledger(ledger)
     first = mod.build_or_execute(mf_path, ledger, execute=True, target_id="telegram_home")
     duplicate = mod.build_or_execute(mf_path, ledger, execute=True, target_id="telegram_home")
 
@@ -300,7 +467,7 @@ def test_execute_rejects_group_or_world_writable_explicit_parent(tmp_path, monke
     parent.mkdir(mode=0o777)
     parent.chmod(0o777)
     ledger = parent / "receipts.jsonl"
-    ledger.write_text('{"executed":false}\n', encoding="utf-8")
+    write_valid_neutral_ledger(ledger)
     calls = []
     monkeypatch.setattr(mod, "_build_or_execute_unlocked", lambda *args, **kwargs: calls.append(True))
 
@@ -317,7 +484,7 @@ def test_execute_rejects_symlinked_ledger_ancestor(tmp_path, monkeypatch):
     parent.mkdir(parents=True, mode=0o700)
     parent.chmod(0o700)
     ledger = parent / "receipts.jsonl"
-    ledger.write_text('{"executed":false}\n', encoding="utf-8")
+    write_valid_neutral_ledger(ledger)
     alias = tmp_path / "alias"
     alias.symlink_to(outside, target_is_directory=True)
     calls = []
@@ -332,7 +499,7 @@ def test_execute_rejects_symlinked_ledger_ancestor(tmp_path, monkeypatch):
 def test_execute_fails_closed_without_no_follow_support(tmp_path, monkeypatch):
     mod = load()
     ledger = tmp_path / "receipts.jsonl"
-    ledger.write_text('{"executed":false}\n', encoding="utf-8")
+    write_valid_neutral_ledger(ledger)
     monkeypatch.delattr(mod.os, "O_NOFOLLOW", raising=False)
 
     result = mod.build_or_execute(tmp_path / "manifest.json", ledger, execute=True)
@@ -374,7 +541,7 @@ def test_public_append_ledger_rejects_symlink_target(tmp_path):
 def test_execute_fails_closed_when_private_permissions_are_unsupported(tmp_path, monkeypatch):
     mod = load()
     ledger = tmp_path / "receipts.jsonl"
-    ledger.write_text('{"executed":false}\n', encoding="utf-8")
+    write_valid_neutral_ledger(ledger)
     monkeypatch.setattr(mod.os, "name", "nt")
 
     result = mod.build_or_execute(tmp_path / "manifest.json", ledger, execute=True)
@@ -391,7 +558,7 @@ def test_pending_reservation_blocks_retry_if_final_receipt_append_crashes(tmp_pa
     calls = []
     monkeypatch.setattr(mod, "run_send", lambda target, payload: calls.append(payload) or {"returncode": 0, "parsed": {"success": True, "message_id": "2"}, "stdout": "{}", "stderr": "", "command": ["hermes", "send"]})
     ledger = tmp_path / "ledger.jsonl"
-    ledger.write_text('{"executed":false}\n', encoding="utf-8")
+    write_valid_neutral_ledger(ledger)
     real_append = mod._append_ledger_unlocked
 
     def fail_final_append(path, receipt, **kwargs):
