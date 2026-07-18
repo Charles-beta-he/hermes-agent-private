@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from hermes_constants import get_hermes_home
-from workflow_kernel.runtime_state import prefer_runtime_artifact, unattended_dry_run_report_path
+from workflow_kernel.runtime_state import unattended_dry_run_report_path
 
 SCHEMA_VERSION = 1
 LEDGER_FILENAME = "control_tower.db"
@@ -6390,18 +6390,73 @@ def record_workflow_kernel_policy_editor_decision(
     return {"status": status, "event": event, "projection": projection, "ledger": str(paths["ledger"])}
 
 
+def _workflow_kernel_phase55_snapshot_path(root: Path) -> Path:
+    return root / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+
+
+def _load_workflow_kernel_phase55(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("phase") != 55:
+        return None
+    if data.get("report_id") != "workflow_kernel_unattended_dry_run_scheduler_20260613_phase55":
+        return None
+    if data.get("status") != "UNATTENDED_DRY_RUN_SCHEDULER_READY":
+        return None
+    if any(data.get(field) is not False for field in ("external_side_effects_executed", "cron_state_mutated", "unattended_dispatch_enabled")):
+        return None
+    latest_receipt = data.get("latest_receipt")
+    if not isinstance(latest_receipt, dict):
+        return None
+    if latest_receipt.get("schema") != "workflow_kernel_unattended_dry_run_receipt_v1":
+        return None
+    if latest_receipt.get("status") != "UNATTENDED_DRY_RUN_RECEIPT_RECORDED":
+        return None
+    if latest_receipt.get("phase") != 55 or latest_receipt.get("mode") != "dry_run_preview":
+        return None
+    if latest_receipt.get("blockers") != []:
+        return None
+    rate_limit_decision = latest_receipt.get("rate_limit_decision")
+    if not isinstance(rate_limit_decision, dict) or rate_limit_decision.get("decision") != "dry_run_allowed":
+        return None
+    if any(latest_receipt.get(field) is not False for field in ("external_side_effects_executed", "unattended_dispatch_enabled", "would_send")):
+        return None
+    return data
+
+
+def _workflow_kernel_phase55_selection(root: Path) -> tuple[Path, dict[str, Any] | None, str]:
+    runtime = unattended_dry_run_report_path(get_hermes_home())
+    snapshot = _workflow_kernel_phase55_snapshot_path(root)
+    runtime_data = _load_workflow_kernel_phase55(runtime)
+    if runtime_data is not None:
+        return runtime, runtime_data, "runtime"
+    snapshot_data = _load_workflow_kernel_phase55(snapshot)
+    if snapshot_data is not None:
+        return snapshot, snapshot_data, "frozen_baseline"
+    return snapshot, None, "missing"
+
+
 def _workflow_kernel_phase55_path(root: Path) -> Path:
-    snapshot = root / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
-    return prefer_runtime_artifact(unattended_dry_run_report_path(get_hermes_home()), snapshot)
+    return _workflow_kernel_phase55_selection(root)[0]
+
+
+def _workflow_kernel_phase55_source(root: Path) -> str:
+    return _workflow_kernel_phase55_selection(root)[2]
 
 
 def build_workflow_kernel_policy_editor_projection() -> dict[str, Any]:
     paths = _workflow_kernel_policy_editor_paths()
     root = Path(__file__).resolve().parents[1]
     policy_path = root / "docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json"
-    phase55_path = _workflow_kernel_phase55_path(root)
+    _, phase55_data, phase55_source = _workflow_kernel_phase55_selection(root)
+    phase55 = phase55_data or {}
     policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
-    phase55 = json.loads(phase55_path.read_text()) if phase55_path.exists() else {}
     events: list[dict[str, Any]] = []
     if paths["ledger"].exists():
         for line in paths["ledger"].read_text().splitlines():
@@ -6416,6 +6471,8 @@ def build_workflow_kernel_policy_editor_projection() -> dict[str, Any]:
         "policy_digest": policy.get("policy_digest"),
         "policy_status": policy.get("status"),
         "phase55_status": phase55.get("status"),
+        "phase55_artifact_source": phase55_source,
+        "phase55_is_stale_baseline": phase55_source == "frozen_baseline",
         "pending_decisions": 0 if latest else 1,
         "latest_decision": latest,
         "approval_ledger": str(paths["ledger"]),
@@ -6439,7 +6496,7 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
     phase50_path = root / "docs/private/workflow-kernel-guarded-external-send/workflow_kernel_guarded_external_send_20260613_phase50.json"
     phase52_path = root / "docs/private/workflow-kernel-control-tower-projection/workflow_kernel_control_tower_projection_20260613_phase52.json"
     policy_path = root / "docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json"
-    phase55_path = _workflow_kernel_phase55_path(root)
+    _, dry_run_scheduler, phase55_source = _workflow_kernel_phase55_selection(root)
     phase57_path = root / "docs/private/workflow-kernel-dry-run-cron-rollout/workflow_kernel_dry_run_cron_rollout_20260613_phase57.json"
     phase58_path = root / "docs/private/workflow-kernel-guarded-send-runner-activation/workflow_kernel_guarded_send_runner_activation_20260613_phase58.json"
     phase59_path = root / "docs/private/workflow-kernel-guarded-manual-send-runner/workflow_kernel_guarded_manual_send_runner_20260613_phase59.json"
@@ -6507,7 +6564,6 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         guarded_send = json.loads(phase50_path.read_text())
         control_tower_projection = json.loads(phase52_path.read_text())
         policy = json.loads(policy_path.read_text()) if policy_path.exists() else None
-        dry_run_scheduler = json.loads(phase55_path.read_text()) if phase55_path.exists() else None
         dry_run_cron_rollout = json.loads(phase57_path.read_text()) if phase57_path.exists() else None
         guarded_send_activation = json.loads(phase58_path.read_text()) if phase58_path.exists() else None
         guarded_manual_runner = json.loads(phase59_path.read_text()) if phase59_path.exists() else None
@@ -6651,6 +6707,8 @@ def _workflow_kernel_control_tower_snapshot() -> dict[str, Any]:
         },
         "unattended_dry_run_scheduler": {
             "status": (dry_run_scheduler or {}).get("status", "not_compiled"),
+            "artifact_source": phase55_source,
+            "is_stale_baseline": phase55_source == "frozen_baseline",
             "cadence": (dry_run_scheduler or {}).get("cadence"),
             "latest_idempotency_key": ((dry_run_scheduler or {}).get("latest_receipt") or {}).get("idempotency_key"),
             "would_send": ((dry_run_scheduler or {}).get("latest_receipt") or {}).get("would_send"),

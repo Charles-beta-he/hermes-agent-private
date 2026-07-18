@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import stat
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,8 +22,18 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from workflow_kernel.io import write_json_artifact
-from workflow_kernel.runtime_state import seed_jsonl_once, unattended_dry_run_dir, unattended_dry_run_ledger_path
+from workflow_kernel.io import canonical_json_bytes, write_json_artifact
+from workflow_kernel.runtime_state import (
+    LedgerAnchor,
+    ensure_runtime_artifact_parent,
+    exclusive_ledger_lock,
+    open_ledger_file,
+    seed_jsonl_once,
+    unattended_dry_run_dir,
+    unattended_dry_run_ledger_path,
+    validate_private_file_target,
+    write_private_file_atomic,
+)
 
 DEFAULT_POLICY = ROOT / "docs/private/workflow-kernel-unattended-dispatch-policy/workflow_kernel_unattended_dispatch_policy_20260613_phase54.json"
 LEGACY_OUT = ROOT / "docs/private/workflow-kernel-unattended-dry-run-scheduler"
@@ -109,16 +121,70 @@ def build_dry_run_receipt(policy_report: dict[str, Any], *, payload: str = DEFAU
     }
 
 
+def _private_root_for_ledger(ledger_path: Path) -> Path | None:
+    return DEFAULT_LEDGER.parents[1] if ledger_path == DEFAULT_LEDGER else None
+
+
+def _append_receipt_unlocked(
+    ledger_path: Path,
+    receipt: dict[str, Any],
+    *,
+    private_root: Path | None,
+    anchor: LedgerAnchor | None = None,
+) -> None:
+    private_runtime = private_root is not None if anchor is not None else ensure_runtime_artifact_parent(
+        ledger_path,
+        private_root=private_root,
+    )
+    flags = os.O_CREAT | os.O_APPEND | os.O_WRONLY
+    descriptor = open_ledger_file(
+        ledger_path,
+        flags,
+        private_root=private_root,
+        anchor=anchor,
+        mode=0o600 if private_runtime else 0o666,
+    )
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise OSError(f"refusing non-regular or multiply-linked ledger: {ledger_path}")
+        if private_runtime:
+            os.fchmod(descriptor, 0o600)
+        payload = (json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+        while payload:
+            written = os.write(descriptor, payload)
+            payload = payload[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def append_receipt(ledger_path: Path, receipt: dict[str, Any]) -> None:
-    ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    with ledger_path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n")
+    private_root = _private_root_for_ledger(ledger_path)
+    with exclusive_ledger_lock(ledger_path, private_root=private_root) as anchor:
+        if ledger_path == DEFAULT_LEDGER:
+            prepare_default_ledger(ledger_path, anchor=anchor)
+        _append_receipt_unlocked(
+            ledger_path,
+            receipt,
+            private_root=private_root,
+            anchor=anchor,
+        )
 
 
-def prepare_default_ledger(ledger_path: Path) -> dict[str, object]:
+def prepare_default_ledger(
+    ledger_path: Path,
+    *,
+    anchor: LedgerAnchor | None = None,
+) -> dict[str, object]:
     if ledger_path != DEFAULT_LEDGER:
         return {"status": "explicit_path", "path": str(ledger_path)}
-    return seed_jsonl_once(LEGACY_LEDGER, ledger_path)
+    return seed_jsonl_once(
+        LEGACY_LEDGER,
+        ledger_path,
+        private_root=DEFAULT_LEDGER.parents[1],
+        anchor=anchor,
+    )
 
 
 def build_report(receipt: dict[str, Any], *, ledger_path: Path, cadence: str) -> dict[str, Any]:
@@ -138,10 +204,17 @@ def build_report(receipt: dict[str, Any], *, ledger_path: Path, cadence: str) ->
 
 
 def write_report(report: dict[str, Any], out_dir: Path) -> dict[str, str]:
-    out_dir.mkdir(parents=True, exist_ok=True)
     json_path = out_dir / "workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
     md_path = out_dir / "workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.md"
-    artifact = write_json_artifact(json_path, report)
+    private_root = DEFAULT_OUT.parent if out_dir == DEFAULT_OUT else None
+    private_runtime = ensure_runtime_artifact_parent(json_path, private_root=private_root)
+    if private_runtime:
+        assert private_root is not None
+        validate_private_file_target(json_path)
+        validate_private_file_target(md_path)
+        artifact = write_private_file_atomic(json_path, canonical_json_bytes(report), private_root=private_root)
+    else:
+        artifact = write_json_artifact(json_path, report)
     lines = [
         "# Workflow Kernel Unattended Dry-run Scheduler — Phase 55",
         "",
@@ -157,7 +230,10 @@ def write_report(report: dict[str, Any], out_dir: Path) -> dict[str, str]:
         "",
         f"Next boundary: {report['next_boundary']}",
     ]
-    md_path.write_text("\n".join(lines) + "\n")
+    if private_runtime:
+        write_private_file_atomic(md_path, ("\n".join(lines) + "\n").encode("utf-8"), private_root=private_root)
+    else:
+        md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"json": str(json_path), "md": str(md_path), "sha256": artifact["sha256"]}
 
 
@@ -172,7 +248,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--append-ledger", action="store_true")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
-    prepare_default_ledger(args.ledger)
     policy = read_policy(args.policy)
     receipt = build_dry_run_receipt(policy, payload=args.payload)
     if args.append_ledger:
