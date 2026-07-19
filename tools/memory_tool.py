@@ -547,6 +547,7 @@ class MemoryStore:
             working: List[str] = list(original)
             limit = self._char_limit(target)
 
+            committed_operation_indexes: List[int] = []
             for i, op in enumerate(operations):
                 op = op or {}
                 act = op.get("action")
@@ -560,6 +561,7 @@ class MemoryStore:
                     if content in working:
                         continue  # idempotent -- skip duplicate, don't fail the batch
                     working.append(content)
+                    committed_operation_indexes.append(i)
 
                 elif act == "replace":
                     if not old_text:
@@ -577,7 +579,9 @@ class MemoryStore:
                             target,
                             f"{pos}: '{old_text}' matched multiple distinct entries -- be more specific.",
                         )
-                    working[matches[0]] = content
+                    if working[matches[0]] != content:
+                        working[matches[0]] = content
+                        committed_operation_indexes.append(i)
 
                 elif act == "remove":
                     if not old_text:
@@ -591,6 +595,7 @@ class MemoryStore:
                             f"{pos}: '{old_text}' matched multiple distinct entries -- be more specific.",
                         )
                     working.pop(matches[0])
+                    committed_operation_indexes.append(i)
 
                 else:
                     return self._batch_error(
@@ -617,11 +622,13 @@ class MemoryStore:
             self._set_entries(target, working)
             self.save_to_disk(target)
 
-        return self._success_response(
+        response = self._success_response(
             target,
             f"Applied {len(operations)} operation(s).",
             changed=working != original,
         )
+        response["committed_operation_indexes"] = committed_operation_indexes
+        return response
 
     def _batch_error(self, target: str, message: str) -> Dict[str, Any]:
         """Build a batch-abort error that reports live (uncommitted) state."""

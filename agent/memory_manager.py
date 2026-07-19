@@ -646,7 +646,6 @@ class MemoryManager:
 
     def _submit_background(self, fn) -> bool:
         """Atomically accept work while active, otherwise reject observably."""
-        run_inline = False
         with self._sync_executor_lock:
             if self._sync_lifecycle != "active":
                 self._background_rejections += 1
@@ -661,8 +660,9 @@ class MemoryManager:
                         thread_name_prefix="mem-sync",
                     )
                 except Exception as e:  # pragma: no cover - resource exhaustion
+                    self._background_failures += 1
                     logger.warning("Failed to create memory sync executor: %s", e)
-                    run_inline = True
+                    return False
 
             executor = self._sync_executor
             if executor is not None:
@@ -674,8 +674,6 @@ class MemoryManager:
                     logger.warning("Memory background submit failed: %s", e)
                     return False
 
-        if run_inline:
-            return self._run_background_task(fn)
         return False
 
     def _get_sync_executor(self) -> Optional[ThreadPoolExecutor]:
@@ -937,11 +935,14 @@ class MemoryManager:
         target: str,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Notify external providers when the built-in memory tool writes.
+    ) -> bool:
+        """Notify external providers and report whether every sink succeeded.
 
         Skips the builtin provider itself (it's the source of the write).
+        Sink failures enter the observable background-failure barrier so a
+        committed canonical write cannot silently diverge from its mirror.
         """
+        succeeded = True
         for provider in self._providers:
             if provider.name == "builtin":
                 continue
@@ -956,10 +957,14 @@ class MemoryManager:
                 else:
                     provider.on_memory_write(action, target, content)
             except Exception as e:
-                logger.debug(
+                succeeded = False
+                with self._sync_executor_lock:
+                    self._background_failures += 1
+                logger.warning(
                     "Memory provider '%s' on_memory_write failed: %s",
                     provider.name, e,
                 )
+        return succeeded
 
     # Actions the bridge mirrors to external providers. The built-in memory
     # tool can also return non-mutating shapes (errors, staged-for-approval
@@ -989,31 +994,65 @@ class MemoryManager:
         tool_args: Dict[str, Any],
         *,
         build_metadata: Optional[Callable[[], Dict[str, Any]]] = None,
-    ) -> None:
-        """Mirror only the one top-level ABI operation actually executed.
-
-        The request's nested ``operations`` data is untrusted input, not a
-        receipt of which sub-operations committed.
-        """
+    ) -> bool:
+        """Mirror only operations attested by the canonical write receipt."""
         if not self._memory_tool_result_succeeded(tool_result):
-            return
+            return True
 
-        action = str(tool_args.get("action") or "")
-        if action not in self._MIRRORED_MEMORY_ACTIONS:
-            return
-        try:
-            metadata = dict(build_metadata() if build_metadata else {})
-            old_text = tool_args.get("old_text")
-            if old_text:
-                metadata["old_text"] = str(old_text)
-            self.on_memory_write(
-                action,
-                str(tool_args.get("target") or "memory"),
-                str(tool_args.get("content") or ""),
-                metadata=metadata,
-            )
-        except Exception as e:
-            logger.debug("notify_memory_tool_write failed for op %s: %s", action, e)
+        receipt = tool_result
+        if isinstance(receipt, str):
+            try:
+                receipt = json.loads(receipt)
+            except Exception:
+                return True
+
+        raw_operations = tool_args.get("operations")
+        if isinstance(raw_operations, list) and raw_operations:
+            committed = receipt.get("committed_operation_indexes")
+            if not isinstance(committed, list) or any(
+                not isinstance(index, int)
+                or isinstance(index, bool)
+                or index < 0
+                or index >= len(raw_operations)
+                for index in committed
+            ):
+                with self._sync_executor_lock:
+                    self._background_failures += 1
+                logger.warning("Committed memory batch lacked a valid operation receipt")
+                return False
+            operations = [raw_operations[index] for index in committed]
+        else:
+            operations = [{
+                "action": tool_args.get("action"),
+                "content": tool_args.get("content"),
+                "old_text": tool_args.get("old_text"),
+            }]
+
+        succeeded = True
+        target = str(tool_args.get("target") or "memory")
+        for op in operations:
+            if not isinstance(op, dict):
+                continue
+            action = str(op.get("action") or "")
+            if action not in self._MIRRORED_MEMORY_ACTIONS:
+                continue
+            try:
+                metadata = dict(build_metadata() if build_metadata else {})
+                old_text = op.get("old_text")
+                if old_text:
+                    metadata["old_text"] = str(old_text)
+                succeeded = self.on_memory_write(
+                    action,
+                    target,
+                    str(op.get("content") or ""),
+                    metadata=metadata,
+                ) and succeeded
+            except Exception as e:
+                succeeded = False
+                with self._sync_executor_lock:
+                    self._background_failures += 1
+                logger.warning("notify_memory_tool_write failed for op %s: %s", action, e)
+        return succeeded
 
     def on_delegation(self, task: str, result: str, *,
                       child_session_id: str = "", **kwargs) -> None:

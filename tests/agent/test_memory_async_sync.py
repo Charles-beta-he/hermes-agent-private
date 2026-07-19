@@ -219,3 +219,37 @@ def test_flush_pending_reports_background_provider_failure():
     status = mgr.background_status()
     assert status["failures"] == 1
     assert status["rejections"] == 0
+
+
+def test_executor_creation_failure_rejects_without_inline_provider_use(monkeypatch):
+    import tools.daemon_pool as daemon_pool_module
+
+    def _fail_executor(*args, **kwargs):
+        raise RuntimeError("injected executor construction failure")
+
+    monkeypatch.setattr(daemon_pool_module, "DaemonThreadPoolExecutor", _fail_executor)
+    sync_called = threading.Event()
+    closed = threading.Event()
+
+    class _NoInlineProvider(_SlowProvider):
+        _name = "no-inline-fallback"
+
+        def sync_turn(self, *args, **kwargs):
+            sync_called.set()
+
+        def shutdown(self):
+            closed.set()
+
+    mgr = MemoryManager()
+    mgr.add_provider(_NoInlineProvider(delay=0.0))
+
+    assert mgr.sync_all("first", "response") is False
+    assert sync_called.is_set() is False
+    status = mgr.background_status()
+    assert status["failures"] == 1
+    assert status["executor_active"] is False
+
+    mgr.shutdown_all()
+    assert closed.wait(timeout=1)
+    assert mgr.background_status()["lifecycle"] == "shutdown"
+    assert mgr.flush_pending(timeout=1) is False

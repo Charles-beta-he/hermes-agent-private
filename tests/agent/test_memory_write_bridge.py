@@ -82,24 +82,36 @@ def test_skips_uncommitted_or_unrecognized_write(tool_result):
     assert provider.calls == []
 
 
-def test_mirrors_only_top_level_operation_and_ignores_nested_request_fields():
+def test_mirrors_top_level_operation():
     manager, provider = _manager_with_provider()
-    manager.notify_memory_tool_write(
+    assert manager.notify_memory_tool_write(
         {"success": True, "changed": True},
         {
             "action": "add",
             "target": "memory",
             "content": "actually added",
-            "operations": [{"action": "remove", "old_text": "never removed"}],
         },
         build_metadata=lambda: {"write_origin": "memory_tool"},
-    )
+    ) is True
     assert provider.calls == [{
         "action": "add",
         "target": "memory",
         "content": "actually added",
         "metadata": {"write_origin": "memory_tool"},
     }]
+
+
+def test_committed_batch_without_canonical_operation_receipt_fails_closed():
+    manager, provider = _manager_with_provider()
+    assert manager.notify_memory_tool_write(
+        {"success": True, "changed": True},
+        {
+            "target": "memory",
+            "operations": [{"action": "remove", "old_text": "unattested"}],
+        },
+    ) is False
+    assert provider.calls == []
+    assert manager.flush_pending(timeout=1) is False
 
 
 def test_preserves_old_text_for_top_level_replace():
@@ -146,3 +158,50 @@ def test_builtin_receipts_distinguish_mutation_from_noop(tmp_path, monkeypatch):
     for result in (first, duplicate, same_replace, duplicate_batch):
         manager.notify_memory_tool_write(result, args)
     assert [call["content"] for call in provider.calls] == ["same fact"]
+
+
+def test_real_batch_receipt_mirrors_only_committed_operations(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    from tools.memory_tool import MemoryStore, memory_tool
+
+    store = MemoryStore()
+    store.load_from_disk()
+    assert store.add("memory", "existing fact")["changed"] is True
+    args = {
+        "target": "memory",
+        "operations": [
+            {"action": "add", "content": "existing fact"},
+            {"action": "add", "content": "new batch fact"},
+        ],
+    }
+    result = memory_tool(store=store, **args)
+    receipt = json.loads(result)
+    assert receipt["success"] is True
+    assert receipt["changed"] is True
+    assert receipt["committed_operation_indexes"] == [1]
+
+    manager, provider = _manager_with_provider()
+    assert manager.notify_memory_tool_write(result, args) is True
+    assert provider.calls == [{
+        "action": "add",
+        "target": "memory",
+        "content": "new batch fact",
+        "metadata": {},
+    }]
+
+
+def test_memory_write_provider_failure_is_observable():
+    class _FailingWriteProvider(_RecordingProvider):
+        def on_memory_write(self, action, target, content, metadata=None):
+            raise RuntimeError("injected receipt sink failure")
+
+    manager = MemoryManager()
+    manager.add_provider(_FailingWriteProvider())
+    accepted = manager.notify_memory_tool_write(
+        {"success": True, "changed": True},
+        {"action": "add", "target": "memory", "content": "fact"},
+    )
+
+    assert accepted is False
+    assert manager.flush_pending(timeout=1) is False
+    assert manager.background_status()["failures"] == 1
