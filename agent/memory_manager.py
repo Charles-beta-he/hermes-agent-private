@@ -1045,13 +1045,13 @@ class MemoryManager:
                 continue
             try:
                 metadata = dict(build_metadata() if build_metadata else {})
-                old_text = op.get("old_text")
+                old_text = str(op.get("old_text") or "").strip()
                 if old_text:
-                    metadata["old_text"] = str(old_text)
+                    metadata["old_text"] = old_text
                 succeeded = self.on_memory_write(
                     action,
                     target,
-                    str(op.get("content") or ""),
+                    str(op.get("content") or "").strip(),
                     metadata=metadata,
                 ) and succeeded
             except Exception as e:

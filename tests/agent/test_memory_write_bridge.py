@@ -171,7 +171,7 @@ def test_real_batch_receipt_mirrors_only_committed_operations(tmp_path, monkeypa
         "target": "memory",
         "operations": [
             {"action": "add", "content": "existing fact"},
-            {"action": "add", "content": "new batch fact"},
+            {"action": "add", "content": "  new batch fact  "},
         ],
     }
     result = memory_tool(store=store, **args)
