@@ -221,6 +221,22 @@ def test_flush_pending_reports_background_provider_failure():
     assert status["rejections"] == 0
 
 
+def test_flush_pending_reports_background_prefetch_failure():
+    class _FailingPrefetchProvider(_SlowProvider):
+        _name = "failing-prefetch"
+
+        def queue_prefetch(self, *args, **kwargs):
+            raise RuntimeError("injected prefetch failure")
+
+    mgr = MemoryManager()
+    mgr.add_provider(_FailingPrefetchProvider(delay=0.0))
+    mgr.queue_prefetch_all("hi", session_id="s1")
+    assert mgr.flush_pending(timeout=1) is False
+    status = mgr.background_status()
+    assert status["failures"] == 1
+    assert status["rejections"] == 0
+
+
 def test_executor_creation_failure_rejects_without_inline_provider_use(monkeypatch):
     import tools.daemon_pool as daemon_pool_module
 

@@ -555,14 +555,21 @@ class MemoryManager:
             return
 
         def _run() -> None:
+            errors = []
             for provider in providers:
                 try:
                     provider.queue_prefetch(clean_query, session_id=session_id)
                 except Exception as e:
-                    logger.debug(
-                        "Memory provider '%s' queue_prefetch failed (non-fatal): %s",
+                    errors.append((provider.name, e))
+                    logger.warning(
+                        "Memory provider '%s' queue_prefetch failed: %s",
                         provider.name, e,
                     )
+            if errors:
+                names = ", ".join(name for name, _ in errors)
+                raise RuntimeError(
+                    f"memory queue_prefetch failed for provider(s): {names}"
+                )
 
         self._submit_background(_run)
 

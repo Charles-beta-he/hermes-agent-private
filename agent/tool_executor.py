@@ -1381,7 +1381,7 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                 # providers. All gating/op-expansion lives behind the manager
                 # interface (MemoryManager.notify_memory_tool_write).
                 if agent._memory_manager:
-                    agent._memory_manager.notify_memory_tool_write(
+                    mirrored = agent._memory_manager.notify_memory_tool_write(
                         result,
                         next_args,
                         build_metadata=lambda: agent._build_memory_write_metadata(
@@ -1389,6 +1389,11 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                             tool_call_id=getattr(tool_call, "id", None),
                         ),
                     )
+                    if not mirrored:
+                        logger.warning(
+                            "Built-in memory write committed, but an external "
+                            "memory receipt mirror failed"
+                        )
                 return result
             function_result, function_args = _run_agent_tool_execution_middleware(
                 agent,
