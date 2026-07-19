@@ -369,7 +369,11 @@ class MemoryStore:
 
             # Reject exact duplicates
             if content in entries:
-                return self._success_response(target, "Entry already exists (no duplicate added).")
+                return self._success_response(
+                    target,
+                    "Entry already exists (no duplicate added).",
+                    changed=False,
+                )
 
             # Calculate what the new total would be
             new_entries = entries + [content]
@@ -394,7 +398,7 @@ class MemoryStore:
             self._set_entries(target, entries)
             self.save_to_disk(target)
 
-        return self._success_response(target, "Entry added.")
+        return self._success_response(target, "Entry added.", changed=True)
 
     def replace(self, target: str, old_text: str, new_content: str) -> Dict[str, Any]:
         """Find entry containing old_text substring, replace it with new_content."""
@@ -459,11 +463,13 @@ class MemoryStore:
                     "usage": f"{current:,}/{limit:,}",
                 })
 
-            entries[idx] = new_content
-            self._set_entries(target, entries)
-            self.save_to_disk(target)
+            changed = entries[idx] != new_content
+            if changed:
+                entries[idx] = new_content
+                self._set_entries(target, entries)
+                self.save_to_disk(target)
 
-        return self._success_response(target, "Entry replaced.")
+        return self._success_response(target, "Entry replaced.", changed=changed)
 
     def remove(self, target: str, old_text: str) -> Dict[str, Any]:
         """Remove the entry containing old_text substring."""
@@ -503,7 +509,7 @@ class MemoryStore:
             self._set_entries(target, entries)
             self.save_to_disk(target)
 
-        return self._success_response(target, "Entry removed.")
+        return self._success_response(target, "Entry removed.", changed=True)
 
     def apply_batch(self, target: str, operations: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Apply a sequence of add/replace/remove ops to one target atomically.
@@ -537,7 +543,8 @@ class MemoryStore:
                 return _drift_error(self._path_for(target), bak)
 
             # Work on a copy; only commit if the whole batch validates.
-            working: List[str] = list(self._entries_for(target))
+            original: List[str] = list(self._entries_for(target))
+            working: List[str] = list(original)
             limit = self._char_limit(target)
 
             for i, op in enumerate(operations):
@@ -610,7 +617,11 @@ class MemoryStore:
             self._set_entries(target, working)
             self.save_to_disk(target)
 
-        return self._success_response(target, f"Applied {len(operations)} operation(s).")
+        return self._success_response(
+            target,
+            f"Applied {len(operations)} operation(s).",
+            changed=working != original,
+        )
 
     def _batch_error(self, target: str, message: str) -> Dict[str, Any]:
         """Build a batch-abort error that reports live (uncommitted) state."""
@@ -643,7 +654,13 @@ class MemoryStore:
         """Truncated one-line previews of entries for error feedback."""
         return [e[:width] + ("..." if len(e) > width else "") for e in entries]
 
-    def _success_response(self, target: str, message: str = None) -> Dict[str, Any]:
+    def _success_response(
+        self,
+        target: str,
+        message: Optional[str] = None,
+        *,
+        changed: bool = False,
+    ) -> Dict[str, Any]:
         # A successful write means the consolidation loop made progress, so the
         # per-turn failure budget resets (the cap counts consecutive failures,
         # not lifetime ones within a turn) (#42405).
@@ -663,6 +680,9 @@ class MemoryStore:
         resp = {
             "success": True,
             "done": True,
+            # A successful no-op is not a committed mutation. Durable-write
+            # mirrors must gate on this explicit receipt field.
+            "changed": changed,
             "target": target,
             "usage": f"{pct}% — {current:,}/{limit:,} chars",
             "entry_count": len(entries),

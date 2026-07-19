@@ -15,6 +15,7 @@ The fix dispatches provider work to a single-worker background executor.
 for session boundaries and deterministic tests. ``shutdown_all`` drains the
 executor with a bounded timeout so a wedged provider can't hang teardown.
 """
+import threading
 import time
 
 import pytest
@@ -136,3 +137,85 @@ def test_writes_are_serialized_in_order():
         mgr.sync_all(f"turn-{i}", "resp", session_id="s1")
     assert mgr.flush_pending(timeout=10) is True
     assert order == [f"turn-{i}" for i in range(5)]
+
+
+def test_shutdown_rejects_late_sync_without_recreating_executor(monkeypatch):
+    import agent.memory_manager as memory_manager_module
+
+    monkeypatch.setattr(memory_manager_module, "_SYNC_DRAIN_TIMEOUT_S", 0.05)
+    started = threading.Event()
+    release = threading.Event()
+    shutdown_done = threading.Event()
+
+    class _BlockingProvider(_SlowProvider):
+        _name = "blocking"
+
+        def sync_turn(self, *args, **kwargs):
+            started.set()
+            release.wait(timeout=5)
+
+        def shutdown(self):
+            shutdown_done.set()
+
+    mgr = MemoryManager()
+    mgr.add_provider(_BlockingProvider(delay=0.0))
+    assert mgr.sync_all("first", "response") is True
+    assert started.wait(timeout=1)
+
+    t0 = time.monotonic()
+    mgr.shutdown_all()
+    assert time.monotonic() - t0 < 0.5
+    assert shutdown_done.is_set() is False
+    assert mgr.sync_all("late", "must be rejected") is False
+    assert mgr._sync_executor is None
+    assert mgr.flush_pending(timeout=0.1) is False
+
+    release.set()
+    assert shutdown_done.wait(timeout=1)
+
+
+def test_flush_pending_waits_for_shutdown_drain(monkeypatch):
+    import agent.memory_manager as memory_manager_module
+
+    monkeypatch.setattr(memory_manager_module, "_SYNC_DRAIN_TIMEOUT_S", 0.05)
+    started = threading.Event()
+    release = threading.Event()
+    shutdown_done = threading.Event()
+
+    class _BlockingProvider(_SlowProvider):
+        _name = "blocking-flush"
+
+        def sync_turn(self, *args, **kwargs):
+            started.set()
+            release.wait(timeout=5)
+
+        def shutdown(self):
+            shutdown_done.set()
+
+    mgr = MemoryManager()
+    mgr.add_provider(_BlockingProvider(delay=0.0))
+    assert mgr.sync_all("first", "response") is True
+    assert started.wait(timeout=1)
+    mgr.shutdown_all()
+    assert mgr.background_status()["lifecycle"] == "shutting_down"
+    assert mgr.flush_pending(timeout=0.02) is False
+
+    release.set()
+    assert shutdown_done.wait(timeout=1)
+    assert mgr.flush_pending(timeout=1) is True
+
+
+def test_flush_pending_reports_background_provider_failure():
+    class _FailingProvider(_SlowProvider):
+        _name = "failing"
+
+        def sync_turn(self, *args, **kwargs):
+            raise RuntimeError("injected sync failure")
+
+    mgr = MemoryManager()
+    mgr.add_provider(_FailingProvider(delay=0.0))
+    assert mgr.sync_all("hi", "response") is True
+    assert mgr.flush_pending(timeout=1) is False
+    status = mgr.background_status()
+    assert status["failures"] == 1
+    assert status["rejections"] == 0
