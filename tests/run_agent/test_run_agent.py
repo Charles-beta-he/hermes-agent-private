@@ -2582,6 +2582,39 @@ class TestExecuteToolCalls:
         assert metadata["tool_call_id"] == "mem-1"
         assert messages[-1]["tool_call_id"] == "mem-1"
 
+    def test_sequential_memory_mirror_rejection_is_logged_without_rewriting_tool_success(
+        self, agent, caplog
+    ):
+        tc = _mock_tool_call(
+            name="memory",
+            arguments=json.dumps({"action": "add", "target": "memory", "content": "durable"}),
+            call_id="mem-rejected",
+        )
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc])
+        messages = []
+
+        class RejectingMemoryManager(MemoryManager):
+            def has_tool(self, tool_name):
+                return False
+
+            def notify_memory_tool_write(self, *args, **kwargs):
+                return False
+
+        agent._memory_manager = RejectingMemoryManager()
+        agent._memory_store = object()
+
+        with (
+            patch(
+                "tools.memory_tool.memory_tool",
+                return_value=json.dumps({"success": True, "changed": True}),
+            ),
+            caplog.at_level(logging.WARNING, logger="agent.tool_executor"),
+        ):
+            agent._execute_tool_calls_sequential(mock_msg, messages, "task-1")
+
+        assert json.loads(messages[-1]["content"])["success"] is True
+        assert "external memory receipt mirror failed" in caplog.text
+
     def test_keyboard_interrupt_emits_cancelled_post_tool_hook(self, agent, monkeypatch):
         tc = _mock_tool_call(name="web_search", arguments='{"q":"test"}', call_id="c1")
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc])
@@ -3600,6 +3633,41 @@ class TestConcurrentToolExecution:
         assert (action, target, content) == ("remove", "memory", "")
         assert metadata["old_text"] == old_text
         assert metadata["tool_call_id"] == "mem-1"
+
+    def test_invoke_tool_memory_mirror_rejection_is_logged_without_rewriting_tool_success(
+        self, agent, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(
+            "hermes_cli.plugins.get_pre_tool_call_block_message",
+            lambda *args, **kwargs: None,
+        )
+
+        class RejectingMemoryManager(MemoryManager):
+            def has_tool(self, tool_name):
+                return False
+
+            def notify_memory_tool_write(self, *args, **kwargs):
+                return False
+
+        agent._memory_manager = RejectingMemoryManager()
+        agent._memory_store = object()
+
+        with (
+            patch(
+                "tools.memory_tool.memory_tool",
+                return_value=json.dumps({"success": True, "changed": True}),
+            ),
+            caplog.at_level(logging.WARNING, logger="agent.agent_runtime_helpers"),
+        ):
+            result = agent._invoke_tool(
+                "memory",
+                {"action": "add", "target": "memory", "content": "durable"},
+                "task-1",
+                tool_call_id="mem-rejected",
+            )
+
+        assert json.loads(result)["success"] is True
+        assert "external memory receipt mirror failed" in caplog.text
 
     def test_invoke_tool_memory_failed_remove_skips_provider_notification(self, agent, monkeypatch):
         monkeypatch.setattr(
