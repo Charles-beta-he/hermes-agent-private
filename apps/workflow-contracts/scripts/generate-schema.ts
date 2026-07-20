@@ -5,6 +5,7 @@ import { toClosureV1JsonSchema } from '../src/closure'
 import { toEvidenceV1JsonSchema } from '../src/evidence'
 import { toVerifierVoteV1JsonSchema } from '../src/verifier-vote'
 import { toWorkflowRunStatusV1JsonSchema } from '../src/workflow-run-status'
+import { toWorkflowRunTransitionV1JsonSchema } from '../src/workflow-run-transition'
 
 const schemaDir = fileURLToPath(new URL('../../../schemas/', import.meta.url))
 
@@ -13,6 +14,10 @@ const schemas = [
   ['verifier-vote-v1.schema.json', toVerifierVoteV1JsonSchema()],
   ['closure-v1.schema.json', toClosureV1JsonSchema()],
   ['workflow-run-status-v1.schema.json', toWorkflowRunStatusV1JsonSchema()],
+  [
+    'workflow-run-transition-v1.schema.json',
+    toWorkflowRunTransitionV1JsonSchema(),
+  ],
 ] as const
 
 await Promise.all(

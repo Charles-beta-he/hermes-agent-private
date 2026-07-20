@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "const": "proposed"
+        },
+        "to": {
+          "type": "string",
+          "const": "claimed"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "const": "claimed"
+        },
+        "to": {
+          "type": "string",
+          "const": "running"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "const": "running"
+        },
+        "to": {
+          "type": "string",
+          "const": "review"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "const": "review"
+        },
+        "to": {
+          "type": "string",
+          "const": "done"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "title": "Hermes WorkflowRunTransitionV1"
+}

@@ -16,6 +16,8 @@ CLOSURE_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "closure-v
 CLOSURE_SCHEMA_PATH = REPO_ROOT / "schemas" / "closure-v1.schema.json"
 RUN_STATUS_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "workflow-run-status-v1" / "cases.json"
 RUN_STATUS_SCHEMA_PATH = REPO_ROOT / "schemas" / "workflow-run-status-v1.schema.json"
+TRANSITION_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "workflow-run-transition-v1" / "cases.json"
+TRANSITION_SCHEMA_PATH = REPO_ROOT / "schemas" / "workflow-run-transition-v1.schema.json"
 RUN_STATUS_TRANSITION_SCHEMAS = (
     REPO_ROOT / "schemas" / "runtime_claim_execution_packet.schema.json",
     REPO_ROOT / "schemas" / "runtime_execution_worker_packet.schema.json",
@@ -81,3 +83,21 @@ def test_workflow_run_status_v1_matches_runtime_packet_lifecycle() -> None:
 
     generated = json.loads(RUN_STATUS_SCHEMA_PATH.read_text(encoding="utf-8"))
     assert generated["enum"] == observed
+
+    transition_validator = Draft202012Validator(
+        json.loads(TRANSITION_SCHEMA_PATH.read_text(encoding="utf-8"))
+    )
+    expected_edges = set(zip(observed, observed[1:]))
+    for source in observed:
+        for destination in observed:
+            errors = list(
+                transition_validator.iter_errors(
+                    {"from": source, "to": destination}
+                )
+            )
+            assert (not errors) is ((source, destination) in expected_edges)
+
+
+@pytest.mark.parametrize("case", _cases(TRANSITION_CASES_PATH), ids=lambda case: case["name"])
+def test_workflow_run_transition_v1_fixture_parity(case: dict) -> None:
+    _assert_schema_case(TRANSITION_SCHEMA_PATH, case, "WorkflowRunTransitionV1")

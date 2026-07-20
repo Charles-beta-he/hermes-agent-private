@@ -1,0 +1,14 @@
+[
+  { "name": "valid proposed to claimed", "valid": true, "value": { "from": "proposed", "to": "claimed" } },
+  { "name": "valid claimed to running", "valid": true, "value": { "from": "claimed", "to": "running" } },
+  { "name": "valid running to review", "valid": true, "value": { "from": "running", "to": "review" } },
+  { "name": "valid review to done", "valid": true, "value": { "from": "review", "to": "done" } },
+  { "name": "invalid skipped transition", "valid": false, "value": { "from": "proposed", "to": "running" } },
+  { "name": "invalid reverse transition", "valid": false, "value": { "from": "review", "to": "running" } },
+  { "name": "invalid self transition", "valid": false, "value": { "from": "running", "to": "running" } },
+  { "name": "invalid blocked transition", "valid": false, "value": { "from": "running", "to": "blocked" } },
+  { "name": "invalid unknown source", "valid": false, "value": { "from": "todo", "to": "claimed" } },
+  { "name": "invalid authority field", "valid": false, "value": { "from": "review", "to": "done", "authorized": true } },
+  { "name": "invalid missing destination", "valid": false, "value": { "from": "claimed" } },
+  { "name": "invalid non-object", "valid": false, "value": "proposed->claimed" }
+]

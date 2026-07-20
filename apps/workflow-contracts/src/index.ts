@@ -14,7 +14,16 @@ export {
   VerifierVoteV1Schema,
 } from './verifier-vote'
 export {
+  replayWorkflowRunTransitionsV1,
+  type WorkflowRunReplayV1Result,
+} from './workflow-run-replay'
+export {
   toWorkflowRunStatusV1JsonSchema,
   type WorkflowRunStatusV1,
   WorkflowRunStatusV1Schema,
 } from './workflow-run-status'
+export {
+  toWorkflowRunTransitionV1JsonSchema,
+  type WorkflowRunTransitionV1,
+  WorkflowRunTransitionV1Schema,
+} from './workflow-run-transition'
