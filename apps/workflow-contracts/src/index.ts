@@ -14,6 +14,11 @@ export {
   VerifierVoteV1Schema,
 } from './verifier-vote'
 export {
+  projectWorkflowRunPacketV1,
+  type WorkflowRunPacketProjectionV1,
+  type WorkflowRunPacketStageV1,
+} from './workflow-run-packet-projection'
+export {
   replayWorkflowRunTransitionsV1,
   type WorkflowRunReplayV1Result,
 } from './workflow-run-replay'
