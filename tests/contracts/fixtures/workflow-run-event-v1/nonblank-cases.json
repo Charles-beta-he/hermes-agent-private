@@ -1,0 +1,23 @@
+[
+  { "name": "empty", "valid": false, "value": "" },
+  { "name": "ASCII space only", "valid": false, "value": " " },
+  { "name": "tab only", "valid": false, "value": "\t" },
+  { "name": "LF only", "valid": false, "value": "\n" },
+  { "name": "CR only", "valid": false, "value": "\r" },
+  { "name": "CRLF only", "valid": false, "value": "\r\n" },
+  { "name": "NEL only", "valid": false, "value": "\u0085" },
+  { "name": "NBSP only", "valid": false, "value": "\u00a0" },
+  { "name": "Ogham space only", "valid": false, "value": "\u1680" },
+  { "name": "file separator only", "valid": false, "value": "\u001c" },
+  { "name": "Unicode line separator only", "valid": false, "value": "\u2028" },
+  { "name": "Unicode paragraph separator only", "valid": false, "value": "\u2029" },
+  { "name": "narrow NBSP only", "valid": false, "value": "\u202f" },
+  { "name": "medium mathematical space only", "valid": false, "value": "\u205f" },
+  { "name": "ideographic space only", "valid": false, "value": "\u3000" },
+  { "name": "BOM only", "valid": false, "value": "\ufeff" },
+  { "name": "embedded NUL control", "valid": false, "value": "run\u0000-1" },
+  { "name": "wrapped tab and newline controls preserved", "valid": true, "value": " \tmeaningful\n " },
+  { "name": "ASCII-space wrapped meaningful", "valid": true, "value": "  run-1  " },
+  { "name": "NBSP-wrapped meaningful", "valid": true, "value": "\u00a0run-1\u00a0" },
+  { "name": "Unicode meaningful", "valid": true, "value": "运行-1" }
+]

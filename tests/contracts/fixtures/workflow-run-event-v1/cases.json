@@ -1,0 +1,241 @@
+[
+  {
+    "name": "valid first workflow event",
+    "valid": true,
+    "value": {
+      "schema_version": "workflow_run_event_v1",
+      "run_id": "run-1",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "2026-07-20T00:00:01Z",
+      "provenance": {
+        "producer": "workflow_runtime_claim_executor",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "transition": { "from": "proposed", "to": "claimed" },
+      "event_id": "wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"
+    }
+  },
+  {
+    "name": "missing event id",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_run_event_v1",
+      "run_id": "run-1",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "2026-07-20T00:00:01Z",
+      "provenance": {
+        "producer": "workflow_runtime_claim_executor",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "transition": { "from": "proposed", "to": "claimed" }
+    }
+  },
+  {
+    "name": "unknown top-level field",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_run_event_v1",
+      "run_id": "run-1",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "2026-07-20T00:00:01Z",
+      "provenance": {
+        "producer": "workflow_runtime_claim_executor",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "transition": { "from": "proposed", "to": "claimed" },
+      "event_id": "wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b",
+      "extra": true
+    }
+  },
+  {
+    "name": "invalid schema version",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_run_event_v2",
+      "run_id": "run-1",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "2026-07-20T00:00:01Z",
+      "provenance": {
+        "producer": "workflow_runtime_claim_executor",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "transition": { "from": "proposed", "to": "claimed" },
+      "event_id": "wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"
+    }
+  },
+  {
+    "name": "zero sequence",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_run_event_v1",
+      "run_id": "run-1",
+      "sequence": 0,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "2026-07-20T00:00:01Z",
+      "provenance": {
+        "producer": "workflow_runtime_claim_executor",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "transition": { "from": "proposed", "to": "claimed" },
+      "event_id": "wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"
+    }
+  },
+  {
+    "name": "unsafe integer sequence",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_run_event_v1",
+      "run_id": "run-1",
+      "sequence": 9007199254740992,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "2026-07-20T00:00:01Z",
+      "provenance": {
+        "producer": "workflow_runtime_claim_executor",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "transition": { "from": "proposed", "to": "claimed" },
+      "event_id": "wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"
+    }
+  },
+  {
+    "name": "invalid event id",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_run_event_v1",
+      "run_id": "run-1",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "2026-07-20T00:00:01Z",
+      "provenance": {
+        "producer": "workflow_runtime_claim_executor",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "transition": { "from": "proposed", "to": "claimed" },
+      "event_id": "event-1"
+    }
+  },
+  {
+    "name": "invalid provenance digest",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_run_event_v1",
+      "run_id": "run-1",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "2026-07-20T00:00:01Z",
+      "provenance": {
+        "producer": "workflow_runtime_claim_executor",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:nope"
+      },
+      "transition": { "from": "proposed", "to": "claimed" },
+      "event_id": "wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"
+    }
+  },
+  {
+    "name": "blank producer",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_run_event_v1",
+      "run_id": "run-1",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "2026-07-20T00:00:01Z",
+      "provenance": {
+        "producer": "   ",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "transition": { "from": "proposed", "to": "claimed" },
+      "event_id": "wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"
+    }
+  },
+  {
+    "name": "invalid timestamp",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_run_event_v1",
+      "run_id": "run-1",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "today",
+      "provenance": {
+        "producer": "workflow_runtime_claim_executor",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "transition": { "from": "proposed", "to": "claimed" },
+      "event_id": "wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"
+    }
+  },
+  {
+    "name": "unsupported skipped transition",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_run_event_v1",
+      "run_id": "run-1",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:1",
+      "occurred_at": "2026-07-20T00:00:01Z",
+      "provenance": {
+        "producer": "workflow_runtime_claim_executor",
+        "artifact_path": "docs/private/runtime/claim.json",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "transition": { "from": "proposed", "to": "done" },
+      "event_id": "wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"
+    }
+  },
+  {
+    "name": "rejects NEL-only run id",
+    "valid": false,
+    "value": {"schema_version":"workflow_run_event_v1","run_id":"\u0085","sequence":1,"previous_event_id":null,"idempotency_key":"run-1:1","occurred_at":"2026-07-20T00:00:01Z","provenance":{"producer":"workflow_runtime_claim_executor","artifact_path":"docs/private/runtime/claim.json","artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"transition":{"from":"proposed","to":"claimed"},"event_id":"wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"}
+  },
+  {
+    "name": "rejects BOM-only idempotency key",
+    "valid": false,
+    "value": {"schema_version":"workflow_run_event_v1","run_id":"run-1","sequence":1,"previous_event_id":null,"idempotency_key":"\ufeff","occurred_at":"2026-07-20T00:00:01Z","provenance":{"producer":"workflow_runtime_claim_executor","artifact_path":"docs/private/runtime/claim.json","artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"transition":{"from":"proposed","to":"claimed"},"event_id":"wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"}
+  },
+  {
+    "name": "rejects tab-only producer",
+    "valid": false,
+    "value": {"schema_version":"workflow_run_event_v1","run_id":"run-1","sequence":1,"previous_event_id":null,"idempotency_key":"run-1:1","occurred_at":"2026-07-20T00:00:01Z","provenance":{"producer":"\t","artifact_path":"docs/private/runtime/claim.json","artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"transition":{"from":"proposed","to":"claimed"},"event_id":"wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"}
+  },
+  {
+    "name": "rejects CRLF-only artifact path",
+    "valid": false,
+    "value": {"schema_version":"workflow_run_event_v1","run_id":"run-1","sequence":1,"previous_event_id":null,"idempotency_key":"run-1:1","occurred_at":"2026-07-20T00:00:01Z","provenance":{"producer":"workflow_runtime_claim_executor","artifact_path":"\r\n","artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"transition":{"from":"proposed","to":"claimed"},"event_id":"wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"}
+  },
+  {
+    "name": "rejects Unicode line-separator-only run id",
+    "valid": false,
+    "value": {"schema_version":"workflow_run_event_v1","run_id":"\u2028","sequence":1,"previous_event_id":null,"idempotency_key":"run-1:1","occurred_at":"2026-07-20T00:00:01Z","provenance":{"producer":"workflow_runtime_claim_executor","artifact_path":"docs/private/runtime/claim.json","artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"transition":{"from":"proposed","to":"claimed"},"event_id":"wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"}
+  },
+  {
+    "name": "accepts whitespace-wrapped nonblank run id",
+    "valid": true,
+    "value": {"schema_version":"workflow_run_event_v1","run_id":"  run-1  ","sequence":1,"previous_event_id":null,"idempotency_key":"run-1:1","occurred_at":"2026-07-20T00:00:01Z","provenance":{"producer":"workflow_runtime_claim_executor","artifact_path":"docs/private/runtime/claim.json","artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"transition":{"from":"proposed","to":"claimed"},"event_id":"wre_5da611d326b387740447811ae2bb8f9236cc643fa86d094937c470fab428cd7b"}
+  }
+]

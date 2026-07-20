@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -18,6 +19,15 @@ RUN_STATUS_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "workfl
 RUN_STATUS_SCHEMA_PATH = REPO_ROOT / "schemas" / "workflow-run-status-v1.schema.json"
 TRANSITION_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "workflow-run-transition-v1" / "cases.json"
 TRANSITION_SCHEMA_PATH = REPO_ROOT / "schemas" / "workflow-run-transition-v1.schema.json"
+RUN_EVENT_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "workflow-run-event-v1" / "cases.json"
+RUN_EVENT_NONBLANK_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "workflow-run-event-v1" / "nonblank-cases.json"
+RUN_EVENT_SCHEMA_PATH = REPO_ROOT / "schemas" / "workflow-run-event-v1.schema.json"
+RUN_EVENT_NONBLANK_FIELDS = (
+    "run_id",
+    "idempotency_key",
+    "provenance.producer",
+    "provenance.artifact_path",
+)
 RUN_STATUS_TRANSITION_SCHEMAS = (
     REPO_ROOT / "schemas" / "runtime_claim_execution_packet.schema.json",
     REPO_ROOT / "schemas" / "runtime_execution_worker_packet.schema.json",
@@ -40,6 +50,16 @@ def _assert_schema_case(schema_path: Path, case: dict, label: str) -> None:
     errors = list(validator.iter_errors(case["value"]))
 
     assert (not errors) is case["valid"]
+
+
+def _event_with_nonblank_field(field: str, value: str) -> dict:
+    valid_case = next(case for case in _cases(RUN_EVENT_CASES_PATH) if case["valid"])
+    event = deepcopy(valid_case["value"])
+    if field.startswith("provenance."):
+        event["provenance"][field.removeprefix("provenance.")] = value
+    else:
+        event[field] = value
+    return event
 
 
 @pytest.mark.parametrize("case", _cases(EVIDENCE_CASES_PATH), ids=lambda case: case["name"])
@@ -101,3 +121,41 @@ def test_workflow_run_status_v1_matches_runtime_packet_lifecycle() -> None:
 @pytest.mark.parametrize("case", _cases(TRANSITION_CASES_PATH), ids=lambda case: case["name"])
 def test_workflow_run_transition_v1_fixture_parity(case: dict) -> None:
     _assert_schema_case(TRANSITION_SCHEMA_PATH, case, "WorkflowRunTransitionV1")
+
+
+@pytest.mark.parametrize("case", _cases(RUN_EVENT_CASES_PATH), ids=lambda case: case["name"])
+def test_workflow_run_event_v1_fixture_parity(case: dict) -> None:
+    _assert_schema_case(RUN_EVENT_SCHEMA_PATH, case, "WorkflowRunEventV1")
+
+
+@pytest.mark.parametrize("field", RUN_EVENT_NONBLANK_FIELDS)
+@pytest.mark.parametrize(
+    "case",
+    _cases(RUN_EVENT_NONBLANK_CASES_PATH),
+    ids=lambda case: case["name"],
+)
+def test_workflow_run_event_v1_portable_nonblank_parity(
+    field: str,
+    case: dict,
+) -> None:
+    _assert_schema_case(
+        RUN_EVENT_SCHEMA_PATH,
+        {"value": _event_with_nonblank_field(field, case["value"]), "valid": case["valid"]},
+        f"WorkflowRunEventV1.{field}",
+    )
+
+
+@pytest.mark.parametrize("field", RUN_EVENT_NONBLANK_FIELDS)
+@pytest.mark.parametrize("codepoint", (0xD800, 0xDFFF))
+def test_workflow_run_event_v1_rejects_unpaired_surrogates(
+    field: str,
+    codepoint: int,
+) -> None:
+    _assert_schema_case(
+        RUN_EVENT_SCHEMA_PATH,
+        {
+            "value": _event_with_nonblank_field(field, f"run-{chr(codepoint)}"),
+            "valid": False,
+        },
+        f"WorkflowRunEventV1.{field}.surrogate",
+    )
