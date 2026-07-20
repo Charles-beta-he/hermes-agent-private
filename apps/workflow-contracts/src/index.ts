@@ -18,6 +18,10 @@ export {
   type WorkflowRunReplayV1Result,
 } from './workflow-run-replay'
 export {
+  evaluateWorkflowRunShadowV1,
+  type WorkflowRunShadowV1Result,
+} from './workflow-run-shadow'
+export {
   toWorkflowRunStatusV1JsonSchema,
   type WorkflowRunStatusV1,
   WorkflowRunStatusV1Schema,
