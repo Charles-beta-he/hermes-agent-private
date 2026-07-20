@@ -1,0 +1,88 @@
+[
+  {
+    "name": "valid complete evidence",
+    "valid": true,
+    "value": {
+      "id": "E-test",
+      "claim": "The focused contract test passed",
+      "source": "command",
+      "method": "npm test --workspace @hermes/workflow-contracts",
+      "artifact_path": "tests/contracts/fixtures/evidence-v1/cases.json",
+      "digest": "sha256:0123456789abcdef",
+      "timestamp": "2026-07-20T10:50:28Z",
+      "verdict": "pass"
+    }
+  },
+  {
+    "name": "valid minimal evidence",
+    "valid": true,
+    "value": {
+      "id": "E-user",
+      "claim": "The user approved local reversible implementation",
+      "source": "user_statement",
+      "method": "direct conversation instruction",
+      "timestamp": "2026-07-20T10:42:47+00:00",
+      "verdict": "advisory"
+    }
+  },
+  {
+    "name": "missing required claim",
+    "valid": false,
+    "value": {
+      "id": "E-missing",
+      "source": "file",
+      "method": "read_file",
+      "timestamp": "2026-07-20T10:50:28Z",
+      "verdict": "fail"
+    }
+  },
+  {
+    "name": "unknown field fails closed",
+    "valid": false,
+    "value": {
+      "id": "E-extra",
+      "claim": "Unknown authority must not be accepted",
+      "source": "api",
+      "method": "read-only response",
+      "timestamp": "2026-07-20T10:50:28Z",
+      "verdict": "warn",
+      "mark_done": true
+    }
+  },
+  {
+    "name": "invalid source",
+    "valid": false,
+    "value": {
+      "id": "E-source",
+      "claim": "Source values are bounded",
+      "source": "guess",
+      "method": "untrusted inference",
+      "timestamp": "2026-07-20T10:50:28Z",
+      "verdict": "degraded"
+    }
+  },
+  {
+    "name": "invalid verdict",
+    "valid": false,
+    "value": {
+      "id": "E-verdict",
+      "claim": "Verdict values are bounded",
+      "source": "model_review",
+      "method": "independent review",
+      "timestamp": "2026-07-20T10:50:28Z",
+      "verdict": "certified"
+    }
+  },
+  {
+    "name": "invalid timestamp",
+    "valid": false,
+    "value": {
+      "id": "E-time",
+      "claim": "Timestamps use ISO 8601 with timezone",
+      "source": "screenshot",
+      "method": "visual capture",
+      "timestamp": "2026/07/20 10:50",
+      "verdict": "warn"
+    }
+  }
+]
