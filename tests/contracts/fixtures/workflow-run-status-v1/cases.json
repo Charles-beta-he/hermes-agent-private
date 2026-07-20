@@ -1,0 +1,22 @@
+[
+  { "name": "valid proposed", "valid": true, "value": "proposed" },
+  { "name": "valid claimed", "valid": true, "value": "claimed" },
+  { "name": "valid running", "valid": true, "value": "running" },
+  { "name": "valid review", "valid": true, "value": "review" },
+  { "name": "valid done", "valid": true, "value": "done" },
+  { "name": "invalid kanban triage", "valid": false, "value": "triage" },
+  { "name": "invalid kanban todo", "valid": false, "value": "todo" },
+  { "name": "invalid kanban scheduled", "valid": false, "value": "scheduled" },
+  { "name": "invalid kanban ready", "valid": false, "value": "ready" },
+  { "name": "invalid blocked without V1 semantics", "valid": false, "value": "blocked" },
+  { "name": "invalid kanban archived", "valid": false, "value": "archived" },
+  { "name": "invalid mission active", "valid": false, "value": "active" },
+  { "name": "invalid mission paused", "valid": false, "value": "paused" },
+  { "name": "invalid mission blocked on human", "valid": false, "value": "blocked_on_human" },
+  { "name": "invalid failed without V1 semantics", "valid": false, "value": "failed" },
+  { "name": "invalid cancelled without V1 semantics", "valid": false, "value": "cancelled" },
+  { "name": "invalid complete alias", "valid": false, "value": "complete" },
+  { "name": "invalid uppercase alias", "valid": false, "value": "DONE" },
+  { "name": "invalid empty string", "valid": false, "value": "" },
+  { "name": "invalid non-string", "valid": false, "value": 1 }
+]
