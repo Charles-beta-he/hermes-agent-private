@@ -1,4 +1,9 @@
 export {
+  type ClosureV1,
+  ClosureV1Schema,
+  toClosureV1JsonSchema,
+} from './closure'
+export {
   EvidenceV1Schema,
   toEvidenceV1JsonSchema,
   type EvidenceV1,

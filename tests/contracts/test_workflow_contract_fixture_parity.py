@@ -12,6 +12,8 @@ EVIDENCE_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "evidence
 EVIDENCE_SCHEMA_PATH = REPO_ROOT / "schemas" / "evidence-v1.schema.json"
 VOTE_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "verifier-vote-v1" / "cases.json"
 VOTE_SCHEMA_PATH = REPO_ROOT / "schemas" / "verifier-vote-v1.schema.json"
+CLOSURE_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "closure-v1" / "cases.json"
+CLOSURE_SCHEMA_PATH = REPO_ROOT / "schemas" / "closure-v1.schema.json"
 
 
 def _cases(path: Path) -> list[dict]:
@@ -38,3 +40,8 @@ def test_evidence_v1_fixture_parity(case: dict) -> None:
 @pytest.mark.parametrize("case", _cases(VOTE_CASES_PATH), ids=lambda case: case["name"])
 def test_verifier_vote_v1_fixture_parity(case: dict) -> None:
     _assert_schema_case(VOTE_SCHEMA_PATH, case, "VerifierVoteV1")
+
+
+@pytest.mark.parametrize("case", _cases(CLOSURE_CASES_PATH), ids=lambda case: case["name"])
+def test_closure_v1_fixture_parity(case: dict) -> None:
+    _assert_schema_case(CLOSURE_SCHEMA_PATH, case, "ClosureV1")
