@@ -1,0 +1,109 @@
+[
+  {
+    "name": "valid independent approval",
+    "valid": true,
+    "value": {
+      "id": "V-review-1",
+      "model": "reviewer-model",
+      "vote": "approve",
+      "evidence_refs": ["E-test"],
+      "reasoning": "All acceptance claims have objective evidence.",
+      "timestamp": "2026-07-20T19:15:00Z"
+    }
+  },
+  {
+    "name": "valid amendment with multiple evidence refs",
+    "valid": true,
+    "value": {
+      "id": "V-review-2",
+      "model": "reviewer-model",
+      "vote": "amend",
+      "evidence_refs": ["E-test", "E-ci"],
+      "reasoning": "CI evidence is required before approval.",
+      "timestamp": "2026-07-20T21:15:00+02:00"
+    }
+  },
+  {
+    "name": "invalid missing evidence refs",
+    "valid": false,
+    "value": {
+      "id": "V-review-3",
+      "model": "reviewer-model",
+      "vote": "approve",
+      "reasoning": "No objective evidence references supplied.",
+      "timestamp": "2026-07-20T19:15:00Z"
+    }
+  },
+  {
+    "name": "invalid empty evidence refs",
+    "valid": false,
+    "value": {
+      "id": "V-review-4",
+      "model": "reviewer-model",
+      "vote": "approve",
+      "evidence_refs": [],
+      "reasoning": "No objective evidence references supplied.",
+      "timestamp": "2026-07-20T19:15:00Z"
+    }
+  },
+  {
+    "name": "invalid presentation block vote",
+    "valid": false,
+    "value": {
+      "id": "V-review-5",
+      "model": "reviewer-model",
+      "vote": "block",
+      "evidence_refs": ["E-test"],
+      "reasoning": "Presentation verdict requires an explicit adapter.",
+      "timestamp": "2026-07-20T19:15:00Z"
+    }
+  },
+  {
+    "name": "invalid unknown authority field",
+    "valid": false,
+    "value": {
+      "id": "V-review-6",
+      "model": "reviewer-model",
+      "vote": "approve",
+      "evidence_refs": ["E-test"],
+      "reasoning": "A vote cannot grant runtime authority.",
+      "timestamp": "2026-07-20T19:15:00Z",
+      "execution_allowed": true
+    }
+  },
+  {
+    "name": "invalid timestamp without timezone",
+    "valid": false,
+    "value": {
+      "id": "V-review-7",
+      "model": "reviewer-model",
+      "vote": "reject",
+      "evidence_refs": ["E-test"],
+      "reasoning": "Timestamp provenance is ambiguous.",
+      "timestamp": "2026-07-20T19:15:00"
+    }
+  },
+  {
+    "name": "invalid empty reasoning",
+    "valid": false,
+    "value": {
+      "id": "V-review-8",
+      "model": "reviewer-model",
+      "vote": "reject",
+      "evidence_refs": ["E-test"],
+      "reasoning": "",
+      "timestamp": "2026-07-20T19:15:00Z"
+    }
+  },
+  {
+    "name": "invalid missing id",
+    "valid": false,
+    "value": {
+      "model": "reviewer-model",
+      "vote": "amend",
+      "evidence_refs": ["E-test"],
+      "reasoning": "A durable vote identity is required.",
+      "timestamp": "2026-07-20T19:15:00Z"
+    }
+  }
+]
