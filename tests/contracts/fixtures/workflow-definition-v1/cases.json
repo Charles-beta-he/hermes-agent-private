@@ -1,0 +1,171 @@
+[
+  {
+    "name": "valid bounded workflow definition",
+    "valid": true,
+    "value": {
+      "schema_version": "workflow_definition_v1",
+      "workflow_id": "deep-absorption",
+      "version": 1,
+      "title": "Deep absorption workflow",
+      "goal": "Compile a bounded evidence-gated workflow plan.",
+      "non_goals": ["No external execution."],
+      "constraints": ["Compilation grants no authority."],
+      "authority": {
+        "max_side_effect": "local_write",
+        "allowed_capabilities": ["read_file", "terminal", "write_file"]
+      },
+      "tasks": [
+        {
+          "id": "inspect",
+          "title": "Inspect evidence",
+          "role": "explore",
+          "owner": "explorer",
+          "depends_on": [],
+          "inputs": ["source evidence"],
+          "outputs": ["inventory"],
+          "writes": [],
+          "authority": {
+            "side_effect": "local_read",
+            "capabilities": ["read_file"]
+          },
+          "acceptance": [
+            {
+              "id": "inspect-evidence",
+              "claim": "The source inventory is grounded.",
+              "evidence_required": ["file"]
+            }
+          ],
+          "verifies": []
+        },
+        {
+          "id": "plan",
+          "title": "Plan bounded implementation",
+          "role": "plan",
+          "owner": "planner",
+          "depends_on": ["inspect"],
+          "inputs": ["inventory"],
+          "outputs": ["implementation plan"],
+          "writes": [],
+          "authority": {
+            "side_effect": "local_read",
+            "capabilities": ["read_file"]
+          },
+          "acceptance": [
+            {
+              "id": "plan-bounded",
+              "claim": "The plan declares authority and stop boundaries.",
+              "evidence_required": ["file"]
+            }
+          ],
+          "verifies": []
+        },
+        {
+          "id": "implement",
+          "title": "Implement compiler",
+          "role": "execute",
+          "owner": "executor",
+          "depends_on": ["plan"],
+          "inputs": ["implementation plan"],
+          "outputs": ["compiler artifact"],
+          "writes": ["workflow_kernel/compiler"],
+          "authority": {
+            "side_effect": "local_write",
+            "capabilities": ["read_file", "write_file"]
+          },
+          "acceptance": [
+            {
+              "id": "compiler-tests",
+              "claim": "The compiler passes deterministic tests.",
+              "evidence_required": ["command", "file"]
+            }
+          ],
+          "verifies": []
+        },
+        {
+          "id": "verify",
+          "title": "Verify implementation",
+          "role": "verify",
+          "owner": "verifier",
+          "depends_on": ["implement"],
+          "inputs": ["compiler artifact"],
+          "outputs": ["verification verdict"],
+          "writes": [],
+          "authority": {
+            "side_effect": "local_read",
+            "capabilities": ["read_file", "terminal"]
+          },
+          "acceptance": [
+            {
+              "id": "verification-fresh",
+              "claim": "Fresh tests and readback support closure.",
+              "evidence_required": ["command", "readback"]
+            }
+          ],
+          "verifies": ["implement"]
+        }
+      ],
+      "loop_policy": {
+        "max_iterations": 3,
+        "repeated_failure_limit": 2,
+        "on_repeated_failure": "switch_path"
+      },
+      "stop_conditions": [
+        "success",
+        "blocked",
+        "human_gate",
+        "terminal_failure",
+        "cancelled",
+        "context_exhausted",
+        "stale"
+      ],
+      "handoff": {
+        "required_fields": [
+          "goal",
+          "task_states",
+          "artifacts",
+          "evidence",
+          "blockers",
+          "next_step",
+          "authority_state"
+        ]
+      }
+    }
+  },
+  {
+    "name": "invalid unknown top-level field",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_definition_v1",
+      "workflow_id": "invalid",
+      "version": 1,
+      "title": "Invalid",
+      "goal": "Invalid",
+      "non_goals": [],
+      "constraints": [],
+      "authority": {"max_side_effect": "none", "allowed_capabilities": []},
+      "tasks": [],
+      "loop_policy": {"max_iterations": 1, "repeated_failure_limit": 1, "on_repeated_failure": "terminal_failure"},
+      "stop_conditions": ["success", "terminal_failure"],
+      "handoff": {"required_fields": ["goal"]},
+      "authority_granted": true
+    }
+  },
+  {
+    "name": "invalid empty task set",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_definition_v1",
+      "workflow_id": "invalid-empty",
+      "version": 1,
+      "title": "Invalid empty",
+      "goal": "Invalid empty",
+      "non_goals": [],
+      "constraints": [],
+      "authority": {"max_side_effect": "none", "allowed_capabilities": []},
+      "tasks": [],
+      "loop_policy": {"max_iterations": 1, "repeated_failure_limit": 1, "on_repeated_failure": "terminal_failure"},
+      "stop_conditions": ["success", "terminal_failure"],
+      "handoff": {"required_fields": ["goal"]}
+    }
+  }
+]

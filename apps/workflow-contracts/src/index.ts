@@ -14,6 +14,27 @@ export {
   VerifierVoteV1Schema,
 } from './verifier-vote'
 export {
+  type WorkflowDefinitionV1,
+  WorkflowDefinitionV1Schema,
+  WorkflowEvidenceKindV1Schema,
+  WorkflowHandoffFieldV1Schema,
+  WorkflowIdentifierV1Schema,
+  WorkflowLoopPolicyV1Schema,
+  WorkflowSideEffectV1Schema,
+  WorkflowStopConditionV1Schema,
+  WorkflowTaskDefinitionV1Schema,
+  WorkflowTaskRoleV1Schema,
+  toWorkflowDefinitionV1JsonSchema,
+} from './workflow-definition'
+export {
+  type WorkflowExecutionPlanV1,
+  WorkflowExecutionPlanV1Schema,
+  WorkflowExecutionPlanWaveV1Schema,
+  WorkflowExecutionTaskBindingV1Schema,
+  WorkflowVerifierLinkV1Schema,
+  toWorkflowExecutionPlanV1JsonSchema,
+} from './workflow-execution-plan'
+export {
   createWorkflowRunEventV1,
   deriveWorkflowRunEventIdV1,
   replayWorkflowRunEventLedgerV1,

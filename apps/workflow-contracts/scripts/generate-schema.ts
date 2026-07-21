@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { toClosureV1JsonSchema } from '../src/closure'
 import { toEvidenceV1JsonSchema } from '../src/evidence'
 import { toVerifierVoteV1JsonSchema } from '../src/verifier-vote'
+import { toWorkflowDefinitionV1JsonSchema } from '../src/workflow-definition'
+import { toWorkflowExecutionPlanV1JsonSchema } from '../src/workflow-execution-plan'
 import { toWorkflowRunEventV1JsonSchema } from '../src/workflow-run-event'
 import { toWorkflowRunStatusV1JsonSchema } from '../src/workflow-run-status'
 import { toWorkflowRunTransitionV1JsonSchema } from '../src/workflow-run-transition'
@@ -17,6 +19,11 @@ const schemas = [
   ['evidence-v1.schema.json', toEvidenceV1JsonSchema()],
   ['verifier-vote-v1.schema.json', toVerifierVoteV1JsonSchema()],
   ['closure-v1.schema.json', toClosureV1JsonSchema()],
+  ['workflow-definition-v1.schema.json', toWorkflowDefinitionV1JsonSchema()],
+  [
+    'workflow-execution-plan-v1.schema.json',
+    toWorkflowExecutionPlanV1JsonSchema(),
+  ],
   ['workflow-run-status-v1.schema.json', toWorkflowRunStatusV1JsonSchema()],
   ['workflow-run-event-v1.schema.json', toWorkflowRunEventV1JsonSchema()],
   [
@@ -36,5 +43,13 @@ await Promise.all([
   writeFile(
     `${workflowKernelSchemaDir}workflow-run-event-v1.schema.json`,
     serializedSchemas.get('workflow-run-event-v1.schema.json')!,
+  ),
+  writeFile(
+    `${workflowKernelSchemaDir}workflow-definition-v1.schema.json`,
+    serializedSchemas.get('workflow-definition-v1.schema.json')!,
+  ),
+  writeFile(
+    `${workflowKernelSchemaDir}workflow-execution-plan-v1.schema.json`,
+    serializedSchemas.get('workflow-execution-plan-v1.schema.json')!,
   ),
 ])

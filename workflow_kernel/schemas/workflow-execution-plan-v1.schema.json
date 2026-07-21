@@ -1,0 +1,210 @@
+{
+  "$id": "https://hermes-agent.local/schemas/workflow-execution-plan-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "workflow_execution_plan_v1"
+    },
+    "workflow_ref": {
+      "type": "object",
+      "properties": {
+        "workflow_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+        },
+        "version": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "workflow_id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "definition_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "authority_granted": {
+      "type": "boolean",
+      "const": false
+    },
+    "executable": {
+      "type": "boolean",
+      "const": false
+    },
+    "waves": {
+      "minItems": 1,
+      "maxItems": 256,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "task_ids": {
+            "minItems": 1,
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+            }
+          }
+        },
+        "required": [
+          "index",
+          "task_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "task_bindings": {
+      "minItems": 1,
+      "maxItems": 256,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "explore",
+              "plan",
+              "execute",
+              "verify"
+            ]
+          },
+          "owner": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+          },
+          "side_effect": {
+            "type": "string",
+            "enum": [
+              "none",
+              "local_read",
+              "local_write",
+              "external_read",
+              "external_write"
+            ]
+          },
+          "capabilities": {
+            "maxItems": 128,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+            }
+          },
+          "writes": {
+            "maxItems": 128,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "pattern": "\\S"
+            }
+          }
+        },
+        "required": [
+          "task_id",
+          "role",
+          "owner",
+          "side_effect",
+          "capabilities",
+          "writes"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "verifier_links": {
+      "maxItems": 256,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "execute_task_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+          },
+          "verifier_task_ids": {
+            "minItems": 1,
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+            }
+          }
+        },
+        "required": [
+          "execute_task_id",
+          "verifier_task_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "stop_conditions": {
+      "minItems": 2,
+      "maxItems": 16,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "success",
+          "blocked",
+          "human_gate",
+          "terminal_failure",
+          "cancelled",
+          "context_exhausted",
+          "stale"
+        ]
+      }
+    },
+    "handoff_required_fields": {
+      "minItems": 1,
+      "maxItems": 16,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "goal",
+          "task_states",
+          "artifacts",
+          "evidence",
+          "blockers",
+          "next_step",
+          "authority_state"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "workflow_ref",
+    "definition_digest",
+    "authority_granted",
+    "executable",
+    "waves",
+    "task_bindings",
+    "verifier_links",
+    "stop_conditions",
+    "handoff_required_fields"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes WorkflowExecutionPlanV1"
+}
