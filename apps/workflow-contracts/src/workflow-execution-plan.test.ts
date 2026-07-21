@@ -22,6 +22,19 @@ describe('WorkflowExecutionPlanV1', () => {
     expect(deriveWorkflowExecutionPlanDigestV1(plan)).toBe(plan.plan_digest)
   })
 
+  it('does not depend on locale-sensitive key ordering', () => {
+    const plan = cases[0].value
+    const originalLocaleCompare = String.prototype.localeCompare
+    String.prototype.localeCompare = () => {
+      throw new Error('canonical ordering must not call localeCompare')
+    }
+    try {
+      expect(deriveWorkflowExecutionPlanDigestV1(plan)).toBe(plan.plan_digest)
+    } finally {
+      String.prototype.localeCompare = originalLocaleCompare
+    }
+  })
+
   it('keeps the checked-in JSON Schema generated from Zod', () => {
     expect(toWorkflowExecutionPlanV1JsonSchema()).toEqual(generatedSchema)
   })
