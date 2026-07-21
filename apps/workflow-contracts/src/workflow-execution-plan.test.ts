@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import cases from '../../../tests/contracts/fixtures/workflow-execution-plan-v1/cases.json'
+import integralNumberPlan from '../../../tests/contracts/fixtures/workflow-execution-plan-v1/integral-number-plan.json'
 import generatedSchema from '../../../schemas/workflow-execution-plan-v1.schema.json'
 import {
   deriveWorkflowExecutionPlanDigestV1,
@@ -33,6 +34,17 @@ describe('WorkflowExecutionPlanV1', () => {
     } finally {
       String.prototype.localeCompare = originalLocaleCompare
     }
+  })
+
+  it('matches Python for schema-valid integral JSON numeric syntax', () => {
+    expect(integralNumberPlan.source_numeric_syntax).toEqual({
+      version: 1,
+      max_iterations: 3,
+      repeated_failure_limit: 2,
+    })
+    expect(deriveWorkflowExecutionPlanDigestV1(integralNumberPlan.value)).toBe(
+      integralNumberPlan.value.plan_digest,
+    )
   })
 
   it('keeps the checked-in JSON Schema generated from Zod', () => {

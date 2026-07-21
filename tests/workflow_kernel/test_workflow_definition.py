@@ -23,6 +23,13 @@ FIXTURE_PATH = (
     / "workflow-definition-v1"
     / "cases.json"
 )
+INTEGRAL_NUMBER_PLAN_FIXTURE_PATH = (
+    Path(__file__).parents[1]
+    / "contracts"
+    / "fixtures"
+    / "workflow-execution-plan-v1"
+    / "integral-number-plan.json"
+)
 
 
 def _valid_definition() -> dict[str, Any]:
@@ -73,6 +80,26 @@ def test_compile_valid_definition_into_authority_neutral_plan() -> None:
     assert plan["verifier_links"] == [
         {"execute_task_id": "implement", "verifier_task_ids": ["verify"]}
     ]
+
+
+def test_compiler_normalizes_integral_json_numbers_before_digesting() -> None:
+    integer_definition = _valid_definition()
+    float_definition = _valid_definition()
+    float_definition["version"] = 1.0
+    float_definition["loop_policy"]["max_iterations"] = 3.0
+    float_definition["loop_policy"]["repeated_failure_limit"] = 2.0
+
+    integer_plan = compile_workflow_definition_v1(integer_definition)
+    float_plan = compile_workflow_definition_v1(float_definition)
+    shared_fixture = json.loads(
+        INTEGRAL_NUMBER_PLAN_FIXTURE_PATH.read_text(encoding="utf-8")
+    )
+
+    assert float_plan == integer_plan
+    assert float_plan == shared_fixture["value"]
+    assert type(float_plan["workflow_ref"]["version"]) is int
+    assert type(float_plan["loop_policy"]["max_iterations"]) is int
+    assert type(float_plan["loop_policy"]["repeated_failure_limit"]) is int
 
 
 def test_compiler_does_not_mutate_input() -> None:

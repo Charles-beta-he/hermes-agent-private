@@ -94,9 +94,24 @@ def _reject_duplicates(values: list[str], path: str) -> None:
         seen.add(value)
 
 
+def _normalize_json_numbers(value: Any) -> Any:
+    """Match JSON/JavaScript's single numeric representation before hashing."""
+
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_normalize_json_numbers(item) for item in value]
+    if isinstance(value, Mapping):
+        return {
+            key: _normalize_json_numbers(item)
+            for key, item in value.items()
+        }
+    return value
+
+
 def _canonical_digest(value: Mapping[str, Any]) -> str:
     payload = json.dumps(
-        value,
+        _normalize_json_numbers(value),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -159,6 +174,9 @@ def compile_workflow_definition_v1(
     """
 
     _validate_schema(definition, "workflow-definition-v1.schema.json")
+    normalized_definition = _normalize_json_numbers(definition)
+    assert isinstance(normalized_definition, Mapping)
+    definition = normalized_definition
 
     tasks_raw = definition["tasks"]
     assert isinstance(tasks_raw, list)
