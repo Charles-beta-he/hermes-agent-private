@@ -1,0 +1,171 @@
+{
+  "$id": "https://hermes-agent.local/schemas/workflow-loop-snapshot-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "workflow_loop_snapshot_v1"
+    },
+    "workflow_ref": {
+      "type": "object",
+      "properties": {
+        "workflow_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+        },
+        "version": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "workflow_id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "definition_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "plan_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "last_signal_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "iteration": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "consecutive_failures": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "task_states": {
+      "minItems": 1,
+      "maxItems": 256,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ready",
+              "running",
+              "verifying",
+              "passed",
+              "failed",
+              "blocked",
+              "cancelled",
+              "stale"
+            ]
+          }
+        },
+        "required": [
+          "task_id",
+          "state"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "workflow_state": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "running",
+        "verifying",
+        "passed",
+        "blocked",
+        "human_gate",
+        "terminal_failure",
+        "cancelled",
+        "context_exhausted",
+        "stale"
+      ]
+    },
+    "terminal": {
+      "type": "boolean"
+    },
+    "stop_reason": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "success",
+            "blocked",
+            "human_gate",
+            "terminal_failure",
+            "cancelled",
+            "context_exhausted",
+            "stale"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "continuation_action": {
+      "type": "string",
+      "enum": [
+        "continue",
+        "retry",
+        "switch_path",
+        "human_gate",
+        "stop"
+      ]
+    },
+    "authority_granted": {
+      "type": "boolean",
+      "const": false
+    },
+    "executable": {
+      "type": "boolean",
+      "const": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "workflow_ref",
+    "definition_digest",
+    "plan_digest",
+    "sequence",
+    "last_signal_id",
+    "iteration",
+    "consecutive_failures",
+    "task_states",
+    "workflow_state",
+    "terminal",
+    "stop_reason",
+    "continuation_action",
+    "authority_granted",
+    "executable"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes WorkflowLoopSnapshotV1"
+}

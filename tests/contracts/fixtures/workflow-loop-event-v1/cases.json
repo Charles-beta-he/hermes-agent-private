@@ -1,0 +1,53 @@
+[
+  {
+    "name": "valid first loop event",
+    "valid": true,
+    "value": {
+      "schema_version": "workflow_loop_event_v1",
+      "run_id": "run-1",
+      "session_owner": "session-owner",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:signal-1",
+      "occurred_at": "2026-07-21T00:00:00Z",
+      "expires_at": "2026-07-21T01:00:00Z",
+      "definition_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "signal": {
+        "schema_version": "workflow_loop_signal_v1",
+        "signal_id": "signal-1",
+        "kind": "task_started_observed",
+        "expected_sequence": 0,
+        "task_id": "inspect",
+        "reason": "Observed task start."
+      },
+      "event_id": "wle_f3a981ff4717d91f19b6f9e6c2d2e4f600be1c20dc74227707017936072b70a2",
+      "plan_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  {
+    "name": "invalid authority injection",
+    "valid": false,
+    "value": {
+      "schema_version": "workflow_loop_event_v1",
+      "run_id": "run-1",
+      "session_owner": "session-owner",
+      "sequence": 1,
+      "previous_event_id": null,
+      "idempotency_key": "run-1:signal-1",
+      "occurred_at": "2026-07-21T00:00:00Z",
+      "expires_at": "2026-07-21T01:00:00Z",
+      "definition_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "signal": {
+        "schema_version": "workflow_loop_signal_v1",
+        "signal_id": "signal-1",
+        "kind": "task_started_observed",
+        "expected_sequence": 0,
+        "task_id": "inspect",
+        "reason": "Observed task start."
+      },
+      "event_id": "wle_f3a981ff4717d91f19b6f9e6c2d2e4f600be1c20dc74227707017936072b70a2",
+      "authority_granted": true,
+      "plan_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  }
+]

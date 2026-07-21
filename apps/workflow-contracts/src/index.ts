@@ -27,6 +27,7 @@ export {
   toWorkflowDefinitionV1JsonSchema,
 } from './workflow-definition'
 export {
+  deriveWorkflowExecutionPlanDigestV1,
   type WorkflowExecutionPlanV1,
   WorkflowExecutionPlanV1Schema,
   WorkflowExecutionPlanWaveV1Schema,
@@ -34,6 +35,26 @@ export {
   WorkflowVerifierLinkV1Schema,
   toWorkflowExecutionPlanV1JsonSchema,
 } from './workflow-execution-plan'
+export {
+  type WorkflowLoopSignalV1,
+  WorkflowLoopSignalKindV1Schema,
+  WorkflowLoopSignalV1Schema,
+  type WorkflowLoopSnapshotV1,
+  WorkflowLoopSnapshotV1Schema,
+  WorkflowLoopStateV1Schema,
+  WorkflowLoopTaskStateV1Schema,
+  toWorkflowLoopSignalV1JsonSchema,
+  toWorkflowLoopSnapshotV1JsonSchema,
+} from './workflow-loop'
+export {
+  createWorkflowLoopEventV1,
+  deriveWorkflowLoopEventIdV1,
+  toWorkflowLoopEventV1JsonSchema,
+  type WorkflowLoopEventBodyV1,
+  WorkflowLoopEventBodyV1Schema,
+  type WorkflowLoopEventV1,
+  WorkflowLoopEventV1Schema,
+} from './workflow-loop-event'
 export {
   createWorkflowRunEventV1,
   deriveWorkflowRunEventIdV1,

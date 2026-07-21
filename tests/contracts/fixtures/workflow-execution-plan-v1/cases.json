@@ -4,27 +4,122 @@
     "valid": true,
     "value": {
       "schema_version": "workflow_execution_plan_v1",
-      "workflow_ref": {"workflow_id": "deep-absorption", "version": 1},
+      "workflow_ref": {
+        "workflow_id": "deep-absorption",
+        "version": 1
+      },
       "definition_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "authority_granted": false,
       "executable": false,
       "waves": [
-        {"index": 1, "task_ids": ["inspect"]},
-        {"index": 2, "task_ids": ["plan"]},
-        {"index": 3, "task_ids": ["implement"]},
-        {"index": 4, "task_ids": ["verify"]}
+        {
+          "index": 1,
+          "task_ids": [
+            "inspect"
+          ]
+        },
+        {
+          "index": 2,
+          "task_ids": [
+            "plan"
+          ]
+        },
+        {
+          "index": 3,
+          "task_ids": [
+            "implement"
+          ]
+        },
+        {
+          "index": 4,
+          "task_ids": [
+            "verify"
+          ]
+        }
       ],
       "task_bindings": [
-        {"task_id": "inspect", "role": "explore", "owner": "explorer", "side_effect": "local_read", "capabilities": ["read_file"], "writes": []},
-        {"task_id": "plan", "role": "plan", "owner": "planner", "side_effect": "local_read", "capabilities": ["read_file"], "writes": []},
-        {"task_id": "implement", "role": "execute", "owner": "executor", "side_effect": "local_write", "capabilities": ["read_file", "write_file"], "writes": ["workflow_kernel/compiler"]},
-        {"task_id": "verify", "role": "verify", "owner": "verifier", "side_effect": "local_read", "capabilities": ["read_file", "terminal"], "writes": []}
+        {
+          "task_id": "inspect",
+          "role": "explore",
+          "owner": "explorer",
+          "depends_on": [],
+          "side_effect": "local_read",
+          "capabilities": [
+            "read_file"
+          ],
+          "writes": []
+        },
+        {
+          "task_id": "plan",
+          "role": "plan",
+          "owner": "planner",
+          "depends_on": [
+            "inspect"
+          ],
+          "side_effect": "local_read",
+          "capabilities": [
+            "read_file"
+          ],
+          "writes": []
+        },
+        {
+          "task_id": "implement",
+          "role": "execute",
+          "owner": "executor",
+          "depends_on": [
+            "plan"
+          ],
+          "side_effect": "local_write",
+          "capabilities": [
+            "read_file",
+            "write_file"
+          ],
+          "writes": [
+            "workflow_kernel/compiler"
+          ]
+        },
+        {
+          "task_id": "verify",
+          "role": "verify",
+          "owner": "verifier",
+          "depends_on": [
+            "implement"
+          ],
+          "side_effect": "local_read",
+          "capabilities": [
+            "read_file",
+            "terminal"
+          ],
+          "writes": []
+        }
       ],
       "verifier_links": [
-        {"execute_task_id": "implement", "verifier_task_ids": ["verify"]}
+        {
+          "execute_task_id": "implement",
+          "verifier_task_ids": [
+            "verify"
+          ]
+        }
       ],
-      "stop_conditions": ["success", "terminal_failure"],
-      "handoff_required_fields": ["goal", "task_states", "artifacts", "evidence", "blockers", "next_step", "authority_state"]
+      "loop_policy": {
+        "max_iterations": 3,
+        "repeated_failure_limit": 2,
+        "on_repeated_failure": "switch_path"
+      },
+      "stop_conditions": [
+        "success",
+        "terminal_failure"
+      ],
+      "handoff_required_fields": [
+        "goal",
+        "task_states",
+        "artifacts",
+        "evidence",
+        "blockers",
+        "next_step",
+        "authority_state"
+      ],
+      "plan_digest": "sha256:688301bad9eb98eb843351e29032c43ff0dd93636e35eb110b2e3195750085d6"
     }
   },
   {
@@ -32,15 +127,46 @@
     "valid": false,
     "value": {
       "schema_version": "workflow_execution_plan_v1",
-      "workflow_ref": {"workflow_id": "invalid", "version": 1},
+      "workflow_ref": {
+        "workflow_id": "invalid",
+        "version": 1
+      },
       "definition_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "authority_granted": false,
       "executable": true,
-      "waves": [{"index": 1, "task_ids": ["task"]}],
-      "task_bindings": [{"task_id": "task", "role": "execute", "owner": "executor", "side_effect": "none", "capabilities": [], "writes": []}],
+      "waves": [
+        {
+          "index": 1,
+          "task_ids": [
+            "task"
+          ]
+        }
+      ],
+      "task_bindings": [
+        {
+          "task_id": "task",
+          "role": "execute",
+          "owner": "executor",
+          "depends_on": [],
+          "side_effect": "none",
+          "capabilities": [],
+          "writes": []
+        }
+      ],
       "verifier_links": [],
-      "stop_conditions": ["success", "terminal_failure"],
-      "handoff_required_fields": ["goal"]
+      "loop_policy": {
+        "max_iterations": 1,
+        "repeated_failure_limit": 1,
+        "on_repeated_failure": "terminal_failure"
+      },
+      "stop_conditions": [
+        "success",
+        "terminal_failure"
+      ],
+      "handoff_required_fields": [
+        "goal"
+      ],
+      "plan_digest": "sha256:fd3e1c41433621beb3dcf36e881afc27a858a3f76b16567dbd3092da37a709b0"
     }
   }
 ]

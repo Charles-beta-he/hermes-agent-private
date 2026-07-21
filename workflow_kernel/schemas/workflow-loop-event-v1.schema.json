@@ -1,0 +1,151 @@
+{
+  "$id": "https://hermes-agent.local/schemas/workflow-loop-event-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "workflow_loop_event_v1"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+    },
+    "session_owner": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "previous_event_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^wle_[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "allOf": [
+        {
+          "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+        },
+        {
+          "pattern": "\\S"
+        }
+      ]
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "definition_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "plan_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "signal": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "workflow_loop_signal_v1"
+        },
+        "signal_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "task_started_observed",
+            "task_passed_observed",
+            "task_failed_observed",
+            "blocked_observed",
+            "human_gate_observed",
+            "cancelled_observed",
+            "context_exhausted_observed",
+            "stale_observed"
+          ]
+        },
+        "expected_sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "allOf": [
+            {
+              "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+            },
+            {
+              "pattern": "\\S"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "signal_id",
+        "kind",
+        "expected_sequence",
+        "task_id",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "title": "Hermes WorkflowLoopSignalV1"
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^wle_[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "session_owner",
+    "sequence",
+    "previous_event_id",
+    "idempotency_key",
+    "occurred_at",
+    "expires_at",
+    "definition_digest",
+    "plan_digest",
+    "signal",
+    "event_id"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes WorkflowLoopEventV1"
+}

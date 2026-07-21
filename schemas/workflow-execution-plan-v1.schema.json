@@ -30,6 +30,10 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "plan_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "authority_granted": {
       "type": "boolean",
       "const": false
@@ -91,6 +95,14 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9._-]{0,127}$"
           },
+          "depends_on": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+            }
+          },
           "side_effect": {
             "type": "string",
             "enum": [
@@ -124,6 +136,7 @@
           "task_id",
           "role",
           "owner",
+          "depends_on",
           "side_effect",
           "capabilities",
           "writes"
@@ -157,6 +170,35 @@
         ],
         "additionalProperties": false
       }
+    },
+    "loop_policy": {
+      "type": "object",
+      "properties": {
+        "max_iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "repeated_failure_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "on_repeated_failure": {
+          "type": "string",
+          "enum": [
+            "switch_path",
+            "human_gate",
+            "terminal_failure"
+          ]
+        }
+      },
+      "required": [
+        "max_iterations",
+        "repeated_failure_limit",
+        "on_repeated_failure"
+      ],
+      "additionalProperties": false
     },
     "stop_conditions": {
       "minItems": 2,
@@ -197,11 +239,13 @@
     "schema_version",
     "workflow_ref",
     "definition_digest",
+    "plan_digest",
     "authority_granted",
     "executable",
     "waves",
     "task_bindings",
     "verifier_links",
+    "loop_policy",
     "stop_conditions",
     "handoff_required_fields"
   ],

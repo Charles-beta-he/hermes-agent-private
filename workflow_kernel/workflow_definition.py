@@ -354,6 +354,17 @@ def compile_workflow_definition_v1(
             "external-write workflow requires a human_gate stop condition",
             "$.stop_conditions",
         )
+    repeated_failure_stop = {
+        "switch_path": "blocked",
+        "human_gate": "human_gate",
+        "terminal_failure": "terminal_failure",
+    }[loop_policy["on_repeated_failure"]]
+    if repeated_failure_stop not in stop_conditions:
+        _fail(
+            "failure_policy_stop_missing",
+            f"repeated-failure policy requires stop condition {repeated_failure_stop!r}",
+            "$.stop_conditions",
+        )
 
     handoff_fields = set(definition["handoff"]["required_fields"])
     missing_handoff = _REQUIRED_HANDOFF_FIELDS - handoff_fields
@@ -382,6 +393,7 @@ def compile_workflow_definition_v1(
                 "task_id": task_id,
                 "role": task_by_id[task_id]["role"],
                 "owner": task_by_id[task_id]["owner"],
+                "depends_on": sorted(task_by_id[task_id]["depends_on"]),
                 "side_effect": task_by_id[task_id]["authority"]["side_effect"],
                 "capabilities": sorted(
                     task_by_id[task_id]["authority"]["capabilities"]
@@ -397,8 +409,10 @@ def compile_workflow_definition_v1(
             }
             for execute_task_id, verifier_ids in sorted(verifier_links.items())
         ],
+        "loop_policy": dict(definition["loop_policy"]),
         "stop_conditions": list(definition["stop_conditions"]),
         "handoff_required_fields": list(definition["handoff"]["required_fields"]),
     }
+    plan["plan_digest"] = _canonical_digest(plan)
     _validate_schema(plan, "workflow-execution-plan-v1.schema.json")
     return plan

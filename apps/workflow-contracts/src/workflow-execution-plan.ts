@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto'
+
 import { z } from 'zod'
 
 import {
   WorkflowHandoffFieldV1Schema,
   WorkflowIdentifierV1Schema,
+  WorkflowLoopPolicyV1Schema,
   WorkflowSideEffectV1Schema,
   WorkflowStopConditionV1Schema,
   WorkflowTaskRoleV1Schema,
@@ -20,6 +23,7 @@ export const WorkflowExecutionTaskBindingV1Schema = z.strictObject({
   task_id: WorkflowIdentifierV1Schema,
   role: WorkflowTaskRoleV1Schema,
   owner: WorkflowIdentifierV1Schema,
+  depends_on: z.array(WorkflowIdentifierV1Schema).max(256),
   side_effect: WorkflowSideEffectV1Schema,
   capabilities: z.array(WorkflowIdentifierV1Schema).max(128),
   writes: z.array(z.string().min(1).max(4096).regex(/\S/)).max(128),
@@ -38,6 +42,7 @@ export const WorkflowExecutionPlanV1Schema = z
       version: z.number().int().positive(),
     }),
     definition_digest: Sha256Digest,
+    plan_digest: Sha256Digest,
     authority_granted: z.literal(false),
     executable: z.literal(false),
     waves: z.array(WorkflowExecutionPlanWaveV1Schema).min(1).max(256),
@@ -46,6 +51,7 @@ export const WorkflowExecutionPlanV1Schema = z
       .min(1)
       .max(256),
     verifier_links: z.array(WorkflowVerifierLinkV1Schema).max(256),
+    loop_policy: WorkflowLoopPolicyV1Schema,
     stop_conditions: z.array(WorkflowStopConditionV1Schema).min(2).max(16),
     handoff_required_fields: z
       .array(WorkflowHandoffFieldV1Schema)
@@ -57,6 +63,27 @@ export const WorkflowExecutionPlanV1Schema = z
 export type WorkflowExecutionPlanV1 = z.infer<
   typeof WorkflowExecutionPlanV1Schema
 >
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(',')}]`
+  }
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(
+      ([left], [right]) => left.localeCompare(right),
+    )
+    return `{${entries
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+export function deriveWorkflowExecutionPlanDigestV1(input: unknown): string {
+  const plan = WorkflowExecutionPlanV1Schema.parse(input)
+  const { plan_digest: _planDigest, ...body } = plan
+  return `sha256:${createHash('sha256').update(canonicalJson(body)).digest('hex')}`
+}
 
 export function toWorkflowExecutionPlanV1JsonSchema(): Record<string, unknown> {
   return {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from importlib import resources
 from pathlib import Path
@@ -49,6 +50,18 @@ def test_compile_valid_definition_into_authority_neutral_plan() -> None:
     assert plan["schema_version"] == "workflow_execution_plan_v1"
     assert plan["workflow_ref"] == {"workflow_id": "deep-absorption", "version": 1}
     assert plan["definition_digest"].startswith("sha256:")
+    assert plan["plan_digest"].startswith("sha256:")
+    plan_body = {key: value for key, value in plan.items() if key != "plan_digest"}
+    expected_plan_digest = hashlib.sha256(
+        json.dumps(
+            plan_body,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    assert plan["plan_digest"] == f"sha256:{expected_plan_digest}"
+    assert compile_workflow_definition_v1(definition)["plan_digest"] == plan["plan_digest"]
     assert plan["authority_granted"] is False
     assert plan["executable"] is False
     assert plan["waves"] == [
@@ -103,6 +116,9 @@ def test_public_and_packaged_generated_schemas_are_byte_identical() -> None:
     for name in (
         "workflow-definition-v1.schema.json",
         "workflow-execution-plan-v1.schema.json",
+        "workflow-loop-snapshot-v1.schema.json",
+        "workflow-loop-signal-v1.schema.json",
+        "workflow-loop-event-v1.schema.json",
     ):
         public_schema = (repository_root / "schemas" / name).read_bytes()
         packaged_schema = resources.files("workflow_kernel.schemas").joinpath(name).read_bytes()
@@ -241,6 +257,25 @@ def test_rejects_repeated_failure_limit_above_iteration_bound() -> None:
     definition["loop_policy"]["repeated_failure_limit"] = 3
 
     _assert_error(definition, "unbounded_failure_policy")
+
+
+@pytest.mark.parametrize(
+    ("policy", "required_stop"),
+    [
+        ("switch_path", "blocked"),
+        ("human_gate", "human_gate"),
+        ("terminal_failure", "terminal_failure"),
+    ],
+)
+def test_repeated_failure_policy_requires_matching_stop_condition(
+    policy: str, required_stop: str
+) -> None:
+    definition = _valid_definition()
+    definition["loop_policy"]["on_repeated_failure"] = policy
+    definition["stop_conditions"] = ["success", "cancelled"]
+    assert required_stop not in definition["stop_conditions"]
+
+    _assert_error(definition, "failure_policy_stop_missing")
 
 
 @pytest.mark.parametrize(

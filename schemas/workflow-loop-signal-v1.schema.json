@@ -1,0 +1,67 @@
+{
+  "$id": "https://hermes-agent.local/schemas/workflow-loop-signal-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "workflow_loop_signal_v1"
+    },
+    "signal_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "task_started_observed",
+        "task_passed_observed",
+        "task_failed_observed",
+        "blocked_observed",
+        "human_gate_observed",
+        "cancelled_observed",
+        "context_exhausted_observed",
+        "stale_observed"
+      ]
+    },
+    "expected_sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "allOf": [
+        {
+          "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+        },
+        {
+          "pattern": "\\S"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "signal_id",
+    "kind",
+    "expected_sequence",
+    "task_id",
+    "reason"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes WorkflowLoopSignalV1"
+}
