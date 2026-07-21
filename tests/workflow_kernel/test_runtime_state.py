@@ -395,6 +395,20 @@ def test_private_atomic_write_stays_anchored_when_parent_path_is_swapped(tmp_pat
     assert (parked / artifact.name).read_bytes() == b'{"safe":true}\n'
 
 
+def test_private_directory_creation_fsyncs_each_new_parent_entry(tmp_path, monkeypatch):
+    original_fsync = runtime_state.os.fsync
+    fsynced: list[int] = []
+
+    def tracked_fsync(descriptor):
+        fsynced.append(os.fstat(descriptor).st_ino)
+        return original_fsync(descriptor)
+
+    monkeypatch.setattr(runtime_state.os, "fsync", tracked_fsync)
+    runtime_state.ensure_private_directory(tmp_path / "one" / "two")
+
+    assert len(fsynced) == 2
+
+
 def test_private_ledger_transaction_stays_anchored_when_parent_path_is_swapped(tmp_path):
     private_root = tmp_path / "state/workflow-kernel"
     parent = private_root / "limited-unattended"

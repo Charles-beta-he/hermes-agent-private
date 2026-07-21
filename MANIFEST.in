@@ -1,3 +1,5 @@
+recursive-include workflow_kernel/schemas *.json
+
 graft skills
 graft optional-skills
 graft evals

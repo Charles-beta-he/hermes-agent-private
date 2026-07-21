@@ -41,8 +41,10 @@ def _open_directory_chain(path: Path) -> int:
     descriptor = os.open(absolute.anchor, flags)
     try:
         for part in absolute.parts[1:]:
+            created = False
             try:
                 os.mkdir(part, PRIVATE_DIRECTORY_MODE, dir_fd=descriptor)
+                created = True
             except FileExistsError:
                 pass
             next_descriptor = None
@@ -50,6 +52,8 @@ def _open_directory_chain(path: Path) -> int:
                 next_descriptor = os.open(part, flags, dir_fd=descriptor)
                 if not stat.S_ISDIR(os.fstat(next_descriptor).st_mode):
                     raise OSError(f"refusing non-directory ancestor: {absolute}")
+                if created:
+                    os.fsync(descriptor)
                 os.close(descriptor)
                 descriptor = next_descriptor
                 next_descriptor = None
@@ -89,7 +93,19 @@ def _open_regular_file_at(
     flags: int,
     mode: int = PRIVATE_FILE_MODE,
 ) -> int:
-    descriptor = os.open(name, flags | _no_follow_flag(), mode, dir_fd=directory_descriptor)
+    open_flags = flags | _no_follow_flag()
+    if flags & os.O_CREAT and not flags & os.O_EXCL:
+        try:
+            descriptor = os.open(name, open_flags | os.O_EXCL, mode, dir_fd=directory_descriptor)
+        except FileExistsError:
+            descriptor = os.open(
+                name,
+                open_flags & ~(os.O_CREAT | os.O_EXCL),
+                mode,
+                dir_fd=directory_descriptor,
+            )
+    else:
+        descriptor = os.open(name, open_flags, mode, dir_fd=directory_descriptor)
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -117,6 +133,17 @@ def open_ledger_file(
     return _open_regular_file(path, flags, mode)
 
 
+def read_ledger_descriptor_bytes(descriptor: int) -> bytes:
+    """Read an opened ledger descriptor from the beginning without reopening its path."""
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    while True:
+        chunk = os.read(descriptor, 65536)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
 def read_ledger_bytes(
     path: Path,
     *,
@@ -125,12 +152,7 @@ def read_ledger_bytes(
 ) -> bytes:
     descriptor = open_ledger_file(path, os.O_RDONLY, private_root=private_root, anchor=anchor)
     try:
-        chunks: list[bytes] = []
-        while True:
-            chunk = os.read(descriptor, 65536)
-            if not chunk:
-                return b"".join(chunks)
-            chunks.append(chunk)
+        return read_ledger_descriptor_bytes(descriptor)
     finally:
         os.close(descriptor)
 

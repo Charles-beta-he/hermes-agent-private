@@ -9,6 +9,9 @@ import { toWorkflowRunStatusV1JsonSchema } from '../src/workflow-run-status'
 import { toWorkflowRunTransitionV1JsonSchema } from '../src/workflow-run-transition'
 
 const schemaDir = fileURLToPath(new URL('../../../schemas/', import.meta.url))
+const workflowKernelSchemaDir = fileURLToPath(
+  new URL('../../../workflow_kernel/schemas/', import.meta.url),
+)
 
 const schemas = [
   ['evidence-v1.schema.json', toEvidenceV1JsonSchema()],
@@ -22,8 +25,16 @@ const schemas = [
   ],
 ] as const
 
-await Promise.all(
-  schemas.map(([name, schema]) =>
-    writeFile(`${schemaDir}${name}`, `${JSON.stringify(schema, null, 2)}\n`),
-  ),
+const serializedSchemas = new Map(
+  schemas.map(([name, schema]) => [name, `${JSON.stringify(schema, null, 2)}\n`]),
 )
+
+await Promise.all([
+  ...[...serializedSchemas.entries()].map(([name, content]) =>
+    writeFile(`${schemaDir}${name}`, content),
+  ),
+  writeFile(
+    `${workflowKernelSchemaDir}workflow-run-event-v1.schema.json`,
+    serializedSchemas.get('workflow-run-event-v1.schema.json')!,
+  ),
+])
