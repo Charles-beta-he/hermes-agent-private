@@ -1567,7 +1567,7 @@ def _handle_image_generate(args, **kw):
 _GENERIC_IMAGE_DESCRIPTION = IMAGE_GENERATE_SCHEMA["description"]
 
 
-def _active_image_capabilities() -> Dict[str, Any]:
+def get_active_image_capabilities() -> Dict[str, Any]:
     """Best-effort: return the active backend/model's image capabilities.
 
     Resolution order mirrors the runtime dispatch:
@@ -1618,6 +1618,11 @@ def _active_image_capabilities() -> Dict[str, Any]:
         pass
 
     return info
+
+
+def _active_image_capabilities() -> Dict[str, Any]:
+    """Compatibility wrapper for existing callers and monkeypatch-based tests."""
+    return get_active_image_capabilities()
 
 
 def _build_dynamic_image_schema() -> Dict[str, Any]:

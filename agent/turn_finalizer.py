@@ -391,6 +391,20 @@ def finalize_turn(
         "cost_source": agent.session_cost_source,
         "session_id": agent.session_id,
     }
+    try:
+        from agent.image_intent_routing import finalize_image_intent_shadow
+        from hermes_cli.config import load_config_readonly
+
+        _image_shadow = finalize_image_intent_shadow(
+            getattr(agent, "_last_image_intent_shadow", None),
+            messages=messages,
+            config=load_config_readonly() or {},
+        )
+        if _image_shadow is not None:
+            setattr(agent, "_last_image_intent_shadow", _image_shadow)
+            result["image_intent_shadow"] = _image_shadow
+    except Exception as _image_shadow_err:
+        logger.debug("image intent shadow finalization failed: %s", _image_shadow_err, exc_info=True)
     if agent._tool_guardrail_halt_decision is not None:
         result["guardrail"] = agent._tool_guardrail_halt_decision.to_metadata()
     # Surface any post-loop cleanup failures so the caller can distinguish a

@@ -182,3 +182,33 @@ def test_text_response_on_last_allowed_call_is_completed():
     )
     assert result["final_response"] == "final report"
     assert result["completed"] is True
+
+
+def test_result_surfaces_finalized_image_intent_shadow_readback():
+    from agent.image_intent_routing import run_image_intent_shadow
+
+    class _Provider:
+        name = "fake"
+
+        def capabilities(self):
+            return {"modalities": ["text"], "max_reference_images": 0}
+
+    agent = _StubAgent(raise_in=())
+    agent._last_image_intent_shadow = run_image_intent_shadow(
+        user_message="生成一张图片",
+        config={"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+        image_tool_available=True,
+        provider=_Provider(),
+        turn_id="turn-1",
+    )
+    result = _run(
+        agent,
+        final_response="final report",
+        api_call_count=1,
+        turn_exit_reason="text_response(finish_reason=stop)",
+    )
+    shadow = result["image_intent_shadow"]
+    assert shadow["status"] == "finalized"
+    assert shadow["runtime_mutation_authorized"] is False
+    assert shadow["alignment"]["status"] == "conflict"
+    assert shadow["alignment"]["production_gate"] == "block"
