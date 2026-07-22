@@ -146,6 +146,22 @@ def _coerce_list(value: Any) -> List[str]:
     return _coerce_list_impl(value)
 
 
+def _parse_token_expires_in(data: Any) -> int:
+    """Return a positive integer token TTL seconds from a token response payload.
+
+    Missing ``expires_in`` defaults to 7200. Bool and non-integral values are
+    rejected so JSON true/false or float TTLs cannot silently coerce via int().
+    """
+    if not isinstance(data, dict):
+        raise RuntimeError("expires_in must be a positive integer")
+    if "expires_in" not in data:
+        return 7200
+    value = data.get("expires_in")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise RuntimeError("expires_in must be a positive integer")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # QQAdapter
 # ---------------------------------------------------------------------------
@@ -411,7 +427,7 @@ class QQAdapter(BasePlatformAdapter):
                     f"QQ Bot token response missing access_token: {data}"
                 )
 
-            expires_in = int(data.get("expires_in", 7200))
+            expires_in = _parse_token_expires_in(data)
             self._access_token = token
             self._token_expires_at = time.time() + expires_in
             logger.info(
