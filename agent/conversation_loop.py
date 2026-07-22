@@ -446,6 +446,20 @@ def _record_kanban_budget_failure(agent: Any, *, task_id: str, api_call_count: i
         )
 
 
+def _clear_image_intent_shadow_state(agent: Any) -> None:
+    """Remove any observation owned by a previous public invocation."""
+    for attribute in ("_last_image_intent_shadow", "_last_image_intent_shadow_turn_id"):
+        if not hasattr(agent, attribute):
+            continue
+        try:
+            delattr(agent, attribute)
+        except Exception:
+            try:
+                setattr(agent, attribute, None)
+            except Exception:
+                pass
+
+
 def _run_image_intent_shadow_router(
     agent: Any,
     user_message: Any,
@@ -458,24 +472,17 @@ def _run_image_intent_shadow_router(
     mode.  It stores only the resulting receipt on the live agent so callers
     and tests can read back the decision without mutating the conversation.
     """
-    if hasattr(agent, "_last_image_intent_shadow"):
-        try:
-            delattr(agent, "_last_image_intent_shadow")
-        except Exception:
-            try:
-                setattr(agent, "_last_image_intent_shadow", None)
-            except Exception:
-                pass
+    _clear_image_intent_shadow_state(agent)
     try:
         from hermes_cli.config import load_config_readonly
 
         config = load_config_readonly() or {}
         section = config.get("image_intent_routing") if isinstance(config, dict) else None
-        if not isinstance(section, dict) or not section.get("enabled"):
+        if not isinstance(section, dict) or section.get("enabled") is not True:
             return None
 
         capabilities = None
-        if not section.get("kill_switch") and str(section.get("mode") or "shadow").lower() == "shadow":
+        if section.get("kill_switch", False) is False and str(section.get("mode") or "shadow").strip().lower() == "shadow":
             from tools.image_generation_tool import get_active_image_capabilities
 
             capabilities = get_active_image_capabilities()
@@ -493,6 +500,7 @@ def _run_image_intent_shadow_router(
         )
         if receipt is not None:
             setattr(agent, "_last_image_intent_shadow", receipt)
+            setattr(agent, "_last_image_intent_shadow_turn_id", turn_id)
         return receipt
     except Exception as exc:  # pragma: no cover - defensive fail-soft boundary
         logger.debug("image intent shadow router unavailable: %s", exc, exc_info=True)
@@ -1083,7 +1091,69 @@ def _sync_failover_system_message(agent, api_messages, active_system_prompt):
     return sp
 
 
+def _finalize_image_intent_shadow_result(agent: Any, result: Any) -> Any:
+    """Finalize the observation for every dictionary return path."""
+    if not isinstance(result, dict):
+        return result
+    existing = result.get("image_intent_shadow")
+    if isinstance(existing, dict) and existing.get("status") == "finalized":
+        return result
+    try:
+        from agent.image_intent_routing import finalize_image_intent_shadow
+    except Exception as exc:  # pragma: no cover - defensive fail-soft boundary
+        logger.debug("image intent shadow finalizer unavailable: %s", exc, exc_info=True)
+        return result
+
+    finalizer_config: Dict[str, Any] = {}
+    try:
+        from hermes_cli.config import load_config_readonly
+
+        finalizer_config = load_config_readonly() or {}
+    except Exception as exc:  # fail closed: preserve in-memory readback, disable persistence
+        logger.debug("image intent shadow config unavailable: %s", exc, exc_info=True)
+
+    try:
+        finalized = finalize_image_intent_shadow(
+            getattr(agent, "_last_image_intent_shadow", None),
+            messages=result.get("messages") or [],
+            config=finalizer_config,
+            current_turn_id=getattr(agent, "_last_image_intent_shadow_turn_id", None),
+        )
+        if finalized is not None:
+            setattr(agent, "_last_image_intent_shadow", finalized)
+            result["image_intent_shadow"] = finalized
+    except Exception as exc:  # pragma: no cover - defensive fail-soft boundary
+        logger.debug("image intent shadow finalizer unavailable: %s", exc, exc_info=True)
+    return result
+
+
 def run_conversation(
+    agent,
+    user_message: str,
+    system_message: str = None,
+    conversation_history: List[Dict[str, Any]] = None,
+    task_id: str = None,
+    stream_callback: Optional[callable] = None,
+    persist_user_message: Optional[str] = None,
+    persist_user_timestamp: Optional[float] = None,
+    moa_config: Optional[dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    _clear_image_intent_shadow_state(agent)
+    result = _run_conversation_impl(
+        agent,
+        user_message,
+        system_message,
+        conversation_history,
+        task_id,
+        stream_callback,
+        persist_user_message,
+        persist_user_timestamp,
+        moa_config,
+    )
+    return _finalize_image_intent_shadow_result(agent, result)
+
+
+def _run_conversation_impl(
     agent,
     user_message: str,
     system_message: str = None,
@@ -5969,6 +6039,7 @@ def run_conversation(
         _turn_exit_reason=_turn_exit_reason,
     )
 
-
+# Preserve source-inspection compatibility for existing regression contracts.
+setattr(run_conversation, "__wrapped__", _run_conversation_impl)
 
 __all__ = ["run_conversation"]

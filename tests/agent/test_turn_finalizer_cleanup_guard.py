@@ -212,3 +212,159 @@ def test_result_surfaces_finalized_image_intent_shadow_readback():
     assert shadow["runtime_mutation_authorized"] is False
     assert shadow["alignment"]["status"] == "conflict"
     assert shadow["alignment"]["production_gate"] == "block"
+
+
+def test_normal_finalizer_surfaces_readback_when_config_reload_fails(monkeypatch):
+    from agent.image_intent_routing import run_image_intent_shadow
+
+    agent = _StubAgent(raise_in=())
+    agent._last_image_intent_shadow = run_image_intent_shadow(
+        user_message="生成一张图片",
+        config={"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+        image_tool_available=True,
+        capabilities={
+            "provider": "fake",
+            "model": "fake-v1",
+            "modalities": ["text"],
+            "max_reference_images": 0,
+        },
+        turn_id="turn-1",
+    )
+    monkeypatch.setattr(
+        "hermes_cli.config.load_config_readonly",
+        lambda: (_ for _ in ()).throw(RuntimeError("config unavailable")),
+    )
+
+    result = _run(
+        agent,
+        final_response="final report",
+        api_call_count=1,
+        turn_exit_reason="text_response(finish_reason=stop)",
+    )
+
+    assert result["image_intent_shadow"]["status"] == "finalized"
+    assert agent._last_image_intent_shadow["status"] == "finalized"
+
+
+def test_run_conversation_wrapper_finalizes_direct_return_shadow(monkeypatch):
+    import agent.conversation_loop as conversation_loop
+    from agent.image_intent_routing import run_image_intent_shadow
+
+    class _DirectReturnAgent:
+        pass
+
+    agent = _DirectReturnAgent()
+
+    def _direct_return(*args, **kwargs):
+        agent._last_image_intent_shadow = run_image_intent_shadow(
+            user_message="生成一张图片",
+            config={"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+            image_tool_available=True,
+            capabilities={
+                "provider": "fake",
+                "model": "fake-v1",
+                "modalities": ["text"],
+                "max_reference_images": 0,
+            },
+            turn_id="direct-return",
+        )
+        agent._last_image_intent_shadow_turn_id = "direct-return"
+        return {
+            "completed": False,
+            "messages": [
+                {"role": "user", "content": "生成一张图片"},
+                {"role": "assistant", "content": "blocked before normal finalizer"},
+            ],
+        }
+
+    monkeypatch.setattr(conversation_loop, "_run_conversation_impl", _direct_return)
+    monkeypatch.setattr(
+        "hermes_cli.config.load_config_readonly",
+        lambda: {"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+    )
+
+    result = conversation_loop.run_conversation(agent, "生成一张图片")
+
+    assert result["image_intent_shadow"]["status"] == "finalized"
+    assert result["image_intent_shadow"]["alignment"]["production_gate"] == "block"
+    assert agent._last_image_intent_shadow == result["image_intent_shadow"]
+
+
+def test_run_conversation_wrapper_drops_receipt_from_previous_invocation(monkeypatch):
+    import agent.conversation_loop as conversation_loop
+    from agent.image_intent_routing import run_image_intent_shadow
+
+    class _DirectReturnAgent:
+        pass
+
+    agent = _DirectReturnAgent()
+    agent._last_image_intent_shadow = run_image_intent_shadow(
+        user_message="旧回合：生成一张图片",
+        config={"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+        image_tool_available=True,
+        capabilities={
+            "provider": "fake",
+            "model": "fake-v1",
+            "modalities": ["text"],
+            "max_reference_images": 0,
+        },
+        turn_id="old-turn",
+    )
+    agent._last_image_intent_shadow_turn_id = "old-turn"
+    monkeypatch.setattr(
+        conversation_loop,
+        "_run_conversation_impl",
+        lambda *args, **kwargs: {
+            "completed": False,
+            "messages": [{"role": "user", "content": "新回合：解释图片格式"}],
+        },
+    )
+
+    result = conversation_loop.run_conversation(agent, "新回合：解释图片格式")
+
+    assert "image_intent_shadow" not in result
+    assert not hasattr(agent, "_last_image_intent_shadow")
+    assert not hasattr(agent, "_last_image_intent_shadow_turn_id")
+
+
+def test_run_conversation_wrapper_finalizes_when_config_reload_fails(monkeypatch):
+    import agent.conversation_loop as conversation_loop
+    from agent.image_intent_routing import run_image_intent_shadow
+
+    class _DirectReturnAgent:
+        pass
+
+    agent = _DirectReturnAgent()
+
+    def _direct_return(*args, **kwargs):
+        agent._last_image_intent_shadow = run_image_intent_shadow(
+            user_message="生成一张图片",
+            config={"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+            image_tool_available=True,
+            capabilities={
+                "provider": "fake",
+                "model": "fake-v1",
+                "modalities": ["text"],
+                "max_reference_images": 0,
+            },
+            turn_id="direct-return",
+        )
+        agent._last_image_intent_shadow_turn_id = "direct-return"
+        return {
+            "completed": False,
+            "messages": [
+                {"role": "user", "content": "生成一张图片"},
+                {"role": "assistant", "content": "blocked before normal finalizer"},
+            ],
+        }
+
+    monkeypatch.setattr(conversation_loop, "_run_conversation_impl", _direct_return)
+    monkeypatch.setattr(
+        "hermes_cli.config.load_config_readonly",
+        lambda: (_ for _ in ()).throw(RuntimeError("config unavailable")),
+    )
+
+    result = conversation_loop.run_conversation(agent, "生成一张图片")
+
+    assert result["image_intent_shadow"]["status"] == "finalized"
+    assert agent._last_image_intent_shadow == result["image_intent_shadow"]

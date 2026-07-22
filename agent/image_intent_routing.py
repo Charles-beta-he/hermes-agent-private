@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-CONTRACT_VERSION = "hermes_image_intent_contract_v1"
+CONTRACT_VERSION = "hermes_image_intent_contract_v2"
 
 
 class ImageIntent(str, Enum):
@@ -51,6 +51,9 @@ class ImageProviderCapabilityContract:
     schema_version: str
     provider: str
     model: str | None
+    configured_provider: str | None
+    configured_model: str | None
+    available: bool
     text_to_image: bool
     image_edit: bool
     reference_images: bool
@@ -119,6 +122,17 @@ _GENERATE_PATTERNS = (
     r"(?:create|generate|draw|render|make).{0,20}(?:an?\s+)?(?:image|picture|illustration|poster|photo|avatar)",
 )
 
+_ATTACHMENT_MARKER = r"\[\d+\s+images?\]"
+_ATTACHED_ANALYZE_PATTERNS = (
+    rf"{_ATTACHMENT_MARKER}.{{0,80}}(?:分析|识别|检查|审查)",
+    rf"{_ATTACHMENT_MARKER}.{{0,80}}(?:analy[sz]e|inspect|review)\b",
+)
+_ATTACHED_EDIT_PATTERNS = (
+    rf"{_ATTACHMENT_MARKER}.{{0,80}}(?:编辑|修改|改成|变成|去掉|移除|替换)",
+    rf"{_ATTACHMENT_MARKER}.{{0,80}}(?:edit|modify|transform|remove|replace)\b",
+    rf"{_ATTACHMENT_MARKER}.{{0,80}}make\s+(?:it|this)\b",
+)
+
 
 def _first_pattern(text: str, patterns: tuple[str, ...]) -> str | None:
     for pattern in patterns:
@@ -145,9 +159,29 @@ def classify_image_intent_shadow(user_message: Any) -> ImageIntentDecision:
                 schema_version=CONTRACT_VERSION,
                 intent=intent,
                 confidence="high",
-                source="deterministic_shadow_v1",
+                source="deterministic_shadow_v2",
                 evidence=(match,),
             )
+
+    match = _first_pattern(text, _ATTACHED_ANALYZE_PATTERNS)
+    if match:
+        return ImageIntentDecision(
+            schema_version=CONTRACT_VERSION,
+            intent=ImageIntent.ANALYZE_ASSET,
+            confidence="high",
+            source="deterministic_shadow_v2",
+            evidence=(match,),
+        )
+
+    match = _first_pattern(text, _ATTACHED_EDIT_PATTERNS)
+    if match:
+        return ImageIntentDecision(
+            schema_version=CONTRACT_VERSION,
+            intent=ImageIntent.EDIT_ASSET,
+            confidence="high",
+            source="deterministic_shadow_v2",
+            evidence=(match,),
+        )
 
     match = _first_pattern(text, _EDIT_PATTERNS)
     if match:
@@ -155,7 +189,7 @@ def classify_image_intent_shadow(user_message: Any) -> ImageIntentDecision:
             schema_version=CONTRACT_VERSION,
             intent=ImageIntent.EDIT_ASSET,
             confidence="high",
-            source="deterministic_shadow_v1",
+            source="deterministic_shadow_v2",
             evidence=(match,),
         )
 
@@ -165,7 +199,7 @@ def classify_image_intent_shadow(user_message: Any) -> ImageIntentDecision:
             schema_version=CONTRACT_VERSION,
             intent=ImageIntent.GENERATE_ASSET,
             confidence="high",
-            source="deterministic_shadow_v1",
+            source="deterministic_shadow_v2",
             evidence=(match,),
         )
 
@@ -173,7 +207,7 @@ def classify_image_intent_shadow(user_message: Any) -> ImageIntentDecision:
         schema_version=CONTRACT_VERSION,
         intent=ImageIntent.AMBIGUOUS,
         confidence="low",
-        source="deterministic_shadow_v1",
+        source="deterministic_shadow_v2",
         evidence=(),
     )
 
@@ -204,10 +238,16 @@ def build_provider_capability_contract(
         max_refs = 0
     provider_name = raw.get("provider") or getattr(provider, "name", "unknown") or "unknown"
     resolved_model = model if model is not None else raw.get("model")
+    configured_provider = raw.get("configured_provider") or provider_name
+    configured_model = raw.get("configured_model") or resolved_model
+    available = raw.get("available", True) is True
     return ImageProviderCapabilityContract(
         schema_version=CONTRACT_VERSION,
         provider=str(provider_name),
         model=str(resolved_model) if resolved_model else None,
+        configured_provider=str(configured_provider) if configured_provider else None,
+        configured_model=str(configured_model) if configured_model else None,
+        available=available,
         text_to_image="text" in modalities,
         image_edit="image" in modalities,
         reference_images=max_refs > 0,
@@ -249,6 +289,8 @@ def evaluate_image_intent_contract(
     if not image_tool_available:
         blocker = "image_tool_unavailable"
     elif provider is None:
+        blocker = "provider_unavailable"
+    elif not provider.available:
         blocker = "provider_unavailable"
     elif intent is ImageIntent.GENERATE_ASSET and not provider.text_to_image:
         blocker = "provider_missing_text_to_image"
@@ -299,6 +341,7 @@ def finalize_image_intent_shadow(
     *,
     messages: Any,
     config: Mapping[str, Any] | None = None,
+    current_turn_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Compare a shadow recommendation with current-turn tool observations.
 
@@ -311,12 +354,25 @@ def finalize_image_intent_shadow(
     if receipt.get("status") != "observed":
         return final
 
-    observed = _collect_current_turn_tool_names(messages)
-    image_observed = "image_generate" in observed
     decision_value = receipt.get("decision")
     route_value = receipt.get("route")
+    provider_value = receipt.get("provider")
     decision: Mapping[str, Any] = decision_value if isinstance(decision_value, Mapping) else {}
     route: Mapping[str, Any] = route_value if isinstance(route_value, Mapping) else {}
+    provider_present = "provider" in receipt and provider_value is not None
+    provider_contract: Mapping[str, Any] = provider_value if isinstance(provider_value, Mapping) else {}
+    nested_versions = [decision.get("schema_version"), route.get("schema_version")]
+    if provider_present:
+        nested_versions.append(provider_contract.get("schema_version"))
+    version_mismatch = receipt.get("schema_version") != CONTRACT_VERSION or any(
+        version != CONTRACT_VERSION for version in nested_versions
+    )
+    turn_mismatch = receipt.get("status") == "observed" and (
+        current_turn_id is None or receipt.get("turn_id") != current_turn_id
+    )
+
+    observed = [] if turn_mismatch else _collect_current_turn_tool_names(messages)
+    image_observed = "image_generate" in observed
     intent = str(decision.get("intent") or "ambiguous")
     artifact_required = bool(route.get("artifact_required"))
     eligible = bool(route.get("eligible"))
@@ -326,7 +382,14 @@ def finalize_image_intent_shadow(
         ImageIntent.EXPLAIN_ONLY.value,
         ImageIntent.ANALYZE_ASSET.value,
     }
-    if receipt.get("schema_version") != CONTRACT_VERSION:
+    if turn_mismatch:
+        alignment = {
+            "status": "conflict",
+            "reason": "turn_id_mismatch",
+            "review_required": True,
+            "production_gate": "block",
+        }
+    elif version_mismatch:
         alignment = {
             "status": "conflict",
             "reason": "contract_version_mismatch",
@@ -377,10 +440,16 @@ def finalize_image_intent_shadow(
     root = config if isinstance(config, Mapping) else {}
     raw_section = root.get("image_intent_routing")
     section = raw_section if isinstance(raw_section, Mapping) else {}
-    if section.get("ledger_enabled"):
+    persistence_enabled = (
+        not turn_mismatch
+        and section.get("enabled") is True
+        and section.get("kill_switch", False) is False
+        and section.get("ledger_enabled") is True
+    )
+    if persistence_enabled:
         configured_path = section.get("ledger_path")
         ledger_path = Path(str(configured_path)).expanduser() if configured_path else _default_ledger_path()
-        _append_jsonl_private(ledger_path, final)
+        _append_jsonl_private(ledger_path, _ledger_payload(final))
     return final
 
 
@@ -394,19 +463,43 @@ def _default_ledger_path() -> Path:
     return root / "state" / "image-intent-routing" / "shadow-events.jsonl"
 
 
+def _ledger_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the persistence-safe subset; deterministic prompt hashes stay in memory only."""
+    persisted = dict(payload)
+    persisted.pop("message_sha256", None)
+    return persisted
+
+
+def _reject_symlink_components(path: Path) -> None:
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current /= component
+        if current.is_symlink():
+            raise OSError(f"ledger path contains symlink component: {current}")
+
+
 def _append_jsonl_private(path: Path, payload: Mapping[str, Any]) -> None:
+    path = Path(os.path.abspath(path))
+    _reject_symlink_components(path)
+    parent_existed = path.parent.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(path.parent, 0o700)
-    except OSError:
-        pass
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    if not parent_existed:
+        try:
+            os.chmod(path.parent, 0o700)
+        except OSError:
+            pass
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
     try:
         os.fchmod(fd, 0o600)
-    except OSError:
-        pass
-    with os.fdopen(fd, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(dict(payload), ensure_ascii=False, sort_keys=True) + "\n")
+        encoded = (json.dumps(dict(payload), ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+        written = os.write(fd, encoded)
+        if written != len(encoded):
+            raise OSError(f"short ledger write: {written}/{len(encoded)} bytes")
+    finally:
+        os.close(fd)
 
 
 def run_image_intent_shadow(
@@ -424,9 +517,9 @@ def run_image_intent_shadow(
     root = config if isinstance(config, Mapping) else {}
     raw = root.get("image_intent_routing")
     section = raw if isinstance(raw, Mapping) else {}
-    if not section.get("enabled"):
+    if section.get("enabled") is not True:
         return None
-    if section.get("kill_switch"):
+    if section.get("kill_switch", False) is not False:
         return {
             "schema_version": CONTRACT_VERSION,
             "status": "disabled_by_kill_switch",
@@ -472,8 +565,8 @@ def run_image_intent_shadow(
         "route": route.to_dict(),
         "runtime_mutation_authorized": False,
     }
-    if section.get("ledger_enabled"):
+    if section.get("ledger_enabled") is True:
         configured_path = section.get("ledger_path")
         ledger_path = Path(str(configured_path)).expanduser() if configured_path else _default_ledger_path()
-        _append_jsonl_private(ledger_path, receipt)
+        _append_jsonl_private(ledger_path, _ledger_payload(receipt))
     return receipt

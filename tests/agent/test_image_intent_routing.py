@@ -44,7 +44,7 @@ def test_shadow_classifier_is_conservative_and_negative_cases_win(text, expected
     decision = classify_image_intent_shadow(text)
     assert decision.intent is expected
     assert decision.schema_version == CONTRACT_VERSION
-    assert decision.source == "deterministic_shadow_v1"
+    assert decision.source == "deterministic_shadow_v2"
 
 
 def test_provider_capability_contract_normalizes_existing_provider_surface():
@@ -187,9 +187,11 @@ def test_shadow_runtime_writes_local_readback_without_changing_policy(tmp_path):
     assert receipt["route"]["runtime_mutation_authorized"] is False
 
     rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
-    assert rows == [receipt]
+    assert len(rows) == 1
     assert rows[0]["turn_id"] == "turn-1"
     assert "user_message" not in rows[0]
+    assert "message_sha256" not in rows[0]
+    assert receipt["message_sha256"]
 
 
 def test_shadow_ledger_tightens_existing_file_permissions(tmp_path):
@@ -325,6 +327,7 @@ def test_finalize_shadow_detects_negative_generation_conflict():
     )
     final = finalize_image_intent_shadow(
         receipt,
+        current_turn_id="turn-negative",
         messages=[
             {"role": "user", "content": "只写提示词，不要生成图片"},
             {
@@ -355,6 +358,7 @@ def test_finalize_shadow_detects_missing_expected_artifact_tool():
     )
     final = finalize_image_intent_shadow(
         receipt,
+        current_turn_id="turn-generate",
         messages=[
             {"role": "user", "content": "生成一张图片"},
             {"role": "assistant", "content": "这里是图片。"},
@@ -376,6 +380,7 @@ def test_finalize_shadow_blocks_contract_version_drift():
     receipt["schema_version"] = "hermes_image_intent_contract_v0"
     final = finalize_image_intent_shadow(
         receipt,
+        current_turn_id="turn-drift",
         messages=[{"role": "user", "content": "生成一张图片"}],
     )
     assert final["alignment"]["status"] == "conflict"
@@ -410,6 +415,7 @@ def test_finalize_shadow_keeps_ambiguous_and_aligned_turns_non_blocking():
     )
     final = finalize_image_intent_shadow(
         ambiguous,
+        current_turn_id="turn-ambiguous",
         messages=[
             {"role": "user", "content": "想做个视觉方案"},
             {"role": "assistant", "content": "可以先梳理方向。"},
@@ -418,3 +424,304 @@ def test_finalize_shadow_keeps_ambiguous_and_aligned_turns_non_blocking():
     assert final["alignment"]["status"] == "not_applicable"
     assert final["alignment"]["review_required"] is False
     assert final["alignment"]["production_gate"] == "observe"
+
+
+@pytest.mark.parametrize("value", ["false", "true", 1, 0, [], {}])
+def test_shadow_requires_exact_boolean_enabled(value, tmp_path):
+    ledger = tmp_path / "events.jsonl"
+    receipt = run_image_intent_shadow(
+        user_message="生成一张图片",
+        config={
+            "image_intent_routing": {
+                "enabled": value,
+                "mode": "shadow",
+                "ledger_enabled": True,
+                "ledger_path": str(ledger),
+            }
+        },
+        image_tool_available=True,
+        provider=FakeProvider(),
+        turn_id="strict-enabled",
+    )
+    assert receipt is None
+    assert not ledger.exists()
+
+
+def test_shadow_requires_exact_boolean_ledger_gate(tmp_path):
+    ledger = tmp_path / "events.jsonl"
+    receipt = run_image_intent_shadow(
+        user_message="生成一张图片",
+        config={
+            "image_intent_routing": {
+                "enabled": True,
+                "mode": "shadow",
+                "ledger_enabled": "false",
+                "ledger_path": str(ledger),
+            }
+        },
+        image_tool_available=True,
+        provider=FakeProvider(),
+        turn_id="strict-ledger",
+    )
+    assert receipt["status"] == "observed"
+    assert not ledger.exists()
+
+
+def test_kill_switch_suppresses_finalization_persistence(tmp_path):
+    ledger = tmp_path / "events.jsonl"
+    receipt = run_image_intent_shadow(
+        user_message="生成一张图片",
+        config={"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+        image_tool_available=True,
+        provider=FakeProvider(),
+        turn_id="kill-before-finalize",
+    )
+    final = finalize_image_intent_shadow(
+        receipt,
+        current_turn_id="kill-before-finalize",
+        messages=[{"role": "user", "content": "生成一张图片"}],
+        config={
+            "image_intent_routing": {
+                "enabled": False,
+                "kill_switch": True,
+                "ledger_enabled": True,
+                "ledger_path": str(ledger),
+            }
+        },
+    )
+    assert final["status"] == "finalized"
+    assert not ledger.exists()
+
+
+def test_custom_existing_ledger_parent_permissions_are_not_changed(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o755)
+    shared.chmod(0o755)
+    ledger = shared / "events.jsonl"
+    run_image_intent_shadow(
+        user_message="生成一张图片",
+        config={
+            "image_intent_routing": {
+                "enabled": True,
+                "mode": "shadow",
+                "ledger_enabled": True,
+                "ledger_path": str(ledger),
+            }
+        },
+        image_tool_available=True,
+        provider=FakeProvider(),
+        turn_id="shared-parent",
+    )
+    assert shared.stat().st_mode & 0o777 == 0o755
+    assert ledger.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("[1 image]\nRemove the background", ImageIntent.EDIT_ASSET),
+        ("[1 image]\nMake it watercolor", ImageIntent.EDIT_ASSET),
+        ("[1 image]\nAnalyze accessibility issues", ImageIntent.ANALYZE_ASSET),
+    ],
+)
+def test_attached_image_context_supports_implicit_edit_and_analysis(text, expected):
+    assert classify_image_intent_shadow(text).intent is expected
+
+
+def test_conversation_loop_rejects_quoted_enabled_without_resolving_provider(monkeypatch):
+    class FakeAgent:
+        valid_tool_names = {"image_generate"}
+
+    monkeypatch.setattr(
+        "hermes_cli.config.load_config_readonly",
+        lambda: {"image_intent_routing": {"enabled": "false", "mode": "shadow"}},
+    )
+    monkeypatch.setattr(
+        "tools.image_generation_tool.get_active_image_capabilities",
+        lambda: pytest.fail("malformed enabled flag must fail closed"),
+    )
+    assert _run_image_intent_shadow_router(
+        FakeAgent(),
+        user_message="生成一张图片",
+        turn_id="strict-loop-gate",
+    ) is None
+
+
+def test_finalize_rejects_turn_identity_mismatch_without_persisting(tmp_path):
+    ledger = tmp_path / "events.jsonl"
+    receipt = run_image_intent_shadow(
+        user_message="生成一张图片",
+        config={"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+        image_tool_available=True,
+        provider=FakeProvider(),
+        turn_id="old-turn",
+    )
+    final = finalize_image_intent_shadow(
+        receipt,
+        current_turn_id="new-turn",
+        messages=[{"role": "user", "content": "分析这张图片"}],
+        config={
+            "image_intent_routing": {
+                "enabled": True,
+                "mode": "shadow",
+                "ledger_enabled": True,
+                "ledger_path": str(ledger),
+            }
+        },
+    )
+    assert final["alignment"]["reason"] == "turn_id_mismatch"
+    assert final["alignment"]["production_gate"] == "block"
+    assert not ledger.exists()
+
+
+def test_finalize_rejects_observed_receipt_without_current_turn_identity():
+    receipt = run_image_intent_shadow(
+        user_message="生成一张图片",
+        config={"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+        image_tool_available=True,
+        provider=FakeProvider(),
+        turn_id="old-turn",
+    )
+
+    final = finalize_image_intent_shadow(receipt, messages=[])
+
+    assert final["alignment"]["reason"] == "turn_id_mismatch"
+    assert final["alignment"]["production_gate"] == "block"
+
+
+@pytest.mark.parametrize("nested_key", ["decision", "provider", "route"])
+def test_finalize_blocks_nested_contract_version_drift(nested_key):
+    receipt = run_image_intent_shadow(
+        user_message="生成一张图片",
+        config={"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+        image_tool_available=True,
+        provider=FakeProvider(),
+        turn_id="nested-drift",
+    )
+    receipt[nested_key]["schema_version"] = "hermes_image_intent_contract_v0"
+    final = finalize_image_intent_shadow(
+        receipt,
+        current_turn_id="nested-drift",
+        messages=[{"role": "user", "content": "生成一张图片"}],
+    )
+    assert final["alignment"]["reason"] == "contract_version_mismatch"
+    assert final["alignment"]["production_gate"] == "block"
+
+
+def test_finalize_blocks_empty_provider_contract_as_schema_drift():
+    receipt = run_image_intent_shadow(
+        user_message="生成一张图片",
+        config={"image_intent_routing": {"enabled": True, "mode": "shadow"}},
+        image_tool_available=True,
+        provider=FakeProvider(),
+        turn_id="empty-provider",
+    )
+    receipt["provider"] = {}
+
+    final = finalize_image_intent_shadow(
+        receipt,
+        current_turn_id="empty-provider",
+        messages=[{"role": "user", "content": "生成一张图片"}],
+    )
+
+    assert final["alignment"]["reason"] == "contract_version_mismatch"
+    assert final["alignment"]["production_gate"] == "block"
+
+
+def test_provider_unavailable_capability_projection_blocks_shadow_eligibility():
+    provider = build_provider_capability_contract(
+        None,
+        capabilities={
+            "configured_provider": "missing-plugin",
+            "configured_model": "requested-v1",
+            "provider": "missing-plugin",
+            "model": "requested-v1",
+            "available": False,
+            "modalities": [],
+            "max_reference_images": 0,
+        },
+    )
+    route = evaluate_image_intent_contract(
+        classify_image_intent_shadow("生成一张图片"),
+        provider=provider,
+        image_tool_available=True,
+    )
+    assert provider.configured_provider == "missing-plugin"
+    assert provider.available is False
+    assert route.eligible is False
+    assert route.blocker == "provider_unavailable"
+
+
+def test_ledger_rejects_symlink_without_touching_target(tmp_path):
+    victim = tmp_path / "victim.jsonl"
+    victim.write_text("original\n", encoding="utf-8")
+    victim.chmod(0o644)
+    ledger = tmp_path / "events.jsonl"
+    ledger.symlink_to(victim)
+
+    with pytest.raises(OSError):
+        run_image_intent_shadow(
+            user_message="生成一张图片",
+            config={
+                "image_intent_routing": {
+                    "enabled": True,
+                    "mode": "shadow",
+                    "ledger_enabled": True,
+                    "ledger_path": str(ledger),
+                }
+            },
+            image_tool_available=True,
+            provider=FakeProvider(),
+            turn_id="symlink-ledger",
+        )
+
+    assert victim.read_text(encoding="utf-8") == "original\n"
+    assert victim.stat().st_mode & 0o777 == 0o644
+
+
+def test_authoritative_resolver_does_not_fall_back_from_missing_explicit_provider(monkeypatch):
+    from tools import image_generation_tool
+
+    monkeypatch.setattr(image_generation_tool, "_read_configured_image_provider", lambda: "missing-plugin")
+    monkeypatch.setattr(image_generation_tool, "_read_configured_image_model", lambda: "requested-v1")
+    monkeypatch.setattr("hermes_cli.plugins._ensure_plugins_discovered", lambda: None)
+    monkeypatch.setattr("agent.image_gen_registry.get_provider", lambda name: None)
+    monkeypatch.setattr(
+        image_generation_tool,
+        "_resolve_fal_model",
+        lambda: pytest.fail("explicit missing provider must not silently fall back to FAL"),
+    )
+
+    capabilities = image_generation_tool.get_active_image_capabilities()
+
+    assert capabilities["configured_provider"] == "missing-plugin"
+    assert capabilities["configured_model"] == "requested-v1"
+    assert capabilities["provider"] == "missing-plugin"
+    assert capabilities["available"] is False
+    assert capabilities["modalities"] == []
+
+
+def test_ledger_rejects_symlinked_parent_component(tmp_path):
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    linked_parent = tmp_path / "linked"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+    ledger = linked_parent / "events.jsonl"
+
+    with pytest.raises(OSError):
+        run_image_intent_shadow(
+            user_message="生成一张图片",
+            config={
+                "image_intent_routing": {
+                    "enabled": True,
+                    "mode": "shadow",
+                    "ledger_enabled": True,
+                    "ledger_path": str(ledger),
+                }
+            },
+            image_tool_available=True,
+            provider=FakeProvider(),
+            turn_id="symlink-parent",
+        )
+
+    assert not (real_parent / "events.jsonl").exists()
