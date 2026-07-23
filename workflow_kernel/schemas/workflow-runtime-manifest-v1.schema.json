@@ -1,10 +1,10 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hermes-agent.local/schemas/workflow-runtime-manifest-v1.schema.json",
-  "title": "Hermes WorkflowRuntimeManifestV1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "schema_version": {
+      "type": "string",
       "const": "workflow_runtime_manifest_v1"
     },
     "run_id": {
@@ -12,6 +12,7 @@
       "minLength": 1
     },
     "identity_schema_version": {
+      "type": "number",
       "const": 1
     },
     "baseline_ref": {
@@ -53,23 +54,28 @@
       "properties": {
         "spawns": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "wall_ms": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "tool_calls": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "tokens": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "side_effect_ops": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -83,7 +89,9 @@
     },
     "leaves": {
       "type": "object",
-      "minProperties": 1,
+      "propertyNames": {
+        "type": "string"
+      },
       "additionalProperties": {
         "type": "object",
         "properties": {
@@ -95,32 +103,41 @@
             "type": "string",
             "minLength": 1
           },
-          "input": {},
+          "input": {
+            "$ref": "#/$defs/__schema0"
+          },
           "output_schema": {
-            "type": "object"
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
           },
           "reserve": {
             "type": "object",
             "properties": {
               "spawns": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "maximum": 9007199254740991
               },
               "wall_ms": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "maximum": 9007199254740991
               },
               "tool_calls": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "maximum": 9007199254740991
               },
               "tokens": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "maximum": 9007199254740991
               },
               "side_effect_ops": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "maximum": 9007199254740991
               }
             },
             "required": [
@@ -141,7 +158,8 @@
           "reserve"
         ],
         "additionalProperties": false
-      }
+      },
+      "minProperties": 1
     }
   },
   "required": [
@@ -159,5 +177,39 @@
     "hard_budget",
     "leaves"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "title": "Hermes WorkflowRuntimeManifestV1",
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  }
 }

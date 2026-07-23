@@ -1,10 +1,10 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hermes-agent.local/schemas/workflow-leaf-packet-v1.schema.json",
-  "title": "Hermes WorkflowLeafPacketV1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "schema_version": {
+      "type": "string",
       "const": "workflow_leaf_packet_v1"
     },
     "leaf_id": {
@@ -24,6 +24,7 @@
       "minLength": 1
     },
     "status": {
+      "type": "string",
       "enum": [
         "completed",
         "failed",
@@ -85,23 +86,28 @@
       "properties": {
         "spawns": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "wall_ms": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "tool_calls": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "tokens": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "side_effect_ops": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -114,15 +120,23 @@
       "additionalProperties": false
     },
     "continuation": {
-      "type": [
-        "object",
-        "null"
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "value_present": {
       "type": "boolean"
     },
-    "result": {}
+    "result": {
+      "$ref": "#/$defs/__schema0"
+    }
   },
   "required": [
     "schema_version",
@@ -139,5 +153,39 @@
     "value_present",
     "result"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "title": "Hermes WorkflowLeafPacketV1",
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  }
 }

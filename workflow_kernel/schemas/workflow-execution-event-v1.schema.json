@@ -1,10 +1,10 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hermes-agent.local/schemas/workflow-execution-event-v1.schema.json",
-  "title": "Hermes WorkflowExecutionEventV1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "schema_version": {
+      "type": "string",
       "const": "workflow_execution_event_v1"
     },
     "run_id": {
@@ -13,14 +13,19 @@
     },
     "sequence": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "maximum": 9007199254740991
     },
     "previous_event_id": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "pattern": "^wee_[0-9a-f]{64}$"
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^wee_[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "idempotency_key": {
       "type": "string",
@@ -28,9 +33,11 @@
     },
     "occurred_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
     },
     "event_type": {
+      "type": "string",
       "enum": [
         "run_accepted",
         "run_started",
@@ -39,11 +46,14 @@
         "budget_released",
         "leaf_started",
         "leaf_packet",
+        "run_verified",
         "run_completed"
       ]
     },
     "payload": {
-      "type": "object"
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {}
     },
     "event_id": {
       "type": "string",
@@ -61,5 +71,6 @@
     "payload",
     "event_id"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "title": "Hermes WorkflowExecutionEventV1"
 }

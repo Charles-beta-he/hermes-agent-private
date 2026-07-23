@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from workflow_kernel import governed_runtime
 from workflow_kernel import workflow_execution_ledger as execution_ledger
 from workflow_kernel.governed_runtime import (
     ExecuteGrant,
@@ -315,6 +316,7 @@ def test_local_dag_executes_with_structured_packets_and_status_projects_ledger(t
     result = _run(tmp_path)
 
     assert result["status"] == "run_completed"
+    assert result["outcome"] == "completed"
     assert result["verification_state"] == "verified"
     assert result["convergence_state"] == "not_converged"
     assert [packet["leaf_id"] for packet in result["leaf_packets"]] == ["inspect", "implement", "verify"]
@@ -324,6 +326,26 @@ def test_local_dag_executes_with_structured_packets_and_status_projects_ledger(t
 
     status = read_runtime_status(tmp_path / "run.jsonl", private_root=tmp_path)
     assert status == result
+    events = read_execution_events(tmp_path / "run.jsonl", private_root=tmp_path)
+    assert events[-2]["event_type"] == "run_verified"
+    assert events[-1]["event_type"] == "run_completed"
+
+
+def test_run_completion_cannot_fabricate_verification_without_explicit_event(tmp_path: Path) -> None:
+    _run(tmp_path)
+    events = read_execution_events(tmp_path / "run.jsonl", private_root=tmp_path)
+    verified_index = next(
+        index for index, event in enumerate(events) if event["event_type"] == "run_verified"
+    )
+    without_verification = events[:verified_index] + [deepcopy(events[-1])]
+    completion = without_verification[-1]
+    completion["sequence"] = without_verification[-2]["sequence"] + 1
+    completion["previous_event_id"] = without_verification[-2]["event_id"]
+    completion["event_id"] = derive_workflow_execution_event_id_v1(completion)
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        project_execution_events(without_verification)
+    assert excinfo.value.code == "completion_inconsistent"
 
 
 def test_completed_null_is_distinct_from_missing_or_failed_result(tmp_path: Path) -> None:
@@ -361,6 +383,24 @@ def test_unsupported_isolation_fails_before_ledger_or_reservation(tmp_path: Path
     assert not (tmp_path / "run.jsonl").exists()
 
 
+def test_unsupported_isolation_fails_before_any_runtime_state(tmp_path: Path) -> None:
+    manifest = _manifest()
+    manifest["leaves"]["inspect"]["isolation"] = "container"
+    private_root = tmp_path / "runtime-state"
+
+    with pytest.raises(WorkflowRuntimeError) as excinfo:
+        run_workflow(
+            _definition(),
+            manifest,
+            ledger_path=private_root / "run.jsonl",
+            private_root=private_root,
+            execute_grant=ExecuteGrant.local_only(),
+            now=NOW,
+        )
+    assert excinfo.value.code == "isolation_unsupported"
+    assert not private_root.exists()
+
+
 def test_external_read_authority_projects_without_unhandled_key_error() -> None:
     definition = _definition()
     definition["authority"]["max_side_effect"] = "external_read"
@@ -395,6 +435,7 @@ def test_hard_budget_blocks_new_leaf_and_preserves_partial_receipts(tmp_path: Pa
     assert inspect["status"] == "completed"
     assert implement["status"] == "blocked"
     assert implement["uncertainty"][0]["code"] == "hard_budget_exhausted"
+    assert result["outcome"] == "blocked"
 
 
 @pytest.mark.parametrize(
@@ -462,7 +503,13 @@ def test_torn_ledger_tail_fails_closed_without_rewriting_history(tmp_path: Path)
     assert ledger.read_bytes() == original + b'{"truncated":'
 
 
-def _seed_reserved_start(tmp_path: Path, *, expires_at: str, hard_spawns: int = 3) -> None:
+def _seed_reserved_start(
+    tmp_path: Path,
+    *,
+    expires_at: str,
+    hard_spawns: int = 3,
+    mark_started: bool = True,
+) -> None:
     manifest = _manifest()
     manifest["hard_budget"]["spawns"] = hard_spawns
     preview = compile_runtime_preview(_definition(), manifest)
@@ -480,6 +527,7 @@ def _seed_reserved_start(tmp_path: Path, *, expires_at: str, hard_spawns: int = 
             "plan_digest": preview["plan_digest"],
             "hard_budget": manifest["hard_budget"],
             "task_order": ["inspect", "implement", "verify"],
+            "verification_task_ids": ["verify"],
         },
         idempotency_key="seed:accepted",
     )
@@ -490,12 +538,13 @@ def _seed_reserved_start(tmp_path: Path, *, expires_at: str, hard_spawns: int = 
         payload={"reservation_id": "seed:reservation", "task_id": "inspect", "amounts": _reservation(), "expires_at": expires_at},
         idempotency_key="seed:reserve",
     )
-    append_execution_event(
-        **common,
-        event_type="leaf_started",
-        payload={"leaf_id": "inspect", "reservation_id": "seed:reservation"},
-        idempotency_key="seed:leaf-started",
-    )
+    if mark_started:
+        append_execution_event(
+            **common,
+            event_type="leaf_started",
+            payload={"leaf_id": "inspect", "reservation_id": "seed:reservation"},
+            idempotency_key="seed:leaf-started",
+        )
 
 
 def test_resume_recovers_ledger_interrupted_after_acceptance(tmp_path: Path) -> None:
@@ -515,6 +564,7 @@ def test_resume_recovers_ledger_interrupted_after_acceptance(tmp_path: Path) -> 
             "plan_digest": preview["plan_digest"],
             "hard_budget": manifest["hard_budget"],
             "task_order": ["inspect", "implement", "verify"],
+            "verification_task_ids": ["verify"],
         },
         idempotency_key="seed:accepted-only",
         occurred_at=NOW,
@@ -527,26 +577,247 @@ def test_resume_recovers_ledger_interrupted_after_acceptance(tmp_path: Path) -> 
     assert [event["event_type"] for event in events[:2]] == ["run_accepted", "run_started"]
 
 
-def test_resume_fails_closed_on_active_reservation_then_recovers_expired_start(tmp_path: Path) -> None:
+def test_resume_fails_closed_on_active_and_expired_started_reservations(tmp_path: Path) -> None:
     _seed_reserved_start(tmp_path, expires_at="2026-07-23T05:01:00Z")
 
     with pytest.raises(WorkflowRuntimeError) as excinfo:
         _run(tmp_path, resume=True, now=NOW)
     assert excinfo.value.code == "reservation_active"
 
-    result = _run(tmp_path, resume=True, now=LATER)
-    assert result["status"] == "run_completed"
-    assert all(packet["status"] == "completed" for packet in result["leaf_packets"])
-    events = read_execution_events(tmp_path / "run.jsonl", private_root=tmp_path)
-    assert any(
-        event["event_type"] == "budget_released"
-        and event["payload"]["reason"] == "expired_on_resume"
-        for event in events
+    with pytest.raises(WorkflowRuntimeError) as excinfo:
+        _run(tmp_path, resume=True, now=LATER)
+    assert excinfo.value.code == "reservation_orphaned"
+
+
+def test_resume_fails_closed_after_settlement_without_terminal_packet(tmp_path: Path) -> None:
+    _seed_reserved_start(tmp_path, expires_at="2026-07-23T05:01:00Z")
+    append_execution_event(
+        tmp_path / "run.jsonl",
+        private_root=tmp_path,
+        run_id=_manifest()["run_id"],
+        event_type="budget_settled",
+        payload={"reservation_id": "seed:reservation", "actual": _reservation()},
+        idempotency_key="seed:settled",
+        occurred_at=NOW,
     )
+
+    with pytest.raises(WorkflowRuntimeError) as excinfo:
+        _run(tmp_path, resume=True, now=LATER)
+    assert excinfo.value.code == "leaf_recovery_unsafe"
+
+
+def test_failed_started_leaf_consumes_reserved_budget(monkeypatch, tmp_path: Path) -> None:
+    definition = _definition()
+    next(task for task in definition["tasks"] if task["id"] == "implement")["depends_on"] = []
+    manifest = _manifest()
+    manifest["max_concurrency"] = 1
+    manifest["hard_budget"] = _reservation()
+    calls = 0
+    original = governed_runtime._builtin_adapters()
+
+    def fail_adapter(value, dependencies):
+        nonlocal calls
+        del value, dependencies
+        calls += 1
+        raise RuntimeError("adapter failed after dispatch")
+
+    monkeypatch.setattr(
+        governed_runtime,
+        "_builtin_adapters",
+        lambda: {
+            **original,
+            "local.echo": governed_runtime._Adapter(
+                adapter_id="local.echo",
+                capabilities=frozenset(),
+                side_effect="none",
+                supported_isolations=frozenset({"in_process_trusted_pure"}),
+                execute=fail_adapter,
+            ),
+        },
+    )
+
+    result = _run(tmp_path, definition=definition, manifest=manifest)
+
+    assert calls == 1
+    assert result["budget"]["settled"] == _reservation()
+
+
+def test_projection_rejects_verified_or_converged_completion_over_cancelled_packets(tmp_path: Path) -> None:
+    manifest = _manifest()
+    run_workflow(
+        _definition(),
+        manifest,
+        ledger_path=tmp_path / "run.jsonl",
+        private_root=tmp_path,
+        execute_grant=ExecuteGrant.local_only(),
+        now=NOW,
+        cancel_requested=lambda: True,
+    )
+    events = read_execution_events(tmp_path / "run.jsonl", private_root=tmp_path)
+    events[-1]["payload"]["verification_state"] = "verified"
+    events[-1]["payload"]["convergence_state"] = "converged"
+    events[-1]["event_id"] = derive_workflow_execution_event_id_v1(events[-1])
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        project_execution_events(events)
+    assert excinfo.value.code == "completion_inconsistent"
+
+
+def test_runtime_identity_normalizes_integral_json_numbers() -> None:
+    integer_manifest = _manifest()
+    float_manifest = deepcopy(integer_manifest)
+    float_manifest["hard_budget"]["wall_ms"] = 30_000.0
+    float_manifest["leaves"]["inspect"]["reserve"]["wall_ms"] = 10_000.0
+
+    integer_preview = compile_runtime_preview(_definition(), integer_manifest)
+    float_preview = compile_runtime_preview(_definition(), float_manifest)
+
+    assert float_preview["manifest_digest"] == integer_preview["manifest_digest"]
+    assert float_preview["identity_hash"] == integer_preview["identity_hash"]
+
+
+def test_ledger_rejects_release_after_leaf_dispatch(tmp_path: Path) -> None:
+    _seed_reserved_start(tmp_path, expires_at="2026-07-23T05:01:00Z")
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        append_execution_event(
+            tmp_path / "run.jsonl",
+            private_root=tmp_path,
+            run_id=_manifest()["run_id"],
+            event_type="budget_released",
+            payload={"reservation_id": "seed:reservation", "reason": "must_not_refund"},
+            idempotency_key="seed:invalid-release",
+            occurred_at=NOW,
+        )
+    assert excinfo.value.code == "started_reservation_release"
+
+
+def test_reservation_and_task_ids_cannot_be_reused_after_dispatch(tmp_path: Path) -> None:
+    ledger = tmp_path / "run.jsonl"
+    _seed_reserved_start(tmp_path, expires_at="2026-07-23T05:01:00Z")
+    append_execution_event(
+        ledger,
+        private_root=tmp_path,
+        run_id=_manifest()["run_id"],
+        event_type="budget_settled",
+        payload={"reservation_id": "seed:reservation", "actual": _reservation()},
+        idempotency_key="seed:settle-before-reuse",
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        append_execution_event(
+            ledger,
+            private_root=tmp_path,
+            run_id=_manifest()["run_id"],
+            event_type="budget_reserved",
+            payload={
+                "reservation_id": "seed:reservation",
+                "task_id": "implement",
+                "amounts": _reservation(),
+                "expires_at": "2026-07-23T05:02:00Z",
+            },
+            idempotency_key="seed:reuse-reservation",
+            occurred_at=NOW,
+        )
+    assert excinfo.value.code == "reservation_conflict"
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        append_execution_event(
+            ledger,
+            private_root=tmp_path,
+            run_id=_manifest()["run_id"],
+            event_type="budget_reserved",
+            payload={
+                "reservation_id": "seed:second-reservation",
+                "task_id": "inspect",
+                "amounts": _reservation(),
+                "expires_at": "2026-07-23T05:02:00Z",
+            },
+            idempotency_key="seed:second-reservation",
+            occurred_at=NOW,
+        )
+    assert excinfo.value.code == "reservation_conflict"
+
+
+def test_budget_reservation_rejects_unknown_task(tmp_path: Path) -> None:
+    _seed_reserved_start(
+        tmp_path,
+        expires_at="2026-07-23T05:01:00Z",
+        mark_started=False,
+    )
+    append_execution_event(
+        tmp_path / "run.jsonl",
+        private_root=tmp_path,
+        run_id=_manifest()["run_id"],
+        event_type="budget_released",
+        payload={"reservation_id": "seed:reservation", "reason": "test_reset"},
+        idempotency_key="seed:test-reset",
+        occurred_at=NOW,
+    )
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        append_execution_event(
+            tmp_path / "run.jsonl",
+            private_root=tmp_path,
+            run_id=_manifest()["run_id"],
+            event_type="budget_reserved",
+            payload={
+                "reservation_id": "seed:unknown-task",
+                "task_id": "not-in-plan",
+                "amounts": _reservation(),
+                "expires_at": "2026-07-23T05:02:00Z",
+            },
+            idempotency_key="seed:unknown-task",
+            occurred_at=NOW,
+        )
+    assert excinfo.value.code == "leaf_unknown"
+
+
+def test_leaf_packet_usage_must_match_durable_settlement(tmp_path: Path) -> None:
+    _run(tmp_path)
+    events = read_execution_events(tmp_path / "run.jsonl", private_root=tmp_path)
+    packet_index = next(
+        index for index, event in enumerate(events) if event["event_type"] == "leaf_packet"
+    )
+    prefix = events[: packet_index + 1]
+    prefix[-1]["payload"]["packet"]["usage"]["wall_ms"] += 1
+    prefix[-1]["event_id"] = derive_workflow_execution_event_id_v1(prefix[-1])
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        project_execution_events(prefix)
+    assert excinfo.value.code == "packet_usage_mismatch"
+
+
+def test_non_completed_leaf_packet_requires_uncertainty_evidence(tmp_path: Path) -> None:
+    run_workflow(
+        _definition(),
+        _manifest(),
+        ledger_path=tmp_path / "run.jsonl",
+        private_root=tmp_path,
+        execute_grant=ExecuteGrant.local_only(),
+        now=NOW,
+        cancel_requested=lambda: True,
+    )
+    events = read_execution_events(tmp_path / "run.jsonl", private_root=tmp_path)
+    packet_index = next(
+        index for index, event in enumerate(events) if event["event_type"] == "leaf_packet"
+    )
+    prefix = events[: packet_index + 1]
+    prefix[-1]["payload"]["packet"]["uncertainty"] = []
+    prefix[-1]["event_id"] = derive_workflow_execution_event_id_v1(prefix[-1])
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        project_execution_events(prefix)
+    assert excinfo.value.code == "packet_semantics_invalid"
 
 
 def test_concurrent_budget_reservations_are_serialized_atomically(tmp_path: Path) -> None:
-    _seed_reserved_start(tmp_path, expires_at="2026-07-23T05:01:00Z", hard_spawns=1)
+    _seed_reserved_start(
+        tmp_path,
+        expires_at="2026-07-23T05:01:00Z",
+        hard_spawns=1,
+        mark_started=False,
+    )
     ledger = tmp_path / "run.jsonl"
     append_execution_event(
         ledger,
@@ -600,6 +871,7 @@ def test_cancellation_stops_admitting_new_leaves_and_preserves_receipts(tmp_path
     assert packets["implement"]["status"] == "cancelled"
     assert packets["verify"]["status"] == "cancelled"
     assert result["budget"]["settled"]["spawns"] == 1
+    assert result["outcome"] == "cancelled"
     assert result["verification_state"] == "unverified"
 
 
@@ -660,6 +932,7 @@ def test_adapter_failure_is_distinct_from_null_blocked_and_unverified(tmp_path: 
     assert packet["value_present"] is False
     assert packet["result"] is None
     assert packet["uncertainty"][0]["code"] == "adapter_failed"
+    assert result["outcome"] == "failed"
     assert result["verification_state"] == "unverified"
 
 
@@ -712,6 +985,7 @@ def test_event_time_order_uses_instants_not_lexical_offsets(tmp_path: Path) -> N
             "plan_digest": preview["plan_digest"],
             "hard_budget": manifest["hard_budget"],
             "task_order": ["inspect", "implement", "verify"],
+            "verification_task_ids": ["verify"],
         },
         idempotency_key="time:accepted",
         occurred_at="2026-07-23T05:00:00Z",

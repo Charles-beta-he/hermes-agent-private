@@ -38,6 +38,7 @@ _EVENT_TYPES = {
     "budget_released",
     "leaf_started",
     "leaf_packet",
+    "run_verified",
     "run_completed",
 }
 
@@ -63,9 +64,19 @@ def _validator(schema_name: str) -> Draft202012Validator:
     return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 
+def _normalize_json_numbers(value: object) -> object:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_normalize_json_numbers(item) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _normalize_json_numbers(item) for key, item in value.items()}
+    return value
+
+
 def _compact_json(value: object) -> bytes:
     return json.dumps(
-        value,
+        _normalize_json_numbers(value),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -166,6 +177,7 @@ def _validate_payload(event_type: str, payload: object) -> dict[str, Any]:
                 "plan_digest",
                 "hard_budget",
                 "task_order",
+                "verification_task_ids",
             },
             event_type,
         )
@@ -185,6 +197,14 @@ def _validate_payload(event_type: str, payload: object) -> dict[str, Any]:
             or len(set(payload["task_order"])) != len(payload["task_order"])
         ):
             _fail("payload_invalid", "task_order must contain unique non-empty task ids")
+        verification_task_ids = payload["verification_task_ids"]
+        if (
+            not isinstance(verification_task_ids, list)
+            or any(not isinstance(item, str) or not item for item in verification_task_ids)
+            or len(set(verification_task_ids)) != len(verification_task_ids)
+            or not set(verification_task_ids).issubset(payload["task_order"])
+        ):
+            _fail("payload_invalid", "verification_task_ids must be unique task ids")
     elif event_type == "run_started":
         _require_exact(payload, set(), event_type)
     elif event_type == "budget_reserved":
@@ -213,6 +233,16 @@ def _validate_payload(event_type: str, payload: object) -> dict[str, Any]:
         _schema_validate(_LEAF_SCHEMA, payload["packet"])
         payload["packet"] = dict(payload["packet"])
         payload["packet"]["usage"] = _resource(payload["packet"]["usage"], field="packet.usage")
+    elif event_type == "run_verified":
+        _require_exact(payload, {"verifier_leaf_ids"}, event_type)
+        verifier_leaf_ids = payload["verifier_leaf_ids"]
+        if (
+            not isinstance(verifier_leaf_ids, list)
+            or not verifier_leaf_ids
+            or any(not isinstance(item, str) or not item for item in verifier_leaf_ids)
+            or len(set(verifier_leaf_ids)) != len(verifier_leaf_ids)
+        ):
+            _fail("payload_invalid", "verifier_leaf_ids must contain unique non-empty task ids")
     elif event_type == "run_completed":
         _require_exact(payload, {"status", "verification_state", "convergence_state"}, event_type)
         if payload["status"] != "run_completed":
@@ -289,11 +319,15 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
         "plan_digest": None,
         "hard_budget": _zero_resource(),
         "task_order": [],
+        "verification_task_ids": [],
         "status": "missing",
+        "outcome": None,
         "verification_state": "unverified",
         "convergence_state": "not_converged",
         "reservations": {},
+        "closed_reservations": {},
         "settled": _zero_resource(),
+        "settlements": {},
         "started": {},
         "leaf_packets_by_id": {},
         "event_count": 0,
@@ -343,6 +377,7 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
                 plan_digest=payload["plan_digest"],
                 hard_budget=payload["hard_budget"],
                 task_order=list(payload["task_order"]),
+                verification_task_ids=list(payload["verification_task_ids"]),
                 status="accepted",
             )
         elif event_type == "run_started":
@@ -354,7 +389,14 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
                 _fail("invalid_transition", "budget reservation requires running state")
             rid = payload["reservation_id"]
             task_id = payload["task_id"]
-            if rid in state["reservations"] or task_id in state["leaf_packets_by_id"]:
+            if task_id not in state["task_order"]:
+                _fail("leaf_unknown", "reservation task is not in task_order")
+            if (
+                rid in state["reservations"]
+                or rid in state["closed_reservations"]
+                or task_id in state["leaf_packets_by_id"]
+                or task_id in state["started"]
+            ):
                 _fail("reservation_conflict", "reservation or task already exists")
             if any(item["task_id"] == task_id for item in state["reservations"].values()):
                 _fail("reservation_conflict", "task already has an outstanding reservation")
@@ -371,11 +413,16 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
             if any(payload["actual"][key] > reservation["amounts"][key] for key in _RESOURCE_KEYS):
                 _fail("reservation_exceeded", "actual usage exceeds reserved budget")
             state["settled"] = _add(state["settled"], payload["actual"])
+            state["settlements"][rid] = payload["actual"]
+            state["closed_reservations"][rid] = "settled"
             del state["reservations"][rid]
         elif event_type == "budget_released":
             rid = payload["reservation_id"]
             if rid not in state["reservations"]:
                 _fail("reservation_missing", "release has no outstanding reservation")
+            if rid in state["started"].values():
+                _fail("started_reservation_release", "dispatched work cannot refund its reservation")
+            state["closed_reservations"][rid] = "released"
             del state["reservations"][rid]
         elif event_type == "leaf_started":
             rid = payload["reservation_id"]
@@ -383,8 +430,8 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
             if reservation is None or reservation["task_id"] != payload["leaf_id"]:
                 _fail("reservation_missing", "leaf start is not backed by its reservation")
             prior_reservation = state["started"].get(payload["leaf_id"])
-            if prior_reservation in state["reservations"]:
-                _fail("leaf_duplicate", "leaf already has an active start")
+            if prior_reservation is not None:
+                _fail("leaf_duplicate", "leaf already has a recorded start")
             state["started"][payload["leaf_id"]] = rid
         elif event_type == "leaf_packet":
             packet = payload["packet"]
@@ -399,12 +446,70 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
                 rid = state["started"][leaf_id]
                 if rid in state["reservations"]:
                     _fail("reservation_open", "leaf packet cannot precede settle/release")
+                settlement = state["settlements"].get(rid)
+                if settlement is None or packet["usage"] != settlement:
+                    _fail("packet_usage_mismatch", "packet usage must equal its durable settlement")
+            elif packet["usage"] != _zero_resource():
+                _fail("packet_usage_mismatch", "non-dispatched packet usage must be zero")
+            if packet["status"] == "completed":
+                if (
+                    not packet["value_present"]
+                    or not packet["claims"]
+                    or not packet["evidence"]
+                    or packet["uncertainty"]
+                ):
+                    _fail("packet_semantics_invalid", "completed packet lacks positive evidence semantics")
+            elif not packet["uncertainty"]:
+                _fail("packet_semantics_invalid", "non-completed packet requires uncertainty evidence")
+            if not packet["value_present"] and packet["result"] is not None:
+                _fail("packet_semantics_invalid", "missing result must be represented as JSON null")
             state["leaf_packets_by_id"][leaf_id] = packet
+        elif event_type == "run_verified":
+            if state["status"] != "running" or state["verification_state"] != "unverified":
+                _fail("invalid_transition", "run verification requires an unverified running state")
+            verifier_leaf_ids = payload["verifier_leaf_ids"]
+            if verifier_leaf_ids != state["verification_task_ids"]:
+                _fail("verification_inconsistent", "verifier ids do not match the accepted execution plan")
+            if set(state["leaf_packets_by_id"]) != set(state["task_order"]):
+                _fail("verification_incomplete", "verification requires all terminal leaf packets")
+            if any(
+                packet["status"] != "completed"
+                for packet in state["leaf_packets_by_id"].values()
+            ):
+                _fail("verification_incomplete", "verification requires every leaf to complete")
+            if any(
+                state["leaf_packets_by_id"][leaf_id]["status"] != "completed"
+                or not state["leaf_packets_by_id"][leaf_id]["evidence"]
+                for leaf_id in verifier_leaf_ids
+            ):
+                _fail("verification_inconsistent", "verifier receipts lack completed evidence")
+            state["verification_state"] = "verified"
         elif event_type == "run_completed":
             if state["status"] != "running" or state["reservations"]:
                 _fail("invalid_transition", "run completion requires running state and no reservations")
             if set(state["leaf_packets_by_id"]) != set(state["task_order"]):
                 _fail("incomplete_run", "every task needs a terminal leaf packet")
+            if payload["verification_state"] != state["verification_state"]:
+                _fail(
+                    "completion_inconsistent",
+                    "verification_state requires a preceding explicit verification event",
+                )
+            if payload["convergence_state"] != "not_converged":
+                _fail(
+                    "completion_inconsistent",
+                    "convergence requires a distinct evidence-bearing event not supported by v1",
+                )
+            terminal_statuses = {
+                packet["status"] for packet in state["leaf_packets_by_id"].values()
+            }
+            state["outcome"] = next(
+                (
+                    outcome
+                    for outcome in ("failed", "blocked", "cancelled", "unverified")
+                    if outcome in terminal_statuses
+                ),
+                "completed",
+            )
             state["status"] = payload["status"]
             state["verification_state"] = payload["verification_state"]
             state["convergence_state"] = payload["convergence_state"]

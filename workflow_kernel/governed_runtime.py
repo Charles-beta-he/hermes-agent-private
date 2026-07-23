@@ -26,7 +26,6 @@ from workflow_kernel.workflow_execution_ledger import (
     WorkflowExecutionLedgerError,
     append_execution_event,
     project_execution_events,
-    read_execution_events,
     read_execution_events_read_only,
 )
 
@@ -158,10 +157,20 @@ def _manifest_validator() -> Draft202012Validator:
     return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 
+def _normalize_json_numbers(value: object) -> object:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_normalize_json_numbers(item) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _normalize_json_numbers(item) for key, item in value.items()}
+    return value
+
+
 def _compact_json(value: object) -> bytes:
     try:
         return json.dumps(
-            value,
+            _normalize_json_numbers(value),
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
@@ -350,7 +359,7 @@ def _append(
 
 def _read(ledger_path: Path, private_root: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     try:
-        events = read_execution_events(ledger_path, private_root=private_root)
+        events = read_execution_events_read_only(ledger_path, private_root=private_root)
         return events, project_execution_events(events)
     except WorkflowExecutionLedgerError as exc:
         raise WorkflowRuntimeError(exc.code, str(exc)) from exc
@@ -376,6 +385,7 @@ def _render_status(projection: Mapping[str, Any]) -> dict[str, Any]:
         "schema_version": "workflow_runtime_status_v1",
         "run_id": projection["run_id"],
         "status": projection["status"],
+        "outcome": projection["outcome"],
         "verification_state": projection["verification_state"],
         "convergence_state": projection["convergence_state"],
         "identity_hash": projection["identity_hash"],
@@ -512,13 +522,13 @@ def run_workflow(
     execute_grant.consume()
     _parse_instant(now)
 
+    plan, normalized_manifest, preview, adapters = _prepare(
+        definition,
+        manifest,
+        validate_adapters=False,
+    )
     existing_events, existing = _read(ledger_path, private_root)
     if existing_events:
-        plan, normalized_manifest, preview, adapters = _prepare(
-            definition,
-            manifest,
-            validate_adapters=False,
-        )
         if not resume:
             _fail("run_exists", "ledger already contains a run; use explicit resume")
         if existing["identity_schema_version"] != 1:
@@ -557,6 +567,11 @@ def run_workflow(
             for wave in plan["waves"]
             for task_id in wave["task_ids"]
         ]
+        verification_task_ids = sorted(
+            binding["task_id"]
+            for binding in plan["task_bindings"]
+            if binding["role"] == "verify"
+        )
         _append(
             ledger_path,
             private_root,
@@ -571,6 +586,7 @@ def run_workflow(
                 "plan_digest": preview["plan_digest"],
                 "hard_budget": normalized_manifest["hard_budget"],
                 "task_order": task_order,
+                "verification_task_ids": verification_task_ids,
             },
             f"{normalized_manifest['run_id']}:accepted",
             now,
@@ -586,9 +602,27 @@ def run_workflow(
         )
 
     run_id = normalized_manifest["run_id"]
-    # Reservations are admission leases, not proof of dispatch. Resume may reclaim
-    # only expired reservations; active reservations fail closed.
-    for reservation_id, reservation in sorted(existing["reservations"].items()):
+    verification_task_ids = list(existing["verification_task_ids"])
+    completed_leaf_ids = set(existing["leaf_packets_by_id"])
+    reservations = existing["reservations"]
+    for task_id, reservation_id in sorted(existing["started"].items()):
+        if task_id in completed_leaf_ids:
+            continue
+        reservation = reservations.get(reservation_id)
+        if reservation is None:
+            _fail(
+                "leaf_recovery_unsafe",
+                f"leaf {task_id} consumed its reservation without a terminal packet",
+            )
+        if _parse_instant(reservation["expires_at"]) <= _parse_instant(now):
+            _fail(
+                "reservation_orphaned",
+                f"leaf {task_id} may still be executing after reservation expiry; fencing is unavailable",
+            )
+
+    # Unstarted reservations are admission leases and may be reclaimed only after
+    # expiry. Started work is handled above and always fails closed without fencing.
+    for reservation_id, reservation in sorted(reservations.items()):
         if _parse_instant(reservation["expires_at"]) > _parse_instant(now):
             _fail("reservation_active", f"reservation {reservation_id} is still active")
         existing = _append(
@@ -727,17 +761,44 @@ def run_workflow(
                 leaf = normalized_manifest["leaves"][task_id]
                 try:
                     adapter_result, wall_ms = future.result()
+                except Exception as exc:
+                    # Dispatch already occurred. Conservatively charge the full
+                    # reservation so failed work cannot refund a consumed spawn.
+                    existing = _append(
+                        ledger_path,
+                        private_root,
+                        run_id,
+                        "budget_settled",
+                        {"reservation_id": reservation_id, "actual": leaf["reserve"]},
+                        f"{run_id}:settle:{reservation_id}",
+                        now,
+                    )
+                    packet = _leaf_packet(
+                        leaf_id=task_id,
+                        leaf=leaf,
+                        manifest=normalized_manifest,
+                        dependencies=dependencies,
+                        status="failed",
+                        result=None,
+                        value_present=False,
+                        uncertainty=[{"code": "adapter_failed", "message": f"{type(exc).__name__}: {exc}"}],
+                        usage=leaf["reserve"],
+                    )
+                else:
                     actual = dict(adapter_result.usage)
                     actual["spawns"] = 1
                     actual["wall_ms"] = wall_ms
                     if any(actual[key] > leaf["reserve"][key] for key in _RESOURCE_KEYS):
+                        # The adapter violated its declared upper bound. Charge the
+                        # full reservation and fail the packet; never refund work
+                        # that was physically dispatched.
                         existing = _append(
                             ledger_path,
                             private_root,
                             run_id,
-                            "budget_released",
-                            {"reservation_id": reservation_id, "reason": "actual_exceeded_reservation"},
-                            f"{run_id}:release:{reservation_id}",
+                            "budget_settled",
+                            {"reservation_id": reservation_id, "actual": leaf["reserve"]},
+                            f"{run_id}:settle:{reservation_id}",
                             now,
                         )
                         packet = _leaf_packet(
@@ -749,6 +810,7 @@ def run_workflow(
                             result=None,
                             value_present=False,
                             uncertainty=[{"code": "reservation_exceeded", "message": "actual usage exceeded reserved budget"}],
+                            usage=leaf["reserve"],
                         )
                     else:
                         existing = _append(
@@ -791,35 +853,25 @@ def run_workflow(
                                 evidence=adapter_result.evidence,
                                 usage=actual,
                             )
-                except Exception as exc:
-                    try:
-                        existing = _append(
-                            ledger_path,
-                            private_root,
-                            run_id,
-                            "budget_released",
-                            {"reservation_id": reservation_id, "reason": "adapter_failed"},
-                            f"{run_id}:release:{reservation_id}",
-                            now,
-                        )
-                    except WorkflowRuntimeError as release_exc:
-                        if release_exc.code != "reservation_missing":
-                            raise
-                    packet = _leaf_packet(
-                        leaf_id=task_id,
-                        leaf=leaf,
-                        manifest=normalized_manifest,
-                        dependencies=dependencies,
-                        status="failed",
-                        result=None,
-                        value_present=False,
-                        uncertainty=[{"code": "adapter_failed", "message": f"{type(exc).__name__}: {exc}"}],
-                    )
                 append_packet(packet, f"attempt-{attempts[task_id]}")
                 pending.discard(task_id)
 
     all_completed = all(packet["status"] == "completed" for packet in packets.values())
-    verification_state = "verified" if all_completed else "unverified"
+    if (
+        all_completed
+        and verification_task_ids
+        and existing["verification_state"] == "unverified"
+    ):
+        existing = _append(
+            ledger_path,
+            private_root,
+            run_id,
+            "run_verified",
+            {"verifier_leaf_ids": verification_task_ids},
+            f"{run_id}:verified",
+            now,
+        )
+    verification_state = existing["verification_state"]
     existing = _append(
         ledger_path,
         private_root,
