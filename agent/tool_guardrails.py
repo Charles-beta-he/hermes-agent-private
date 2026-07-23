@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+import re
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from utils import safe_json_loads
@@ -77,6 +80,9 @@ class ToolCallGuardrailConfig:
     same_tool_failure_halt_after: int = 8
     no_progress_warn_after: int = 2
     no_progress_block_after: int = 5
+    graph_no_progress_halt_after: int = 0
+    graph_history_size: int = 512
+    graph_fingerprint_capacity: int = 0
     idempotent_tools: frozenset[str] = field(default_factory=lambda: IDEMPOTENT_TOOL_NAMES)
     mutating_tools: frozenset[str] = field(default_factory=lambda: MUTATING_TOOL_NAMES)
 
@@ -121,7 +127,47 @@ class ToolCallGuardrailConfig:
                 hard_stop_after.get("idempotent_no_progress", data.get("no_progress_block_after")),
                 defaults.no_progress_block_after,
             ),
+            graph_no_progress_halt_after=_non_negative_int(
+                hard_stop_after.get(
+                    "graph_no_progress", data.get("graph_no_progress_halt_after")
+                ),
+                defaults.graph_no_progress_halt_after,
+            ),
+            graph_history_size=_positive_int(
+                data.get("graph_history_size"), defaults.graph_history_size
+            ),
+            graph_fingerprint_capacity=_non_negative_int(
+                data.get("graph_fingerprint_capacity"),
+                defaults.graph_fingerprint_capacity,
+            ),
         )
+
+    def bounded_for_execution_graph(
+        self, max_graph_iterations: int
+    ) -> "ToolCallGuardrailConfig":
+        """Disable all-history stall tracking when no finite graph cap exists.
+
+        Exact all-history novelty requires memory proportional to the maximum
+        number of calls. A positive execution-graph budget provides that bound;
+        without one, keeping the breaker disabled preserves bounded memory.
+        """
+        if self.graph_no_progress_halt_after <= 0:
+            return self
+        if max_graph_iterations <= 0:
+            return replace(
+                self,
+                graph_no_progress_halt_after=0,
+                graph_fingerprint_capacity=0,
+            )
+        capacity = self.graph_fingerprint_capacity or max(
+            self.graph_history_size, max_graph_iterations
+        )
+        return replace(self, graph_fingerprint_capacity=capacity)
+
+    @property
+    def effective_graph_fingerprint_capacity(self) -> int:
+        """Maximum exact fingerprints retained before fail-closed saturation."""
+        return max(1, self.graph_fingerprint_capacity or self.graph_history_size)
 
 
 @dataclass(frozen=True)
@@ -226,12 +272,38 @@ def summarize_tool_failure(
     return _compact_text("; ".join(part for part in parts if part), max_chars)
 
 
+def _strip_ephemeral_arg_paths(value: Any) -> Any:
+    """Canonicalize volatile fields and random temp paths in tool arguments."""
+    if isinstance(value, Mapping):
+        normalized: dict[str, Any] = {}
+        for item_key, item_value in value.items():
+            key = str(item_key)
+            volatile_key = _canonical_volatile_field_key(key, item_value)
+            if volatile_key is not None:
+                normalized[volatile_key] = "<volatile>"
+            else:
+                normalized[key] = _strip_ephemeral_arg_paths(item_value)
+        return normalized
+    if isinstance(value, list):
+        return [_strip_ephemeral_arg_paths(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_strip_ephemeral_arg_paths(item) for item in value)
+    if isinstance(value, str):
+        return _TEMP_PATH.sub(_normalize_ephemeral_temp_path, value)
+    return value
+
+
 def canonical_tool_args(args: Mapping[str, Any]) -> str:
-    """Return sorted compact JSON for parsed tool arguments."""
+    """Return compact JSON with ephemeral temp roots canonicalized.
+
+    A changing random temporary directory is transport noise, not a material
+    query change. Preserve the path leaf and every non-path argument so real
+    business inputs continue to produce distinct signatures.
+    """
     if not isinstance(args, Mapping):
         raise TypeError(f"tool args must be a mapping, got {type(args).__name__}")
     return json.dumps(
-        args,
+        _strip_ephemeral_arg_paths(args),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -279,7 +351,79 @@ class ToolCallGuardrailController:
 
     def __init__(self, config: ToolCallGuardrailConfig | None = None):
         self.config = config or ToolCallGuardrailConfig()
+        self._graph_lock = threading.RLock()
+        # Full fingerprint history is bounded by the execution-graph call
+        # budget. The OrderedDict only retains recent detail for telemetry.
+        self._graph_seen_fingerprints: set[str] = set()
+        self._graph_seen_results: OrderedDict[
+            tuple[ToolCallSignature, str], None
+        ] = OrderedDict()
+        self._graph_shared = {
+            "no_progress_streak": 0,
+            "halt_decision": None,
+        }
+        self._durable_backend = None
+        self._durable_graph_id = ""
         self.reset_for_turn()
+
+    def bind_durable_graph(self, backend: Any, graph_id: str) -> None:
+        """Restore graph novelty and sticky halt state after reconstruction."""
+        if backend is None or not graph_id:
+            return
+        state = backend.load_execution_graph_guardrail_state(graph_id)
+        with self._graph_lock:
+            self._durable_backend = backend
+            self._durable_graph_id = str(graph_id)
+            self._graph_seen_fingerprints.update(state.get("fingerprints", set()))
+            self._graph_shared["no_progress_streak"] = int(
+                state.get("no_progress_streak", 0)
+            )
+            halt = self._durable_halt_decision(state)
+            if halt is not None:
+                self._graph_shared["halt_decision"] = halt
+
+    @staticmethod
+    def _durable_halt_decision(state: Mapping[str, Any]) -> ToolGuardrailDecision | None:
+        code = str(state.get("halt_code") or "")
+        if not code:
+            return None
+        tool_name = str(state.get("halt_tool_name") or "")
+        args_hash = str(state.get("halt_args_hash") or "")
+        count = int(state.get("halt_count") or 0)
+        if code == "graph_history_capacity_halt":
+            message = (
+                "Stopped the execution graph before exact novelty history could "
+                "exceed its configured capacity. Use existing evidence or start "
+                "a separately authorized graph."
+            )
+        else:
+            message = (
+                "Stopped the execution graph after repeated tool evidence added "
+                "no new result. Use existing evidence or re-plan with a materially "
+                "different query/action."
+            )
+        signature = (
+            ToolCallSignature(tool_name=tool_name, args_hash=args_hash)
+            if tool_name and args_hash
+            else None
+        )
+        return ToolGuardrailDecision(
+            action="halt",
+            code=code,
+            message=message,
+            tool_name=tool_name,
+            count=count,
+            signature=signature,
+        )
+
+    def share_graph_state_from(self, other: "ToolCallGuardrailController") -> None:
+        """Share graph novelty state while retaining per-agent turn counters."""
+        self._graph_lock = other._graph_lock
+        self._graph_seen_fingerprints = other._graph_seen_fingerprints
+        self._graph_seen_results = other._graph_seen_results
+        self._graph_shared = other._graph_shared
+        self._durable_backend = other._durable_backend
+        self._durable_graph_id = other._durable_graph_id
 
     def reset_for_turn(self) -> None:
         self._exact_failure_counts: dict[ToolCallSignature, int] = {}
@@ -290,10 +434,35 @@ class ToolCallGuardrailController:
 
     @property
     def halt_decision(self) -> ToolGuardrailDecision | None:
-        return self._halt_decision
+        with self._graph_lock:
+            graph_halt = self._graph_shared.get("halt_decision")
+        return graph_halt or self._halt_decision
+
+    def graph_progress_snapshot(self) -> dict[str, Any]:
+        """Return structured, non-sensitive graph convergence telemetry."""
+        with self._graph_lock:
+            return {
+                "enabled": bool(
+                    self.config.hard_stop_enabled
+                    and self.config.graph_no_progress_halt_after > 0
+                ),
+                "seen_count": len(self._graph_seen_fingerprints),
+                "fingerprint_capacity": self.config.effective_graph_fingerprint_capacity,
+                "recent_detail_count": len(self._graph_seen_results),
+                "no_progress_streak": int(
+                    self._graph_shared.get("no_progress_streak", 0)
+                ),
+                "halt_after": self.config.graph_no_progress_halt_after,
+                "halted": self._graph_shared.get("halt_decision") is not None,
+            }
 
     def before_call(self, tool_name: str, args: Mapping[str, Any] | None) -> ToolGuardrailDecision:
         signature = ToolCallSignature.from_call(tool_name, _coerce_args(args))
+        with self._graph_lock:
+            graph_halt = self._graph_shared.get("halt_decision")
+        if graph_halt is not None:
+            self._halt_decision = graph_halt
+            return graph_halt
         if not self.config.hard_stop_enabled:
             return ToolGuardrailDecision(tool_name=tool_name, signature=signature)
 
@@ -347,8 +516,17 @@ class ToolCallGuardrailController:
     ) -> ToolGuardrailDecision:
         args = _coerce_args(args)
         signature = ToolCallSignature.from_call(tool_name, args)
+        with self._graph_lock:
+            graph_halt = self._graph_shared.get("halt_decision")
+        if graph_halt is not None:
+            self._halt_decision = graph_halt
+            return graph_halt
         if failed is None:
             failed, _ = classify_tool_failure(tool_name, result)
+
+        graph_decision = self._observe_graph_result(signature, result)
+        if graph_decision is not None:
+            return graph_decision
 
         if failed:
             exact_count = self._exact_failure_counts.get(signature, 0) + 1
@@ -437,6 +615,123 @@ class ToolCallGuardrailController:
             return False
         return tool_name in self.config.idempotent_tools
 
+    def _observe_graph_result(
+        self,
+        signature: ToolCallSignature,
+        result: str | None,
+    ) -> ToolGuardrailDecision | None:
+        """Track exact evidence novelty across root-turn resets.
+
+        A full hash-only seen-set includes successful and rejected/failed
+        results, so rediscovering an evicted detail or rejected finding cannot
+        keep a graph alive. A separate bounded LRU retains recent detail keys.
+        """
+        threshold = self.config.graph_no_progress_halt_after
+        if threshold <= 0:
+            return None
+        result_hash = _result_hash(result)
+        key = (signature, result_hash)
+        fingerprint = _sha256(
+            f"{signature.tool_name}\0{signature.args_hash}\0{result_hash}"
+        )
+        if self._durable_backend is not None and self._durable_graph_id:
+            try:
+                state = self._durable_backend.observe_execution_graph_guardrail_fingerprint(
+                    self._durable_graph_id,
+                    fingerprint,
+                    capacity=self.config.effective_graph_fingerprint_capacity,
+                    halt_after=threshold,
+                    hard_stop_enabled=self.config.hard_stop_enabled,
+                    tool_name=signature.tool_name,
+                    args_hash=signature.args_hash,
+                )
+            except Exception as exc:
+                decision = ToolGuardrailDecision(
+                    action="halt",
+                    code="graph_guardrail_persistence_halt",
+                    message=(
+                        "Stopped the execution graph because durable novelty state "
+                        f"could not be committed: {type(exc).__name__}."
+                    ),
+                    tool_name=signature.tool_name,
+                    signature=signature,
+                )
+                with self._graph_lock:
+                    self._graph_shared["halt_decision"] = decision
+                self._halt_decision = decision
+                return decision
+            with self._graph_lock:
+                if not state.get("capacity_exhausted", False):
+                    self._graph_seen_fingerprints.add(fingerprint)
+                    self._graph_seen_results[key] = None
+                    self._graph_seen_results.move_to_end(key)
+                    while len(self._graph_seen_results) > self.config.graph_history_size:
+                        self._graph_seen_results.popitem(last=False)
+                self._graph_shared["no_progress_streak"] = int(
+                    state.get("no_progress_streak", 0)
+                )
+                durable_halt = self._durable_halt_decision(state)
+                if durable_halt is not None:
+                    self._graph_shared["halt_decision"] = durable_halt
+                    self._halt_decision = durable_halt
+                    return durable_halt
+            return None
+        capacity_exhausted = False
+        with self._graph_lock:
+            if fingerprint in self._graph_seen_fingerprints:
+                self._graph_shared["no_progress_streak"] += 1
+            elif (
+                len(self._graph_seen_fingerprints)
+                >= self.config.effective_graph_fingerprint_capacity
+            ):
+                capacity_exhausted = True
+            else:
+                self._graph_seen_fingerprints.add(fingerprint)
+                self._graph_shared["no_progress_streak"] = 0
+            if not capacity_exhausted:
+                self._graph_seen_results[key] = None
+                self._graph_seen_results.move_to_end(key)
+                while len(self._graph_seen_results) > self.config.graph_history_size:
+                    self._graph_seen_results.popitem(last=False)
+            no_progress_streak = self._graph_shared["no_progress_streak"]
+
+        if capacity_exhausted and self.config.hard_stop_enabled:
+            decision = ToolGuardrailDecision(
+                action="halt",
+                code="graph_history_capacity_halt",
+                message=(
+                    "Stopped the execution graph before exact novelty history "
+                    "could exceed its configured capacity. Use existing evidence "
+                    "or start a separately authorized graph."
+                ),
+                tool_name=signature.tool_name,
+                count=self.config.effective_graph_fingerprint_capacity,
+                signature=signature,
+            )
+            with self._graph_lock:
+                self._graph_shared["halt_decision"] = decision
+            self._halt_decision = decision
+            return decision
+
+        if self.config.hard_stop_enabled and no_progress_streak >= threshold:
+            decision = ToolGuardrailDecision(
+                action="halt",
+                code="graph_no_progress_halt",
+                message=(
+                    "Stopped the execution graph after repeated tool evidence "
+                    "added no new result. Use existing evidence or re-plan with "
+                    "a materially different query/action."
+                ),
+                tool_name=signature.tool_name,
+                count=no_progress_streak,
+                signature=signature,
+            )
+            with self._graph_lock:
+                self._graph_shared["halt_decision"] = decision
+            self._halt_decision = decision
+            return decision
+        return None
+
 
 def toolguard_synthetic_result(decision: ToolGuardrailDecision) -> str:
     """Build a synthetic role=tool content string for a blocked tool call."""
@@ -495,12 +790,112 @@ def _compact_text(value: Any, max_chars: int) -> str:
     return text[: max(0, max_chars - 1)].rstrip() + "…"
 
 
+_VOLATILE_FIELD_NAMES = frozenset(
+    {
+        "timestamp",
+        "time",
+        "createdat",
+        "updatedat",
+        "duration",
+        "elapsed",
+        "latency",
+        "requestid",
+        "traceid",
+        "spanid",
+        "nonce",
+        "uuid",
+    }
+)
+
+
+_VOLATILE_TIME_FIELDS = frozenset({"timestamp", "createdat", "updatedat", "time"})
+_VOLATILE_ID_FIELDS = frozenset({"requestid", "traceid", "spanid", "nonce", "uuid"})
+_OPAQUE_ID_TEXT = re.compile(r"^(?:[0-9a-f]{16,64}|[A-Za-z0-9_-]{24,})$")
+
+
+def _canonical_volatile_field_key(key: str, value: Any = None) -> str | None:
+    """Identify narrowly proven runtime-noise fields.
+
+    Substring matching (for example ``execution_time_limit`` or
+    ``resource_uuid``) hides material business payloads. Exact transport field
+    names are normalized only when their value also has the expected volatile
+    shape; human/business identifiers such as ``invoice-123`` remain evidence.
+    """
+    compact = re.sub(r"[^a-z0-9]", "", key.lower())
+    if compact in _VOLATILE_TIME_FIELDS:
+        text = str(value or "").strip()
+        if _ISO_TIMESTAMP.fullmatch(text):
+            return f"<volatile:{compact}>"
+        return None
+    if compact in _VOLATILE_ID_FIELDS:
+        text = str(value or "").strip()
+        if _UUID_TEXT.fullmatch(text) or _OPAQUE_ID_TEXT.fullmatch(text):
+            return f"<volatile:{compact}>"
+    return None
+_ISO_TIMESTAMP = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}[T ][0-2]\d:[0-5]\d:[0-5]\d"
+    r"(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"
+)
+_UUID_TEXT = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
+    r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b"
+)
+_TEMP_PATH = re.compile(
+    r"(?P<root>(?:/private)?/(?:tmp|var/tmp)|"
+    r"(?:/private)?/var/folders/[^/\s\"']+/[^/\s\"']+/T)"
+    r"(?P<suffix>(?:/[^\s\"'<>\[\]{}(),;]+)+)"
+)
+_EPHEMERAL_TEMP_CHILD = re.compile(
+    r"^(?:tmp|tmp(?=[-_.a-z0-9]*\d)[-_.a-z0-9]+|pytest(?:[-_.].*)?|"
+    r"(?:node-test|jest|vitest)(?:[-_.].*)?|"
+    r"[0-9a-f]{8}-[0-9a-f-]{27,})$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_ephemeral_temp_path(match: re.Match[str]) -> str:
+    parts = [part for part in match.group("suffix").split("/") if part]
+    if not parts:
+        return "<tempdir>"
+    while parts and _EPHEMERAL_TEMP_CHILD.fullmatch(parts[0]):
+        parts = parts[1:]
+    return "<tempdir>" + ("/" + "/".join(parts) if parts else "")
+
+
+def _strip_volatile_text(value: str) -> str:
+    value = _ISO_TIMESTAMP.sub("<timestamp>", value)
+    return _TEMP_PATH.sub(_normalize_ephemeral_temp_path, value)
+
+
+def _strip_volatile_result_fields(value: Any, *, key: str = "") -> Any:
+    """Remove transport/runtime noise before graph novelty comparison."""
+    if isinstance(value, Mapping):
+        normalized: dict[str, Any] = {}
+        for item_key, item_value in value.items():
+            item_key_text = str(item_key)
+            volatile_key = _canonical_volatile_field_key(item_key_text, item_value)
+            if volatile_key is not None:
+                normalized[volatile_key] = "<volatile>"
+            else:
+                normalized[item_key_text] = _strip_volatile_result_fields(
+                    item_value, key=item_key_text
+                )
+        return normalized
+    if isinstance(value, list):
+        return [_strip_volatile_result_fields(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_strip_volatile_result_fields(item) for item in value)
+    if isinstance(value, str):
+        return _strip_volatile_text(value)
+    return value
+
+
 def _result_hash(result: str | None) -> str:
     parsed = safe_json_loads(result or "")
     if parsed is not None:
         try:
             canonical = json.dumps(
-                parsed,
+                _strip_volatile_result_fields(parsed),
                 ensure_ascii=False,
                 sort_keys=True,
                 separators=(",", ":"),
@@ -509,7 +904,7 @@ def _result_hash(result: str | None) -> str:
         except TypeError:
             canonical = str(parsed)
     else:
-        canonical = result or ""
+        canonical = _strip_volatile_text(result or "")
     return _sha256(canonical)
 
 
@@ -537,6 +932,16 @@ def _positive_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed >= 1 else default
+
+
+def _non_negative_int(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
 
 
 def _sha256(value: str) -> str:

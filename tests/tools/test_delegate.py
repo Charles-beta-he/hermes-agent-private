@@ -433,7 +433,33 @@ class TestDelegateTask(unittest.TestCase):
 
         self.assertIs(mock_child._print_fn, sink)
 
-    def test_child_inherits_auto_relay_settings(self):
+    def test_child_uses_receipt_isolated_handle_for_durable_graph_budget(self):
+        parent = _make_mock_parent(depth=0)
+        parent_budget = MagicMock()
+        child_budget = object()
+        parent_budget.fork_handle.return_value = child_budget
+        parent.graph_budget = parent_budget
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            mock_child = MagicMock()
+            MockAgent.return_value = mock_child
+
+            _build_child_agent(
+                task_index=0,
+                goal="Share capacity without sharing receipt ownership",
+                context=None,
+                toolsets=None,
+                model=None,
+                max_iterations=10,
+                parent_agent=parent,
+                task_count=1,
+            )
+
+        parent_budget.fork_handle.assert_called_once_with()
+        _, kwargs = MockAgent.call_args
+        self.assertIs(kwargs["graph_budget"], child_budget)
+
+    def test_child_relay_is_disabled_when_parent_relay_is_disabled(self):
         parent = _make_mock_parent(depth=0)
         parent.auto_relay_enabled = False
         parent.max_relay_count = 7
@@ -456,7 +482,7 @@ class TestDelegateTask(unittest.TestCase):
             )
 
         self.assertIs(mock_child.auto_relay_enabled, False)
-        self.assertEqual(mock_child.max_relay_count, 7)
+        self.assertEqual(mock_child.max_relay_count, 0)
 
     def test_child_inherits_string_false_auto_relay_setting(self):
         parent = _make_mock_parent(depth=0)
@@ -481,7 +507,7 @@ class TestDelegateTask(unittest.TestCase):
             )
 
         self.assertIs(mock_child.auto_relay_enabled, False)
-        self.assertEqual(mock_child.max_relay_count, 7)
+        self.assertEqual(mock_child.max_relay_count, 0)
 
     def test_child_uses_thinking_callback_when_progress_callback_available(self):
         parent = _make_mock_parent(depth=0)

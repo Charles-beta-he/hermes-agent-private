@@ -477,7 +477,8 @@ class AIAgent:
         skip_memory: bool = False,
         session_db=None,
         parent_session_id: str = None,
-        iteration_budget: "IterationBudget" = None,
+        iteration_budget: Optional["IterationBudget"] = None,
+        graph_budget: Optional["IterationBudget"] = None,
         fallback_model: Dict[str, Any] = None,
         credential_pool=None,
         checkpoints_enabled: bool = False,
@@ -553,6 +554,7 @@ class AIAgent:
             session_db=session_db,
             parent_session_id=parent_session_id,
             iteration_budget=iteration_budget,
+            graph_budget=graph_budget,
             fallback_model=fallback_model,
             credential_pool=credential_pool,
             checkpoints_enabled=checkpoints_enabled,
@@ -587,10 +589,56 @@ class AIAgent:
             logger.debug("SessionDB unavailable for recall", exc_info=True)
             return None
 
+    def _ensure_graph_budget_persistence(self) -> None:
+        """Bind configured graph admission to the durable session ledger."""
+        graph = getattr(self, "graph_budget", None)
+        if graph is None or getattr(graph, "max_total", 0) <= 0:
+            return
+        if getattr(graph, "is_persistent", False):
+            return
+        if self._session_db is None:
+            from hermes_state import SessionDB
+
+            self._session_db = SessionDB()
+        graph_id = (
+            self._session_db.resolve_session_execution_graph(self.session_id)
+            or (
+                self._session_db.resolve_session_execution_graph(
+                    self._parent_session_id
+                )
+                if self._parent_session_id
+                else None
+            )
+            or getattr(self, "execution_graph_id", "")
+            or self._parent_session_id
+            or self.session_id
+        )
+        durable = IterationBudget(
+            graph.max_total,
+            backend=self._session_db,
+            budget_id=graph_id,
+        )
+        # This method runs before the first provider dispatch. Refuse an unsafe
+        # late migration rather than trying to infer whether local reservations
+        # were already mirrored durably.
+        if graph.used and durable.used != graph.used:
+            raise RuntimeError("cannot migrate a partially consumed graph budget")
+        self.graph_budget = durable
+        self.max_graph_iterations = durable.max_total
+        self.execution_graph_id = graph_id
+        self._session_init_model_config["execution_graph_id"] = graph_id
+
     def _ensure_db_session(self) -> None:
-        """Create session DB row on first use. Disables _session_db on failure."""
+        """Create and graph-bind the session DB row before provider dispatch."""
         if getattr(self, "_persist_disabled", False):
             return
+        try:
+            self._ensure_graph_budget_persistence()
+        except Exception as e:
+            self._graph_budget_persistence_error = f"{type(e).__name__}: {e}"
+            logger.warning("Execution graph budget persistence failed: %s", e)
+            return
+        self._graph_budget_persistence_error = ""
         if self._session_db_created or not self._session_db:
             return
         source = _session_source_for_agent(self.platform)
@@ -605,6 +653,11 @@ class AIAgent:
                 parent_session_id=self._parent_session_id,
                 cwd=_launch_cwd_for_session(source),
             )
+            execution_graph_id = getattr(self, "execution_graph_id", "")
+            if execution_graph_id:
+                self._session_db.bind_session_execution_graph(
+                    self.session_id, execution_graph_id
+                )
             self._session_db_created = True
         except Exception as e:
             # Transient failure (e.g. SQLite lock). Keep _session_db alive —
@@ -3389,6 +3442,41 @@ class AIAgent:
         except Exception:
             pass
 
+    def _close_codex_session(self, *, reason: str) -> None:
+        """Idempotently release the Codex process under agent ownership lock."""
+        from agent.codex_runtime import _codex_agent_session_lock
+
+        with _codex_agent_session_lock(self):
+            self._close_codex_session_locked(reason=reason)
+
+    def _close_codex_session_locked(self, *, reason: str) -> None:
+        """Release the Codex app-server process while ownership is locked."""
+        session = getattr(self, "_codex_session", None)
+        if session is None:
+            return
+        # Clear ownership before invoking provider code so re-entrant teardown
+        # cannot signal the same process twice. Restore the handle only when the
+        # provider reports or raises a failed close, preserving a bounded retry
+        # path instead of permanently orphaning an unconfirmed subprocess.
+        self._codex_session = None
+        try:
+            closed = session.close()
+            if closed is False:
+                self._codex_session = session
+                logger.warning(
+                    "Codex app-server teardown incomplete: session=%s reason=%s",
+                    getattr(self, "session_id", None) or "none",
+                    reason,
+                )
+        except Exception:
+            self._codex_session = session
+            logger.warning(
+                "Codex app-server teardown failed: session=%s reason=%s",
+                getattr(self, "session_id", None) or "none",
+                reason,
+                exc_info=True,
+            )
+
     def release_clients(self) -> None:
         """Release LLM client resources WITHOUT tearing down session tool state.
 
@@ -3410,6 +3498,10 @@ class AIAgent:
         hard teardown for actual session boundaries (/new, /reset, session
         expiry).
         """
+        # Provider subprocesses are client resources and must not survive a
+        # soft agent-cache eviction.
+        self._close_codex_session(reason="client_release")
+
         # Close active child agents (per-turn; no cross-turn persistence).
         try:
             with self._active_children_lock:
@@ -3450,6 +3542,10 @@ class AIAgent:
         independently guarded so a failure in one does not prevent the rest.
         """
         task_id = getattr(self, "session_id", None) or ""
+
+        # Provider subprocess ownership belongs to the agent and must be
+        # released before the SQLite row is finalized.
+        self._close_codex_session(reason="agent_close")
 
         # 1. Kill background processes for this task
         try:
@@ -4141,10 +4237,22 @@ class AIAgent:
                 exc,
             )
 
-    def _run_codex_stream(self, api_kwargs: dict, client: Any = None, on_first_delta: callable = None):
+    def _run_codex_stream(
+        self,
+        api_kwargs: dict,
+        client: Any = None,
+        on_first_delta: callable = None,
+        dispatch_gate=None,
+    ):
         """Forwarder — see ``agent.codex_runtime.run_codex_stream``."""
         from agent.codex_runtime import run_codex_stream
-        return run_codex_stream(self, api_kwargs, client, on_first_delta)
+        return run_codex_stream(
+            self,
+            api_kwargs,
+            client,
+            on_first_delta,
+            dispatch_gate=dispatch_gate,
+        )
 
     def _run_codex_create_stream_fallback(self, api_kwargs: dict, client: Any = None):
         """Forwarder — see ``agent.codex_runtime.run_codex_create_stream_fallback``."""
@@ -4526,7 +4634,7 @@ class AIAgent:
             return False
         return pool.has_available()
 
-    def _anthropic_messages_create(self, api_kwargs: dict):
+    def _anthropic_messages_create(self, api_kwargs: dict, *, dispatch_gate=None):
         if self.api_mode == "anthropic_messages":
             self._try_refresh_anthropic_client_credentials()
         # Defensive: strip Responses-only kwargs that can leak in under an
@@ -4538,6 +4646,7 @@ class AIAgent:
             api_kwargs,
             log_prefix=getattr(self, "log_prefix", ""),
             prefer_stream=not bool(getattr(self, "_disable_streaming", False)),
+            dispatch_gate=dispatch_gate,
         )
 
     def _rebuild_anthropic_client(self) -> None:
@@ -4566,10 +4675,10 @@ class AIAgent:
                 drop_context_1m_beta=_drop_1m,
             )
 
-    def _interruptible_api_call(self, api_kwargs: dict):
+    def _interruptible_api_call(self, api_kwargs: dict, *, dispatch_gate=None):
         """Forwarder — see ``agent.chat_completion_helpers.interruptible_api_call``."""
         from agent.chat_completion_helpers import interruptible_api_call
-        return interruptible_api_call(self, api_kwargs)
+        return interruptible_api_call(self, api_kwargs, dispatch_gate=dispatch_gate)
 
     # ── Unified streaming API call ─────────────────────────────────────────
 
@@ -4738,11 +4847,17 @@ class AIAgent:
         )
 
     def _interruptible_streaming_api_call(
-        self, api_kwargs: dict, *, on_first_delta: callable = None
+        self, api_kwargs: dict, *, on_first_delta: callable = None,
+        dispatch_gate=None,
     ):
         """Forwarder — see ``agent.chat_completion_helpers.interruptible_streaming_api_call``."""
         from agent.chat_completion_helpers import interruptible_streaming_api_call
-        return interruptible_streaming_api_call(self, api_kwargs, on_first_delta=on_first_delta)
+        return interruptible_streaming_api_call(
+            self,
+            api_kwargs,
+            on_first_delta=on_first_delta,
+            dispatch_gate=dispatch_gate,
+        )
 
     def _try_activate_fallback(self, reason: "FailoverReason | None" = None) -> bool:
         """Forwarder — see ``agent.chat_completion_helpers.try_activate_fallback``."""
@@ -5589,12 +5704,23 @@ class AIAgent:
         auto-compress abort.  Auto-compress callers use the default
         ``force=False``.
         """
+        from agent.auxiliary_client import physical_dispatch_gate
         from agent.conversation_compression import compress_context
-        return compress_context(
-            self, messages, system_message,
-            approx_tokens=approx_tokens, task_id=task_id, focus_topic=focus_topic,
-            force=force,
-        )
+        from agent.conversation_loop import _commit_iteration_graph_budget
+
+        # This method is the shared entry point for preflight, retry, CLI, ACP,
+        # gateway, and TUI compression. Gate here so no direct caller can bypass
+        # graph admission. Nested loop-level gates are harmless: the innermost
+        # callback replaces (then restores) the same thread-local gate, and each
+        # physical auxiliary dispatch invokes exactly one callback.
+        with physical_dispatch_gate(
+            lambda: _commit_iteration_graph_budget(self)
+        ):
+            return compress_context(
+                self, messages, system_message,
+                approx_tokens=approx_tokens, task_id=task_id, focus_topic=focus_topic,
+                force=force,
+            )
 
     def _set_tool_guardrail_halt(self, decision: ToolGuardrailDecision) -> None:
         """Record the first guardrail decision that should stop this turn."""

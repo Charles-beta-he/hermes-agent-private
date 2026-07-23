@@ -297,17 +297,20 @@ class CodexAppServerSession:
         )
         return self._thread_id
 
-    def close(self) -> None:
+    def close(self) -> bool:
+        """Close the owned client, preserving retry ownership on failure."""
         if self._closed:
-            return
-        self._closed = True
+            return True
         if self._client is not None:
             try:
-                self._client.close()
-            except Exception:  # pragma: no cover - best-effort cleanup
-                pass
-            self._client = None
+                if self._client.close() is False:
+                    return False
+            except Exception:  # pragma: no cover - defensive ownership path
+                return False
+        self._client = None
         self._thread_id = None
+        self._closed = True
+        return True
 
     def __enter__(self) -> "CodexAppServerSession":
         return self
@@ -370,6 +373,7 @@ class CodexAppServerSession:
         turn_timeout: float = 600.0,
         notification_poll_timeout: float = 0.25,
         post_tool_quiet_timeout: float = 90.0,
+        dispatch_gate: Optional[Callable[[], bool]] = None,
     ) -> TurnResult:
         """Send a user message and block until turn/completed, while
         forwarding server-initiated approval requests and projecting items
@@ -407,6 +411,15 @@ class CodexAppServerSession:
 
         # Send turn/start with the user input. Text-only for now (codex
         # supports rich content but Hermes' text path is the common case).
+        if dispatch_gate is not None:
+            try:
+                admitted = dispatch_gate()
+            except Exception as exc:
+                result.error = f"graph budget commit failed before Codex provider dispatch: {exc}"
+                return result
+            if not admitted:
+                result.error = "graph budget commit failed before Codex provider dispatch"
+                return result
         try:
             ts = self._client.request(
                 "turn/start",
@@ -640,6 +653,7 @@ class CodexAppServerSession:
         *,
         turn_timeout: float = 600.0,
         notification_poll_timeout: float = 0.25,
+        dispatch_gate=None,
     ) -> TurnResult:
         """Trigger Codex-native history compaction for the current thread.
 
@@ -663,6 +677,20 @@ class CodexAppServerSession:
         self._interrupt_event.clear()
         projector = CodexEventProjector()
 
+        if dispatch_gate is not None:
+            try:
+                admitted = dispatch_gate()
+            except Exception as exc:
+                result.error = (
+                    "graph budget commit failed before Codex compaction dispatch: "
+                    f"{exc}"
+                )
+                return result
+            if not admitted:
+                result.error = (
+                    "graph budget commit failed before Codex compaction dispatch"
+                )
+                return result
         try:
             self._client.request(
                 "thread/compact/start",

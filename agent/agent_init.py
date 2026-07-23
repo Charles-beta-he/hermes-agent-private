@@ -321,7 +321,8 @@ def init_agent(
     skip_memory: bool = False,
     session_db=None,
     parent_session_id: str = None,
-    iteration_budget: "IterationBudget" = None,
+    iteration_budget: Optional["IterationBudget"] = None,
+    graph_budget: Optional["IterationBudget"] = None,
     fallback_model: Dict[str, Any] = None,
     credential_pool=None,
     checkpoints_enabled: bool = False,
@@ -386,6 +387,10 @@ def init_agent(
     # Shared iteration budget — parent creates, children inherit.
     # Consumed by every LLM turn across parent + all subagents.
     agent.iteration_budget = iteration_budget or IterationBudget(max_iterations)
+    # Optional cumulative budget for the complete live execution graph. Unlike
+    # iteration_budget, this object is not reset between root turns and can be
+    # shared with delegated children.
+    agent.graph_budget = graph_budget
     # Budget/iteration auto-relay is config-driven and default-safe. Defaults
     # are initialized here before config is loaded later in this constructor.
     agent.auto_relay_enabled = True
@@ -859,9 +864,15 @@ def init_agent(
             except Exception:
                 pass
 
+        def _moa_dispatch_admission() -> bool:
+            from agent.conversation_loop import _commit_iteration_graph_budget
+
+            return _commit_iteration_graph_budget(agent)
+
         agent.client = MoAClient(
             agent.model or "default",
             reference_callback=_moa_reference_relay,
+            dispatch_callback=_moa_dispatch_admission,
         )
         agent._client_kwargs = {}
         agent.api_key = api_key or "moa-virtual-provider"
@@ -1329,11 +1340,85 @@ def init_agent(
         agent.auto_relay_enabled = True
         agent.max_relay_count = 3
     try:
-        agent._tool_guardrails = ToolCallGuardrailController(
-            ToolCallGuardrailConfig.from_mapping(
-                _agent_cfg.get("tool_loop_guardrails", {})
-            )
+        _convergence_cfg = _agent_cfg.get("convergence", {})
+        if not isinstance(_convergence_cfg, dict):
+            _convergence_cfg = {}
+        _max_graph_iterations = max(
+            0, int(_convergence_cfg.get("max_graph_iterations", 0) or 0)
         )
+        agent.require_durable_graph_budget = is_truthy_value(
+            _convergence_cfg.get("require_durable_graph_budget"), default=True
+        )
+        agent._graph_budget_persistence_error = ""
+        if agent.graph_budget is None:
+            _graph_id = None
+            if session_db is not None:
+                try:
+                    _graph_id = session_db.resolve_session_execution_graph(agent.session_id)
+                    if _graph_id is None and parent_session_id:
+                        _graph_id = session_db.resolve_session_execution_graph(
+                            parent_session_id
+                        )
+                except Exception:
+                    _graph_id = None
+            if _graph_id is not None and _max_graph_iterations <= 0:
+                # Resume must preserve an existing durable cap even when the
+                # current config disables or omits the default for new graphs.
+                if session_db is None:
+                    raise RuntimeError("durable graph backend unavailable on resume")
+                _used, _max_graph_iterations = session_db.get_execution_graph_budget(
+                    _graph_id
+                )
+            if _max_graph_iterations > 0:
+                _graph_id = _graph_id or parent_session_id or agent.session_id
+                agent.graph_budget = IterationBudget(
+                    _max_graph_iterations,
+                    backend=session_db,
+                    budget_id=_graph_id,
+                )
+        agent.max_graph_iterations = (
+            agent.graph_budget.max_total if agent.graph_budget is not None else 0
+        )
+        agent.execution_graph_id = (
+            getattr(agent.graph_budget, "budget_id", "") or agent.session_id
+            if agent.graph_budget is not None
+            else ""
+        )
+        if agent.execution_graph_id:
+            agent._session_init_model_config["execution_graph_id"] = (
+                agent.execution_graph_id
+            )
+    except Exception:
+        agent.require_durable_graph_budget = True
+        agent._graph_budget_persistence_error = "graph budget initialization failed"
+        agent.max_graph_iterations = (
+            agent.graph_budget.max_total if agent.graph_budget is not None else 0
+        )
+        agent.execution_graph_id = (
+            getattr(agent.graph_budget, "budget_id", "")
+            if agent.graph_budget is not None
+            else ""
+        )
+    try:
+        _raw_tool_guardrail_config = ToolCallGuardrailConfig.from_mapping(
+            _agent_cfg.get("tool_loop_guardrails", {})
+        )
+        _tool_guardrail_config = _raw_tool_guardrail_config.bounded_for_execution_graph(
+            agent.max_graph_iterations
+        )
+        if (
+            _raw_tool_guardrail_config.graph_no_progress_halt_after
+            and not _tool_guardrail_config.graph_no_progress_halt_after
+        ):
+            _ra().logger.warning(
+                "Graph no-progress halt disabled because convergence.max_graph_iterations "
+                "is 0; enable a finite graph budget to bound all-history novelty state"
+            )
+        agent._tool_guardrails = ToolCallGuardrailController(_tool_guardrail_config)
+        if session_db is not None and agent.execution_graph_id:
+            agent._tool_guardrails.bind_durable_graph(
+                session_db, agent.execution_graph_id
+            )
     except Exception as _tlg_err:
         _ra().logger.warning("Tool loop guardrail config ignored: %s", _tlg_err)
     # Cache only the derived auxiliary compression context override that is

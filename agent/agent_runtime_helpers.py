@@ -1719,7 +1719,42 @@ def create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: boo
 
 
 def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mode=''):
-    """Switch the model/provider in-place for a live agent.
+    """Atomically retire stale Codex ownership and switch the live route."""
+    from agent.codex_runtime import (
+        _codex_agent_session_lock,
+        _retire_codex_session,
+    )
+
+    with _codex_agent_session_lock(agent):
+        current_route = (
+            getattr(agent, "model", None),
+            getattr(agent, "provider", None),
+            getattr(agent, "api_mode", None),
+        )
+        requested_route = (new_model, new_provider, api_mode or None)
+        # Avoid MagicMock/dynamic-proxy attribute fabrication; only an actually
+        # owned session participates in retirement.
+        existing = getattr(agent, "__dict__", {}).get("_codex_session")
+        route_changes = current_route[:2] != requested_route[:2] or (
+            api_mode and current_route[2] != api_mode
+        )
+        if existing is not None and route_changes:
+            if not _retire_codex_session(agent, reason="model_switch"):
+                raise RuntimeError(
+                    "cannot switch model while Codex session retirement is unconfirmed"
+                )
+        return _switch_model_locked(
+            agent,
+            new_model,
+            new_provider,
+            api_key=api_key,
+            base_url=base_url,
+            api_mode=api_mode,
+        )
+
+
+def _switch_model_locked(agent, new_model, new_provider, api_key='', base_url='', api_mode=''):
+    """Switch the model/provider while the per-agent lifecycle lock is held.
 
     Called by the /model command handlers (CLI and gateway) after
     ``model_switch.switch_model()`` has resolved credentials and
@@ -1853,7 +1888,16 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
             agent.api_key = api_key or "moa-virtual-provider"
             agent.base_url = "moa://local"
             agent._client_kwargs = {}
-            agent.client = MoAClient(agent.model or "default")
+
+            def _moa_dispatch_admission() -> bool:
+                from agent.conversation_loop import _commit_iteration_graph_budget
+
+                return _commit_iteration_graph_budget(agent)
+
+            agent.client = MoAClient(
+                agent.model or "default",
+                dispatch_callback=_moa_dispatch_admission,
+            )
         elif api_mode == "anthropic_messages":
             from agent.anthropic_adapter import (
                 build_anthropic_client,

@@ -1370,6 +1370,14 @@ DEFAULT_CONFIG = {
         "max_line_length": 2000,
     },
 
+    # Cumulative execution-graph admission. 0 keeps legacy behavior. A positive
+    # value bounds model calls across root turns, auto-relays, and shared-budget
+    # delegated children for the lifetime of the live graph.
+    "convergence": {
+        "max_graph_iterations": 0,
+        "require_durable_graph_budget": True,
+    },
+
     # Tool loop guardrails nudge models when they repeat failed or
     # non-progressing tool calls. Soft warnings are always-on by default;
     # hard stops are opt-in so interactive CLI/TUI sessions keep flowing.
@@ -1385,7 +1393,9 @@ DEFAULT_CONFIG = {
             "exact_failure": 5,
             "same_tool_failure": 8,
             "idempotent_no_progress": 5,
+            "graph_no_progress": 0,
         },
+        "graph_history_size": 512,
     },
 
     "compression": {
@@ -2193,6 +2203,12 @@ DEFAULT_CONFIG = {
         "inherit_mcp_toolsets": True,
         "max_iterations": 50,  # per-subagent iteration cap (each subagent gets its own budget,
                                # independent of the parent's max_iterations)
+        # Compatibility input only. Governed descendants always reuse the
+        # parent's cumulative ledger; false logs a warning rather than minting
+        # an isolated N×cap budget. Each child still gets an isolated receipt handle.
+        "share_graph_budget": True,
+        "child_auto_relay": False,   # relay never expands into children implicitly
+        "child_max_relay_count": 0,  # effective only when child_auto_relay is true
         # Subagent summaries return to the parent's context verbatim. A batch
         # fan-out (N children) returns N summaries at once, which can exceed
         # the parent's context window and trigger a compression/429 death

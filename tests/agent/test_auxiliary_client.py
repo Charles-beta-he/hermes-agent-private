@@ -1259,7 +1259,7 @@ class TestVisionClientFallback:
         real_client = SimpleNamespace(messages=messages_api)
         captured_kwargs = {}
 
-        def fake_create_anthropic_message(_client, kwargs):
+        def fake_create_anthropic_message(_client, kwargs, **_options):
             captured_kwargs.update(kwargs)
             return final_message
 

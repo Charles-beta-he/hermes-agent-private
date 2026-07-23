@@ -29,9 +29,72 @@ from agent.anthropic_adapter import (
 from agent.transports import get_transport
 
 
+def test_stream_fallback_admits_each_physical_anthropic_attempt():
+    from agent.anthropic_adapter import create_anthropic_message
+
+    class UnsupportedStream:
+        def __enter__(self):
+            raise RuntimeError("stream not supported")
+
+        def __exit__(self, *_args):
+            return False
+
+    messages = SimpleNamespace(
+        stream=MagicMock(return_value=UnsupportedStream()),
+        create=MagicMock(return_value=SimpleNamespace(content=[])),
+    )
+    admissions = []
+
+    result = create_anthropic_message(
+        SimpleNamespace(messages=messages),
+        {"model": "claude-test", "messages": []},
+        dispatch_gate=lambda: admissions.append("admitted") or True,
+    )
+
+    assert result.content == []
+    assert admissions == ["admitted", "admitted"]
+    messages.stream.assert_called_once()
+    messages.create.assert_called_once()
+
+
+def test_stream_fallback_fails_closed_before_second_anthropic_attempt():
+    from agent.anthropic_adapter import create_anthropic_message
+
+    class UnsupportedStream:
+        def __enter__(self):
+            raise RuntimeError("stream not supported")
+
+        def __exit__(self, *_args):
+            return False
+
+    messages = SimpleNamespace(
+        stream=MagicMock(return_value=UnsupportedStream()),
+        create=MagicMock(),
+    )
+    admissions = iter((True, False))
+
+    with pytest.raises(RuntimeError, match="graph budget commit failed"):
+        create_anthropic_message(
+            SimpleNamespace(messages=messages),
+            {"model": "claude-test", "messages": []},
+            dispatch_gate=lambda: next(admissions),
+        )
+
+    messages.create.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_live_macos_keychain(monkeypatch):
+    """Never let a developer's real Claude credential influence unit tests."""
+    monkeypatch.setattr(
+        "agent.anthropic_adapter._read_claude_code_credentials_from_keychain",
+        lambda: None,
+    )
 
 
 class TestIsOAuthToken:

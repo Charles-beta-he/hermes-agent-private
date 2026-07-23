@@ -16,9 +16,11 @@ runtime is not selected.
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import queue
+import signal
 import subprocess
 import threading
 import time
@@ -51,6 +53,42 @@ class _Pending:
     sent_at: float = field(default_factory=time.time)
 
 
+_PENDING_CLOSE_CLIENTS: set[Any] = set()
+_LIVE_CODEX_CLIENTS: set[Any] = set()
+_PENDING_CLOSE_LOCK = threading.Lock()
+
+
+def retry_pending_codex_clients() -> int:
+    """Retry unconfirmed provider shutdowns retained by the module backstop."""
+    with _PENDING_CLOSE_LOCK:
+        pending = list(_PENDING_CLOSE_CLIENTS)
+    closed = 0
+    for client in pending:
+        try:
+            if client.close():
+                closed += 1
+        except Exception:
+            pass
+    return closed
+
+
+def close_owned_codex_clients_at_exit() -> int:
+    """Close every process-owning client, including normally live clients."""
+    with _PENDING_CLOSE_LOCK:
+        owned = list(_LIVE_CODEX_CLIENTS | _PENDING_CLOSE_CLIENTS)
+    closed = 0
+    for client in owned:
+        try:
+            if client.close():
+                closed += 1
+        except Exception:
+            pass
+    return closed
+
+
+atexit.register(close_owned_codex_clients_at_exit)
+
+
 class CodexAppServerClient:
     """Minimal JSON-RPC 2.0 client for `codex app-server` over stdio.
 
@@ -75,6 +113,10 @@ class CodexAppServerClient:
         extra_args: Optional[list[str]] = None,
         env: Optional[dict[str, str]] = None,
     ) -> None:
+        # A long-running gateway may evict the prior owner after a transient
+        # kill failure. Retry module-retained handles before spawning another
+        # provider process; atexit performs the same retry at process shutdown.
+        retry_pending_codex_clients()
         self._codex_bin = codex_bin
         # codex app-server is a model-driving CLI executor: it runs a
         # model-chosen agentic loop that executes shell commands, so it
@@ -134,7 +176,9 @@ class CodexAppServerClient:
             stderr=subprocess.PIPE,
             bufsize=0,
             env=spawn_env,
+            start_new_session=True,
         )
+        self._process_group_id = self._proc.pid if os.name != "nt" else None
         self._next_id = 1
         self._pending: dict[int, _Pending] = {}
         self._pending_lock = threading.Lock()
@@ -142,8 +186,11 @@ class CodexAppServerClient:
         self._server_requests: queue.Queue = queue.Queue()
         self._stderr_lines: list[str] = []
         self._stderr_lock = threading.Lock()
+        self._close_lock = threading.RLock()
         self._closed = False
         self._initialized = False
+        with _PENDING_CLOSE_LOCK:
+            _LIVE_CODEX_CLIENTS.add(self)
 
         self._reader = threading.Thread(target=self._read_stdout, daemon=True)
         self._reader.start()
@@ -177,25 +224,115 @@ class CodexAppServerClient:
         self._initialized = True
         return result
 
-    def close(self, timeout: float = 3.0) -> None:
-        """Close stdin and wait for the subprocess to exit, escalating to kill."""
+    def close(self, timeout: float = 3.0) -> bool:
+        """Serialize teardown so concurrent retry/backstop callers are idempotent."""
+        close_lock = getattr(self, "_close_lock", None)
+        if close_lock is None:
+            # Tests and recovery code may reconstruct an owned client via
+            # ``__new__``. Initialize the per-client lock once under the module
+            # registry lock so concurrent first close callers cannot diverge.
+            with _PENDING_CLOSE_LOCK:
+                close_lock = getattr(self, "_close_lock", None)
+                if close_lock is None:
+                    close_lock = threading.RLock()
+                    self._close_lock = close_lock
+        with close_lock:
+            return self._close_locked(timeout)
+
+    def _close_locked(self, timeout: float = 3.0) -> bool:
+        """Close the owned process group and confirm its leader exited.
+
+        A failed escalation leaves the client retryable so its owning agent can
+        retain the handle and attempt teardown again.
+        """
+
+        def _mark_closed() -> bool:
+            self._closed = True
+            with _PENDING_CLOSE_LOCK:
+                _PENDING_CLOSE_CLIENTS.discard(self)
+                _LIVE_CODEX_CLIENTS.discard(self)
+            return True
+
+        def _has_exited() -> bool:
+            try:
+                return self._proc.poll() is not None
+            except Exception:
+                return False
+
+        raw_process_group_id = getattr(self, "_process_group_id", None)
+        process_group_id = (
+            int(raw_process_group_id) if raw_process_group_id is not None else None
+        )
+        owns_process_group = os.name != "nt" and process_group_id is not None
+
+        def _signal_group(sig: int) -> bool:
+            if not owns_process_group:
+                return False
+            assert process_group_id is not None
+            try:
+                os.killpg(process_group_id, sig)
+                return True
+            except ProcessLookupError:
+                return True
+            except Exception:
+                return False
+
+        def _group_alive() -> bool:
+            if not owns_process_group:
+                return False
+            assert process_group_id is not None
+            try:
+                os.killpg(process_group_id, 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except Exception:
+                return True
+
         if self._closed:
-            return
-        self._closed = True
+            return _mark_closed()
         try:
             if self._proc.stdin and not self._proc.stdin.closed:
                 self._proc.stdin.close()
         except Exception:
             pass
+
+        leader_confirmed = _has_exited()
+        if leader_confirmed and not _group_alive():
+            return _mark_closed()
+
         try:
-            self._proc.terminate()
+            if owns_process_group:
+                _signal_group(signal.SIGTERM)
+            else:
+                self._proc.terminate()
             self._proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            try:
+            leader_confirmed = True
+            if not owns_process_group:
+                return _mark_closed()
+        except Exception:
+            if _has_exited():
+                leader_confirmed = True
+                if not owns_process_group:
+                    return _mark_closed()
+
+        try:
+            if owns_process_group:
+                _signal_group(signal.SIGKILL)
+            else:
                 self._proc.kill()
-                self._proc.wait(timeout=1.0)
-            except Exception:
-                pass
+            self._proc.wait(timeout=1.0)
+            leader_confirmed = True
+        except Exception:
+            if _has_exited():
+                leader_confirmed = True
+
+        if leader_confirmed and not _group_alive():
+            return _mark_closed()
+        self._closed = False
+        with _PENDING_CLOSE_LOCK:
+            _PENDING_CLOSE_CLIENTS.add(self)
+        return False
 
     def __enter__(self) -> "CodexAppServerClient":
         return self

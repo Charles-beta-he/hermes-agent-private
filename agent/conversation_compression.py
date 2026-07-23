@@ -436,6 +436,30 @@ def compress_context(
     agent: Any,
     messages: list,
     system_message: str,
+    approx_tokens: Optional[int] = None,
+    task_id: str = "default",
+    focus_topic: Optional[str] = None,
+    force: bool = False,
+) -> Tuple[list, str]:
+    """Serialize route selection and compression with Codex lifecycle mutation."""
+    from agent.codex_runtime import _codex_agent_session_lock
+
+    with _codex_agent_session_lock(agent):
+        return _compress_context_locked(
+            agent,
+            messages,
+            system_message,
+            approx_tokens=approx_tokens,
+            task_id=task_id,
+            focus_topic=focus_topic,
+            force=force,
+        )
+
+
+def _compress_context_locked(
+    agent: Any,
+    messages: list,
+    system_message: str,
     *,
     approx_tokens: Optional[int] = None,
     task_id: str = "default",
@@ -1012,7 +1036,30 @@ def _compress_context_via_codex_app_server(
     task_id: str = "default",
     force: bool = False,
 ) -> Tuple[list, str]:
-    """Route compaction to Codex app-server for Codex-owned threads.
+    """Serialize compaction with Codex turn creation, execution, and teardown."""
+    from agent.codex_runtime import _codex_agent_session_lock
+
+    with _codex_agent_session_lock(agent):
+        return _compress_context_via_codex_app_server_locked(
+            agent,
+            messages,
+            system_message,
+            approx_tokens=approx_tokens,
+            task_id=task_id,
+            force=force,
+        )
+
+
+def _compress_context_via_codex_app_server_locked(
+    agent: Any,
+    messages: list,
+    system_message: Optional[str],
+    *,
+    approx_tokens: Optional[int] = None,
+    task_id: str = "default",
+    force: bool = False,
+) -> Tuple[list, str]:
+    """Route compaction to Codex app-server while ownership is locked.
 
     Hermes' normal compressor rewrites the local OpenAI-style transcript.
     That does not shrink the actual Codex app-server thread context. For this
@@ -1063,13 +1110,19 @@ def _compress_context_via_codex_app_server(
     except Exception:
         pass
 
-    result = codex_session.compact_thread()
+    from agent.conversation_loop import _commit_iteration_graph_budget
+
+    result = codex_session.compact_thread(
+        dispatch_gate=lambda: _commit_iteration_graph_budget(agent)
+    )
     if getattr(result, "should_retire", False):
-        try:
-            codex_session.close()
-        except Exception:
-            pass
-        agent._codex_session = None
+        from agent.codex_runtime import _retire_codex_session
+
+        if not _retire_codex_session(agent, reason="compaction-retire"):
+            logger.warning(
+                "codex app-server compaction retirement remains unconfirmed; "
+                "session ownership retained"
+            )
 
     if getattr(result, "error", None):
         try:
@@ -1095,8 +1148,7 @@ def _compress_context_via_codex_app_server(
             approx_tokens=approx_tokens,
             force=True,
         )
-        if getattr(result, "token_usage_last", None):
-            _record_codex_app_server_usage(agent, result)
+        _record_codex_app_server_usage(agent, result)
     except Exception:
         logger.debug("codex compaction bookkeeping failed", exc_info=True)
 
