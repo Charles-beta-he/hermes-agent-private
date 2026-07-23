@@ -86,6 +86,31 @@ def test_direct_context_compression_charges_each_physical_dispatch(monkeypatch):
     assert create.call_count == 1
 
 
+def test_lazy_graph_budget_persistence_also_binds_durable_guardrails(tmp_path):
+    db = SessionDB(tmp_path / "state.db")
+    try:
+        controller = ToolCallGuardrailController(
+            ToolCallGuardrailConfig(graph_no_progress_halt_after=2)
+        )
+        agent = object.__new__(AIAgent)
+        agent.graph_budget = IterationBudget(3)
+        agent._session_db = db
+        setattr(agent, "session_id", "lazy-session")
+        setattr(agent, "_parent_session_id", None)
+        agent.execution_graph_id = "lazy-graph"
+        setattr(agent, "_session_init_model_config", {})
+        setattr(agent, "_tool_guardrails", controller)
+
+        AIAgent._ensure_graph_budget_persistence(agent)
+
+        assert agent.graph_budget.is_persistent is True
+        assert controller._durable_backend is db
+        assert controller._durable_graph_id == "lazy-graph"
+    finally:
+        db.close()
+
+
+
 def test_persistent_graph_budget_fork_has_independent_receipt_ownership(tmp_path):
     db = SessionDB(tmp_path / "state.db")
     try:

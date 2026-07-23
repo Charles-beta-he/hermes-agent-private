@@ -4241,6 +4241,39 @@ class TestHandleMaxIterations:
         assert "couldn't summarize" in result
         assert "provider-call budget exhausted" in result
 
+    def test_anthropic_iteration_summary_gates_each_physical_attempt(self, agent):
+        agent.api_mode = "anthropic_messages"
+        transport = MagicMock()
+        transport.build_kwargs.return_value = {}
+        transport.normalize_response.return_value = SimpleNamespace(content="Summary")
+        physical_attempts = 0
+
+        def fake_create(api_kwargs, *, dispatch_gate=None):
+            nonlocal physical_attempts
+            assert dispatch_gate is not None
+            assert dispatch_gate()
+            physical_attempts += 1
+            assert dispatch_gate()
+            physical_attempts += 1
+            return SimpleNamespace()
+
+        with (
+            patch.object(agent, "_get_transport", return_value=transport),
+            patch.object(agent, "_anthropic_messages_create", side_effect=fake_create),
+            patch(
+                "agent.conversation_loop._commit_iteration_graph_budget",
+                return_value=True,
+            ) as commit_graph,
+        ):
+            result = agent._handle_max_iterations(
+                [{"role": "user", "content": "do stuff"}],
+                90,
+            )
+
+        assert result == "Summary"
+        assert physical_attempts == 2
+        assert commit_graph.call_count == 2
+
     def test_api_sanitizer_matches_responses_call_id_when_id_differs(self, agent):
         messages = [
             {

@@ -308,8 +308,11 @@ class CodexAppServerClient:
                 self._proc.terminate()
             self._proc.wait(timeout=timeout)
             leader_confirmed = True
-            if not owns_process_group:
-                return _mark_closed()
+            # Once wait() reaps the group leader, its numeric PGID is no longer
+            # proof of ownership and may be recycled immediately. Never signal
+            # that PGID again; escalation is only safe while wait() times out
+            # and the original leader remains alive.
+            return _mark_closed()
         except Exception:
             if _has_exited():
                 leader_confirmed = True

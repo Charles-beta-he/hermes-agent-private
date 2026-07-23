@@ -504,6 +504,25 @@ class TestCodexAppServerCloseEscalation:
         proc.terminate.assert_not_called()
         proc.kill.assert_not_called()
 
+    def test_reaped_group_leader_is_not_followed_by_sigkill_to_recycled_pgid(
+        self, monkeypatch
+    ):
+        import os
+        import signal
+
+        proc = MagicMock()
+        proc.stdin = None
+        proc.wait.return_value = 0
+        client = self._client_with_process(proc)
+        client._process_group_id = 4242
+        killpg = MagicMock(side_effect=[None, ProcessLookupError("group exited")])
+        monkeypatch.setattr(os, "killpg", killpg)
+
+        assert client.close(timeout=0.1) is True
+        assert killpg.call_args_list == [
+            ((4242, signal.SIGTERM),),
+        ]
+
     def test_real_nested_descendant_is_not_left_running_after_group_close(self):
         import os
         import signal

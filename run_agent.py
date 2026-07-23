@@ -594,7 +594,24 @@ class AIAgent:
         graph = getattr(self, "graph_budget", None)
         if graph is None or getattr(graph, "max_total", 0) <= 0:
             return
+
+        def _bind_guardrails(durable_graph) -> None:
+            controller = getattr(self, "_tool_guardrails", None)
+            backend = getattr(self, "_session_db", None) or getattr(
+                durable_graph, "_backend", None
+            )
+            graph_id = getattr(durable_graph, "budget_id", "")
+            if controller is None or backend is None or not graph_id:
+                return
+            if (
+                getattr(controller, "_durable_backend", None) is backend
+                and getattr(controller, "_durable_graph_id", "") == graph_id
+            ):
+                return
+            controller.bind_durable_graph(backend, graph_id)
+
         if getattr(graph, "is_persistent", False):
+            _bind_guardrails(graph)
             return
         if self._session_db is None:
             from hermes_state import SessionDB
@@ -627,6 +644,7 @@ class AIAgent:
         self.max_graph_iterations = durable.max_total
         self.execution_graph_id = graph_id
         self._session_init_model_config["execution_graph_id"] = graph_id
+        _bind_guardrails(durable)
 
     def _ensure_db_session(self) -> None:
         """Create and graph-bind the session DB row before provider dispatch."""

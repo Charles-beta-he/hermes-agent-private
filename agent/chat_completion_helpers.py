@@ -1692,8 +1692,10 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
                                max_tokens=agent.max_tokens, reasoning_config=agent.reasoning_config,
                                is_oauth=agent._is_anthropic_oauth,
                                preserve_dots=agent._anthropic_preserve_dots())
-                _summary_dispatch_gate()
-                summary_response = agent._anthropic_messages_create(_ant_kw)
+                summary_response = agent._anthropic_messages_create(
+                    _ant_kw,
+                    dispatch_gate=_summary_dispatch_gate,
+                )
                 _summary_result = _tsum.normalize_response(summary_response, strip_tool_prefix=agent._is_anthropic_oauth)
                 final_response = (_summary_result.content or "").strip()
             else:
@@ -1728,8 +1730,10 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
                                 is_oauth=agent._is_anthropic_oauth,
                                 max_tokens=agent.max_tokens, reasoning_config=agent.reasoning_config,
                                 preserve_dots=agent._anthropic_preserve_dots())
-                _summary_dispatch_gate()
-                retry_response = agent._anthropic_messages_create(_ant_kw2)
+                retry_response = agent._anthropic_messages_create(
+                    _ant_kw2,
+                    dispatch_gate=_summary_dispatch_gate,
+                )
                 _retry_result = _tretry.normalize_response(retry_response, strip_tool_prefix=agent._is_anthropic_oauth)
                 final_response = (_retry_result.content or "").strip()
             else:
