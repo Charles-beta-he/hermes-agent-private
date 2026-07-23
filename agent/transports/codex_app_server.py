@@ -321,19 +321,29 @@ class CodexAppServerClient:
                     return _mark_closed()
 
         try:
+            group_kill_confirmed = False
             if owns_process_group:
-                _signal_group(getattr(signal, "SIGKILL", signal.SIGTERM))
+                group_kill_confirmed = _signal_group(
+                    getattr(signal, "SIGKILL", signal.SIGTERM)
+                )
             else:
                 self._proc.kill()
             self._proc.wait(timeout=1.0)
             leader_confirmed = True
-        except Exception:
-            if _has_exited():
-                leader_confirmed = True
+            if owns_process_group and group_kill_confirmed:
+                # Probe for observability, but do not treat a positive result
+                # as live work after the leader is reaped and the hard-kill
+                # was delivered: Linux may keep killed, orphaned descendants
+                # as zombies in the PGID until PID 1 reaps them.
+                _group_alive()
+                return _mark_closed()
+        except (OSError, subprocess.TimeoutExpired):
+            leader_confirmed = _has_exited()
 
-        if leader_confirmed and not _group_alive():
+        group_confirmed = not owns_process_group or not _group_alive()
+        if leader_confirmed and group_confirmed:
             return _mark_closed()
-        self._closed = False
+
         with _PENDING_CLOSE_LOCK:
             _PENDING_CLOSE_CLIENTS.add(self)
         return False
