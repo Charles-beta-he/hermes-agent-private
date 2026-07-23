@@ -2606,3 +2606,235 @@ def test_partial_append_error_rolls_back_record_for_idempotent_retry(
         occurred_at=NOW,
     )
     assert projection["status"] == "accepted"
+
+
+def test_cancellation_is_polled_while_an_adapter_is_running(
+    monkeypatch, tmp_path: Path
+) -> None:
+    adapters = governed_runtime._builtin_adapters()
+    original = adapters["local.echo"]
+    cancellation_seen = Event()
+    observed_during_adapter: list[bool] = []
+    probes = 0
+
+    def wait_for_cancellation(value, dependencies):
+        observed_during_adapter.append(cancellation_seen.wait(0.25))
+        return original.execute(value, dependencies)
+
+    def cancel_requested() -> bool:
+        nonlocal probes
+        probes += 1
+        if probes >= 2:
+            cancellation_seen.set()
+            return True
+        return False
+
+    monkeypatch.setattr(
+        governed_runtime,
+        "_builtin_adapters",
+        lambda: {
+            **adapters,
+            "local.echo": governed_runtime._Adapter(
+                adapter_id=original.adapter_id,
+                capabilities=original.capabilities,
+                side_effect=original.side_effect,
+                supported_isolations=original.supported_isolations,
+                execute=wait_for_cancellation,
+            ),
+        },
+    )
+
+    result = run_workflow(
+        _definition(),
+        _manifest(),
+        ledger_path=tmp_path / "run.jsonl",
+        private_root=tmp_path,
+        execute_grant=ExecuteGrant.local_only(),
+        now=NOW,
+        cancel_requested=cancel_requested,
+    )
+
+    assert observed_during_adapter == [True]
+    assert probes >= 2
+    assert result["outcome"] == "cancelled"
+
+
+def test_cancellation_while_the_final_verifier_runs_remains_terminally_visible(
+    monkeypatch, tmp_path: Path
+) -> None:
+    adapters = governed_runtime._builtin_adapters()
+    original = adapters["local.verify_dependency"]
+    verifier_entered = Event()
+    cancellation_seen = Event()
+
+    def wait_for_cancellation(value, dependencies):
+        verifier_entered.set()
+        assert cancellation_seen.wait(1)
+        return original.execute(value, dependencies)
+
+    def cancel_requested() -> bool:
+        if not verifier_entered.is_set():
+            return False
+        cancellation_seen.set()
+        return True
+
+    monkeypatch.setattr(
+        governed_runtime,
+        "_builtin_adapters",
+        lambda: {
+            **adapters,
+            "local.verify_dependency": governed_runtime._Adapter(
+                adapter_id=original.adapter_id,
+                capabilities=original.capabilities,
+                side_effect=original.side_effect,
+                supported_isolations=original.supported_isolations,
+                execute=wait_for_cancellation,
+            ),
+        },
+    )
+
+    ledger = tmp_path / "run.jsonl"
+    result = run_workflow(
+        _definition(),
+        _manifest(),
+        ledger_path=ledger,
+        private_root=tmp_path,
+        execute_grant=ExecuteGrant.local_only(),
+        now=NOW,
+        cancel_requested=cancel_requested,
+    )
+    events = read_execution_events(ledger, private_root=tmp_path)
+    event_types = [event["event_type"] for event in events]
+
+    assert verifier_entered.is_set()
+    assert cancellation_seen.is_set()
+    assert "run_cancel_requested" in event_types
+    assert "run_verified" not in event_types
+    assert result["outcome"] == "cancelled"
+    assert result["verification_state"] == "unverified"
+
+
+def test_ledger_rejects_verification_after_cancellation_intent(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    replay_root = tmp_path / "replay"
+    source_root.mkdir(mode=0o700)
+    replay_root.mkdir(mode=0o700)
+    source_ledger = source_root / "run.jsonl"
+    replay_ledger = replay_root / "run.jsonl"
+
+    run_workflow(
+        _definition(),
+        _manifest(),
+        ledger_path=source_ledger,
+        private_root=source_root,
+        execute_grant=ExecuteGrant.local_only(),
+        now=NOW,
+    )
+    source_events = read_execution_events(source_ledger, private_root=source_root)
+    verification_event = next(
+        event for event in source_events if event["event_type"] == "run_verified"
+    )
+    for event in source_events:
+        if event["event_type"] == "run_verified":
+            break
+        append_execution_event(
+            replay_ledger,
+            private_root=replay_root,
+            run_id=event["run_id"],
+            event_type=event["event_type"],
+            payload=event["payload"],
+            idempotency_key=event["idempotency_key"],
+            occurred_at=event["occurred_at"],
+        )
+    append_execution_event(
+        replay_ledger,
+        private_root=replay_root,
+        run_id=_manifest()["run_id"],
+        event_type="run_cancel_requested",
+        payload={"reason": "cancellation_requested", "message": None},
+        idempotency_key="replay:cancel-before-verification",
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        append_execution_event(
+            replay_ledger,
+            private_root=replay_root,
+            run_id=verification_event["run_id"],
+            event_type="run_verified",
+            payload=verification_event["payload"],
+            idempotency_key=verification_event["idempotency_key"],
+            occurred_at=verification_event["occurred_at"],
+        )
+    assert excinfo.value.code == "invalid_transition"
+
+
+def test_status_does_not_block_behind_an_active_execution(
+    monkeypatch, tmp_path: Path
+) -> None:
+    context = multiprocessing.get_context("fork")
+    adapters = governed_runtime._builtin_adapters()
+    original = adapters["local.echo"]
+    entered = context.Event()
+    release = context.Event()
+
+    def blocking_adapter(value, dependencies):
+        entered.set()
+        assert release.wait(3)
+        return original.execute(value, dependencies)
+
+    monkeypatch.setattr(
+        governed_runtime,
+        "_builtin_adapters",
+        lambda: {
+            **adapters,
+            "local.echo": governed_runtime._Adapter(
+                adapter_id=original.adapter_id,
+                capabilities=original.capabilities,
+                side_effect=original.side_effect,
+                supported_isolations=original.supported_isolations,
+                execute=blocking_adapter,
+            ),
+        },
+    )
+
+    ledger = tmp_path / "run.jsonl"
+
+    def run_worker() -> None:
+        run_workflow(
+            _definition(),
+            _manifest(),
+            ledger_path=ledger,
+            private_root=tmp_path,
+            execute_grant=ExecuteGrant.local_only(),
+            now=NOW,
+        )
+
+    runner = context.Process(target=run_worker)
+    runner.start()
+    assert entered.wait(2)
+
+    receiver, sender = context.Pipe(duplex=False)
+    status = context.Process(
+        target=_fifo_ledger_public_api_worker,
+        args=("status", str(ledger), str(tmp_path), sender),
+    )
+    status.start()
+    sender.close()
+    try:
+        assert receiver.poll(0.75)
+        assert receiver.recv() == ("WorkflowRuntimeError", "ledger_busy")
+    finally:
+        release.set()
+        runner.join(timeout=3)
+        status.join(timeout=3)
+        if runner.is_alive():
+            runner.terminate()
+            runner.join(timeout=2)
+        if status.is_alive():
+            status.terminate()
+            status.join(timeout=2)
+        receiver.close()
+
+    assert runner.exitcode == 0
+    assert status.exitcode == 0

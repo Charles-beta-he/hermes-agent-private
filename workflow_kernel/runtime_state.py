@@ -41,12 +41,15 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_reset_lock_state_after_fork)
 
 
-def _acquire_posix_lock(descriptor: int) -> None:
+def _acquire_posix_lock(descriptor: int, *, blocking: bool = True) -> None:
     import fcntl
 
     _ACTIVE_LOCK_DESCRIPTORS.add(descriptor)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        operation = fcntl.LOCK_EX
+        if not blocking:
+            operation |= fcntl.LOCK_NB
+        fcntl.flock(descriptor, operation)
     except BaseException:
         _ACTIVE_LOCK_DESCRIPTORS.discard(descriptor)
         raise
@@ -63,7 +66,7 @@ def _release_posix_lock(descriptor: int) -> None:
 
 @contextmanager
 def _exclusive_parent_coordination(
-    directory_descriptor: int, parent: Path
+    directory_descriptor: int, parent: Path, *, blocking: bool = True
 ) -> Iterator[None]:
     """Hold a reentrant-per-thread POSIX coordination lock on a stable parent inode."""
     if os.name == "nt":  # pragma: no cover - governed execution rejects Windows
@@ -83,7 +86,7 @@ def _exclusive_parent_coordination(
         finally:
             held[key] -= 1
         return
-    _acquire_posix_lock(directory_descriptor)
+    _acquire_posix_lock(directory_descriptor, blocking=blocking)
     held[key] = 1
     try:
         yield
@@ -453,6 +456,7 @@ def exclusive_existing_ledger_lock_read_only(
     ledger_path: Path,
     *,
     private_root: Path,
+    blocking: bool = True,
 ) -> Iterator[LedgerAnchor | None]:
     """Acquire an existing ledger writer lock without creating or chmodding state."""
     owner_pid = os.getpid()
@@ -471,7 +475,9 @@ def exclusive_existing_ledger_lock_read_only(
     flags = os.O_RDWR if os.name == "nt" else os.O_RDONLY
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
-    coordination = _exclusive_parent_coordination(parent_descriptor, parent)
+    coordination = _exclusive_parent_coordination(
+        parent_descriptor, parent, blocking=blocking
+    )
     coordination_entered = False
     try:
         coordination.__enter__()
@@ -491,9 +497,13 @@ def exclusive_existing_ledger_lock_read_only(
                         "refusing to mutate an empty existing ledger lock during read-only acquisition"
                     )
                 os.lseek(descriptor, 0, os.SEEK_SET)
-                msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+                msvcrt.locking(
+                    descriptor,
+                    msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK,
+                    1,
+                )
             else:
-                _acquire_posix_lock(descriptor)
+                _acquire_posix_lock(descriptor, blocking=blocking)
             locked = True
             yield LedgerAnchor(parent_descriptor, parent, ledger_path.name)
         finally:

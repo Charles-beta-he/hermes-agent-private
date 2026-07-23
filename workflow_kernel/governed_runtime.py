@@ -623,7 +623,7 @@ def read_runtime_status(ledger_path: Path, *, private_root: Path) -> dict[str, A
     private_root = pin_runtime_path(private_root)
     try:
         events = read_execution_events_synchronized_read_only(
-            ledger_path, private_root=private_root
+            ledger_path, private_root=private_root, blocking=False
         )
         return _render_status(project_execution_events(events))
     except WorkflowExecutionLedgerError as exc:
@@ -903,7 +903,11 @@ def _run_workflow_once(
                 else None
             )
             cancellation_observed = bool(existing["cancellation_requested"])
-            if pending and not cancellation_observed and cancel_requested is not None:
+            if (
+                (pending or running)
+                and not cancellation_observed
+                and cancel_requested is not None
+            ):
                 try:
                     cancellation_observed = bool(cancel_requested())
                 except Exception as exc:
@@ -912,7 +916,7 @@ def _run_workflow_once(
                         f"{type(cancellation_error).__name__}: {cancellation_error}"
                     )
                     cancellation_observed = True
-            if pending and cancellation_observed:
+            if cancellation_observed:
                 if not existing["cancellation_requested"]:
                     existing = _append(
                         ledger_path,
@@ -1090,7 +1094,16 @@ def _run_workflow_once(
                         f"no runnable tasks remain: {sorted(pending)}",
                     )
                 break
-            done, _ = wait(running, return_when=FIRST_COMPLETED)
+            poll_cancellation = (
+                cancel_requested is not None and not existing["cancellation_requested"]
+            )
+            done, _ = wait(
+                running,
+                timeout=0.05 if poll_cancellation else None,
+                return_when=FIRST_COMPLETED,
+            )
+            if not done:
+                continue
             for future in sorted(done, key=lambda item: running[item][0]):
                 task_id, reservation_id, dependencies = running.pop(future)
                 leaf = normalized_manifest["leaves"][task_id]
@@ -1254,6 +1267,7 @@ def _run_workflow_once(
     all_completed = all(packet["status"] == "completed" for packet in packets.values())
     if (
         all_completed
+        and not existing["cancellation_requested"]
         and verification_task_ids
         and existing["verification_state"] == "unverified"
     ):

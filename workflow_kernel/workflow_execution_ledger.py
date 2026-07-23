@@ -669,10 +669,11 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
             if (
                 state["status"] != "running"
                 or state["verification_state"] != "unverified"
+                or state["cancellation_requested"]
             ):
                 _fail(
                     "invalid_transition",
-                    "run verification requires an unverified running state",
+                    "run verification requires an uncancelled unverified running state",
                 )
             verifier_leaf_ids = payload["verifier_leaf_ids"]
             if verifier_leaf_ids != state["verification_task_ids"]:
@@ -742,14 +743,24 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
             terminal_statuses = {
                 packet["status"] for packet in state["leaf_packets_by_id"].values()
             }
-            state["outcome"] = next(
-                (
-                    outcome
-                    for outcome in ("failed", "blocked", "cancelled", "unverified")
-                    if outcome in terminal_statuses
-                ),
-                "completed",
-            )
+            if state["cancellation_reason"] == "cancellation_probe_failed":
+                state["outcome"] = "blocked"
+            elif state["cancellation_requested"]:
+                state["outcome"] = "cancelled"
+            else:
+                state["outcome"] = next(
+                    (
+                        outcome
+                        for outcome in (
+                            "failed",
+                            "blocked",
+                            "cancelled",
+                            "unverified",
+                        )
+                        if outcome in terminal_statuses
+                    ),
+                    "completed",
+                )
             state["status"] = payload["status"]
             state["verification_state"] = payload["verification_state"]
             state["convergence_state"] = payload["convergence_state"]
@@ -808,11 +819,29 @@ def read_execution_events_synchronized_read_only(
     ledger_path: Path,
     *,
     private_root: Path,
+    blocking: bool = True,
 ) -> list[dict[str, Any]]:
     """Read without mutation while synchronizing with cooperative ledger writers."""
+    try:
+        return _read_execution_events_synchronized_read_only(
+            ledger_path, private_root=private_root, blocking=blocking
+        )
+    except BlockingIOError as exc:
+        raise WorkflowExecutionLedgerError(
+            "ledger_busy", "ledger is busy with an active execution or writer"
+        ) from exc
+
+
+def _read_execution_events_synchronized_read_only(
+    ledger_path: Path,
+    *,
+    private_root: Path,
+    blocking: bool,
+) -> list[dict[str, Any]]:
     with exclusive_existing_ledger_lock_read_only(
         ledger_path,
         private_root=private_root,
+        blocking=blocking,
     ) as anchor:
         if anchor is not None:
             return _read_events_from_anchor(ledger_path, private_root, anchor)
@@ -827,6 +856,7 @@ def read_execution_events_synchronized_read_only(
     with exclusive_existing_ledger_lock_read_only(
         ledger_path,
         private_root=private_root,
+        blocking=blocking,
     ) as anchor:
         if anchor is not None:
             return _read_events_from_anchor(ledger_path, private_root, anchor)
