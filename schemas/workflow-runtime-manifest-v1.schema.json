@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes-agent.local/schemas/workflow-runtime-manifest-v1.schema.json",
+  "title": "Hermes WorkflowRuntimeManifestV1",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "workflow_runtime_manifest_v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identity_schema_version": {
+      "const": 1
+    },
+    "baseline_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_scope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile_scope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tool_policy_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model_contract_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "max_concurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "reservation_ttl_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400000
+    },
+    "hard_budget": {
+      "type": "object",
+      "properties": {
+        "spawns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wall_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tool_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "side_effect_ops": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "spawns",
+        "wall_ms",
+        "tool_calls",
+        "tokens",
+        "side_effect_ops"
+      ],
+      "additionalProperties": false
+    },
+    "leaves": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "adapter": {
+            "type": "string",
+            "minLength": 1
+          },
+          "isolation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "input": {},
+          "output_schema": {
+            "type": "object"
+          },
+          "reserve": {
+            "type": "object",
+            "properties": {
+              "spawns": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "wall_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tool_calls": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "side_effect_ops": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "spawns",
+              "wall_ms",
+              "tool_calls",
+              "tokens",
+              "side_effect_ops"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "adapter",
+          "isolation",
+          "input",
+          "output_schema",
+          "reserve"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "identity_schema_version",
+    "baseline_ref",
+    "project_scope",
+    "profile_scope",
+    "tool_policy_ref",
+    "model_contract_ref",
+    "authority_ref",
+    "max_concurrency",
+    "reservation_ttl_ms",
+    "hard_budget",
+    "leaves"
+  ],
+  "additionalProperties": false
+}

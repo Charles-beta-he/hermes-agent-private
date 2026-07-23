@@ -963,6 +963,11 @@ class TestWrapperScriptSecurity:
     def test_validate_alias_name_accepts_safe_identifier(self):
         validate_alias_name("mybot")  # does not raise
 
+    def test_alias_collision_rejects_workflow_runtime_subcommand(self):
+        assert check_alias_collision("workflow-runtime") == (
+            "'workflow-runtime' conflicts with a hermes subcommand"
+        )
+
     def test_create_wrapper_rejects_traversal(self, profile_env):
         sentinel = profile_env / ".bashrc"
         sentinel.write_text("keep", encoding="utf-8")

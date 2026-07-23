@@ -68,6 +68,28 @@ def _open_directory_chain(path: Path) -> int:
         raise
 
 
+def _open_existing_directory_chain(path: Path) -> int:
+    """Open an existing directory chain without creating or chmodding anything."""
+    absolute = _absolute_without_parent_refs(path)
+    flags = os.O_RDONLY | int(getattr(os, "O_DIRECTORY", 0)) | _no_follow_flag()
+    descriptor = os.open(absolute.anchor, flags)
+    try:
+        for part in absolute.parts[1:]:
+            next_descriptor = os.open(part, flags, dir_fd=descriptor)
+            try:
+                if not stat.S_ISDIR(os.fstat(next_descriptor).st_mode):
+                    raise OSError(f"refusing non-directory ancestor: {absolute}")
+            except BaseException:
+                os.close(next_descriptor)
+                raise
+            os.close(descriptor)
+            descriptor = next_descriptor
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
 def _open_regular_file(path: Path, flags: int, mode: int = PRIVATE_FILE_MODE) -> int:
     descriptor = os.open(path, flags | _no_follow_flag(), mode)
     try:
@@ -142,6 +164,23 @@ def read_ledger_descriptor_bytes(descriptor: int) -> bytes:
         if not chunk:
             return b"".join(chunks)
         chunks.append(chunk)
+
+
+def read_existing_private_file_bytes(path: Path, *, private_root: Path) -> bytes:
+    """Read one existing private file without filesystem mutation or lock creation."""
+    parent = _absolute_without_parent_refs(path.parent)
+    root = _absolute_without_parent_refs(private_root)
+    if parent != root and root not in parent.parents:
+        raise ValueError(f"artifact parent is outside private runtime root: {path}")
+    parent_descriptor = _open_existing_directory_chain(parent)
+    try:
+        descriptor = _open_regular_file_at(parent_descriptor, path.name, os.O_RDONLY)
+        try:
+            return read_ledger_descriptor_bytes(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(parent_descriptor)
 
 
 def read_ledger_bytes(
@@ -423,7 +462,8 @@ def seed_jsonl_once(
                 )
                 os.fsync(anchor.directory_descriptor)
             else:
-                assert temporary is not None
+                if temporary is None:
+                    raise OSError("temporary runtime seed path is missing")
                 os.link(temporary, runtime_path, follow_symlinks=False)
             status_value = "seeded"
         except FileExistsError:
@@ -433,7 +473,8 @@ def seed_jsonl_once(
                 if anchor is not None:
                     os.unlink(temporary_name, dir_fd=anchor.directory_descriptor)
                 else:
-                    assert temporary is not None
+                    if temporary is None:
+                        raise OSError("temporary runtime seed path is missing")
                     temporary.unlink()
             except OSError:
                 pass
