@@ -4169,7 +4169,9 @@ class TestHandleMaxIterations:
         agent._cached_system_prompt = "You are helpful."
         captured = {}
 
-        def fake_run_codex_stream(kwargs):
+        def fake_run_codex_stream(kwargs, dispatch_gate=None):
+            if dispatch_gate is not None:
+                assert dispatch_gate()
             captured.update(kwargs)
             return SimpleNamespace(
                 status="completed",
@@ -4201,6 +4203,76 @@ class TestHandleMaxIterations:
             and item.get("call_id") == "call_orphan"
             for item in input_items
         )
+
+    def test_codex_iteration_summary_halts_before_dispatch_when_graph_cap_exhausted(self, agent):
+        agent.api_mode = "codex_responses"
+        agent.provider = "openai-codex"
+        agent.base_url = "https://chatgpt.com/backend-api/codex"
+        agent._base_url_lower = agent.base_url.lower()
+        agent._base_url_hostname = "chatgpt.com"
+        agent.model = "gpt-5.5"
+        physical_dispatches = 0
+
+        def fake_run_codex_stream(kwargs, dispatch_gate=None):
+            nonlocal physical_dispatches
+            assert dispatch_gate is not None
+            if not dispatch_gate():
+                raise RuntimeError("graph cap exhausted")
+            physical_dispatches += 1
+            raise AssertionError("provider dispatch must not occur")
+
+        with (
+            patch(
+                "agent.conversation_loop._commit_iteration_graph_budget",
+                return_value=False,
+            ),
+            patch.object(
+                agent,
+                "_run_codex_stream",
+                side_effect=fake_run_codex_stream,
+            ),
+        ):
+            result = agent._handle_max_iterations(
+                [{"role": "user", "content": "do stuff"}],
+                90,
+            )
+
+        assert physical_dispatches == 0
+        assert "couldn't summarize" in result
+        assert "provider-call budget exhausted" in result
+
+    def test_anthropic_iteration_summary_gates_each_physical_attempt(self, agent):
+        agent.api_mode = "anthropic_messages"
+        transport = MagicMock()
+        transport.build_kwargs.return_value = {}
+        transport.normalize_response.return_value = SimpleNamespace(content="Summary")
+        physical_attempts = 0
+
+        def fake_create(api_kwargs, *, dispatch_gate=None):
+            nonlocal physical_attempts
+            assert dispatch_gate is not None
+            assert dispatch_gate()
+            physical_attempts += 1
+            assert dispatch_gate()
+            physical_attempts += 1
+            return SimpleNamespace()
+
+        with (
+            patch.object(agent, "_get_transport", return_value=transport),
+            patch.object(agent, "_anthropic_messages_create", side_effect=fake_create),
+            patch(
+                "agent.conversation_loop._commit_iteration_graph_budget",
+                return_value=True,
+            ) as commit_graph,
+        ):
+            result = agent._handle_max_iterations(
+                [{"role": "user", "content": "do stuff"}],
+                90,
+            )
+
+        assert result == "Summary"
+        assert physical_attempts == 2
+        assert commit_graph.call_count == 2
 
     def test_api_sanitizer_matches_responses_call_id_when_id_differs(self, agent):
         messages = [
@@ -4928,7 +5000,7 @@ class TestRunConversation:
         assert result["final_response"] == "Recovered after remint"
 
     def test_context_compression_triggered(self, agent):
-        """When compressor says should_compress, compression runs."""
+        """When compressor says should_compress, compression runs under a dispatch gate."""
         self._setup_agent(agent)
         agent.compression_enabled = True
 
@@ -4936,24 +5008,43 @@ class TestRunConversation:
         resp1 = _mock_response(content="", finish_reason="tool_calls", tool_calls=[tc])
         resp2 = _mock_response(content="All done", finish_reason="stop")
         agent.client.chat.completions.create.side_effect = [resp1, resp2]
+        gate_state = {"active": False, "entries": 0}
+
+        class _DispatchGate:
+            def __init__(self, callback):
+                assert callable(callback)
+
+            def __enter__(self):
+                gate_state["entries"] += 1
+                gate_state["active"] = True
+
+            def __exit__(self, *_exc):
+                gate_state["active"] = False
+
+        def _compress(*args, **kwargs):
+            assert gate_state["active"] is True
+            return (
+                [{"role": "user", "content": "search something"}],
+                "compressed system prompt",
+            )
 
         with (
             patch("run_agent.handle_function_call", return_value="result"),
             patch.object(
                 agent.context_compressor, "should_compress", return_value=True
             ),
-            patch.object(agent, "_compress_context") as mock_compress,
+            patch.object(agent, "_compress_context", side_effect=_compress) as mock_compress,
+            patch(
+                "agent.auxiliary_client.physical_dispatch_gate",
+                side_effect=_DispatchGate,
+            ),
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
         ):
-            # _compress_context should return (messages, system_prompt)
-            mock_compress.return_value = (
-                [{"role": "user", "content": "search something"}],
-                "compressed system prompt",
-            )
             result = agent.run_conversation("search something")
         mock_compress.assert_called_once()
+        assert gate_state["entries"] == 1
         assert result["final_response"] == "All done"
         assert result["completed"] is True
 

@@ -7,6 +7,10 @@ covered by a separate live test gated on `codex --version`.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import subprocess
+from unittest.mock import MagicMock
+
 import pytest
 
 from hermes_cli.runtime_provider import (
@@ -167,6 +171,7 @@ class TestSpawnEnvIsolation:
         class FakePopen:
             def __init__(self, cmd, *args, **kwargs):
                 captured["env"] = kwargs.get("env", {}).copy()
+                captured["start_new_session"] = kwargs.get("start_new_session")
                 # Provide minimal Popen surface so __init__ doesn't crash
                 # on attribute access during construction.
                 self.stdin = None
@@ -193,6 +198,7 @@ class TestSpawnEnvIsolation:
         client = cas.CodexAppServerClient(codex_bin="codex")
         client._closed = True  # so close() is a no-op
 
+        assert captured["start_new_session"] is True
         # The spawn env must have HOME=/users/alice unchanged
         assert captured["env"].get("HOME") == "/users/alice", (
             f"HOME got rewritten in codex spawn env: "
@@ -378,3 +384,293 @@ class TestSpawnEnvSecretStripping:
         monkeypatch.setenv("HOME", "/users/alice")
         env = self._capture_spawn_env(monkeypatch)
         assert env.get("HOME") == "/users/alice"
+
+
+class TestCodexAppServerCloseEscalation:
+    @staticmethod
+    def _client_with_process(proc):
+        from agent.transports.codex_app_server import CodexAppServerClient
+
+        client = CodexAppServerClient.__new__(CodexAppServerClient)
+        client._closed = False
+        client._proc = proc
+        proc.poll.return_value = None
+        return client
+
+    def test_timeout_escalates_from_terminate_to_kill_and_wait(self):
+        proc = MagicMock()
+        proc.stdin = None
+        proc.wait.side_effect = [
+            subprocess.TimeoutExpired(cmd="codex app-server", timeout=3.0),
+            0,
+        ]
+        client = self._client_with_process(proc)
+
+        client.close(timeout=3.0)
+
+        proc.terminate.assert_called_once_with()
+        proc.kill.assert_called_once_with()
+        assert proc.wait.call_args_list[0].kwargs == {"timeout": 3.0}
+        assert proc.wait.call_args_list[1].kwargs == {"timeout": 1.0}
+        assert client._closed is True
+
+    @pytest.mark.skipif(__import__("os").name == "nt", reason="POSIX process groups")
+    def test_atexit_callback_closes_registered_provider_process(self, tmp_path):
+        import os
+        import sys
+        import textwrap
+
+        harness = textwrap.dedent(
+            """
+            import pathlib
+            import sys
+
+            from agent.transports.codex_app_server import CodexAppServerClient
+
+            fake_codex = pathlib.Path("fake-codex")
+            fake_codex.write_text(
+                f"#!{sys.executable}\\nimport time\\ntime.sleep(30)\\n",
+                encoding="utf-8",
+            )
+            fake_codex.chmod(0o755)
+            client = CodexAppServerClient(codex_bin=str(fake_codex.resolve()))
+            print(client._proc.pid, flush=True)
+            """
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", harness],
+            cwd=tmp_path,
+            env={**os.environ, "PYTHONPATH": os.getcwd()},
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+            check=True,
+        )
+        provider_pid = int(completed.stdout.strip())
+
+        try:
+            probe = subprocess.run(
+                ["ps", "-p", str(provider_pid), "-o", "pid="],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert not probe.stdout.strip()
+        finally:
+            subprocess.run(
+                ["/bin/kill", "-KILL", f"-{provider_pid}"],
+                capture_output=True,
+                check=False,
+            )
+
+    def test_terminate_error_still_attempts_kill_and_bounded_wait(self):
+        proc = MagicMock()
+        proc.stdin = None
+        proc.terminate.side_effect = OSError("signal failed")
+        proc.wait.return_value = 0
+        client = self._client_with_process(proc)
+
+        assert client.close(timeout=3.0) is True
+
+        proc.kill.assert_called_once_with()
+        proc.wait.assert_called_once_with(timeout=1.0)
+        assert client._closed is True
+
+    def test_owned_process_group_is_terminated_and_killed_as_a_unit(
+        self, monkeypatch
+    ):
+        import os
+        import signal
+
+        proc = MagicMock()
+        proc.stdin = None
+        proc.wait.side_effect = [
+            subprocess.TimeoutExpired(cmd="codex app-server", timeout=0.1),
+            0,
+        ]
+        client = self._client_with_process(proc)
+        client._process_group_id = 4242
+        killpg = MagicMock(
+            side_effect=[None, None, ProcessLookupError("group exited")]
+        )
+        monkeypatch.setattr(os, "killpg", killpg)
+
+        assert client.close(timeout=0.1) is True
+        assert killpg.call_args_list == [
+            ((4242, signal.SIGTERM),),
+            ((4242, signal.SIGKILL),),
+            ((4242, 0),),
+        ]
+        proc.terminate.assert_not_called()
+        proc.kill.assert_not_called()
+
+    def test_reaped_group_leader_is_not_followed_by_sigkill_to_recycled_pgid(
+        self, monkeypatch
+    ):
+        import os
+        import signal
+
+        proc = MagicMock()
+        proc.stdin = None
+        proc.wait.return_value = 0
+        client = self._client_with_process(proc)
+        client._process_group_id = 4242
+        killpg = MagicMock(side_effect=[None, ProcessLookupError("group exited")])
+        monkeypatch.setattr(os, "killpg", killpg)
+
+        assert client.close(timeout=0.1) is True
+        assert killpg.call_args_list == [
+            ((4242, signal.SIGTERM),),
+            ((4242, 0),),
+        ]
+
+    def test_reaped_group_leader_still_kills_surviving_owned_descendants(
+        self, monkeypatch
+    ):
+        import os
+        import signal
+
+        proc = MagicMock()
+        proc.stdin = None
+        proc.wait.side_effect = [0, 0]
+        client = self._client_with_process(proc)
+        client._process_group_id = 4242
+        killpg = MagicMock(
+            side_effect=[None, None, None, ProcessLookupError("group exited")]
+        )
+        monkeypatch.setattr(os, "killpg", killpg)
+
+        assert client.close(timeout=0.1) is True
+        assert killpg.call_args_list == [
+            ((4242, signal.SIGTERM),),
+            ((4242, 0),),
+            ((4242, signal.SIGKILL),),
+            ((4242, 0),),
+        ]
+
+    def test_timeout_then_reaped_empty_group_is_not_signaled_again(
+        self, monkeypatch
+    ):
+        import os
+        import signal
+
+        proc = MagicMock()
+        proc.stdin = None
+        proc.wait.side_effect = subprocess.TimeoutExpired(
+            cmd="codex app-server", timeout=0.1
+        )
+        proc.poll.side_effect = [None, 0]
+        client = self._client_with_process(proc)
+        client._process_group_id = 4242
+        killpg = MagicMock(side_effect=[None, ProcessLookupError("group exited")])
+        monkeypatch.setattr(os, "killpg", killpg)
+
+        assert client.close(timeout=0.1) is True
+        assert killpg.call_args_list == [
+            ((4242, signal.SIGTERM),),
+            ((4242, 0),),
+        ]
+
+    def test_real_nested_descendant_is_not_left_running_after_group_close(self):
+        import os
+        import signal
+        import sys
+        import time
+
+        from agent.transports.codex_app_server import CodexAppServerClient
+
+        child_code = (
+            "import signal,time; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "time.sleep(30)"
+        )
+        leader_code = (
+            "import signal,subprocess,sys,time; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            f"p=subprocess.Popen([sys.executable,'-c',{child_code!r}]); "
+            "print(p.pid, flush=True); time.sleep(30)"
+        )
+        proc = subprocess.Popen(
+            [sys.executable, "-c", leader_code],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        assert proc.stdout is not None
+        descendant_pid = int(proc.stdout.readline().decode().strip())
+        client = CodexAppServerClient.__new__(CodexAppServerClient)
+        client._closed = False
+        client._proc = proc
+        client._process_group_id = proc.pid
+
+        try:
+            assert client.close(timeout=0.05) is True
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(descendant_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.02)
+            else:
+                raise AssertionError(
+                    f"nested Codex descendant still exists: pid={descendant_pid}"
+                )
+        finally:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait(timeout=2.0)
+
+    def test_already_exited_process_is_confirmed_without_signaling(self):
+        from agent.transports import codex_app_server as cas
+
+        proc = MagicMock()
+        proc.stdin = MagicMock(closed=False)
+        proc.terminate.side_effect = ProcessLookupError("already exited")
+        proc.kill.side_effect = ProcessLookupError("already exited")
+        client = self._client_with_process(proc)
+        proc.poll.return_value = 0
+
+        assert client.close(timeout=3.0) is True
+        assert client._closed is True
+        assert client not in cas._PENDING_CLOSE_CLIENTS
+        proc.stdin.close.assert_called_once_with()
+        proc.terminate.assert_not_called()
+        proc.kill.assert_not_called()
+
+    def test_failed_kill_keeps_client_retryable_until_exit_is_confirmed(self):
+        from agent.transports import codex_app_server as cas
+
+        proc = MagicMock()
+        proc.stdin = None
+        proc.terminate.side_effect = [OSError("signal failed"), None]
+        proc.kill.side_effect = OSError("kill failed")
+        proc.wait.return_value = 0
+        client = self._client_with_process(proc)
+
+        assert client.close(timeout=3.0) is False
+        assert client._closed is False
+        assert client in cas._PENDING_CLOSE_CLIENTS
+
+        assert cas.retry_pending_codex_clients() == 1
+        assert client._closed is True
+        assert client not in cas._PENDING_CLOSE_CLIENTS
+        assert proc.terminate.call_count == 2
+        proc.wait.assert_called_once_with(timeout=3.0)
+
+    def test_concurrent_close_serializes_process_teardown(self):
+        proc = MagicMock()
+        proc.stdin = None
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        client = self._client_with_process(proc)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: client.close(timeout=0.1), range(2)))
+
+        assert results == [True, True]
+        assert proc.terminate.call_count == 1
+        assert proc.wait.call_count == 1

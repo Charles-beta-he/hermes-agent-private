@@ -8,7 +8,7 @@ deadline timeouts. These tests pin all of that without spawning real codex.
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from typing import Any, Optional
 
 import pytest
@@ -165,9 +165,22 @@ class TestLifecycle:
         client = FakeClient()
         s = make_session(client)
         s.ensure_started()
-        s.close()
-        s.close()
+        assert s.close() is True
+        assert s.close() is True
         assert client._closed is True
+
+    def test_close_failure_keeps_session_retryable(self):
+        client = FakeClient()
+        close_mock = Mock(side_effect=[False, True])
+        client.close = close_mock
+        s = make_session(client)
+        s.ensure_started()
+
+        assert s.close() is False
+        assert s._closed is False
+        assert s.close() is True
+        assert s._closed is True
+        assert close_mock.call_count == 2
 
 
 # ---- turn loop ----

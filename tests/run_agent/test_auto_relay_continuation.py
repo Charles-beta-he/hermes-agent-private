@@ -22,6 +22,12 @@ def test_auto_relay_recognizes_budget_and_max_iteration_exits():
     assert _is_auto_relay_exit_reason("text_response(finish_reason=stop)") is False
 
 
+def test_auto_relay_suppresses_graph_terminal_reasons():
+    assert _is_auto_relay_exit_reason("graph_budget_exhausted") is False
+    assert _is_auto_relay_exit_reason("graph_budget_persistence_failed") is False
+    assert _is_auto_relay_exit_reason("guardrail_halt") is False
+
+
 def test_should_auto_relay_requires_enabled_summary_and_capacity():
     agent = SimpleNamespace(auto_relay_enabled=True, _relay_count=0, max_relay_count=3)
 

@@ -496,6 +496,15 @@ def load_cli_config() -> Dict[str, Any]:
             "provider": "",    # Subagent provider override (empty = inherit parent provider)
             "base_url": "",    # Direct OpenAI-compatible endpoint for subagents
             "api_key": "",     # API key for delegation.base_url (falls back to OPENAI_API_KEY)
+            # Compatibility input: governed children always share parent capacity;
+            # false warns but cannot mint an independent graph allowance.
+            "share_graph_budget": True,
+            "child_auto_relay": False,
+            "child_max_relay_count": 0,
+        },
+        "convergence": {
+            "max_graph_iterations": 0,
+            "require_durable_graph_budget": True,
         },
         "onboarding": {
             # First-touch hint flags (see agent/onboarding.py).  Each hint is

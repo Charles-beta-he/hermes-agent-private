@@ -18,11 +18,26 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
+_CODEX_AGENT_LOCK_INIT = threading.Lock()
+
+
+def _codex_agent_session_lock(agent) -> threading.RLock:
+    """Return one per-agent lock covering app-server turn and teardown ownership."""
+    lock = getattr(agent, "_codex_session_lock", None)
+    if lock is not None:
+        return lock
+    with _CODEX_AGENT_LOCK_INIT:
+        lock = getattr(agent, "_codex_session_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            agent._codex_session_lock = lock
+    return lock
 
 
 def _codex_note_to_tool_progress(note: dict) -> tuple[str, str, dict] | None:
@@ -298,7 +313,53 @@ def _record_codex_app_server_compaction(
     return True
 
 
+def _retire_codex_session(agent: Any, *, reason: str) -> bool:
+    """Release a Codex session without losing retry ownership on failure."""
+    session = getattr(agent, "_codex_session", None)
+    if session is None:
+        agent._codex_session_retirement_pending = False
+        return True
+    retry_aware_close = getattr(agent, "_close_codex_session", None)
+    if callable(retry_aware_close):
+        retry_aware_close(reason=reason)
+        retired = getattr(agent, "_codex_session", None) is None
+        agent._codex_session_retirement_pending = not retired
+        return retired
+    try:
+        closed = session.close()
+    except Exception:
+        agent._codex_session_retirement_pending = True
+        return False
+    if closed is False:
+        agent._codex_session_retirement_pending = True
+        return False
+    agent._codex_session = None
+    agent._codex_session_retirement_pending = False
+    return True
+
+
 def run_codex_app_server_turn(
+    agent,
+    *,
+    user_message: str,
+    original_user_message: Any,
+    messages: List[Dict[str, Any]],
+    effective_task_id: str,
+    should_review_memory: bool = False,
+) -> Dict[str, Any]:
+    """Serialize app-server turn/start against agent-level teardown."""
+    with _codex_agent_session_lock(agent):
+        return _run_codex_app_server_turn_locked(
+            agent,
+            user_message=user_message,
+            original_user_message=original_user_message,
+            messages=messages,
+            effective_task_id=effective_task_id,
+            should_review_memory=should_review_memory,
+        )
+
+
+def _run_codex_app_server_turn_locked(
     agent,
     *,
     user_message: str,
@@ -318,6 +379,25 @@ def run_codex_app_server_turn(
         CodexAppServerSession,
         _ServerRequestRouting,
     )
+
+    # A session whose teardown was not confirmed remains owned for cleanup,
+    # but it is no longer eligible for provider dispatch. Retry teardown before
+    # any new turn; if it still cannot be confirmed, fail before ``turn/start``
+    # and refund the fresh logical reservation.
+    if getattr(agent, "_codex_session_retirement_pending", False) is True:
+        if not _retire_codex_session(agent, reason="retry_pending_retirement"):
+            from agent.conversation_loop import _refund_iteration_budgets
+
+            _refund_iteration_budgets(agent)
+            error = "Codex app-server retirement is still unconfirmed"
+            return {
+                "final_response": error,
+                "messages": messages,
+                "api_calls": 0,
+                "completed": False,
+                "partial": True,
+                "error": error,
+            }
 
     # Lazy session: one CodexAppServerSession per AIAgent instance.
     # Spawned on first turn, reused across turns, closed at AIAgent
@@ -386,24 +466,59 @@ def run_codex_app_server_turn(
     # standard run_conversation() flow (line ~11823) before the early
     # return reaches us. Do NOT append again — that would duplicate.
 
+    _dispatch_state = {"gate_called": False, "allowed": False}
     try:
-        turn = agent._codex_session.run_turn(user_input=user_message)
+        # Startup/initialize/thread creation are local pre-dispatch work. The
+        # session invokes this gate only after startup succeeds and immediately
+        # before the JSON-RPC ``turn/start`` provider boundary.
+        from agent.conversation_loop import _commit_iteration_graph_budget
+
+        def _codex_dispatch_gate() -> bool:
+            _dispatch_state["gate_called"] = True
+            _dispatch_state["allowed"] = _commit_iteration_graph_budget(agent)
+            return _dispatch_state["allowed"]
+
+        turn = agent._codex_session.run_turn(
+            user_input=user_message,
+            dispatch_gate=_codex_dispatch_gate,  # type: ignore[call-arg]
+        )
+        if not _dispatch_state["gate_called"]:
+            # Startup/initialize/thread creation failed before ``turn/start``.
+            # Nothing reached the provider boundary, so both reservations are
+            # still owned and safely refundable.
+            from agent.conversation_loop import _refund_iteration_budgets
+
+            _refund_iteration_budgets(agent)
+        if not _dispatch_state["gate_called"] or not _dispatch_state["allowed"]:
+            if getattr(turn, "should_retire", False):
+                _retire_codex_session(agent, reason="predispatch_failed")
+            error = turn.error or "Codex app-server failed before provider dispatch"
+            return {
+                "final_response": error,
+                "messages": messages,
+                "api_calls": 0,
+                "completed": False,
+                "partial": True,
+                "error": error,
+            }
     except Exception as exc:
         logger.exception("codex app-server turn failed")
-        # Crash → unconditionally drop the session so the next turn
-        # respawns from scratch instead of reusing a dead client.
-        try:
-            agent._codex_session.close()
-        except Exception:
-            pass
-        agent._codex_session = None
+        if not _dispatch_state["gate_called"]:
+            # Exceptions raised before ``turn/start`` preserve both logical
+            # reservations, just like a returned startup failure.
+            from agent.conversation_loop import _refund_iteration_budgets
+
+            _refund_iteration_budgets(agent)
+        # Crash → retire the dead session. Failed teardown keeps ownership so
+        # the agent/module backstop can retry instead of orphaning the process.
+        _retire_codex_session(agent, reason="turn_failed")
         return {
             "final_response": (
                 f"Codex app-server turn failed: {exc}. "
                 f"Fall back to default runtime with `/codex-runtime auto`."
             ),
             "messages": messages,
-            "api_calls": 0,
+            "api_calls": 1 if _dispatch_state["allowed"] else 0,
             "completed": False,
             "partial": True,
             "error": str(exc),
@@ -419,11 +534,7 @@ def run_codex_app_server_turn(
             "codex app-server session retired (turn error: %s)",
             turn.error,
         )
-        try:
-            agent._codex_session.close()
-        except Exception:
-            pass
-        agent._codex_session = None
+        _retire_codex_session(agent, reason="turn_retired")
 
     # Splice projected messages into the conversation. The projector emits
     # standard {role, content, tool_calls, tool_call_id} entries, which
@@ -814,7 +925,14 @@ def _consume_codex_event_stream(
     return final
 
 
-def run_codex_stream(agent, api_kwargs: dict, client: Any = None, on_first_delta=None):
+def run_codex_stream(
+    agent,
+    api_kwargs: dict,
+    client: Any = None,
+    on_first_delta=None,
+    *,
+    dispatch_gate=None,
+):
     """Execute one streaming Responses API request and return the final response.
 
     Uses ``responses.create(stream=True)`` (low-level raw event iteration)
@@ -853,6 +971,10 @@ def run_codex_stream(agent, api_kwargs: dict, client: Any = None, on_first_delta
         stream_kwargs["stream"] = True
 
         try:
+            if dispatch_gate is not None and not dispatch_gate():
+                raise RuntimeError(
+                    "graph budget exhausted before Codex Responses dispatch"
+                )
             event_stream = active_client.responses.create(**stream_kwargs)
         except (_httpx.RemoteProtocolError, _httpx.ReadTimeout, _httpx.ConnectError, ConnectionError) as exc:
             if attempt < max_stream_retries:

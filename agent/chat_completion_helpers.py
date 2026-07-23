@@ -171,7 +171,7 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def interruptible_api_call(agent, api_kwargs: dict):
+def interruptible_api_call(agent, api_kwargs: dict, *, dispatch_gate=None):
     """
     Run the API call in a background thread so the main conversation loop
     can detect interrupts without waiting for the full HTTP round-trip.
@@ -186,6 +186,11 @@ def interruptible_api_call(agent, api_kwargs: dict):
     provider fallback.
     """
     result = {"response": None, "error": None}
+
+    def _require_dispatch_admission() -> None:
+        if dispatch_gate is not None and not dispatch_gate():
+            raise RuntimeError("graph budget exhausted before provider dispatch")
+
     request_client_holder = {"client": None, "owner_tid": None}
     request_client_lock = threading.Lock()
     # Request-local cancellation flag. Distinct from agent._interrupt_requested
@@ -248,13 +253,23 @@ def interruptible_api_call(agent, api_kwargs: dict):
                         api_kwargs=api_kwargs,
                     )
                 )
+                codex_kwargs = {
+                    "client": request_client,
+                    "on_first_delta": getattr(
+                        agent, "_codex_on_first_delta", None
+                    ),
+                }
+                if dispatch_gate is not None:
+                    codex_kwargs["dispatch_gate"] = dispatch_gate
                 result["response"] = agent._run_codex_stream(
                     api_kwargs,
-                    client=request_client,
-                    on_first_delta=getattr(agent, "_codex_on_first_delta", None),
+                    **codex_kwargs,
                 )
             elif agent.api_mode == "anthropic_messages":
-                result["response"] = agent._anthropic_messages_create(api_kwargs)
+                result["response"] = agent._anthropic_messages_create(
+                    api_kwargs,
+                    dispatch_gate=dispatch_gate,
+                )
             elif agent.api_mode == "bedrock_converse":
                 # Bedrock uses boto3 directly — no OpenAI client needed.
                 # normalize_converse_response produces an OpenAI-compatible
@@ -270,6 +285,7 @@ def interruptible_api_call(agent, api_kwargs: dict):
                 api_kwargs.pop("__bedrock_converse__", None)
                 client = _get_bedrock_runtime_client(region)
                 try:
+                    _require_dispatch_admission()
                     raw_response = client.converse(**api_kwargs)
                 except Exception as _bedrock_exc:
                     # Evict the cached client on stale-connection failures
@@ -290,6 +306,7 @@ def interruptible_api_call(agent, api_kwargs: dict):
                         api_kwargs=api_kwargs,
                     )
                 )
+                _require_dispatch_admission()
                 result["response"] = request_client.chat.completions.create(**api_kwargs)
         except Exception as e:
             # If the request was cancelled by the main thread's interrupt
@@ -1509,6 +1526,16 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
     )
     messages.append({"role": "user", "content": summary_request})
 
+    def _summary_dispatch_gate() -> bool:
+        """Charge every physical summary attempt against the graph ledger."""
+        from agent.conversation_loop import _commit_iteration_graph_budget
+
+        if not _commit_iteration_graph_budget(agent):
+            raise RuntimeError(
+                "Execution-graph provider-call budget exhausted before iteration summary"
+            )
+        return True
+
     try:
         # Build API messages, stripping internal-only fields
         # (finish_reason, reasoning) that strict APIs like Mistral reject with 422
@@ -1599,7 +1626,10 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
         if agent.api_mode == "codex_responses":
             codex_kwargs = agent._build_api_kwargs(api_messages)
             codex_kwargs.pop("tools", None)
-            summary_response = agent._run_codex_stream(codex_kwargs)
+            summary_response = agent._run_codex_stream(
+                codex_kwargs,
+                dispatch_gate=_summary_dispatch_gate,
+            )
             _ct_sum = agent._get_transport()
             _cnr_sum = _ct_sum.normalize_response(summary_response)
             final_response = (_cnr_sum.content or "").strip()
@@ -1662,10 +1692,14 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
                                max_tokens=agent.max_tokens, reasoning_config=agent.reasoning_config,
                                is_oauth=agent._is_anthropic_oauth,
                                preserve_dots=agent._anthropic_preserve_dots())
-                summary_response = agent._anthropic_messages_create(_ant_kw)
+                summary_response = agent._anthropic_messages_create(
+                    _ant_kw,
+                    dispatch_gate=_summary_dispatch_gate,
+                )
                 _summary_result = _tsum.normalize_response(summary_response, strip_tool_prefix=agent._is_anthropic_oauth)
                 final_response = (_summary_result.content or "").strip()
             else:
+                _summary_dispatch_gate()
                 summary_response = agent._ensure_primary_openai_client(reason="iteration_limit_summary").chat.completions.create(**summary_kwargs)
                 _summary_result = agent._get_transport().normalize_response(summary_response)
                 final_response = (_summary_result.content or "").strip()
@@ -1683,7 +1717,10 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
             if agent.api_mode == "codex_responses":
                 codex_kwargs = agent._build_api_kwargs(api_messages)
                 codex_kwargs.pop("tools", None)
-                retry_response = agent._run_codex_stream(codex_kwargs)
+                retry_response = agent._run_codex_stream(
+                    codex_kwargs,
+                    dispatch_gate=_summary_dispatch_gate,
+                )
                 _ct_retry = agent._get_transport()
                 _cnr_retry = _ct_retry.normalize_response(retry_response)
                 final_response = (_cnr_retry.content or "").strip()
@@ -1693,7 +1730,10 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
                                 is_oauth=agent._is_anthropic_oauth,
                                 max_tokens=agent.max_tokens, reasoning_config=agent.reasoning_config,
                                 preserve_dots=agent._anthropic_preserve_dots())
-                retry_response = agent._anthropic_messages_create(_ant_kw2)
+                retry_response = agent._anthropic_messages_create(
+                    _ant_kw2,
+                    dispatch_gate=_summary_dispatch_gate,
+                )
                 _retry_result = _tretry.normalize_response(retry_response, strip_tool_prefix=agent._is_anthropic_oauth)
                 final_response = (_retry_result.content or "").strip()
             else:
@@ -1710,6 +1750,7 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
                 if summary_extra_body:
                     summary_kwargs["extra_body"] = summary_extra_body
 
+                _summary_dispatch_gate()
                 summary_response = agent._ensure_primary_openai_client(reason="iteration_limit_summary_retry").chat.completions.create(**summary_kwargs)
                 _retry_result = agent._get_transport().normalize_response(summary_response)
                 final_response = (_retry_result.content or "").strip()
@@ -1765,7 +1806,9 @@ def cleanup_task_resources(agent, task_id: str) -> None:
 
 
 
-def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=None):
+def interruptible_streaming_api_call(
+    agent, api_kwargs: dict, *, on_first_delta=None, dispatch_gate=None
+):
     """Streaming variant of _interruptible_api_call for real-time token delivery.
 
     Handles all three api_modes:
@@ -1784,6 +1827,10 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
     if agent._interrupt_requested:
         raise InterruptedError("Agent interrupted before streaming API call")
 
+    def _require_dispatch_admission() -> None:
+        if dispatch_gate is not None and not dispatch_gate():
+            raise RuntimeError("graph budget exhausted before provider dispatch")
+
     if agent.api_mode == "codex_responses":
         # Codex streams internally via _run_codex_stream. The main dispatch
         # in _interruptible_api_call already calls it; we just need to
@@ -1791,7 +1838,19 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
         # temporarily so _run_codex_stream can pick it up.
         agent._codex_on_first_delta = on_first_delta
         try:
-            return agent._interruptible_api_call(api_kwargs)
+            api_call = agent._interruptible_api_call
+            try:
+                import inspect
+
+                accepts_dispatch_gate = (
+                    "dispatch_gate" in inspect.signature(api_call).parameters
+                )
+            except (TypeError, ValueError):
+                accepts_dispatch_gate = True
+            if accepts_dispatch_gate:
+                return api_call(api_kwargs, dispatch_gate=dispatch_gate)
+            _require_dispatch_admission()
+            return api_call(api_kwargs)
         finally:
             agent._codex_on_first_delta = None
 
@@ -1824,6 +1883,7 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
                 api_kwargs.pop("__bedrock_converse__", None)
                 client = _get_bedrock_runtime_client(region)
                 try:
+                    _require_dispatch_admission()
                     raw_response = client.converse_stream(**api_kwargs)
                 except Exception as _bedrock_exc:
                     # IAM policies scoped to bedrock:InvokeModel only (no
@@ -1845,6 +1905,7 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
                             "using non-streaming converse() for this session.",
                             type(_bedrock_exc).__name__,
                         )
+                        _require_dispatch_admission()
                         result["response"] = normalize_converse_response(
                             client.converse(**api_kwargs)
                         )
@@ -2509,6 +2570,10 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
                 if agent._interrupt_requested:
                     raise InterruptedError("Agent interrupted before stream retry")
                 try:
+                    # MoA is a virtual facade; its advisors and aggregator each
+                    # acquire their own physical-dispatch admission internally.
+                    if agent.provider != "moa":
+                        _require_dispatch_admission()
                     if agent.api_mode == "anthropic_messages":
                         agent._try_refresh_anthropic_client_credentials()
                         result["response"] = _call_anthropic()

@@ -20,12 +20,19 @@ import run_agent
 from agent.transports.codex_app_server_session import CodexAppServerSession, TurnResult
 
 
+def _admit_codex_turn(kwargs):
+    gate = kwargs.get("dispatch_gate")
+    assert gate is not None
+    assert gate() is True
+
+
 @pytest.fixture
 def fake_session(monkeypatch):
     """Replace CodexAppServerSession with a stub that returns a fixed
     TurnResult, so we can drive AIAgent without spawning real codex."""
 
     def fake_run_turn(self, user_input: str, **kwargs):
+        _admit_codex_turn(kwargs)
         return TurnResult(
             final_text=f"echo: {user_input}",
             projected_messages=[
@@ -87,6 +94,7 @@ class TestRunConversationCodexPath:
 
     def test_codex_app_server_token_usage_updates_session_accounting(self, monkeypatch):
         def fake_run_turn(self, user_input: str, **kwargs):
+            _admit_codex_turn(kwargs)
             return TurnResult(
                 final_text="done",
                 projected_messages=[{"role": "assistant", "content": "done"}],
@@ -137,6 +145,7 @@ class TestRunConversationCodexPath:
 
     def test_native_codex_compaction_updates_bookkeeping(self, monkeypatch):
         def fake_run_turn(self, user_input: str, **kwargs):
+            _admit_codex_turn(kwargs)
             return TurnResult(
                 final_text="done",
                 projected_messages=[{"role": "assistant", "content": "done"}],
@@ -259,6 +268,7 @@ class TestRunConversationCodexPath:
         # Make the fake session report 10 tool iterations in one turn
         # (matching the default skill threshold).
         def fake_run_turn(self, user_input: str, **kwargs):
+            _admit_codex_turn(kwargs)
             return TurnResult(
                 final_text=f"echo: {user_input}",
                 projected_messages=[
@@ -349,6 +359,7 @@ class TestRunConversationCodexPath:
             self._thread_id = "thread-stub-1"
 
         def fake_run_turn(self, user_input: str, **kwargs):
+            _admit_codex_turn(kwargs)
             return TurnResult(
                 final_text="ok",
                 projected_messages=[{"role": "assistant", "content": "ok"}],
@@ -378,6 +389,7 @@ class TestRunConversationCodexPath:
             self._thread_id = "thread-stub-1"
 
         def fake_run_turn(self, user_input: str, **kwargs):
+            _admit_codex_turn(kwargs)
             return TurnResult(
                 final_text="ok",
                 projected_messages=[{"role": "assistant", "content": "ok"}],
@@ -617,6 +629,7 @@ class TestSessionRetirementOnRunAgent:
         closes = {"count": 0}
 
         def fake_run_turn(self, user_input, **kwargs):
+            _admit_codex_turn(kwargs)
             return TurnResult(
                 final_text="",
                 projected_messages=[],
@@ -739,6 +752,7 @@ class TestCodexToolProgressBridge:
             self._client = None
 
         def fake_run_turn(self, user_input, **kwargs):
+            _admit_codex_turn(kwargs)
             # Exercise the wired on_event hook with a real item/started note.
             on_event = captured_init.get("on_event")
             if on_event:

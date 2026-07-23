@@ -13,7 +13,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from agent.auxiliary_client import call_llm
+from agent.auxiliary_client import call_llm, physical_dispatch_gate
 from agent.transports import get_transport
 
 logger = logging.getLogger(__name__)
@@ -223,6 +223,7 @@ def _run_reference(
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    dispatch_gate: Any = None,
 ) -> tuple[str, str, Any]:
     """Call one reference model and return ``(label, text, usage)``.
 
@@ -270,13 +271,14 @@ def _run_reference(
         # (their caching is automatic; markers are ignored harmlessly, but we
         # only decorate when the policy says the route honors them).
         messages = _maybe_apply_moa_cache_control(messages, runtime)
-        response = call_llm(
-            task="moa_reference",
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **runtime,
-        )
+        with physical_dispatch_gate(dispatch_gate):
+            response = call_llm(
+                task="moa_reference",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **runtime,
+            )
         usage = CanonicalUsage()
         raw_usage = getattr(response, "usage", None)
         if raw_usage:
@@ -339,6 +341,7 @@ def _run_references_parallel(
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    dispatch_gate: Any = None,
 ) -> list[tuple[str, str, Any]]:
     """Fan out all reference models in parallel, returning outputs in order.
 
@@ -375,6 +378,7 @@ def _run_references_parallel(
                     ref_messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    dispatch_gate=dispatch_gate,
                 )
             ] = idx
         # Collect every reference before returning — the aggregator needs the
@@ -683,8 +687,14 @@ def _attach_reference_guidance(agg_messages: list[dict[str, Any]], guidance: str
 class MoAChatCompletions:
     """OpenAI-chat-compatible facade where the aggregator is the acting model."""
 
-    def __init__(self, preset_name: str, reference_callback: Any = None):
+    def __init__(
+        self,
+        preset_name: str,
+        reference_callback: Any = None,
+        dispatch_callback: Any = None,
+    ):
         self.preset_name = preset_name or "default"
+        self.dispatch_callback = dispatch_callback
         # Optional display hook. Called as reference outputs become available so
         # frontends can show each reference model's answer as a labelled block
         # before the aggregator acts. Signature:
@@ -902,6 +912,7 @@ class MoAChatCompletions:
                 ref_messages,
                 temperature=temperature,
                 max_tokens=reference_max_tokens,
+                dispatch_gate=self.dispatch_callback,
             )
             self._ref_cache_key = _cache_key
             self._ref_cache_outputs = list(reference_outputs)
@@ -1010,16 +1021,17 @@ class MoAChatCompletions:
             # actually governs the aggregator stream, not just call_llm's default.
             if api_kwargs.get("timeout") is not None:
                 stream_kwargs["timeout"] = api_kwargs["timeout"]
-        _agg_response = call_llm(
-            task="moa_aggregator",
-            messages=agg_messages,
-            temperature=aggregator_temperature,
-            max_tokens=agg_kwargs.get("max_tokens"),
-            tools=agg_kwargs.get("tools"),
-            extra_body=agg_kwargs.get("extra_body"),
-            **stream_kwargs,
-            **_slot_runtime(aggregator),
-        )
+        with physical_dispatch_gate(self.dispatch_callback):
+            _agg_response = call_llm(
+                task="moa_aggregator",
+                messages=agg_messages,
+                temperature=aggregator_temperature,
+                max_tokens=agg_kwargs.get("max_tokens"),
+                tools=agg_kwargs.get("tools"),
+                extra_body=agg_kwargs.get("extra_body"),
+                **stream_kwargs,
+                **_slot_runtime(aggregator),
+            )
         # Non-streaming path (quiet mode / eval / subagents): the aggregator
         # output is available inline, so capture it into the pending trace now.
         # Streaming path: the aggregator's raw token stream is returned to the
@@ -1039,9 +1051,18 @@ class MoAChatCompletions:
 
 
 class MoAClient:
-    def __init__(self, preset_name: str, reference_callback: Any = None):
+    def __init__(
+        self,
+        preset_name: str,
+        reference_callback: Any = None,
+        dispatch_callback: Any = None,
+    ):
         self.chat = type("_MoAChat", (), {})()
-        self.chat.completions = MoAChatCompletions(preset_name, reference_callback=reference_callback)
+        self.chat.completions = MoAChatCompletions(
+            preset_name,
+            reference_callback=reference_callback,
+            dispatch_callback=dispatch_callback,
+        )
 
     def consume_reference_usage(self) -> Any:
         """Pop the pending reference-fan-out usage from the completions facade.
