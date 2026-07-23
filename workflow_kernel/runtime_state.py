@@ -4,21 +4,93 @@ Repository ``docs/private`` files are frozen design/evidence snapshots. Recurrin
 ledgers and latest runtime reports live under ``HERMES_HOME/state`` so scheduled
 runs do not mutate the source checkout.
 """
+
 from __future__ import annotations
 
 import hashlib
 import os
 import stat
+import sys
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from threading import local
 from typing import Iterator
 
 from hermes_constants import get_hermes_home
 
 PRIVATE_DIRECTORY_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
+_THREAD_LOCK_STATE = local()
+_ACTIVE_LOCK_DESCRIPTORS: set[int] = set()
+
+
+def _reset_lock_state_after_fork() -> None:
+    """Drop inherited cooperative-lock ownership in a fork child."""
+    for descriptor in tuple(_ACTIVE_LOCK_DESCRIPTORS):
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    _ACTIVE_LOCK_DESCRIPTORS.clear()
+    _THREAD_LOCK_STATE.parent_locks = {}
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_lock_state_after_fork)
+
+
+def _acquire_posix_lock(descriptor: int) -> None:
+    import fcntl
+
+    _ACTIVE_LOCK_DESCRIPTORS.add(descriptor)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+    except BaseException:
+        _ACTIVE_LOCK_DESCRIPTORS.discard(descriptor)
+        raise
+
+
+def _release_posix_lock(descriptor: int) -> None:
+    import fcntl
+
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        _ACTIVE_LOCK_DESCRIPTORS.discard(descriptor)
+
+
+@contextmanager
+def _exclusive_parent_coordination(
+    directory_descriptor: int, parent: Path
+) -> Iterator[None]:
+    """Hold a reentrant-per-thread POSIX coordination lock on a stable parent inode."""
+    if os.name == "nt":  # pragma: no cover - governed execution rejects Windows
+        yield
+        return
+    owner_pid = os.getpid()
+    key = (owner_pid, str(parent))
+    held = getattr(_THREAD_LOCK_STATE, "parent_locks", None)
+    if held is None:
+        held = {}
+        _THREAD_LOCK_STATE.parent_locks = held
+    count = held.get(key, 0)
+    if count:
+        held[key] = count + 1
+        try:
+            yield
+        finally:
+            held[key] -= 1
+        return
+    _acquire_posix_lock(directory_descriptor)
+    held[key] = 1
+    try:
+        yield
+    finally:
+        if os.getpid() == owner_pid:
+            del held[key]
+            _release_posix_lock(directory_descriptor)
 
 
 def _no_follow_flag() -> int:
@@ -30,8 +102,20 @@ def _no_follow_flag() -> int:
 
 def _absolute_without_parent_refs(path: Path) -> Path:
     if ".." in path.parts:
-        raise ValueError(f"parent path components are not allowed for private runtime paths: {path}")
-    return path.absolute()
+        raise ValueError(
+            f"parent path components are not allowed for private runtime paths: {path}"
+        )
+    absolute = path.absolute()
+    if (
+        sys.platform == "darwin"
+        and len(absolute.parts) > 1
+        and absolute.parts[1] in {"etc", "tmp", "var"}
+    ):
+        # macOS exposes these SIP-controlled top-level aliases as symlinks into
+        # /private. Canonicalize only those known system aliases; do not resolve
+        # caller-controlled descendants, which must still fail no-follow checks.
+        return Path("/private").joinpath(*absolute.parts[1:])
+    return absolute
 
 
 def _open_directory_chain(path: Path) -> int:
@@ -58,7 +142,9 @@ def _open_directory_chain(path: Path) -> int:
                 descriptor = next_descriptor
                 next_descriptor = None
             except OSError as exc:
-                raise OSError(f"refusing unsafe directory ancestor: {absolute}") from exc
+                raise OSError(
+                    f"refusing unsafe directory ancestor: {absolute}"
+                ) from exc
             finally:
                 if next_descriptor is not None:
                     os.close(next_descriptor)
@@ -118,7 +204,9 @@ def _open_regular_file_at(
     open_flags = flags | _no_follow_flag()
     if flags & os.O_CREAT and not flags & os.O_EXCL:
         try:
-            descriptor = os.open(name, open_flags | os.O_EXCL, mode, dir_fd=directory_descriptor)
+            descriptor = os.open(
+                name, open_flags | os.O_EXCL, mode, dir_fd=directory_descriptor
+            )
         except FileExistsError:
             descriptor = os.open(
                 name,
@@ -147,11 +235,19 @@ def open_ledger_file(
     mode: int = PRIVATE_FILE_MODE,
 ) -> int:
     if private_root is not None and anchor is None:
-        raise ValueError("private ledger operations require an anchored parent descriptor")
+        raise ValueError(
+            "private ledger operations require an anchored parent descriptor"
+        )
     if anchor is not None:
-        if private_root is None or anchor.parent != _absolute_without_parent_refs(path.parent) or anchor.name != path.name:
+        if (
+            private_root is None
+            or anchor.parent != _absolute_without_parent_refs(path.parent)
+            or anchor.name != path.name
+        ):
             raise ValueError("ledger anchor does not match private ledger path")
-        return _open_regular_file_at(anchor.directory_descriptor, anchor.name, flags, mode)
+        return _open_regular_file_at(
+            anchor.directory_descriptor, anchor.name, flags, mode
+        )
     return _open_regular_file(path, flags, mode)
 
 
@@ -164,6 +260,29 @@ def read_ledger_descriptor_bytes(descriptor: int) -> bytes:
         if not chunk:
             return b"".join(chunks)
         chunks.append(chunk)
+
+
+def private_file_exists_read_only(path: Path, *, private_root: Path) -> bool:
+    """Check one private regular file without reading or mutating filesystem state."""
+    parent = _absolute_without_parent_refs(path.parent)
+    root = _absolute_without_parent_refs(private_root)
+    if parent != root and root not in parent.parents:
+        raise ValueError(f"artifact parent is outside private runtime root: {path}")
+    try:
+        parent_descriptor = _open_existing_directory_chain(parent)
+    except FileNotFoundError:
+        return False
+    try:
+        try:
+            descriptor = _open_regular_file_at(
+                parent_descriptor, path.name, os.O_RDONLY
+            )
+        except FileNotFoundError:
+            return False
+        os.close(descriptor)
+        return True
+    finally:
+        os.close(parent_descriptor)
 
 
 def read_existing_private_file_bytes(path: Path, *, private_root: Path) -> bytes:
@@ -189,7 +308,9 @@ def read_ledger_bytes(
     private_root: Path | None = None,
     anchor: LedgerAnchor | None = None,
 ) -> bytes:
-    descriptor = open_ledger_file(path, os.O_RDONLY, private_root=private_root, anchor=anchor)
+    descriptor = open_ledger_file(
+        path, os.O_RDONLY, private_root=private_root, anchor=anchor
+    )
     try:
         return read_ledger_descriptor_bytes(descriptor)
     finally:
@@ -226,7 +347,11 @@ def validate_private_file_target(path: Path) -> None:
         info = os.lstat(path)
     except FileNotFoundError:
         return
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+    ):
         raise OSError(f"refusing unsafe private file target: {path}")
 
 
@@ -235,11 +360,17 @@ def _validate_private_file_target_at(directory_descriptor: int, name: str) -> No
         info = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
     except FileNotFoundError:
         return
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+    ):
         raise OSError(f"refusing unsafe private file target: {name}")
 
 
-def write_private_file_atomic(path: Path, data: bytes, *, private_root: Path) -> dict[str, str]:
+def write_private_file_atomic(
+    path: Path, data: bytes, *, private_root: Path
+) -> dict[str, str]:
     """Crash-safe private write anchored to a no-follow parent descriptor."""
     ensure_runtime_artifact_parent(path, private_root=private_root)
     directory_descriptor = _open_directory_chain(path.parent)
@@ -250,7 +381,9 @@ def write_private_file_atomic(path: Path, data: bytes, *, private_root: Path) ->
         if hasattr(os, "O_CLOEXEC"):
             flags |= os.O_CLOEXEC
         _validate_private_file_target_at(directory_descriptor, path.name)
-        descriptor = os.open(temporary_name, flags, PRIVATE_FILE_MODE, dir_fd=directory_descriptor)
+        descriptor = os.open(
+            temporary_name, flags, PRIVATE_FILE_MODE, dir_fd=directory_descriptor
+        )
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise OSError(f"refusing unsafe private temporary file: {path}")
@@ -287,7 +420,9 @@ def write_private_file_atomic(path: Path, data: bytes, *, private_root: Path) ->
     return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest()}
 
 
-def ensure_runtime_artifact_parent(path: Path, *, private_root: Path | None = None) -> bool:
+def ensure_runtime_artifact_parent(
+    path: Path, *, private_root: Path | None = None
+) -> bool:
     """Create an artifact parent and tighten it only for an explicitly supplied runtime root."""
     if private_root is None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -304,12 +439,85 @@ def ensure_runtime_artifact_parent(path: Path, *, private_root: Path | None = No
 
 
 @contextmanager
+def exclusive_existing_ledger_lock_read_only(
+    ledger_path: Path,
+    *,
+    private_root: Path,
+) -> Iterator[LedgerAnchor | None]:
+    """Acquire an existing ledger writer lock without creating or chmodding state."""
+    owner_pid = os.getpid()
+    parent = _absolute_without_parent_refs(ledger_path.parent)
+    root = _absolute_without_parent_refs(private_root)
+    if parent != root and root not in parent.parents:
+        raise ValueError(
+            f"artifact parent is outside private runtime root: {ledger_path}"
+        )
+    try:
+        parent_descriptor = _open_existing_directory_chain(parent)
+    except FileNotFoundError:
+        yield None
+        return
+    lock_path = ledger_path.with_name(f".{ledger_path.name}.lock")
+    flags = os.O_RDWR if os.name == "nt" else os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    coordination = _exclusive_parent_coordination(parent_descriptor, parent)
+    coordination_entered = False
+    try:
+        coordination.__enter__()
+        coordination_entered = True
+        try:
+            descriptor = _open_regular_file_at(parent_descriptor, lock_path.name, flags)
+        except FileNotFoundError:
+            yield None
+            return
+        locked = False
+        try:
+            if os.name == "nt":  # pragma: no cover - Windows locking fallback
+                import msvcrt
+
+                if os.fstat(descriptor).st_size == 0:
+                    raise OSError(
+                        "refusing to mutate an empty existing ledger lock during read-only acquisition"
+                    )
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+            else:
+                _acquire_posix_lock(descriptor)
+            locked = True
+            yield LedgerAnchor(parent_descriptor, parent, ledger_path.name)
+        finally:
+            if os.getpid() == owner_pid:
+                try:
+                    if locked:
+                        if (
+                            os.name == "nt"
+                        ):  # pragma: no cover - Windows locking fallback
+                            import msvcrt
+
+                            os.lseek(descriptor, 0, os.SEEK_SET)
+                            msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                        else:
+                            _release_posix_lock(descriptor)
+                finally:
+                    os.close(descriptor)
+    finally:
+        if os.getpid() == owner_pid:
+            try:
+                if coordination_entered:
+                    coordination.__exit__(None, None, None)
+            finally:
+                os.close(parent_descriptor)
+
+
+@contextmanager
 def exclusive_ledger_lock(
     ledger_path: Path,
     *,
     private_root: Path | None = None,
 ) -> Iterator[LedgerAnchor | None]:
     """Serialize a ledger transaction on one anchored private parent descriptor."""
+    owner_pid = os.getpid()
     ensure_runtime_artifact_parent(ledger_path, private_root=private_root)
     lock_path = ledger_path.with_name(f".{ledger_path.name}.lock")
     flags = os.O_CREAT | os.O_RDWR
@@ -317,13 +525,22 @@ def exclusive_ledger_lock(
         flags |= os.O_CLOEXEC
     anchor: LedgerAnchor | None = None
     parent_descriptor: int | None = None
+    coordination = None
+    coordination_entered = False
     if private_root is not None:
         parent = _absolute_without_parent_refs(ledger_path.parent)
         parent_descriptor = _open_directory_chain(parent)
         anchor = LedgerAnchor(parent_descriptor, parent, ledger_path.name)
+        coordination = _exclusive_parent_coordination(parent_descriptor, parent)
         try:
-            descriptor = _open_regular_file_at(parent_descriptor, lock_path.name, flags, PRIVATE_FILE_MODE)
+            coordination.__enter__()
+            coordination_entered = True
+            descriptor = _open_regular_file_at(
+                parent_descriptor, lock_path.name, flags, PRIVATE_FILE_MODE
+            )
         except BaseException:
+            if coordination_entered:
+                coordination.__exit__(None, None, None)
             os.close(parent_descriptor)
             raise
     else:
@@ -331,7 +548,9 @@ def exclusive_ledger_lock(
     locked = False
     try:
         os.fchmod(descriptor, PRIVATE_FILE_MODE)
-        if os.name == "nt":  # pragma: no cover - Windows locking fallback; execute fails closed there
+        if (
+            os.name == "nt"
+        ):  # pragma: no cover - Windows locking fallback; execute fails closed there
             import msvcrt
 
             if os.fstat(descriptor).st_size == 0:
@@ -339,29 +558,107 @@ def exclusive_ledger_lock(
             os.lseek(descriptor, 0, os.SEEK_SET)
             msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
         else:
-            import fcntl
-
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            _acquire_posix_lock(descriptor)
         locked = True
         yield anchor
     finally:
-        try:
-            if locked:
-                if os.name == "nt":  # pragma: no cover - Windows locking fallback
-                    import msvcrt
-
-                    os.lseek(descriptor, 0, os.SEEK_SET)
-                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(descriptor, fcntl.LOCK_UN)
-        finally:
+        if os.getpid() == owner_pid:
             try:
-                os.close(descriptor)
+                if locked:
+                    if os.name == "nt":  # pragma: no cover - Windows locking fallback
+                        import msvcrt
+
+                        os.lseek(descriptor, 0, os.SEEK_SET)
+                        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                    else:
+                        _release_posix_lock(descriptor)
             finally:
-                if parent_descriptor is not None:
-                    os.close(parent_descriptor)
+                try:
+                    os.close(descriptor)
+                finally:
+                    try:
+                        if coordination_entered and coordination is not None:
+                            coordination.__exit__(None, None, None)
+                    finally:
+                        if parent_descriptor is not None:
+                            os.close(parent_descriptor)
+
+
+@contextmanager
+def exclusive_execution_lock(
+    ledger_path: Path,
+    *,
+    private_root: Path | None = None,
+) -> Iterator[None]:
+    """Hold one cooperative run-owner lock across local adapter dispatch.
+
+    POSIX callers also lock the containing private directory so replacing the
+    named lock leaf cannot create a second cooperative owner. This is not a
+    sandbox against a hostile same-UID process replacing the directory itself;
+    trusted local callers and a stable private-root inode remain prerequisites.
+    The Windows fallback serializes callers only while the lock leaf is stable.
+    """
+    owner_pid = os.getpid()
+    ensure_runtime_artifact_parent(ledger_path, private_root=private_root)
+    lock_path = ledger_path.with_name(f".{ledger_path.name}.execution.lock")
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    parent_descriptor: int | None = None
+    coordination = None
+    coordination_entered = False
+    if private_root is not None:
+        parent = _absolute_without_parent_refs(ledger_path.parent)
+        parent_descriptor = _open_directory_chain(parent)
+        coordination = _exclusive_parent_coordination(parent_descriptor, parent)
+        try:
+            coordination.__enter__()
+            coordination_entered = True
+            descriptor = _open_regular_file_at(
+                parent_descriptor, lock_path.name, flags, PRIVATE_FILE_MODE
+            )
+        except BaseException:
+            if coordination_entered:
+                coordination.__exit__(None, None, None)
+            os.close(parent_descriptor)
+            raise
+    else:
+        descriptor = _open_regular_file(lock_path, flags, PRIVATE_FILE_MODE)
+    locked = False
+    try:
+        os.fchmod(descriptor, PRIVATE_FILE_MODE)
+        if os.name == "nt":  # pragma: no cover - Windows locking fallback
+            import msvcrt
+
+            if os.fstat(descriptor).st_size == 0:
+                os.write(descriptor, b"\0")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+        else:
+            _acquire_posix_lock(descriptor)
+        locked = True
+        yield
+    finally:
+        if os.getpid() == owner_pid:
+            try:
+                if locked:
+                    if os.name == "nt":  # pragma: no cover - Windows locking fallback
+                        import msvcrt
+
+                        os.lseek(descriptor, 0, os.SEEK_SET)
+                        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                    else:
+                        _release_posix_lock(descriptor)
+            finally:
+                try:
+                    os.close(descriptor)
+                finally:
+                    try:
+                        if coordination_entered and coordination is not None:
+                            coordination.__exit__(None, None, None)
+                    finally:
+                        if parent_descriptor is not None:
+                            os.close(parent_descriptor)
 
 
 def runtime_root(home: str | Path | None = None) -> Path:
@@ -382,7 +679,10 @@ def unattended_dry_run_ledger_path(home: str | Path | None = None) -> Path:
 
 
 def unattended_dry_run_report_path(home: str | Path | None = None) -> Path:
-    return unattended_dry_run_dir(home) / "workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+    return (
+        unattended_dry_run_dir(home)
+        / "workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+    )
 
 
 def seed_jsonl_once(
@@ -402,7 +702,11 @@ def seed_jsonl_once(
     try:
         if anchor is not None:
             try:
-                existing = os.stat(anchor.name, dir_fd=anchor.directory_descriptor, follow_symlinks=False)
+                existing = os.stat(
+                    anchor.name,
+                    dir_fd=anchor.directory_descriptor,
+                    follow_symlinks=False,
+                )
             except FileNotFoundError:
                 existing = None
         else:
@@ -411,10 +715,16 @@ def seed_jsonl_once(
             except FileNotFoundError:
                 existing = None
         if existing is not None:
-            if not stat.S_ISREG(existing.st_mode) or stat.S_ISLNK(existing.st_mode) or existing.st_nlink != 1:
+            if (
+                not stat.S_ISREG(existing.st_mode)
+                or stat.S_ISLNK(existing.st_mode)
+                or existing.st_nlink != 1
+            ):
                 raise OSError(f"refusing non-regular runtime ledger: {runtime_path}")
             if anchor is not None:
-                descriptor = _open_regular_file_at(anchor.directory_descriptor, anchor.name, os.O_RDONLY)
+                descriptor = _open_regular_file_at(
+                    anchor.directory_descriptor, anchor.name, os.O_RDONLY
+                )
                 try:
                     os.fchmod(descriptor, PRIVATE_FILE_MODE)
                 finally:

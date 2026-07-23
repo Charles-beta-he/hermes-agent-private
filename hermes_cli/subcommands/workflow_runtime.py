@@ -1,4 +1,5 @@
 """Default-off CLI surface for the governed local workflow runtime."""
+
 from __future__ import annotations
 
 import argparse
@@ -7,6 +8,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
 
 def _load_json(path: str) -> object:
     with Path(path).expanduser().open("r", encoding="utf-8") as handle:
@@ -33,21 +35,46 @@ def _emit(payload: dict[str, Any], *, as_json: bool) -> int:
 def _emit_error(code: str, message: str, *, as_json: bool) -> int:
     payload = {"ok": False, "error": {"code": code, "message": message}}
     if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
+        print(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            file=sys.stderr,
+        )
     else:
         print(f"workflow-runtime error [{code}]: {message}", file=sys.stderr)
     return 2
 
 
-def _command_error(args: argparse.Namespace, code: str, message: str, *, as_json: bool) -> int:
+def _command_error(
+    args: argparse.Namespace, code: str, message: str, *, as_json: bool
+) -> int:
     rc = _emit_error(code, message, as_json=as_json)
     if bool(getattr(args, "_workflow_runtime_cli", False)):
         raise SystemExit(rc)
     return rc
 
 
+def _command_result(
+    args: argparse.Namespace, payload: dict[str, Any], *, as_json: bool
+) -> int:
+    _emit(payload, as_json=as_json)
+    rc = (
+        0
+        if payload.get("outcome") == "completed"
+        and payload.get("verification_state") == "verified"
+        else 1
+    )
+    if rc and bool(getattr(args, "_workflow_runtime_cli", False)):
+        raise SystemExit(rc)
+    return rc
+
+
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return (
+        datetime
+        .now(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def cmd_workflow_runtime(args: argparse.Namespace) -> int:
@@ -97,7 +124,7 @@ def cmd_workflow_runtime(args: argparse.Namespace) -> int:
             resume=action == "resume",
             now=_now(),
         )
-        return _emit(result, as_json=as_json)
+        return _command_result(args, result, as_json=as_json)
     except WorkflowRuntimeError as exc:
         return _command_error(args, exc.code, str(exc), as_json=as_json)
     except WorkflowDefinitionError as exc:
@@ -107,15 +134,25 @@ def cmd_workflow_runtime(args: argparse.Namespace) -> int:
 
 
 def _add_contract_paths(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--definition", required=True, help="WorkflowDefinition v1 JSON path")
-    parser.add_argument("--manifest", required=True, help="Governed runtime manifest JSON path")
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    parser.add_argument(
+        "--definition", required=True, help="WorkflowDefinition v1 JSON path"
+    )
+    parser.add_argument(
+        "--manifest", required=True, help="Governed runtime manifest JSON path"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
 
 
 def _add_execution_paths(parser: argparse.ArgumentParser) -> None:
     _add_contract_paths(parser)
-    parser.add_argument("--ledger", required=True, help="Exact canonical execution-ledger JSONL path")
-    parser.add_argument("--private-root", required=True, help="Private directory containing the ledger")
+    parser.add_argument(
+        "--ledger", required=True, help="Exact canonical execution-ledger JSONL path"
+    )
+    parser.add_argument(
+        "--private-root", required=True, help="Private directory containing the ledger"
+    )
     parser.add_argument(
         "--execute-local",
         action="store_true",
@@ -135,7 +172,9 @@ def build_workflow_runtime_parser(subparsers) -> None:
     parser.set_defaults(_workflow_runtime_cli=True)
     actions = parser.add_subparsers(dest="workflow_runtime_action", required=True)
 
-    compile_parser = actions.add_parser("compile", help="Validate and preview without writing state")
+    compile_parser = actions.add_parser(
+        "compile", help="Validate and preview without writing state"
+    )
     _add_contract_paths(compile_parser)
     compile_parser.set_defaults(func=cmd_workflow_runtime)
 
@@ -143,12 +182,22 @@ def build_workflow_runtime_parser(subparsers) -> None:
     _add_execution_paths(run_parser)
     run_parser.set_defaults(func=cmd_workflow_runtime)
 
-    resume_parser = actions.add_parser("resume", help="Resume only under an identical bound identity")
+    resume_parser = actions.add_parser(
+        "resume", help="Resume only under an identical bound identity"
+    )
     _add_execution_paths(resume_parser)
     resume_parser.set_defaults(func=cmd_workflow_runtime)
 
-    status_parser = actions.add_parser("status", help="Project status from the canonical ledger")
-    status_parser.add_argument("--ledger", required=True, help="Exact execution-ledger JSONL path")
-    status_parser.add_argument("--private-root", required=True, help="Private directory containing the ledger")
-    status_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    status_parser = actions.add_parser(
+        "status", help="Project status from the canonical ledger"
+    )
+    status_parser.add_argument(
+        "--ledger", required=True, help="Exact execution-ledger JSONL path"
+    )
+    status_parser.add_argument(
+        "--private-root", required=True, help="Private directory containing the ledger"
+    )
+    status_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
     status_parser.set_defaults(func=cmd_workflow_runtime)

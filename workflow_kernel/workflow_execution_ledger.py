@@ -4,22 +4,32 @@ The ledger is the only lifecycle authority. Runtime manifests are immutable inpu
 contracts, never mutable state stores. Every admission decision is replayed and
 validated while holding the existing private-ledger writer lock.
 """
+
 from __future__ import annotations
 
 import hashlib
 import importlib.resources
 import json
 import os
-from datetime import datetime, timezone
+import re
+from datetime import timezone
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, NoReturn, cast
 
 from jsonschema import Draft202012Validator
+from jsonschema.protocols import Validator
 
+from workflow_kernel.schema_formats import (
+    is_workflow_event_timestamp,
+    parse_rfc3339_datetime,
+    workflow_format_checker,
+)
 from workflow_kernel.runtime_state import (
     PRIVATE_FILE_MODE,
     LedgerAnchor,
+    exclusive_existing_ledger_lock_read_only,
     exclusive_ledger_lock,
     open_ledger_file,
     read_existing_private_file_bytes,
@@ -33,6 +43,7 @@ _RESOURCE_KEYS = ("spawns", "wall_ms", "tool_calls", "tokens", "side_effect_ops"
 _EVENT_TYPES = {
     "run_accepted",
     "run_started",
+    "run_cancel_requested",
     "budget_reserved",
     "budget_settled",
     "budget_released",
@@ -49,19 +60,31 @@ class WorkflowExecutionLedgerError(ValueError):
         self.code = code
 
 
+class _LedgerWriteFailure(Exception):
+    def __init__(self, bytes_written: int, cause: OSError):
+        super().__init__(str(cause))
+        self.bytes_written = bytes_written
+        self.cause = cause
+
+
 def _fail(code: str, message: str) -> NoReturn:
     raise WorkflowExecutionLedgerError(code, message)
 
 
 @lru_cache(maxsize=2)
-def _validator(schema_name: str) -> Draft202012Validator:
+def _validator(schema_name: str) -> Validator:
     try:
-        resource = importlib.resources.files("workflow_kernel.schemas").joinpath(schema_name)
+        resource = importlib.resources.files("workflow_kernel.schemas").joinpath(
+            schema_name
+        )
         schema = json.loads(resource.read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
     except Exception as exc:
-        _fail("schema_unavailable", f"execution schema {schema_name!r} could not be loaded: {exc}")
-    return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
+        _fail(
+            "schema_unavailable",
+            f"execution schema {schema_name!r} could not be loaded: {exc}",
+        )
+    return Draft202012Validator(schema, format_checker=workflow_format_checker())
 
 
 def _normalize_json_numbers(value: object) -> object:
@@ -88,14 +111,32 @@ def _sha256(value: object) -> str:
     return f"sha256:{hashlib.sha256(_compact_json(value)).hexdigest()}"
 
 
-def _parse_timestamp(value: str) -> datetime:
+def _parse_timestamp(value: str) -> tuple[int, Decimal]:
+    if not is_workflow_event_timestamp(value):
+        _fail(
+            "time_invalid",
+            "event timestamp must match the workflow event RFC 3339 profile",
+        )
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = parse_rfc3339_datetime(value)
     except ValueError as exc:
         _fail("time_invalid", str(exc))
     if parsed.tzinfo is None:
         _fail("time_invalid", "event timestamp must carry a timezone")
-    return parsed.astimezone(timezone.utc)
+    utc_value = parsed.astimezone(timezone.utc)
+    whole_seconds = (
+        utc_value.toordinal() * 86_400
+        + utc_value.hour * 3_600
+        + utc_value.minute * 60
+        + utc_value.second
+    )
+    fraction_match = re.search(r"\.(\d+)(?:Z|[+-]\d{2}:\d{2})$", value)
+    fraction = (
+        Decimal(f"0.{fraction_match.group(1)}")
+        if fraction_match is not None
+        else Decimal(0)
+    )
+    return whole_seconds, fraction
 
 
 def _write_all(descriptor: int, record: bytes) -> None:
@@ -106,8 +147,15 @@ def _write_all(descriptor: int, record: bytes) -> None:
             written = os.write(descriptor, view[offset:])
         except InterruptedError:
             continue
+        except OSError as exc:
+            raise _LedgerWriteFailure(offset, exc) from exc
         if written <= 0:
-            _fail("short_write", f"ledger write made no progress at {offset} of {len(record)} bytes")
+            raise _LedgerWriteFailure(
+                offset,
+                OSError(
+                    f"ledger write made no progress at {offset} of {len(record)} bytes"
+                ),
+            )
         offset += written
 
 
@@ -132,13 +180,17 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _schema_validate(schema_name: str, candidate: object) -> None:
     errors = sorted(
         _validator(schema_name).iter_errors(cast(Any, candidate)),
-        key=lambda error: tuple(f"{type(part).__name__}:{part}" for part in error.absolute_path),
+        key=lambda error: tuple(
+            f"{type(part).__name__}:{part}" for part in error.absolute_path
+        ),
     )
     if errors:
         _fail("schema_invalid", errors[0].message)
 
 
-def _require_exact(payload: Mapping[str, Any], required: set[str], event_type: str) -> None:
+def _require_exact(
+    payload: Mapping[str, Any], required: set[str], event_type: str
+) -> None:
     actual = set(payload)
     if actual != required:
         _fail(
@@ -150,9 +202,10 @@ def _require_exact(payload: Mapping[str, Any], required: set[str], event_type: s
 def _resource(value: object, *, field: str) -> dict[str, int]:
     if not isinstance(value, dict) or set(value) != set(_RESOURCE_KEYS):
         _fail("payload_invalid", f"{field} must contain exactly {_RESOURCE_KEYS}")
+    resource = cast(dict[str, object], value)
     result: dict[str, int] = {}
     for key in _RESOURCE_KEYS:
-        item = value[key]
+        item = resource[key]
         if isinstance(item, bool) or not isinstance(item, int) or item < 0:
             _fail("payload_invalid", f"{field}.{key} must be a non-negative integer")
         result[key] = item
@@ -181,58 +234,120 @@ def _validate_payload(event_type: str, payload: object) -> dict[str, Any]:
             },
             event_type,
         )
-        if payload["identity_schema_version"] != 1 or not isinstance(payload["identity"], dict):
+        if payload["identity_schema_version"] != 1 or not isinstance(
+            payload["identity"], dict
+        ):
             _fail("payload_invalid", "run identity schema/version is invalid")
-        for digest_key in ("identity_hash", "manifest_digest", "definition_digest", "plan_digest"):
+        for digest_key in (
+            "identity_hash",
+            "manifest_digest",
+            "definition_digest",
+            "plan_digest",
+        ):
             value = payload[digest_key]
-            if not isinstance(value, str) or not value.startswith("sha256:") or len(value) != 71:
+            if (
+                not isinstance(value, str)
+                or not value.startswith("sha256:")
+                or len(value) != 71
+            ):
                 _fail("payload_invalid", f"{digest_key} must be a sha256 digest")
         if _sha256(payload["identity"]) != payload["identity_hash"]:
-            _fail("identity_mismatch", "identity_hash does not match canonical identity")
+            _fail(
+                "identity_mismatch", "identity_hash does not match canonical identity"
+            )
         payload["hard_budget"] = _resource(payload["hard_budget"], field="hard_budget")
         if (
             not isinstance(payload["task_order"], list)
             or not payload["task_order"]
-            or any(not isinstance(item, str) or not item for item in payload["task_order"])
+            or any(
+                not isinstance(item, str) or not item for item in payload["task_order"]
+            )
             or len(set(payload["task_order"])) != len(payload["task_order"])
         ):
-            _fail("payload_invalid", "task_order must contain unique non-empty task ids")
+            _fail(
+                "payload_invalid", "task_order must contain unique non-empty task ids"
+            )
         verification_task_ids = payload["verification_task_ids"]
         if (
             not isinstance(verification_task_ids, list)
-            or any(not isinstance(item, str) or not item for item in verification_task_ids)
+            or any(
+                not isinstance(item, str) or not item for item in verification_task_ids
+            )
             or len(set(verification_task_ids)) != len(verification_task_ids)
             or not set(verification_task_ids).issubset(payload["task_order"])
         ):
             _fail("payload_invalid", "verification_task_ids must be unique task ids")
+        verifier_targets = payload["identity"].get("verifier_targets")
+        if (
+            not isinstance(verifier_targets, dict)
+            or set(verifier_targets) != set(verification_task_ids)
+            or any(
+                not isinstance(target, str)
+                or target not in payload["task_order"]
+                or target == verifier_id
+                for verifier_id, target in verifier_targets.items()
+            )
+        ):
+            _fail(
+                "payload_invalid",
+                "identity.verifier_targets must bind every verifier to one distinct accepted task",
+            )
     elif event_type == "run_started":
         _require_exact(payload, set(), event_type)
+    elif event_type == "run_cancel_requested":
+        _require_exact(payload, {"reason", "message"}, event_type)
+        reason = payload["reason"]
+        message = payload["message"]
+        if reason not in {"cancellation_requested", "cancellation_probe_failed"}:
+            _fail("payload_invalid", "invalid cancellation reason")
+        if reason == "cancellation_requested" and message is not None:
+            _fail("payload_invalid", "ordinary cancellation must not include a message")
+        if reason == "cancellation_probe_failed" and (
+            not isinstance(message, str) or not message
+        ):
+            _fail("payload_invalid", "cancellation probe failure requires a message")
     elif event_type == "budget_reserved":
-        _require_exact(payload, {"reservation_id", "task_id", "amounts", "expires_at"}, event_type)
+        _require_exact(
+            payload, {"reservation_id", "task_id", "amounts", "expires_at"}, event_type
+        )
         payload["amounts"] = _resource(payload["amounts"], field="amounts")
         if payload["amounts"]["spawns"] != 1:
-            _fail("payload_invalid", "each leaf reservation must reserve exactly one spawn")
+            _fail(
+                "payload_invalid",
+                "each leaf reservation must reserve exactly one spawn",
+            )
         for key in ("reservation_id", "task_id", "expires_at"):
             if not isinstance(payload[key], str) or not payload[key]:
                 _fail("payload_invalid", f"{key} must be non-empty")
     elif event_type == "budget_settled":
         _require_exact(payload, {"reservation_id", "actual"}, event_type)
         payload["actual"] = _resource(payload["actual"], field="actual")
-        if not isinstance(payload["reservation_id"], str) or not payload["reservation_id"]:
+        if (
+            not isinstance(payload["reservation_id"], str)
+            or not payload["reservation_id"]
+        ):
             _fail("payload_invalid", "reservation_id must be non-empty")
     elif event_type == "budget_released":
         _require_exact(payload, {"reservation_id", "reason"}, event_type)
-        if any(not isinstance(payload[key], str) or not payload[key] for key in ("reservation_id", "reason")):
+        if any(
+            not isinstance(payload[key], str) or not payload[key]
+            for key in ("reservation_id", "reason")
+        ):
             _fail("payload_invalid", "reservation_id and reason must be non-empty")
     elif event_type == "leaf_started":
         _require_exact(payload, {"leaf_id", "reservation_id"}, event_type)
-        if any(not isinstance(payload[key], str) or not payload[key] for key in ("leaf_id", "reservation_id")):
+        if any(
+            not isinstance(payload[key], str) or not payload[key]
+            for key in ("leaf_id", "reservation_id")
+        ):
             _fail("payload_invalid", "leaf_id and reservation_id must be non-empty")
     elif event_type == "leaf_packet":
         _require_exact(payload, {"packet"}, event_type)
         _schema_validate(_LEAF_SCHEMA, payload["packet"])
         payload["packet"] = dict(payload["packet"])
-        payload["packet"]["usage"] = _resource(payload["packet"]["usage"], field="packet.usage")
+        payload["packet"]["usage"] = _resource(
+            payload["packet"]["usage"], field="packet.usage"
+        )
     elif event_type == "run_verified":
         _require_exact(payload, {"verifier_leaf_ids"}, event_type)
         verifier_leaf_ids = payload["verifier_leaf_ids"]
@@ -242,9 +357,14 @@ def _validate_payload(event_type: str, payload: object) -> dict[str, Any]:
             or any(not isinstance(item, str) or not item for item in verifier_leaf_ids)
             or len(set(verifier_leaf_ids)) != len(verifier_leaf_ids)
         ):
-            _fail("payload_invalid", "verifier_leaf_ids must contain unique non-empty task ids")
+            _fail(
+                "payload_invalid",
+                "verifier_leaf_ids must contain unique non-empty task ids",
+            )
     elif event_type == "run_completed":
-        _require_exact(payload, {"status", "verification_state", "convergence_state"}, event_type)
+        _require_exact(
+            payload, {"status", "verification_state", "convergence_state"}, event_type
+        )
         if payload["status"] != "run_completed":
             _fail("payload_invalid", "run_completed status must be run_completed")
         if payload["verification_state"] not in {"verified", "unverified"}:
@@ -320,6 +440,10 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
         "hard_budget": _zero_resource(),
         "task_order": [],
         "verification_task_ids": [],
+        "verifier_targets": {},
+        "cancellation_requested": False,
+        "cancellation_reason": None,
+        "cancellation_message": None,
         "status": "missing",
         "outcome": None,
         "verification_state": "unverified",
@@ -335,7 +459,7 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
     by_key: dict[str, bytes] = {}
     by_id: dict[str, bytes] = {}
-    last_time: datetime | None = None
+    last_time: tuple[int, Decimal] | None = None
     for event in events:
         event = _normalized_event(event)
         canonical = _compact_json(event)
@@ -378,15 +502,28 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
                 hard_budget=payload["hard_budget"],
                 task_order=list(payload["task_order"]),
                 verification_task_ids=list(payload["verification_task_ids"]),
+                verifier_targets=dict(payload["identity"]["verifier_targets"]),
                 status="accepted",
             )
         elif event_type == "run_started":
             if state["status"] != "accepted":
                 _fail("invalid_transition", "run_started requires accepted state")
             state["status"] = "running"
+        elif event_type == "run_cancel_requested":
+            if state["status"] != "running" or state["cancellation_requested"]:
+                _fail(
+                    "invalid_transition",
+                    "run cancellation requires an uncancelled running state",
+                )
+            state["cancellation_requested"] = True
+            state["cancellation_reason"] = payload["reason"]
+            state["cancellation_message"] = payload.get("message")
         elif event_type == "budget_reserved":
-            if state["status"] != "running":
-                _fail("invalid_transition", "budget reservation requires running state")
+            if state["status"] != "running" or state["cancellation_requested"]:
+                _fail(
+                    "invalid_transition",
+                    "budget reservation requires an uncancelled running state",
+                )
             rid = payload["reservation_id"]
             task_id = payload["task_id"]
             if task_id not in state["task_order"]:
@@ -398,19 +535,36 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
                 or task_id in state["started"]
             ):
                 _fail("reservation_conflict", "reservation or task already exists")
-            if any(item["task_id"] == task_id for item in state["reservations"].values()):
-                _fail("reservation_conflict", "task already has an outstanding reservation")
-            reserved = _sum_resources([item["amounts"] for item in state["reservations"].values()])
+            if any(
+                item["task_id"] == task_id for item in state["reservations"].values()
+            ):
+                _fail(
+                    "reservation_conflict",
+                    "task already has an outstanding reservation",
+                )
+            reserved = _sum_resources([
+                item["amounts"] for item in state["reservations"].values()
+            ])
             projected = _add(_add(state["settled"], reserved), payload["amounts"])
-            if any(projected[key] > state["hard_budget"][key] for key in _RESOURCE_KEYS):
-                _fail("hard_budget_exhausted", f"reservation for {task_id} exceeds hard budget")
+            if any(
+                projected[key] > state["hard_budget"][key] for key in _RESOURCE_KEYS
+            ):
+                _fail(
+                    "hard_budget_exhausted",
+                    f"reservation for {task_id} exceeds hard budget",
+                )
             state["reservations"][rid] = payload
         elif event_type == "budget_settled":
             rid = payload["reservation_id"]
             reservation = state["reservations"].get(rid)
             if reservation is None:
-                _fail("reservation_missing", "settlement has no outstanding reservation")
-            if any(payload["actual"][key] > reservation["amounts"][key] for key in _RESOURCE_KEYS):
+                _fail(
+                    "reservation_missing", "settlement has no outstanding reservation"
+                )
+            if any(
+                payload["actual"][key] > reservation["amounts"][key]
+                for key in _RESOURCE_KEYS
+            ):
                 _fail("reservation_exceeded", "actual usage exceeds reserved budget")
             state["settled"] = _add(state["settled"], payload["actual"])
             state["settlements"][rid] = payload["actual"]
@@ -421,14 +575,24 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
             if rid not in state["reservations"]:
                 _fail("reservation_missing", "release has no outstanding reservation")
             if rid in state["started"].values():
-                _fail("started_reservation_release", "dispatched work cannot refund its reservation")
+                _fail(
+                    "started_reservation_release",
+                    "dispatched work cannot refund its reservation",
+                )
             state["closed_reservations"][rid] = "released"
             del state["reservations"][rid]
         elif event_type == "leaf_started":
+            if state["cancellation_requested"]:
+                _fail(
+                    "invalid_transition",
+                    "leaf start is forbidden after cancellation is requested",
+                )
             rid = payload["reservation_id"]
             reservation = state["reservations"].get(rid)
             if reservation is None or reservation["task_id"] != payload["leaf_id"]:
-                _fail("reservation_missing", "leaf start is not backed by its reservation")
+                _fail(
+                    "reservation_missing", "leaf start is not backed by its reservation"
+                )
             prior_reservation = state["started"].get(payload["leaf_id"])
             if prior_reservation is not None:
                 _fail("leaf_duplicate", "leaf already has a recorded start")
@@ -440,17 +604,30 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
                 _fail("leaf_unknown", "packet leaf is not in task_order")
             if leaf_id in state["leaf_packets_by_id"]:
                 _fail("leaf_duplicate", "leaf already has a terminal packet")
-            if packet["status"] not in {"blocked", "cancelled"} and leaf_id not in state["started"]:
-                _fail("invalid_transition", "executed terminal packet requires leaf_started")
+            if (
+                packet["status"] not in {"blocked", "cancelled"}
+                and leaf_id not in state["started"]
+            ):
+                _fail(
+                    "invalid_transition",
+                    "executed terminal packet requires leaf_started",
+                )
             if leaf_id in state["started"]:
                 rid = state["started"][leaf_id]
                 if rid in state["reservations"]:
-                    _fail("reservation_open", "leaf packet cannot precede settle/release")
+                    _fail(
+                        "reservation_open", "leaf packet cannot precede settle/release"
+                    )
                 settlement = state["settlements"].get(rid)
                 if settlement is None or packet["usage"] != settlement:
-                    _fail("packet_usage_mismatch", "packet usage must equal its durable settlement")
+                    _fail(
+                        "packet_usage_mismatch",
+                        "packet usage must equal its durable settlement",
+                    )
             elif packet["usage"] != _zero_resource():
-                _fail("packet_usage_mismatch", "non-dispatched packet usage must be zero")
+                _fail(
+                    "packet_usage_mismatch", "non-dispatched packet usage must be zero"
+                )
             if packet["status"] == "completed":
                 if (
                     not packet["value_present"]
@@ -458,35 +635,77 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
                     or not packet["evidence"]
                     or packet["uncertainty"]
                 ):
-                    _fail("packet_semantics_invalid", "completed packet lacks positive evidence semantics")
+                    _fail(
+                        "packet_semantics_invalid",
+                        "completed packet lacks positive evidence semantics",
+                    )
             elif not packet["uncertainty"]:
-                _fail("packet_semantics_invalid", "non-completed packet requires uncertainty evidence")
+                _fail(
+                    "packet_semantics_invalid",
+                    "non-completed packet requires uncertainty evidence",
+                )
             if not packet["value_present"] and packet["result"] is not None:
-                _fail("packet_semantics_invalid", "missing result must be represented as JSON null")
+                _fail(
+                    "packet_semantics_invalid",
+                    "missing result must be represented as JSON null",
+                )
             state["leaf_packets_by_id"][leaf_id] = packet
         elif event_type == "run_verified":
-            if state["status"] != "running" or state["verification_state"] != "unverified":
-                _fail("invalid_transition", "run verification requires an unverified running state")
+            if (
+                state["status"] != "running"
+                or state["verification_state"] != "unverified"
+            ):
+                _fail(
+                    "invalid_transition",
+                    "run verification requires an unverified running state",
+                )
             verifier_leaf_ids = payload["verifier_leaf_ids"]
             if verifier_leaf_ids != state["verification_task_ids"]:
-                _fail("verification_inconsistent", "verifier ids do not match the accepted execution plan")
+                _fail(
+                    "verification_inconsistent",
+                    "verifier ids do not match the accepted execution plan",
+                )
             if set(state["leaf_packets_by_id"]) != set(state["task_order"]):
-                _fail("verification_incomplete", "verification requires all terminal leaf packets")
+                _fail(
+                    "verification_incomplete",
+                    "verification requires all terminal leaf packets",
+                )
             if any(
                 packet["status"] != "completed"
                 for packet in state["leaf_packets_by_id"].values()
             ):
-                _fail("verification_incomplete", "verification requires every leaf to complete")
+                _fail(
+                    "verification_incomplete",
+                    "verification requires every leaf to complete",
+                )
             if any(
                 state["leaf_packets_by_id"][leaf_id]["status"] != "completed"
                 or not state["leaf_packets_by_id"][leaf_id]["evidence"]
                 for leaf_id in verifier_leaf_ids
             ):
-                _fail("verification_inconsistent", "verifier receipts lack completed evidence")
+                _fail(
+                    "verification_inconsistent",
+                    "verifier receipts lack completed evidence",
+                )
+            for verifier_id in verifier_leaf_ids:
+                target = state["verifier_targets"][verifier_id]
+                packet = state["leaf_packets_by_id"][verifier_id]
+                if (
+                    packet["result"] != {"verified": True, "dependency": target}
+                    or {"type": "runtime_receipt", "ref": f"leaf:{target}"}
+                    not in packet["evidence"]
+                ):
+                    _fail(
+                        "verification_inconsistent",
+                        "verifier receipt does not bind its accepted target",
+                    )
             state["verification_state"] = "verified"
         elif event_type == "run_completed":
             if state["status"] != "running" or state["reservations"]:
-                _fail("invalid_transition", "run completion requires running state and no reservations")
+                _fail(
+                    "invalid_transition",
+                    "run completion requires running state and no reservations",
+                )
             if set(state["leaf_packets_by_id"]) != set(state["task_order"]):
                 _fail("incomplete_run", "every task needs a terminal leaf packet")
             if payload["verification_state"] != state["verification_state"]:
@@ -521,7 +740,9 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     return state
 
 
-def _open_existing(anchor: LedgerAnchor, ledger_path: Path, private_root: Path) -> int | None:
+def _open_existing(
+    anchor: LedgerAnchor, ledger_path: Path, private_root: Path
+) -> int | None:
     try:
         return open_ledger_file(
             ledger_path,
@@ -533,7 +754,9 @@ def _open_existing(anchor: LedgerAnchor, ledger_path: Path, private_root: Path) 
         return None
 
 
-def read_execution_events(ledger_path: Path, *, private_root: Path) -> list[dict[str, Any]]:
+def read_execution_events(
+    ledger_path: Path, *, private_root: Path
+) -> list[dict[str, Any]]:
     with exclusive_ledger_lock(ledger_path, private_root=private_root) as anchor:
         if anchor is None:
             _fail("lock_anchor_missing", "ledger lock did not provide an anchor")
@@ -546,7 +769,52 @@ def read_execution_events(ledger_path: Path, *, private_root: Path) -> list[dict
             os.close(descriptor)
 
 
-def read_execution_events_read_only(ledger_path: Path, *, private_root: Path) -> list[dict[str, Any]]:
+def _read_events_from_anchor(
+    ledger_path: Path,
+    private_root: Path,
+    anchor: LedgerAnchor,
+) -> list[dict[str, Any]]:
+    descriptor = _open_existing(anchor, ledger_path, private_root)
+    if descriptor is None:
+        return []
+    try:
+        return _decode_ledger(read_ledger_descriptor_bytes(descriptor))
+    finally:
+        os.close(descriptor)
+
+
+def read_execution_events_synchronized_read_only(
+    ledger_path: Path,
+    *,
+    private_root: Path,
+) -> list[dict[str, Any]]:
+    """Read without mutation while synchronizing with cooperative ledger writers."""
+    with exclusive_existing_ledger_lock_read_only(
+        ledger_path,
+        private_root=private_root,
+    ) as anchor:
+        if anchor is not None:
+            return _read_events_from_anchor(ledger_path, private_root, anchor)
+
+    # A legacy ledger may predate its transaction lock. Read it first, then
+    # re-check the lock: if a writer created the lock during our read, acquire
+    # it and discard the potentially concurrent bytes before decoding.
+    try:
+        raw = read_existing_private_file_bytes(ledger_path, private_root=private_root)
+    except FileNotFoundError:
+        return []
+    with exclusive_existing_ledger_lock_read_only(
+        ledger_path,
+        private_root=private_root,
+    ) as anchor:
+        if anchor is not None:
+            return _read_events_from_anchor(ledger_path, private_root, anchor)
+    return _decode_ledger(raw)
+
+
+def read_execution_events_read_only(
+    ledger_path: Path, *, private_root: Path
+) -> list[dict[str, Any]]:
     """Read an existing ledger without creating locks, paths, or changing modes."""
     try:
         raw = read_existing_private_file_bytes(ledger_path, private_root=private_root)
@@ -571,7 +839,9 @@ def append_execution_event(
         if anchor is None:
             _fail("lock_anchor_missing", "ledger lock did not provide an anchor")
         try:
-            os.stat(anchor.name, dir_fd=anchor.directory_descriptor, follow_symlinks=False)
+            os.stat(
+                anchor.name, dir_fd=anchor.directory_descriptor, follow_symlinks=False
+            )
             created = False
         except FileNotFoundError:
             created = True
@@ -594,6 +864,14 @@ def append_execution_event(
                     and event["event_type"] == event_type
                     and event["payload"] == normalized_payload
                 ):
+                    try:
+                        os.fsync(descriptor)
+                        os.fsync(anchor.directory_descriptor)
+                    except OSError as exc:
+                        _fail(
+                            "durability_unknown",
+                            f"duplicate ledger event fsync failed: {exc}",
+                        )
                     return projection
                 _fail("idempotency_conflict", "idempotency key maps to another event")
             body: dict[str, Any] = {
@@ -610,8 +888,27 @@ def append_execution_event(
             _normalized_event(event)
             next_projection = project_execution_events([*events, event])
             record = _compact_json(event) + b"\n"
-            os.lseek(descriptor, 0, os.SEEK_END)
-            _write_all(descriptor, record)
+            record_offset = os.lseek(descriptor, 0, os.SEEK_END)
+            try:
+                _write_all(descriptor, record)
+            except _LedgerWriteFailure as exc:
+                try:
+                    os.ftruncate(descriptor, record_offset)
+                    os.fsync(descriptor)
+                    if created:
+                        os.unlink(anchor.name, dir_fd=anchor.directory_descriptor)
+                        os.fsync(anchor.directory_descriptor)
+                except OSError as rollback_exc:
+                    _fail(
+                        "durability_unknown",
+                        "ledger append failed after "
+                        f"{exc.bytes_written} bytes and rollback durability is unknown: "
+                        f"{rollback_exc}",
+                    )
+                _fail(
+                    "write_failed",
+                    f"ledger append failed after {exc.bytes_written} bytes: {exc.cause}",
+                )
             try:
                 os.fsync(descriptor)
                 if created:

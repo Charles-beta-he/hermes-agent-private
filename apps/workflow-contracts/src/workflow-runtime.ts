@@ -97,6 +97,7 @@ export const WorkflowExecutionEventV1Schema = z
     event_type: z.enum([
       'run_accepted',
       'run_started',
+      'run_cancel_requested',
       'budget_reserved',
       'budget_settled',
       'budget_released',

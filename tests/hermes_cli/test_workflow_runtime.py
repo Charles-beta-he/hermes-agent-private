@@ -95,7 +95,9 @@ def test_compile_command_is_read_only(tmp_path: Path, capsys) -> None:
     assert not ledger.exists()
 
 
-def test_run_command_requires_explicit_execute_local_flag(tmp_path: Path, capsys) -> None:
+def test_run_command_requires_explicit_execute_local_flag(
+    tmp_path: Path, capsys
+) -> None:
     definition = tmp_path / "definition.json"
     manifest = tmp_path / "manifest.json"
     ledger = tmp_path / "run.jsonl"
@@ -136,24 +138,66 @@ def test_run_status_and_resume_use_canonical_ledger(tmp_path: Path, capsys) -> N
         "json": True,
     }
 
-    assert subcommand.cmd_workflow_runtime(argparse.Namespace(workflow_runtime_action="run", **common)) == 0
+    assert (
+        subcommand.cmd_workflow_runtime(
+            argparse.Namespace(workflow_runtime_action="run", **common)
+        )
+        == 0
+    )
     run_payload = json.loads(capsys.readouterr().out)
     assert run_payload["status"] == "run_completed"
 
-    assert subcommand.cmd_workflow_runtime(
-        argparse.Namespace(
-            workflow_runtime_action="status",
-            ledger=str(ledger),
-            private_root=str(tmp_path),
-            json=True,
+    assert (
+        subcommand.cmd_workflow_runtime(
+            argparse.Namespace(
+                workflow_runtime_action="status",
+                ledger=str(ledger),
+                private_root=str(tmp_path),
+                json=True,
+            )
         )
-    ) == 0
+        == 0
+    )
     status_payload = json.loads(capsys.readouterr().out)
     assert status_payload == run_payload
 
-    assert subcommand.cmd_workflow_runtime(argparse.Namespace(workflow_runtime_action="resume", **common)) == 0
+    assert (
+        subcommand.cmd_workflow_runtime(
+            argparse.Namespace(workflow_runtime_action="resume", **common)
+        )
+        == 0
+    )
     resume_payload = json.loads(capsys.readouterr().out)
     assert resume_payload == run_payload
+
+
+def test_run_command_returns_nonzero_for_unverified_workflow(
+    tmp_path: Path, capsys
+) -> None:
+    definition = tmp_path / "definition.json"
+    manifest = tmp_path / "manifest.json"
+    ledger = tmp_path / "run.jsonl"
+    manifest_value = _manifest()
+    manifest_value["leaves"]["implement"]["output_schema"] = {"type": "string"}
+    _write_json(definition, _definition())
+    _write_json(manifest, manifest_value)
+
+    rc = subcommand.cmd_workflow_runtime(
+        argparse.Namespace(
+            workflow_runtime_action="run",
+            definition=str(definition),
+            manifest=str(manifest),
+            ledger=str(ledger),
+            private_root=str(tmp_path),
+            execute_local=True,
+            json=True,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "run_completed"
+    assert payload["verification_state"] == "unverified"
+    assert rc == 1
 
 
 def test_parser_registers_default_off_workflow_runtime_surface() -> None:
@@ -161,48 +205,48 @@ def test_parser_registers_default_off_workflow_runtime_surface() -> None:
     subparsers = parser.add_subparsers(dest="command")
     subcommand.build_workflow_runtime_parser(subparsers)
 
-    args = parser.parse_args(
-        [
-            "workflow-runtime",
-            "run",
-            "--definition",
-            "definition.json",
-            "--manifest",
-            "manifest.json",
-            "--ledger",
-            "run.jsonl",
-            "--private-root",
-            ".",
-        ]
-    )
+    args = parser.parse_args([
+        "workflow-runtime",
+        "run",
+        "--definition",
+        "definition.json",
+        "--manifest",
+        "manifest.json",
+        "--ledger",
+        "run.jsonl",
+        "--private-root",
+        ".",
+    ])
     assert args.workflow_runtime_action == "run"
     assert args.execute_local is False
     assert args._workflow_runtime_cli is True
 
 
-def test_registered_cli_failure_exits_nonzero_without_creating_ledger(tmp_path: Path) -> None:
+def test_registered_cli_failure_exits_nonzero_without_creating_ledger(
+    tmp_path: Path,
+) -> None:
     definition = tmp_path / "definition.json"
     manifest = tmp_path / "manifest.json"
     ledger = tmp_path / "run.jsonl"
     _write_json(definition, _definition())
     _write_json(manifest, _manifest())
     parser = argparse.ArgumentParser()
-    subcommand.build_workflow_runtime_parser(parser.add_subparsers(dest="command", required=True))
-    args = parser.parse_args(
-        [
-            "workflow-runtime",
-            "run",
-            "--definition",
-            str(definition),
-            "--manifest",
-            str(manifest),
-            "--ledger",
-            str(ledger),
-            "--private-root",
-            str(tmp_path),
-            "--json",
-        ]
+    subcommand.build_workflow_runtime_parser(
+        parser.add_subparsers(dest="command", required=True)
     )
+    args = parser.parse_args([
+        "workflow-runtime",
+        "run",
+        "--definition",
+        str(definition),
+        "--manifest",
+        str(manifest),
+        "--ledger",
+        str(ledger),
+        "--private-root",
+        str(tmp_path),
+        "--json",
+    ])
 
     with pytest.raises(SystemExit) as excinfo:
         args.func(args)
@@ -211,7 +255,9 @@ def test_registered_cli_failure_exits_nonzero_without_creating_ledger(tmp_path: 
     assert not ledger.exists()
 
 
-def test_cli_normalizes_symlinked_runtime_root_before_path_guard(tmp_path: Path, capsys) -> None:
+def test_cli_normalizes_symlinked_runtime_root_before_path_guard(
+    tmp_path: Path, capsys
+) -> None:
     actual_root = tmp_path / "actual"
     actual_root.mkdir()
     alias_root = tmp_path / "alias"
