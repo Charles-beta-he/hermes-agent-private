@@ -57,6 +57,32 @@ def _multiprocess_run_worker(
         results.put("completed")
 
 
+def _fifo_ledger_public_api_worker(
+    operation: str,
+    ledger_path: str,
+    private_root: str,
+    result_pipe: Any,
+) -> None:
+    try:
+        if operation == "status":
+            read_runtime_status(Path(ledger_path), private_root=Path(private_root))
+        else:
+            run_workflow(
+                _definition(),
+                _manifest(),
+                ledger_path=Path(ledger_path),
+                private_root=Path(private_root),
+                execute_grant=ExecuteGrant.local_only(),
+                now=NOW,
+            )
+    except BaseException as exc:
+        result_pipe.send((type(exc).__name__, getattr(exc, "code", None)))
+    else:
+        result_pipe.send(("returned", None))
+    finally:
+        result_pipe.close()
+
+
 @pytest.mark.parametrize(
     "schema_name",
     [
@@ -258,6 +284,45 @@ def _run(
         resume=resume,
         now=now,
     )
+
+
+def test_relative_runtime_paths_are_pinned_before_cwd_can_change(
+    monkeypatch, tmp_path: Path
+) -> None:
+    original_directory = tmp_path / "original"
+    drift_directory = tmp_path / "drift"
+    original_directory.mkdir()
+    drift_directory.mkdir()
+    monkeypatch.chdir(original_directory)
+    real_exists = governed_runtime.private_file_exists_read_only
+    cwd_changed = False
+
+    def change_cwd_after_first_read(path: Path, *, private_root: Path) -> bool:
+        nonlocal cwd_changed
+        result = real_exists(path, private_root=private_root)
+        if not cwd_changed:
+            cwd_changed = True
+            os.chdir(drift_directory)
+        return result
+
+    monkeypatch.setattr(
+        governed_runtime,
+        "private_file_exists_read_only",
+        change_cwd_after_first_read,
+    )
+
+    result = run_workflow(
+        _definition(),
+        _manifest(),
+        ledger_path=Path("state/run.jsonl"),
+        private_root=Path("state"),
+        execute_grant=ExecuteGrant.local_only(),
+        now=NOW,
+    )
+
+    assert result["status"] == "run_completed"
+    assert (original_directory / "state/run.jsonl").is_file()
+    assert not (drift_directory / "state/run.jsonl").exists()
 
 
 def test_output_schema_format_is_enforced(tmp_path: Path) -> None:
@@ -648,6 +713,34 @@ def test_missing_status_is_strictly_read_only(tmp_path: Path) -> None:
     assert sorted(path.name for path in tmp_path.iterdir()) == before_entries
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires POSIX FIFOs")
+@pytest.mark.parametrize("operation", ["status", "run"])
+def test_fifo_ledger_is_rejected_without_blocking_public_api(
+    tmp_path: Path, operation: str
+) -> None:
+    ledger = tmp_path / "run.jsonl"
+    os.mkfifo(ledger, mode=0o600)
+    context = multiprocessing.get_context("fork")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_fifo_ledger_public_api_worker,
+        args=(operation, str(ledger), str(tmp_path), sender),
+    )
+    process.start()
+    sender.close()
+    returned_within_bound = receiver.poll(0.75)
+    result = receiver.recv() if returned_within_bound else None
+    process.join(timeout=0.25)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=2)
+    receiver.close()
+
+    assert returned_within_bound, f"{operation} blocked while opening a FIFO ledger"
+    assert result is not None and result[0] in {"OSError", "WorkflowRuntimeError"}
+    assert ledger.is_fifo()
+
+
 def test_existing_status_does_not_create_lock_or_chmod_paths(tmp_path: Path) -> None:
     expected = _run(tmp_path)
     ledger = tmp_path / "run.jsonl"
@@ -749,6 +842,30 @@ def test_ledger_replay_rejects_forged_verifier_target_receipt(tmp_path: Path) ->
     packet = events[packet_index]["payload"]["packet"]
     packet["result"] = {"verified": True, "dependency": "inspect"}
     packet["evidence"] = [{"type": "runtime_receipt", "ref": "leaf:inspect"}]
+    for index in range(packet_index, len(events)):
+        events[index]["previous_event_id"] = events[index - 1]["event_id"]
+        events[index]["event_id"] = derive_workflow_execution_event_id_v1(events[index])
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        project_execution_events(events)
+
+    assert excinfo.value.code == "verification_inconsistent"
+
+
+def test_ledger_replay_rejects_stale_verifier_receipt_after_target_result_change(
+    tmp_path: Path,
+) -> None:
+    _run(tmp_path)
+    events = deepcopy(
+        read_execution_events(tmp_path / "run.jsonl", private_root=tmp_path)
+    )
+    packet_index = next(
+        index
+        for index, event in enumerate(events)
+        if event["event_type"] == "leaf_packet"
+        and event["payload"]["packet"]["leaf_id"] == "implement"
+    )
+    events[packet_index]["payload"]["packet"]["result"] = {"ok": False}
     for index in range(packet_index, len(events)):
         events[index]["previous_event_id"] = events[index - 1]["event_id"]
         events[index]["event_id"] = derive_workflow_execution_event_id_v1(events[index])
@@ -1240,6 +1357,43 @@ def test_ledger_rejects_release_after_leaf_dispatch(tmp_path: Path) -> None:
             occurred_at=NOW,
         )
     assert excinfo.value.code == "started_reservation_release"
+
+
+def test_ledger_rejects_settlement_before_leaf_dispatch(tmp_path: Path) -> None:
+    _seed_reserved_start(
+        tmp_path,
+        expires_at="2026-07-23T05:01:00Z",
+        mark_started=False,
+    )
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        append_execution_event(
+            tmp_path / "run.jsonl",
+            private_root=tmp_path,
+            run_id=_manifest()["run_id"],
+            event_type="budget_settled",
+            payload={"reservation_id": "seed:reservation", "actual": _reservation()},
+            idempotency_key="seed:settle-before-dispatch",
+            occurred_at=NOW,
+        )
+    assert excinfo.value.code == "reservation_not_started"
+
+
+def test_ledger_rejects_spawn_refund_after_leaf_dispatch(tmp_path: Path) -> None:
+    _seed_reserved_start(tmp_path, expires_at="2026-07-23T05:01:00Z")
+    refunded = {**_reservation(), "spawns": 0}
+
+    with pytest.raises(WorkflowExecutionLedgerError) as excinfo:
+        append_execution_event(
+            tmp_path / "run.jsonl",
+            private_root=tmp_path,
+            run_id=_manifest()["run_id"],
+            event_type="budget_settled",
+            payload={"reservation_id": "seed:reservation", "actual": refunded},
+            idempotency_key="seed:refund-dispatched-spawn",
+            occurred_at=NOW,
+        )
+    assert excinfo.value.code == "started_reservation_refund"
 
 
 def test_ledger_rejects_new_reservation_after_cancellation_intent(

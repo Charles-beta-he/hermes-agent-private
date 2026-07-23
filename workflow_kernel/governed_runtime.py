@@ -36,11 +36,13 @@ from workflow_kernel.schema_formats import (
 from workflow_kernel.workflow_definition import compile_workflow_definition_v1
 from workflow_kernel.runtime_state import (
     exclusive_execution_lock,
+    pin_runtime_path,
     private_file_exists_read_only,
 )
 from workflow_kernel.workflow_execution_ledger import (
     WorkflowExecutionLedgerError,
     append_execution_event,
+    derive_workflow_leaf_packet_digest_v1,
     project_execution_events,
     read_execution_events_synchronized_read_only,
 )
@@ -148,10 +150,16 @@ def _verify_dependency_adapter(
     packet = dependencies[dependency]
     if packet["status"] != "completed" or not packet["value_present"]:
         raise ValueError("dependency does not have a completed value-bearing packet")
+    packet_digest = derive_workflow_leaf_packet_digest_v1(packet)
     return _AdapterResult(
         result={"verified": True, "dependency": dependency},
         claims=(f"dependency {dependency} has a completed structured packet",),
-        evidence=({"type": "runtime_receipt", "ref": f"leaf:{dependency}"},),
+        evidence=(
+            {
+                "type": "runtime_receipt",
+                "ref": f"leaf:{dependency}:{packet_digest}",
+            },
+        ),
         usage=_zero_usage(),
     )
 
@@ -611,6 +619,8 @@ def _render_status(projection: Mapping[str, Any]) -> dict[str, Any]:
 
 def read_runtime_status(ledger_path: Path, *, private_root: Path) -> dict[str, Any]:
     """Read-only projection from the canonical ledger. Never repairs or rewrites."""
+    ledger_path = pin_runtime_path(ledger_path)
+    private_root = pin_runtime_path(private_root)
     try:
         events = read_execution_events_synchronized_read_only(
             ledger_path, private_root=private_root
@@ -1175,10 +1185,16 @@ def _run_workflow_once(
                         verifier_receipt_valid = True
                         if task_bindings[task_id]["role"] == "verify":
                             target = leaf["input"]["dependency"]
+                            target_digest = derive_workflow_leaf_packet_digest_v1(
+                                dependencies[target]
+                            )
                             verifier_receipt_valid = (
                                 adapter_result.result
                                 == {"verified": True, "dependency": target}
-                                and {"type": "runtime_receipt", "ref": f"leaf:{target}"}
+                                and {
+                                    "type": "runtime_receipt",
+                                    "ref": f"leaf:{target}:{target_digest}",
+                                }
                                 in adapter_result.evidence
                             )
                         if errors:
@@ -1288,6 +1304,8 @@ def run_workflow(
     # Consume at the public invocation boundary. Rejected manifests and missing
     # resumes must not leave a reusable capability behind.
     execute_grant.consume()
+    ledger_path = pin_runtime_path(ledger_path)
+    private_root = pin_runtime_path(private_root)
     _parse_instant(now)
     if _runtime_platform() == "nt":
         _fail(

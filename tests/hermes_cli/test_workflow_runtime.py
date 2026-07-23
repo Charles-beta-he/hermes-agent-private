@@ -255,11 +255,48 @@ def test_registered_cli_failure_exits_nonzero_without_creating_ledger(
     assert not ledger.exists()
 
 
-def test_cli_normalizes_symlinked_runtime_root_before_path_guard(
-    tmp_path: Path, capsys
+@pytest.mark.parametrize("action", ["run", "status", "resume"])
+def test_cli_rejects_symlinked_ledger_without_touching_target(
+    action: str, tmp_path: Path, capsys
+) -> None:
+    definition = tmp_path / "definition.json"
+    manifest = tmp_path / "manifest.json"
+    target = tmp_path / "target.jsonl"
+    alias = tmp_path / "alias.jsonl"
+    _write_json(definition, _definition())
+    _write_json(manifest, _manifest())
+    target.write_text("sentinel\n", encoding="utf-8")
+    target.chmod(0o600)
+    alias.symlink_to(target)
+
+    before = (target.read_bytes(), target.stat().st_mode)
+    args = argparse.Namespace(
+        workflow_runtime_action=action,
+        definition=str(definition),
+        manifest=str(manifest),
+        ledger=str(alias),
+        private_root=str(tmp_path),
+        execute_local=True,
+        json=True,
+    )
+
+    assert subcommand.cmd_workflow_runtime(args) == 2
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["error"]["code"] == "input_invalid"
+    assert alias.is_symlink()
+    assert (target.read_bytes(), target.stat().st_mode) == before
+
+
+@pytest.mark.parametrize("action", ["run", "status", "resume"])
+def test_cli_rejects_symlinked_runtime_root_without_touching_target(
+    action: str, tmp_path: Path, capsys
 ) -> None:
     actual_root = tmp_path / "actual"
     actual_root.mkdir()
+    actual_root.chmod(0o700)
+    target = actual_root / "run.jsonl"
+    target.write_text("sentinel\n", encoding="utf-8")
+    target.chmod(0o600)
     alias_root = tmp_path / "alias"
     alias_root.symlink_to(actual_root, target_is_directory=True)
     definition = tmp_path / "definition.json"
@@ -267,18 +304,23 @@ def test_cli_normalizes_symlinked_runtime_root_before_path_guard(
     _write_json(definition, _definition())
     _write_json(manifest, _manifest())
 
-    rc = subcommand.cmd_workflow_runtime(
-        argparse.Namespace(
-            workflow_runtime_action="run",
-            definition=str(definition),
-            manifest=str(manifest),
-            ledger=str(alias_root / "run.jsonl"),
-            private_root=str(alias_root),
-            execute_local=True,
-            json=True,
-        )
+    before = (target.read_bytes(), target.stat().st_mode, actual_root.stat().st_mode)
+    args = argparse.Namespace(
+        workflow_runtime_action=action,
+        definition=str(definition),
+        manifest=str(manifest),
+        ledger=str(alias_root / "run.jsonl"),
+        private_root=str(alias_root),
+        execute_local=True,
+        json=True,
     )
 
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out)["status"] == "run_completed"
-    assert (actual_root / "run.jsonl").exists()
+    assert subcommand.cmd_workflow_runtime(args) == 2
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["error"]["code"] == "input_invalid"
+    assert alias_root.is_symlink()
+    assert (
+        target.read_bytes(),
+        target.stat().st_mode,
+        actual_root.stat().st_mode,
+    ) == before

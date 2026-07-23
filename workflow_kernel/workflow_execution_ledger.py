@@ -164,6 +164,11 @@ def derive_workflow_execution_event_id_v1(body: Mapping[str, Any]) -> str:
     return f"wee_{hashlib.sha256(_compact_json(canonical)).hexdigest()}"
 
 
+def derive_workflow_leaf_packet_digest_v1(packet: Mapping[str, Any]) -> str:
+    """Bind verifier receipts to the complete canonical target packet."""
+    return f"sha256:{hashlib.sha256(_compact_json(packet)).hexdigest()}"
+
+
 def _reject_constant(value: str) -> NoReturn:
     _fail("invalid_json", f"non-finite JSON number is forbidden: {value}")
 
@@ -561,11 +566,21 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
                 _fail(
                     "reservation_missing", "settlement has no outstanding reservation"
                 )
+            if state["started"].get(reservation["task_id"]) != rid:
+                _fail(
+                    "reservation_not_started",
+                    "settlement requires a matching durable leaf start",
+                )
             if any(
                 payload["actual"][key] > reservation["amounts"][key]
                 for key in _RESOURCE_KEYS
             ):
                 _fail("reservation_exceeded", "actual usage exceeds reserved budget")
+            if payload["actual"]["spawns"] < 1:
+                _fail(
+                    "started_reservation_refund",
+                    "dispatched work must consume at least one reserved spawn",
+                )
             state["settled"] = _add(state["settled"], payload["actual"])
             state["settlements"][rid] = payload["actual"]
             state["closed_reservations"][rid] = "settled"
@@ -690,9 +705,15 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
             for verifier_id in verifier_leaf_ids:
                 target = state["verifier_targets"][verifier_id]
                 packet = state["leaf_packets_by_id"][verifier_id]
+                target_digest = derive_workflow_leaf_packet_digest_v1(
+                    state["leaf_packets_by_id"][target]
+                )
                 if (
                     packet["result"] != {"verified": True, "dependency": target}
-                    or {"type": "runtime_receipt", "ref": f"leaf:{target}"}
+                    or {
+                        "type": "runtime_receipt",
+                        "ref": f"leaf:{target}:{target_digest}",
+                    }
                     not in packet["evidence"]
                 ):
                     _fail(

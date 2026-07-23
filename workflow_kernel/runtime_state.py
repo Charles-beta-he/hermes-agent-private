@@ -118,6 +118,11 @@ def _absolute_without_parent_refs(path: Path) -> Path:
     return absolute
 
 
+def pin_runtime_path(path: Path) -> Path:
+    """Pin a caller path to the invocation CWD without resolving symlinks."""
+    return _absolute_without_parent_refs(path)
+
+
 def _open_directory_chain(path: Path) -> int:
     """Open/create a directory through descriptor-relative no-follow traversal."""
     absolute = _absolute_without_parent_refs(path)
@@ -177,7 +182,10 @@ def _open_existing_directory_chain(path: Path) -> int:
 
 
 def _open_regular_file(path: Path, flags: int, mode: int = PRIVATE_FILE_MODE) -> int:
-    descriptor = os.open(path, flags | _no_follow_flag(), mode)
+    open_flags = flags | _no_follow_flag()
+    if not flags & os.O_CREAT and (flags & os.O_ACCMODE) == os.O_RDONLY:
+        open_flags |= int(getattr(os, "O_NONBLOCK", 0))
+    descriptor = os.open(path, open_flags, mode)
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -202,6 +210,8 @@ def _open_regular_file_at(
     mode: int = PRIVATE_FILE_MODE,
 ) -> int:
     open_flags = flags | _no_follow_flag()
+    if not flags & os.O_CREAT and (flags & os.O_ACCMODE) == os.O_RDONLY:
+        open_flags |= int(getattr(os, "O_NONBLOCK", 0))
     if flags & os.O_CREAT and not flags & os.O_EXCL:
         try:
             descriptor = os.open(
@@ -694,13 +704,31 @@ def seed_jsonl_once(
 ) -> dict[str, object]:
     """Atomically seed a runtime ledger without overwriting runtime history."""
     owned_parent_descriptor: int | None = None
-    if private_root is not None and anchor is None:
+    harden_private = private_root is not None or anchor is not None
+    parent = _absolute_without_parent_refs(runtime_path.parent)
+    if private_root is not None:
+        root = _absolute_without_parent_refs(private_root)
+        if parent != root and root not in parent.parents:
+            raise ValueError(
+                f"artifact parent is outside private runtime root: {runtime_path}"
+            )
+    if anchor is None:
+        try:
+            os.lstat(runtime_path)
+            destination_exists = True
+        except FileNotFoundError:
+            destination_exists = False
+        if not destination_exists and not legacy_path.exists():
+            return {"status": "legacy_missing", "path": str(runtime_path)}
         ensure_runtime_artifact_parent(runtime_path, private_root=private_root)
-        parent = _absolute_without_parent_refs(runtime_path.parent)
-        owned_parent_descriptor = _open_directory_chain(parent)
+        if private_root is not None:
+            owned_parent_descriptor = _open_directory_chain(parent)
+        else:
+            flags = os.O_RDONLY | int(getattr(os, "O_DIRECTORY", 0))
+            owned_parent_descriptor = os.open(parent, flags)
         anchor = LedgerAnchor(owned_parent_descriptor, parent, runtime_path.name)
     try:
-        if anchor is not None:
+        with _exclusive_parent_coordination(anchor.directory_descriptor, anchor.parent):
             try:
                 existing = os.stat(
                     anchor.name,
@@ -709,60 +737,51 @@ def seed_jsonl_once(
                 )
             except FileNotFoundError:
                 existing = None
-        else:
-            try:
-                existing = os.lstat(runtime_path)
-            except FileNotFoundError:
-                existing = None
-        if existing is not None:
-            if (
-                not stat.S_ISREG(existing.st_mode)
-                or stat.S_ISLNK(existing.st_mode)
-                or existing.st_nlink != 1
-            ):
-                raise OSError(f"refusing non-regular runtime ledger: {runtime_path}")
-            if anchor is not None:
+            if existing is not None:
+                if (
+                    not stat.S_ISREG(existing.st_mode)
+                    or stat.S_ISLNK(existing.st_mode)
+                    or existing.st_nlink != 1
+                ):
+                    raise OSError(
+                        f"refusing non-regular runtime ledger: {runtime_path}"
+                    )
                 descriptor = _open_regular_file_at(
                     anchor.directory_descriptor, anchor.name, os.O_RDONLY
                 )
                 try:
-                    os.fchmod(descriptor, PRIVATE_FILE_MODE)
+                    if harden_private:
+                        os.fchmod(descriptor, PRIVATE_FILE_MODE)
                 finally:
                     os.close(descriptor)
-            return {"status": "already_exists", "path": str(runtime_path)}
-        if not legacy_path.exists():
-            return {"status": "legacy_missing", "path": str(runtime_path)}
+                return {"status": "already_exists", "path": str(runtime_path)}
+            if not legacy_path.exists():
+                return {"status": "legacy_missing", "path": str(runtime_path)}
 
-        payload = legacy_path.read_bytes()
-        if anchor is None:
-            ensure_runtime_artifact_parent(runtime_path, private_root=private_root)
-        temporary_name = f".{runtime_path.name}.seed-{os.getpid()}-{uuid.uuid4().hex}"
-        temporary: Path | None = None
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | _no_follow_flag()
-        if anchor is not None:
+            payload = legacy_path.read_bytes()
+            temporary_name = (
+                f".{runtime_path.name}.seed-{os.getpid()}-{uuid.uuid4().hex}"
+            )
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | _no_follow_flag()
             descriptor = _open_regular_file_at(
                 anchor.directory_descriptor,
                 temporary_name,
                 flags,
-                PRIVATE_FILE_MODE,
+                PRIVATE_FILE_MODE if harden_private else 0o666,
             )
-        else:
-            temporary = runtime_path.parent / temporary_name
-            descriptor = _open_regular_file(temporary, flags, 0o666)
-        try:
-            view = memoryview(payload)
-            while view:
-                written = os.write(descriptor, view)
-                if written <= 0:
-                    raise OSError(f"failed to seed runtime ledger: {runtime_path}")
-                view = view[written:]
-            if anchor is not None:
-                os.fchmod(descriptor, PRIVATE_FILE_MODE)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        try:
-            if anchor is not None:
+            try:
+                view = memoryview(payload)
+                while view:
+                    written = os.write(descriptor, view)
+                    if written <= 0:
+                        raise OSError(f"failed to seed runtime ledger: {runtime_path}")
+                    view = view[written:]
+                if harden_private:
+                    os.fchmod(descriptor, PRIVATE_FILE_MODE)
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            try:
                 os.link(
                     temporary_name,
                     anchor.name,
@@ -771,30 +790,21 @@ def seed_jsonl_once(
                     follow_symlinks=False,
                 )
                 os.fsync(anchor.directory_descriptor)
-            else:
-                if temporary is None:
-                    raise OSError("temporary runtime seed path is missing")
-                os.link(temporary, runtime_path, follow_symlinks=False)
-            status_value = "seeded"
-        except FileExistsError:
-            status_value = "already_exists"
-        finally:
-            try:
-                if anchor is not None:
+                status_value = "seeded"
+            except FileExistsError:
+                status_value = "already_exists"
+            finally:
+                try:
                     os.unlink(temporary_name, dir_fd=anchor.directory_descriptor)
-                else:
-                    if temporary is None:
-                        raise OSError("temporary runtime seed path is missing")
-                    temporary.unlink()
-            except OSError:
-                pass
-        return {
-            "status": status_value,
-            "path": str(runtime_path),
-            "source": str(legacy_path),
-            "bytes": len(payload),
-            "sha256": hashlib.sha256(payload).hexdigest(),
-        }
+                except OSError:
+                    pass
+            return {
+                "status": status_value,
+                "path": str(runtime_path),
+                "source": str(legacy_path),
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
     finally:
         if owned_parent_descriptor is not None:
             os.close(owned_parent_descriptor)

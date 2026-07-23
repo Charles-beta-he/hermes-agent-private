@@ -32,6 +32,10 @@ def _concurrent_seed_worker(source: str, destination: str, start, results) -> No
     results.put(seed_jsonl_once(Path(source), Path(destination))["status"])
 
 
+def _seed_and_report(source: str, destination: str, results) -> None:
+    results.put(seed_jsonl_once(Path(source), Path(destination))["status"])
+
+
 def test_runtime_paths_are_profile_scoped_and_outside_repository(
     tmp_path: Path,
 ) -> None:
@@ -100,6 +104,82 @@ def test_seed_jsonl_once_is_process_safe_and_never_overwrites_winner(
         first_source.read_bytes(),
         second_source.read_bytes(),
     }
+
+
+def test_seed_jsonl_once_does_not_reject_winner_during_transient_hardlink(
+    monkeypatch, tmp_path: Path
+) -> None:
+    first_source = tmp_path / "legacy-a.jsonl"
+    second_source = tmp_path / "legacy-b.jsonl"
+    destination = tmp_path / "state/receipts.jsonl"
+    first_source.write_bytes(b'{"source":"a"}\n')
+    second_source.write_bytes(b'{"source":"b"}\n')
+    link_created = Event()
+    allow_cleanup = Event()
+    real_link = runtime_state.os.link
+    results: list[str] = []
+    errors: list[BaseException] = []
+
+    def paused_link(*args, **kwargs) -> None:
+        real_link(*args, **kwargs)
+        link_created.set()
+        assert allow_cleanup.wait(5)
+
+    def seed(source: Path) -> None:
+        try:
+            results.append(str(seed_jsonl_once(source, destination)["status"]))
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    monkeypatch.setattr(runtime_state.os, "link", paused_link)
+    winner = Thread(target=seed, args=(first_source,))
+    winner.start()
+    assert link_created.wait(2)
+    contender = Thread(target=seed, args=(second_source,))
+    contender.start()
+    contender.join(timeout=0.2)
+    allow_cleanup.set()
+    winner.join(timeout=5)
+    contender.join(timeout=5)
+
+    assert not winner.is_alive()
+    assert not contender.is_alive()
+    assert errors == []
+    assert sorted(results) == ["already_exists", "seeded"]
+    assert destination.read_bytes() == first_source.read_bytes()
+
+
+def test_seed_with_existing_anchor_does_not_release_outer_parent_coordination(
+    tmp_path: Path,
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    results = context.Queue()
+    first_source = tmp_path / "legacy-a.jsonl"
+    second_source = tmp_path / "legacy-b.jsonl"
+    first_destination = tmp_path / "state/first.jsonl"
+    second_destination = tmp_path / "state/second.jsonl"
+    first_source.write_bytes(b'{"source":"a"}\n')
+    second_source.write_bytes(b'{"source":"b"}\n')
+
+    with exclusive_ledger_lock(first_destination, private_root=tmp_path) as anchor:
+        seed_jsonl_once(
+            first_source,
+            first_destination,
+            private_root=tmp_path,
+            anchor=anchor,
+        )
+        contender = context.Process(
+            target=_seed_and_report,
+            args=(str(second_source), str(second_destination), results),
+        )
+        contender.start()
+        contender.join(timeout=0.3)
+        assert contender.is_alive()
+
+    contender.join(timeout=5)
+    assert not contender.is_alive()
+    assert contender.exitcode == 0
+    assert results.get(timeout=1) == "seeded"
 
 
 def test_seed_jsonl_once_allows_missing_legacy_without_creating_empty_ledger(

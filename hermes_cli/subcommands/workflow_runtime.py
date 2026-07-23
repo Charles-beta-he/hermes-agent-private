@@ -101,8 +101,12 @@ def cmd_workflow_runtime(args: argparse.Namespace) -> int:
                 ),
                 as_json=as_json,
             )
-        ledger_path = Path(args.ledger).expanduser().resolve(strict=False)
-        private_root = Path(args.private_root).expanduser().resolve()
+        # Preserve caller-controlled path components so descriptor-relative
+        # no-follow validation in the runtime can reject symlinked leaves and
+        # ancestors. The runtime canonicalizes only known macOS top-level
+        # aliases such as /tmp -> /private/tmp.
+        ledger_path = Path(args.ledger).expanduser()
+        private_root = Path(args.private_root).expanduser()
         if action == "status":
             return _emit(
                 read_runtime_status(ledger_path, private_root=private_root),
