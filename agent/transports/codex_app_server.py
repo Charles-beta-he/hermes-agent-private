@@ -270,7 +270,7 @@ class CodexAppServerClient:
                 return False
             assert process_group_id is not None
             try:
-                os.killpg(process_group_id, sig)
+                os.killpg(process_group_id, sig)  # windows-footgun: ok
                 return True
             except ProcessLookupError:
                 return True
@@ -282,7 +282,7 @@ class CodexAppServerClient:
                 return False
             assert process_group_id is not None
             try:
-                os.killpg(process_group_id, 0)
+                os.killpg(process_group_id, 0)  # windows-footgun: ok
                 return True
             except ProcessLookupError:
                 return False
@@ -322,7 +322,7 @@ class CodexAppServerClient:
 
         try:
             if owns_process_group:
-                _signal_group(signal.SIGKILL)
+                _signal_group(getattr(signal, "SIGKILL", signal.SIGTERM))
             else:
                 self._proc.kill()
             self._proc.wait(timeout=1.0)
