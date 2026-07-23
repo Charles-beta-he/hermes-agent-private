@@ -521,6 +521,54 @@ class TestCodexAppServerCloseEscalation:
         assert client.close(timeout=0.1) is True
         assert killpg.call_args_list == [
             ((4242, signal.SIGTERM),),
+            ((4242, 0),),
+        ]
+
+    def test_reaped_group_leader_still_kills_surviving_owned_descendants(
+        self, monkeypatch
+    ):
+        import os
+        import signal
+
+        proc = MagicMock()
+        proc.stdin = None
+        proc.wait.side_effect = [0, 0]
+        client = self._client_with_process(proc)
+        client._process_group_id = 4242
+        killpg = MagicMock(
+            side_effect=[None, None, None, ProcessLookupError("group exited")]
+        )
+        monkeypatch.setattr(os, "killpg", killpg)
+
+        assert client.close(timeout=0.1) is True
+        assert killpg.call_args_list == [
+            ((4242, signal.SIGTERM),),
+            ((4242, 0),),
+            ((4242, signal.SIGKILL),),
+            ((4242, 0),),
+        ]
+
+    def test_timeout_then_reaped_empty_group_is_not_signaled_again(
+        self, monkeypatch
+    ):
+        import os
+        import signal
+
+        proc = MagicMock()
+        proc.stdin = None
+        proc.wait.side_effect = subprocess.TimeoutExpired(
+            cmd="codex app-server", timeout=0.1
+        )
+        proc.poll.side_effect = [None, 0]
+        client = self._client_with_process(proc)
+        client._process_group_id = 4242
+        killpg = MagicMock(side_effect=[None, ProcessLookupError("group exited")])
+        monkeypatch.setattr(os, "killpg", killpg)
+
+        assert client.close(timeout=0.1) is True
+        assert killpg.call_args_list == [
+            ((4242, signal.SIGTERM),),
+            ((4242, 0),),
         ]
 
     def test_real_nested_descendant_is_not_left_running_after_group_close(self):

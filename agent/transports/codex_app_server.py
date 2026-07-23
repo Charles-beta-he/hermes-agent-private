@@ -298,8 +298,9 @@ class CodexAppServerClient:
             pass
 
         leader_confirmed = _has_exited()
-        if leader_confirmed and not _group_alive():
-            return _mark_closed()
+        if leader_confirmed:
+            if not owns_process_group or not _group_alive():
+                return _mark_closed()
 
         try:
             if owns_process_group:
@@ -308,15 +309,15 @@ class CodexAppServerClient:
                 self._proc.terminate()
             self._proc.wait(timeout=timeout)
             leader_confirmed = True
-            # Once wait() reaps the group leader, its numeric PGID is no longer
-            # proof of ownership and may be recycled immediately. Never signal
-            # that PGID again; escalation is only safe while wait() times out
-            # and the original leader remains alive.
-            return _mark_closed()
+            if not owns_process_group or not _group_alive():
+                return _mark_closed()
+            # The leader has been reaped, but a successful group probe proves
+            # original descendants still hold this PGID. POSIX cannot recycle
+            # a non-empty process group, so escalation remains ownership-safe.
         except Exception:
             if _has_exited():
                 leader_confirmed = True
-                if not owns_process_group:
+                if not owns_process_group or not _group_alive():
                     return _mark_closed()
 
         try:
