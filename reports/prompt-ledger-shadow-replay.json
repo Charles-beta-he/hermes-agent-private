@@ -1,0 +1,50 @@
+{
+  "min_text_chars": 4096,
+  "preview_chars": 256,
+  "protect_last_tool_results": 1,
+  "schema_version": 1,
+  "sessions": [
+    {
+      "candidate_count": 13,
+      "candidate_kinds": {
+        "multimodal_tool_result": 4,
+        "text_tool_result": 9
+      },
+      "estimated_reduction_chars": 0,
+      "message_count": 140,
+      "original_chars": 2239589,
+      "projected_chars": 2239589,
+      "recoverable_candidate_count": 0,
+      "retirement_blockers": {
+        "inline_media": 4,
+        "missing_reference": 9
+      },
+      "session_id": "20260723_155049_4e8ff9",
+      "would_apply_count": 0
+    },
+    {
+      "candidate_count": 9,
+      "candidate_kinds": {
+        "multimodal_tool_result": 2,
+        "text_tool_result": 7
+      },
+      "estimated_reduction_chars": 0,
+      "message_count": 120,
+      "original_chars": 570266,
+      "projected_chars": 570266,
+      "recoverable_candidate_count": 0,
+      "retirement_blockers": {
+        "inline_media": 2,
+        "missing_reference": 7
+      },
+      "session_id": "20260724_101012_b2db84",
+      "would_apply_count": 0
+    }
+  ],
+  "source_db": "/Users/charles/.hermes/state.db",
+  "source_integrity_scope": "main_file_stat_only",
+  "source_main_file_metadata_unchanged": true,
+  "source_open_mode": "read_only",
+  "source_sidecars_checked": false,
+  "source_size_bytes": 1500794880
+}
