@@ -240,6 +240,7 @@ from agent.model_metadata import (
 )
 from agent.process_bootstrap import _install_safe_stdio
 from agent.prompt_caching import apply_anthropic_cache_control
+from agent.prompt_ledger import call_with_prompt_ledger
 from agent.retry_utils import (
     adaptive_rate_limit_backoff,
     is_zai_coding_overload_error,
@@ -2046,65 +2047,77 @@ def run_conversation(
                 def _perform_api_call(next_api_kwargs):
                     dispatch_state = {"gate_called": False}
 
-                    def dispatch_gate():
-                        dispatch_state["gate_called"] = True
-                        return _commit_iteration_graph_budget(agent)
+                    def _dispatch(provider_kwargs):
 
-                    try:
-                        graph_dispatch_gate = (
-                            dispatch_gate if _graph_budget(agent) is not None else None
-                        )
+                        def dispatch_gate():
+                            dispatch_state["gate_called"] = True
+                            return _commit_iteration_graph_budget(agent)
 
-                        def _accepts_dispatch_gate(callable_obj):
-                            try:
-                                import inspect
+                        try:
+                            graph_dispatch_gate = (
+                                dispatch_gate if _graph_budget(agent) is not None else None
+                            )
 
-                                parameters = inspect.signature(callable_obj).parameters
-                            except (TypeError, ValueError):
-                                return True
-                            return "dispatch_gate" in parameters
+                            def _accepts_dispatch_gate(callable_obj):
+                                try:
+                                    import inspect
 
-                        if _use_streaming:
-                            streaming_call = agent._interruptible_streaming_api_call
+                                    parameters = inspect.signature(callable_obj).parameters
+                                except (TypeError, ValueError):
+                                    return True
+                                return "dispatch_gate" in parameters
+
+                            if _use_streaming:
+                                streaming_call = agent._interruptible_streaming_api_call
+                                if graph_dispatch_gate is None:
+                                    dispatch_state["gate_called"] = True
+                                    return streaming_call(
+                                        provider_kwargs,
+                                        on_first_delta=_stop_spinner,
+                                    )
+                                if not _accepts_dispatch_gate(streaming_call):
+                                    if not graph_dispatch_gate():
+                                        raise RuntimeError(
+                                            "graph budget exhausted before provider dispatch"
+                                        )
+                                    return streaming_call(
+                                        provider_kwargs,
+                                        on_first_delta=_stop_spinner,
+                                    )
+                                return streaming_call(
+                                    provider_kwargs,
+                                    on_first_delta=_stop_spinner,
+                                    dispatch_gate=graph_dispatch_gate,
+                                )
+                            api_call = agent._interruptible_api_call
                             if graph_dispatch_gate is None:
                                 dispatch_state["gate_called"] = True
-                                return streaming_call(
-                                    next_api_kwargs,
-                                    on_first_delta=_stop_spinner,
-                                )
-                            if not _accepts_dispatch_gate(streaming_call):
+                                return api_call(provider_kwargs)
+                            if not _accepts_dispatch_gate(api_call):
                                 if not graph_dispatch_gate():
                                     raise RuntimeError(
                                         "graph budget exhausted before provider dispatch"
                                     )
-                                return streaming_call(
-                                    next_api_kwargs,
-                                    on_first_delta=_stop_spinner,
-                                )
-                            return streaming_call(
-                                next_api_kwargs,
-                                on_first_delta=_stop_spinner,
-                                dispatch_gate=graph_dispatch_gate,
+                                return api_call(provider_kwargs)
+                            return api_call(
+                                provider_kwargs, dispatch_gate=graph_dispatch_gate
                             )
-                        api_call = agent._interruptible_api_call
-                        if graph_dispatch_gate is None:
-                            dispatch_state["gate_called"] = True
-                            return api_call(next_api_kwargs)
-                        if not _accepts_dispatch_gate(api_call):
-                            if not graph_dispatch_gate():
-                                raise RuntimeError(
-                                    "graph budget exhausted before provider dispatch"
-                                )
-                            return api_call(next_api_kwargs)
-                        return api_call(
-                            next_api_kwargs, dispatch_gate=graph_dispatch_gate
-                        )
+                        except BaseException:
+                            # Client/request construction can fail before reaching the
+                            # physical dispatch boundary. Only that never-gated path is
+                            # refundable. A rejected durable commit retains its owned
+                            # receipt for diagnosis/reconciliation; any successful gate
+                            # is permanently charged even when the transport fails.
+                            if not dispatch_state["gate_called"]:
+                                _refund_iteration_budgets(agent)
+                            raise
+
+                    try:
+                        return call_with_prompt_ledger(agent, next_api_kwargs, _dispatch)
                     except BaseException:
-                        # Client/request construction can fail before reaching the
-                        # physical dispatch boundary. Only that never-gated path is
-                        # refundable. A rejected durable commit retains its owned
-                        # receipt for diagnosis/reconciliation; any successful gate
-                        # is permanently charged even when the transport fails.
+                        # Prompt-ledger preparation and request recording happen before
+                        # _dispatch. Preserve the graph/turn refund contract when either
+                        # exits through BaseException without reaching the physical gate.
                         if not dispatch_state["gate_called"]:
                             _refund_iteration_budgets(agent)
                         raise

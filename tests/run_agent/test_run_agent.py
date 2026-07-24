@@ -323,6 +323,55 @@ def _mock_response(
     return resp
 
 
+def test_run_conversation_routes_exact_provider_payload_through_prompt_ledger(agent):
+    response = _mock_response(
+        content="ledger wired",
+        usage={"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
+    )
+    agent._interruptible_api_call = MagicMock(return_value=response)
+    agent._persist_session = lambda *args, **kwargs: None
+    agent._save_trajectory = lambda *args, **kwargs: None
+    observed = []
+
+    def _observe(current_agent, payload, call):
+        observed.append(payload)
+        result = call(payload)
+        assert agent._interruptible_api_call.call_args.args[0] is payload
+        return result
+
+    with patch("agent.conversation_loop.call_with_prompt_ledger", side_effect=_observe):
+        result = agent.run_conversation("hello")
+
+    assert result["completed"] is True
+    assert result["final_response"] == "ledger wired"
+    assert len(observed) == 1
+
+
+def test_prompt_ledger_predispatch_baseexception_refunds_turn_and_graph(agent):
+    from agent.iteration_budget import IterationBudget
+
+    agent.max_iterations = 3
+    agent.iteration_budget = IterationBudget(3)
+    agent.graph_budget = IterationBudget(3)
+    agent._persist_session = lambda *args, **kwargs: None
+    agent._save_trajectory = lambda *args, **kwargs: None
+    agent._interruptible_api_call = MagicMock()
+
+    with (
+        patch(
+            "agent.conversation_loop.call_with_prompt_ledger",
+            side_effect=KeyboardInterrupt("ledger preparation interrupted"),
+        ),
+        pytest.raises(KeyboardInterrupt, match="ledger preparation interrupted"),
+    ):
+        agent.run_conversation("hello")
+
+    agent._interruptible_api_call.assert_not_called()
+    assert agent.iteration_budget.remaining == 3
+    assert agent.graph_budget.remaining == 3
+    assert agent._last_budget_reservation == (False, False)
+
+
 # ===================================================================
 # Group 1: Pure Functions
 # ===================================================================
