@@ -27,6 +27,17 @@ export {
   toWorkflowDefinitionV1JsonSchema,
 } from './workflow-definition'
 export {
+  type WorkflowArtifactEventV1,
+  WorkflowArtifactEventV1Schema,
+  type WorkflowArtifactV1,
+  WorkflowArtifactV1Schema,
+  type WorkflowMutationV1,
+  WorkflowMutationV1Schema,
+  toWorkflowArtifactEventV1JsonSchema,
+  toWorkflowArtifactV1JsonSchema,
+  toWorkflowMutationV1JsonSchema,
+} from './workflow-artifact'
+export {
   deriveWorkflowExecutionPlanDigestV1,
   type WorkflowExecutionPlanV1,
   WorkflowExecutionPlanV1Schema,

@@ -324,3 +324,201 @@ def test_cli_rejects_symlinked_runtime_root_without_touching_target(
         target.stat().st_mode,
         actual_root.stat().st_mode,
     ) == before
+
+
+def test_artifact_cli_requires_explicit_write_local(tmp_path: Path, capsys) -> None:
+    definition = tmp_path / "definition.json"
+    ledger = tmp_path / "artifact.jsonl"
+    _write_json(definition, _definition())
+
+    rc = subcommand.cmd_workflow_runtime(
+        argparse.Namespace(
+            workflow_runtime_action="artifact-init",
+            definition=str(definition),
+            artifact_ledger=str(ledger),
+            private_root=str(tmp_path),
+            idempotency_key="init-1",
+            write_local=False,
+            json=True,
+        )
+    )
+
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["error"]["code"] == "write_local_flag_required"
+    assert not ledger.exists()
+    assert not Path(f"{ledger}.lock").exists()
+
+
+def test_artifact_cli_init_validate_apply_status_and_history(
+    tmp_path: Path, capsys
+) -> None:
+    definition_path = tmp_path / "definition.json"
+    mutation_path = tmp_path / "mutation.json"
+    ledger = tmp_path / "artifact.jsonl"
+    definition = _definition()
+    _write_json(definition_path, definition)
+
+    assert (
+        subcommand.cmd_workflow_runtime(
+            argparse.Namespace(
+                workflow_runtime_action="artifact-init",
+                definition=str(definition_path),
+                artifact_ledger=str(ledger),
+                private_root=str(tmp_path),
+                idempotency_key="init-1",
+                write_local=True,
+                json=True,
+            )
+        )
+        == 0
+    )
+    init_receipt = json.loads(capsys.readouterr().out)
+    assert init_receipt["readback_verified"] is True
+    assert init_receipt["new_revision"] == 1
+
+    assert (
+        subcommand.cmd_workflow_runtime(
+            argparse.Namespace(
+                workflow_runtime_action="artifact-status",
+                artifact_ledger=str(ledger),
+                private_root=str(tmp_path),
+                json=True,
+            )
+        )
+        == 0
+    )
+    state = json.loads(capsys.readouterr().out)
+    mutation = {
+        "schema_version": "workflow_mutation_v1",
+        "artifact_id": state["artifact_id"],
+        "base_revision": state["revision"],
+        "base_artifact_digest": state["artifact_digest"],
+        "idempotency_key": "mutation-1",
+        "operations": [
+            {
+                "op": "set_metadata",
+                "title": "Governed workflow v2",
+                "goal": definition["goal"],
+                "non_goals": definition["non_goals"],
+                "constraints": definition["constraints"],
+            }
+        ],
+    }
+    _write_json(mutation_path, mutation)
+    before = ledger.read_bytes()
+
+    assert (
+        subcommand.cmd_workflow_runtime(
+            argparse.Namespace(
+                workflow_runtime_action="artifact-validate",
+                mutation=str(mutation_path),
+                artifact_ledger=str(ledger),
+                private_root=str(tmp_path),
+                json=True,
+            )
+        )
+        == 0
+    )
+    validation = json.loads(capsys.readouterr().out)
+    assert validation["valid"] is True
+    assert validation["candidate_revision"] == 2
+    assert ledger.read_bytes() == before
+
+    assert (
+        subcommand.cmd_workflow_runtime(
+            argparse.Namespace(
+                workflow_runtime_action="artifact-apply",
+                mutation=str(mutation_path),
+                artifact_ledger=str(ledger),
+                private_root=str(tmp_path),
+                write_local=True,
+                json=True,
+            )
+        )
+        == 0
+    )
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["new_revision"] == 2
+    assert receipt["readback_verified"] is True
+
+    assert (
+        subcommand.cmd_workflow_runtime(
+            argparse.Namespace(
+                workflow_runtime_action="artifact-history",
+                artifact_ledger=str(ledger),
+                private_root=str(tmp_path),
+                json=True,
+            )
+        )
+        == 0
+    )
+    history = json.loads(capsys.readouterr().out)
+    assert [event["event_type"] for event in history["events"]] == [
+        "artifact_initialized",
+        "mutation_committed",
+    ]
+
+
+def test_compile_can_read_definition_from_artifact_ledger(
+    tmp_path: Path, capsys
+) -> None:
+    definition_path = tmp_path / "definition.json"
+    manifest_path = tmp_path / "manifest.json"
+    ledger = tmp_path / "artifact.jsonl"
+    _write_json(definition_path, _definition())
+    _write_json(manifest_path, _manifest())
+    assert (
+        subcommand.cmd_workflow_runtime(
+            argparse.Namespace(
+                workflow_runtime_action="artifact-init",
+                definition=str(definition_path),
+                artifact_ledger=str(ledger),
+                private_root=str(tmp_path),
+                idempotency_key="init-1",
+                write_local=True,
+                json=True,
+            )
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        subcommand.cmd_workflow_runtime(
+            argparse.Namespace(
+                workflow_runtime_action="compile",
+                definition=None,
+                artifact_ledger=str(ledger),
+                artifact_private_root=str(tmp_path),
+                manifest=str(manifest_path),
+                json=True,
+            )
+        )
+        == 0
+    )
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["mode"] == "compile_preview_only"
+    assert preview["definition_digest"]
+
+
+def test_parser_registers_artifact_governance_surface() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    subcommand.build_workflow_runtime_parser(subparsers)
+
+    args = parser.parse_args(
+        [
+            "workflow-runtime",
+            "artifact-apply",
+            "--mutation",
+            "mutation.json",
+            "--artifact-ledger",
+            "artifact.jsonl",
+            "--private-root",
+            ".",
+            "--write-local",
+        ]
+    )
+    assert args.workflow_runtime_action == "artifact-apply"
+    assert args.write_local is True

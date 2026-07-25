@@ -1,0 +1,1602 @@
+{
+  "$id": "https://hermes-agent.local/schemas/workflow-artifact-event-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "workflow_artifact_event_v1"
+        },
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "previous_event_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^wae_[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "occurred_at": {
+          "allOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!0000-)"
+            },
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            }
+          ]
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^wae_[0-9a-f]{64}$"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "artifact_initialized"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "definition": {
+              "type": "object",
+              "properties": {
+                "schema_version": {
+                  "type": "string",
+                  "const": "workflow_definition_v1"
+                },
+                "workflow_id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                },
+                "version": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "allOf": [
+                    {
+                      "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                    },
+                    {
+                      "pattern": "\\S"
+                    }
+                  ]
+                },
+                "goal": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "allOf": [
+                    {
+                      "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                    },
+                    {
+                      "pattern": "\\S"
+                    }
+                  ]
+                },
+                "non_goals": {
+                  "maxItems": 128,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  }
+                },
+                "constraints": {
+                  "maxItems": 128,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  }
+                },
+                "authority": {
+                  "type": "object",
+                  "properties": {
+                    "max_side_effect": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "local_read",
+                        "local_write",
+                        "external_read",
+                        "external_write"
+                      ]
+                    },
+                    "allowed_capabilities": {
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                      }
+                    }
+                  },
+                  "required": [
+                    "max_side_effect",
+                    "allowed_capabilities"
+                  ],
+                  "additionalProperties": false
+                },
+                "tasks": {
+                  "minItems": 1,
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                      },
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "explore",
+                          "plan",
+                          "execute",
+                          "verify"
+                        ]
+                      },
+                      "owner": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                      },
+                      "depends_on": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                        }
+                      },
+                      "inputs": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "allOf": [
+                            {
+                              "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                            },
+                            {
+                              "pattern": "\\S"
+                            }
+                          ]
+                        }
+                      },
+                      "outputs": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "allOf": [
+                            {
+                              "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                            },
+                            {
+                              "pattern": "\\S"
+                            }
+                          ]
+                        }
+                      },
+                      "writes": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "allOf": [
+                            {
+                              "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                            },
+                            {
+                              "pattern": "\\S"
+                            }
+                          ]
+                        }
+                      },
+                      "authority": {
+                        "type": "object",
+                        "properties": {
+                          "side_effect": {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "local_read",
+                              "local_write",
+                              "external_read",
+                              "external_write"
+                            ]
+                          },
+                          "capabilities": {
+                            "maxItems": 128,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                            }
+                          }
+                        },
+                        "required": [
+                          "side_effect",
+                          "capabilities"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "acceptance": {
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                            },
+                            "claim": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096,
+                              "allOf": [
+                                {
+                                  "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                },
+                                {
+                                  "pattern": "\\S"
+                                }
+                              ]
+                            },
+                            "evidence_required": {
+                              "minItems": 1,
+                              "maxItems": 16,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "command",
+                                  "file",
+                                  "api",
+                                  "screenshot",
+                                  "log",
+                                  "readback"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "claim",
+                            "evidence_required"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "verifies": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title",
+                      "role",
+                      "owner",
+                      "depends_on",
+                      "inputs",
+                      "outputs",
+                      "writes",
+                      "authority",
+                      "acceptance",
+                      "verifies"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "loop_policy": {
+                  "type": "object",
+                  "properties": {
+                    "max_iterations": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100
+                    },
+                    "repeated_failure_limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 20
+                    },
+                    "on_repeated_failure": {
+                      "type": "string",
+                      "enum": [
+                        "switch_path",
+                        "human_gate",
+                        "terminal_failure"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "max_iterations",
+                    "repeated_failure_limit",
+                    "on_repeated_failure"
+                  ],
+                  "additionalProperties": false
+                },
+                "stop_conditions": {
+                  "minItems": 2,
+                  "maxItems": 16,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "success",
+                      "blocked",
+                      "human_gate",
+                      "terminal_failure",
+                      "cancelled",
+                      "context_exhausted",
+                      "stale"
+                    ]
+                  }
+                },
+                "handoff": {
+                  "type": "object",
+                  "properties": {
+                    "required_fields": {
+                      "minItems": 1,
+                      "maxItems": 16,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "goal",
+                          "task_states",
+                          "artifacts",
+                          "evidence",
+                          "blockers",
+                          "next_step",
+                          "authority_state"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "required_fields"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "schema_version",
+                "workflow_id",
+                "version",
+                "title",
+                "goal",
+                "non_goals",
+                "constraints",
+                "authority",
+                "tasks",
+                "loop_policy",
+                "stop_conditions",
+                "handoff"
+              ],
+              "additionalProperties": false,
+              "title": "Hermes WorkflowDefinitionV1"
+            },
+            "revision": {
+              "type": "number",
+              "const": 1
+            },
+            "artifact_digest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "definition",
+            "revision",
+            "artifact_digest"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "artifact_id",
+        "sequence",
+        "previous_event_id",
+        "idempotency_key",
+        "occurred_at",
+        "event_id",
+        "event_type",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "workflow_artifact_event_v1"
+        },
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "previous_event_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^wae_[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "occurred_at": {
+          "allOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!0000-)"
+            },
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            }
+          ]
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^wae_[0-9a-f]{64}$"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "mutation_committed"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "mutation": {
+              "type": "object",
+              "properties": {
+                "schema_version": {
+                  "type": "string",
+                  "const": "workflow_mutation_v1"
+                },
+                "artifact_id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                },
+                "base_revision": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "base_artifact_digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "operations": {
+                  "minItems": 1,
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "add_task"
+                          },
+                          "task": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                              },
+                              "title": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "allOf": [
+                                  {
+                                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                  },
+                                  {
+                                    "pattern": "\\S"
+                                  }
+                                ]
+                              },
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "explore",
+                                  "plan",
+                                  "execute",
+                                  "verify"
+                                ]
+                              },
+                              "owner": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                              },
+                              "depends_on": {
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                                }
+                              },
+                              "inputs": {
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "allOf": [
+                                    {
+                                      "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                    },
+                                    {
+                                      "pattern": "\\S"
+                                    }
+                                  ]
+                                }
+                              },
+                              "outputs": {
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "allOf": [
+                                    {
+                                      "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                    },
+                                    {
+                                      "pattern": "\\S"
+                                    }
+                                  ]
+                                }
+                              },
+                              "writes": {
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "allOf": [
+                                    {
+                                      "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                    },
+                                    {
+                                      "pattern": "\\S"
+                                    }
+                                  ]
+                                }
+                              },
+                              "authority": {
+                                "type": "object",
+                                "properties": {
+                                  "side_effect": {
+                                    "type": "string",
+                                    "enum": [
+                                      "none",
+                                      "local_read",
+                                      "local_write",
+                                      "external_read",
+                                      "external_write"
+                                    ]
+                                  },
+                                  "capabilities": {
+                                    "maxItems": 128,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "side_effect",
+                                  "capabilities"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "acceptance": {
+                                "minItems": 1,
+                                "maxItems": 64,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                                    },
+                                    "claim": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 4096,
+                                      "allOf": [
+                                        {
+                                          "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                        },
+                                        {
+                                          "pattern": "\\S"
+                                        }
+                                      ]
+                                    },
+                                    "evidence_required": {
+                                      "minItems": 1,
+                                      "maxItems": 16,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "enum": [
+                                          "command",
+                                          "file",
+                                          "api",
+                                          "screenshot",
+                                          "log",
+                                          "readback"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "claim",
+                                    "evidence_required"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "verifies": {
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "title",
+                              "role",
+                              "owner",
+                              "depends_on",
+                              "inputs",
+                              "outputs",
+                              "writes",
+                              "authority",
+                              "acceptance",
+                              "verifies"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "task"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "replace_task"
+                          },
+                          "task_id": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                          },
+                          "expected_task_digest": {
+                            "type": "string",
+                            "pattern": "^sha256:[0-9a-f]{64}$"
+                          },
+                          "task": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                              },
+                              "title": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "allOf": [
+                                  {
+                                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                  },
+                                  {
+                                    "pattern": "\\S"
+                                  }
+                                ]
+                              },
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "explore",
+                                  "plan",
+                                  "execute",
+                                  "verify"
+                                ]
+                              },
+                              "owner": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                              },
+                              "depends_on": {
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                                }
+                              },
+                              "inputs": {
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "allOf": [
+                                    {
+                                      "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                    },
+                                    {
+                                      "pattern": "\\S"
+                                    }
+                                  ]
+                                }
+                              },
+                              "outputs": {
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "allOf": [
+                                    {
+                                      "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                    },
+                                    {
+                                      "pattern": "\\S"
+                                    }
+                                  ]
+                                }
+                              },
+                              "writes": {
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "allOf": [
+                                    {
+                                      "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                    },
+                                    {
+                                      "pattern": "\\S"
+                                    }
+                                  ]
+                                }
+                              },
+                              "authority": {
+                                "type": "object",
+                                "properties": {
+                                  "side_effect": {
+                                    "type": "string",
+                                    "enum": [
+                                      "none",
+                                      "local_read",
+                                      "local_write",
+                                      "external_read",
+                                      "external_write"
+                                    ]
+                                  },
+                                  "capabilities": {
+                                    "maxItems": 128,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "side_effect",
+                                  "capabilities"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "acceptance": {
+                                "minItems": 1,
+                                "maxItems": 64,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                                    },
+                                    "claim": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 4096,
+                                      "allOf": [
+                                        {
+                                          "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                        },
+                                        {
+                                          "pattern": "\\S"
+                                        }
+                                      ]
+                                    },
+                                    "evidence_required": {
+                                      "minItems": 1,
+                                      "maxItems": 16,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "enum": [
+                                          "command",
+                                          "file",
+                                          "api",
+                                          "screenshot",
+                                          "log",
+                                          "readback"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "claim",
+                                    "evidence_required"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "verifies": {
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "title",
+                              "role",
+                              "owner",
+                              "depends_on",
+                              "inputs",
+                              "outputs",
+                              "writes",
+                              "authority",
+                              "acceptance",
+                              "verifies"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "task_id",
+                          "expected_task_digest",
+                          "task"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "remove_task"
+                          },
+                          "task_id": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                          },
+                          "expected_task_digest": {
+                            "type": "string",
+                            "pattern": "^sha256:[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "task_id",
+                          "expected_task_digest"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "set_metadata"
+                          },
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096
+                          },
+                          "goal": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096
+                          },
+                          "non_goals": {
+                            "maxItems": 128,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096
+                            }
+                          },
+                          "constraints": {
+                            "maxItems": 128,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096
+                            }
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "title",
+                          "goal",
+                          "non_goals",
+                          "constraints"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "set_loop_contract"
+                          },
+                          "loop_policy": {
+                            "type": "object",
+                            "properties": {
+                              "max_iterations": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 100
+                              },
+                              "repeated_failure_limit": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 20
+                              },
+                              "on_repeated_failure": {
+                                "type": "string",
+                                "enum": [
+                                  "switch_path",
+                                  "human_gate",
+                                  "terminal_failure"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "max_iterations",
+                              "repeated_failure_limit",
+                              "on_repeated_failure"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "stop_conditions": {
+                            "minItems": 2,
+                            "maxItems": 16,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "success",
+                                "blocked",
+                                "human_gate",
+                                "terminal_failure",
+                                "cancelled",
+                                "context_exhausted",
+                                "stale"
+                              ]
+                            }
+                          },
+                          "handoff": {
+                            "type": "object",
+                            "properties": {
+                              "required_fields": {
+                                "minItems": 1,
+                                "maxItems": 16,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "goal",
+                                    "task_states",
+                                    "artifacts",
+                                    "evidence",
+                                    "blockers",
+                                    "next_step",
+                                    "authority_state"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "required_fields"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "loop_policy",
+                          "stop_conditions",
+                          "handoff"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "schema_version",
+                "artifact_id",
+                "base_revision",
+                "base_artifact_digest",
+                "idempotency_key",
+                "operations"
+              ],
+              "additionalProperties": false,
+              "title": "Hermes WorkflowMutationV1"
+            },
+            "definition": {
+              "type": "object",
+              "properties": {
+                "schema_version": {
+                  "type": "string",
+                  "const": "workflow_definition_v1"
+                },
+                "workflow_id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                },
+                "version": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "allOf": [
+                    {
+                      "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                    },
+                    {
+                      "pattern": "\\S"
+                    }
+                  ]
+                },
+                "goal": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "allOf": [
+                    {
+                      "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                    },
+                    {
+                      "pattern": "\\S"
+                    }
+                  ]
+                },
+                "non_goals": {
+                  "maxItems": 128,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  }
+                },
+                "constraints": {
+                  "maxItems": 128,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  }
+                },
+                "authority": {
+                  "type": "object",
+                  "properties": {
+                    "max_side_effect": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "local_read",
+                        "local_write",
+                        "external_read",
+                        "external_write"
+                      ]
+                    },
+                    "allowed_capabilities": {
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                      }
+                    }
+                  },
+                  "required": [
+                    "max_side_effect",
+                    "allowed_capabilities"
+                  ],
+                  "additionalProperties": false
+                },
+                "tasks": {
+                  "minItems": 1,
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                      },
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "explore",
+                          "plan",
+                          "execute",
+                          "verify"
+                        ]
+                      },
+                      "owner": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                      },
+                      "depends_on": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                        }
+                      },
+                      "inputs": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "allOf": [
+                            {
+                              "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                            },
+                            {
+                              "pattern": "\\S"
+                            }
+                          ]
+                        }
+                      },
+                      "outputs": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "allOf": [
+                            {
+                              "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                            },
+                            {
+                              "pattern": "\\S"
+                            }
+                          ]
+                        }
+                      },
+                      "writes": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "allOf": [
+                            {
+                              "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                            },
+                            {
+                              "pattern": "\\S"
+                            }
+                          ]
+                        }
+                      },
+                      "authority": {
+                        "type": "object",
+                        "properties": {
+                          "side_effect": {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "local_read",
+                              "local_write",
+                              "external_read",
+                              "external_write"
+                            ]
+                          },
+                          "capabilities": {
+                            "maxItems": 128,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                            }
+                          }
+                        },
+                        "required": [
+                          "side_effect",
+                          "capabilities"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "acceptance": {
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                            },
+                            "claim": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096,
+                              "allOf": [
+                                {
+                                  "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                                },
+                                {
+                                  "pattern": "\\S"
+                                }
+                              ]
+                            },
+                            "evidence_required": {
+                              "minItems": 1,
+                              "maxItems": 16,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "command",
+                                  "file",
+                                  "api",
+                                  "screenshot",
+                                  "log",
+                                  "readback"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "claim",
+                            "evidence_required"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "verifies": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title",
+                      "role",
+                      "owner",
+                      "depends_on",
+                      "inputs",
+                      "outputs",
+                      "writes",
+                      "authority",
+                      "acceptance",
+                      "verifies"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "loop_policy": {
+                  "type": "object",
+                  "properties": {
+                    "max_iterations": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100
+                    },
+                    "repeated_failure_limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 20
+                    },
+                    "on_repeated_failure": {
+                      "type": "string",
+                      "enum": [
+                        "switch_path",
+                        "human_gate",
+                        "terminal_failure"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "max_iterations",
+                    "repeated_failure_limit",
+                    "on_repeated_failure"
+                  ],
+                  "additionalProperties": false
+                },
+                "stop_conditions": {
+                  "minItems": 2,
+                  "maxItems": 16,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "success",
+                      "blocked",
+                      "human_gate",
+                      "terminal_failure",
+                      "cancelled",
+                      "context_exhausted",
+                      "stale"
+                    ]
+                  }
+                },
+                "handoff": {
+                  "type": "object",
+                  "properties": {
+                    "required_fields": {
+                      "minItems": 1,
+                      "maxItems": 16,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "goal",
+                          "task_states",
+                          "artifacts",
+                          "evidence",
+                          "blockers",
+                          "next_step",
+                          "authority_state"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "required_fields"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "schema_version",
+                "workflow_id",
+                "version",
+                "title",
+                "goal",
+                "non_goals",
+                "constraints",
+                "authority",
+                "tasks",
+                "loop_policy",
+                "stop_conditions",
+                "handoff"
+              ],
+              "additionalProperties": false,
+              "title": "Hermes WorkflowDefinitionV1"
+            },
+            "previous_revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "new_revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "previous_artifact_digest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "new_artifact_digest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "mutation",
+            "definition",
+            "previous_revision",
+            "new_revision",
+            "previous_artifact_digest",
+            "new_artifact_digest"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "artifact_id",
+        "sequence",
+        "previous_event_id",
+        "idempotency_key",
+        "occurred_at",
+        "event_id",
+        "event_type",
+        "payload"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "title": "Hermes WorkflowArtifactEventV1"
+}

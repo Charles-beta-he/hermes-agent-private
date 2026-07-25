@@ -5,6 +5,11 @@ import { toClosureV1JsonSchema } from '../src/closure'
 import { toEvidenceV1JsonSchema } from '../src/evidence'
 import { toVerifierVoteV1JsonSchema } from '../src/verifier-vote'
 import { toWorkflowDefinitionV1JsonSchema } from '../src/workflow-definition'
+import {
+  toWorkflowArtifactEventV1JsonSchema,
+  toWorkflowArtifactV1JsonSchema,
+  toWorkflowMutationV1JsonSchema,
+} from '../src/workflow-artifact'
 import { toWorkflowExecutionPlanV1JsonSchema } from '../src/workflow-execution-plan'
 import {
   toWorkflowLoopSignalV1JsonSchema,
@@ -30,6 +35,12 @@ const schemas = [
   ['verifier-vote-v1.schema.json', toVerifierVoteV1JsonSchema()],
   ['closure-v1.schema.json', toClosureV1JsonSchema()],
   ['workflow-definition-v1.schema.json', toWorkflowDefinitionV1JsonSchema()],
+  ['workflow-artifact-v1.schema.json', toWorkflowArtifactV1JsonSchema()],
+  ['workflow-mutation-v1.schema.json', toWorkflowMutationV1JsonSchema()],
+  [
+    'workflow-artifact-event-v1.schema.json',
+    toWorkflowArtifactEventV1JsonSchema(),
+  ],
   [
     'workflow-execution-plan-v1.schema.json',
     toWorkflowExecutionPlanV1JsonSchema(),
@@ -61,6 +72,9 @@ const serializedSchemas = new Map(
 const packagedSchemaNames = [
   'workflow-run-event-v1.schema.json',
   'workflow-definition-v1.schema.json',
+  'workflow-artifact-v1.schema.json',
+  'workflow-mutation-v1.schema.json',
+  'workflow-artifact-event-v1.schema.json',
   'workflow-execution-plan-v1.schema.json',
   'workflow-loop-snapshot-v1.schema.json',
   'workflow-loop-signal-v1.schema.json',
