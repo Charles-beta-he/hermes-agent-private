@@ -556,6 +556,45 @@ def _receipt_from_event(event: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+
+def _cleanup_uncommitted_created_ledger(
+    descriptor: int,
+    anchor: LedgerAnchor,
+    created_identity: os.stat_result | None,
+) -> None:
+    """Sanitize and unlink only the exact first-ledger inode opened by this call."""
+    os.ftruncate(descriptor, 0)
+    os.fsync(descriptor)
+    current_descriptor_identity = os.fstat(descriptor)
+    if created_identity is None or not _same_file_identity(
+        current_descriptor_identity, created_identity
+    ):
+        raise OSError("created ledger descriptor identity is unavailable or changed")
+    try:
+        current_path_identity = os.stat(
+            anchor.name,
+            dir_fd=anchor.directory_descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        if current_descriptor_identity.st_nlink != 0:
+            raise OSError("created ledger moved to an unknown path before cleanup")
+        os.fsync(anchor.directory_descriptor)
+        return
+    if not _same_file_identity(current_path_identity, created_identity):
+        if current_descriptor_identity.st_nlink != 0:
+            raise OSError("created ledger path identity changed before cleanup")
+        os.fsync(anchor.directory_descriptor)
+        return
+    if current_path_identity.st_nlink != 1:
+        raise OSError("created ledger acquired another link before cleanup")
+    os.unlink(anchor.name, dir_fd=anchor.directory_descriptor)
+    os.fsync(anchor.directory_descriptor)
+
+
 def _append_event_transaction(
     *,
     ledger_path: Path,
@@ -571,6 +610,7 @@ def _append_event_transaction(
         if anchor is None:
             _fail("lock_anchor_missing", "artifact ledger lock did not provide an anchor")
         descriptor = -1
+        created_identity: os.stat_result | None = None
         try:
             os.stat(anchor.name, dir_fd=anchor.directory_descriptor, follow_symlinks=False)
             created = False
@@ -647,35 +687,33 @@ def _append_event_transaction(
                         anchor=anchor,
                         mode=PRIVATE_FILE_MODE,
                     )
+                    created_identity = os.fstat(descriptor)
                     os.fchmod(descriptor, PRIVATE_FILE_MODE)
                 except OSError as exc:
-                    try:
-                        if descriptor >= 0:
-                            os.ftruncate(descriptor, 0)
+                    if descriptor >= 0:
                         try:
-                            os.unlink(anchor.name, dir_fd=anchor.directory_descriptor)
-                        except FileNotFoundError:
-                            pass
-                        os.fsync(anchor.directory_descriptor)
-                    except OSError as cleanup_exc:
-                        _fail(
-                            "durability_unknown",
-                            "first-ledger preparation failed and cleanup could not be "
-                            f"confirmed: {exc}; cleanup: {cleanup_exc}",
-                        )
+                            _cleanup_uncommitted_created_ledger(
+                                descriptor, anchor, created_identity
+                            )
+                        except OSError as cleanup_exc:
+                            _fail(
+                                "durability_unknown",
+                                "first-ledger preparation failed and exact cleanup could not be "
+                                f"confirmed: {exc}; cleanup: {cleanup_exc}",
+                            )
                     _fail("ledger_write_failed", f"failed to prepare first ledger: {exc}")
             try:
                 record_offset = os.lseek(descriptor, 0, os.SEEK_END)
             except OSError as exc:
                 if created:
                     try:
-                        os.ftruncate(descriptor, 0)
-                        os.unlink(anchor.name, dir_fd=anchor.directory_descriptor)
-                        os.fsync(anchor.directory_descriptor)
+                        _cleanup_uncommitted_created_ledger(
+                            descriptor, anchor, created_identity
+                        )
                     except OSError as cleanup_exc:
                         _fail(
                             "durability_unknown",
-                            "first-ledger seek failed and cleanup could not be confirmed: "
+                            "first-ledger seek failed and exact cleanup could not be confirmed: "
                             f"{exc}; cleanup: {cleanup_exc}",
                         )
                 _fail("ledger_write_failed", f"failed to seek ledger append offset: {exc}")
@@ -683,12 +721,15 @@ def _append_event_transaction(
                 _write_all(descriptor, record)
             except _LedgerWriteFailure as exc:
                 try:
-                    os.ftruncate(descriptor, record_offset)
-                    os.fsync(descriptor)
                     if created:
-                        os.unlink(anchor.name, dir_fd=anchor.directory_descriptor)
-                    if directory_sync_required:
-                        os.fsync(anchor.directory_descriptor)
+                        _cleanup_uncommitted_created_ledger(
+                            descriptor, anchor, created_identity
+                        )
+                    else:
+                        os.ftruncate(descriptor, record_offset)
+                        os.fsync(descriptor)
+                        if directory_sync_required:
+                            os.fsync(anchor.directory_descriptor)
                 except OSError as rollback_exc:
                     _fail(
                         "durability_unknown",

@@ -180,7 +180,7 @@ Commit:
 4. Validate the complete candidate before first-ledger creation; create a missing ledger with descriptor-relative `O_EXCL` only after semantic validation succeeds.
 5. Build one canonical event and issue exactly one record write. A short write is never continued with a second append.
 6. `fsync` the ledger and, for first/empty-ledger publication, its containing directory.
-7. If first-ledger preparation (`fchmod`/append seek) or a partial append fails, truncate/remove the uncommitted first ledger and sync its directory. If rollback fails, report `durability_unknown`.
+7. If first-ledger preparation (`fchmod`/append seek) or a partial append fails, sanitize the created descriptor, verify the descriptor and anchored path still identify the same single-linked inode, then remove only that exact uncommitted ledger and sync its directory. `O_EXCL` competition or path replacement must never delete the competing/replacement object. If exact cleanup cannot be confirmed, report `durability_unknown`.
 8. On a file or directory `fsync` failure after a complete write, report `durability_unknown`; an exact idempotent retry must re-sync both the ledger and directory before returning the original receipt.
 9. Read from the same anchored ledger descriptor and replay.
 10. Require revision/digest/event ID equality with the candidate.
@@ -214,7 +214,7 @@ Candidate verification completed before immutable freeze:
 
 - Python related regression:
   `scripts/run_tests.sh tests/workflow_kernel tests/hermes_cli/test_workflow_runtime.py tests/contracts`
-  → 21 files, 546 tests passed, 0 failed.
+  → 21 files, 548 tests passed, 0 failed.
 - Python static checks:
   targeted `uv run ty check ...` and `uv run ruff check ...`
   → `All checks passed!` for both.
@@ -222,23 +222,15 @@ Candidate verification completed before immutable freeze:
   `pnpm --filter @hermes/workflow-contracts typecheck`, `test`, and `schema:check`
   → typecheck passed; 15 files / 269 tests passed; generated schemas match.
 - Artifact durability/adversarial slice:
-  21 tests passed, including one-write short-write rollback, first-create preparation cleanup,
-  file/directory `fsync` uncertainty retry, tamper rejection, and spawned exact-init contention.
-- Real CLI and wheel evidence root:
-  `/Users/charles/.hermes/runs/dataflow-harness-absorption-final-evidence-20260725-precommit-04`.
-  Thirteen actual CLI invocations prove default-off init, init/apply exact retry,
-  read-only validation, apply/read-back, history, artifact-backed compile,
-  stale-base rejection, authority-widening rejection, and tamper rejection.
-- CLI evidence final ledger SHA-256:
-  `1e12981f50dc3340857f7309063d55b41c8bdd71931cf4c365cbb92f6325a63c`.
-- Built wheel SHA-256:
-  `f8744ed593c6d77cc81c25a19675d3afb93441a9f0d093a03adae3c8a1429a12`.
-  An isolated `--no-deps` install resolved and decoded all three packaged artifact schemas.
-- Three earlier evidence-harness runs are retained as `failed-01` through `failed-03`.
-  They failed on verifier-script assumptions (exact idempotent replay was incorrectly expected
-  to be stale; one authority fixture was schema-invalid; one expected error-code label was stale),
-  not on a product command unexpectedly violating its contract. The corrected non-overwriting run
-  is `precommit-04`.
+  23 tests passed, including one-write short-write rollback, first-create preparation cleanup,
+  `O_EXCL` competition preservation, path-replacement fail-closed cleanup, file/directory
+  `fsync` uncertainty retry, tamper rejection, and spawned exact-init contention.
+- Real CLI and wheel evidence is generated only after immutable freeze. The exact candidate commit/tree,
+  evidence-root path, evidence-ledger digest, wheel digest, installed-runtime smoke, and verifier votes
+  live in an external `candidate-evidence.json`/certification bundle keyed by that immutable identity;
+  this avoids an impossible self-referential commit hash inside the candidate itself.
+- Earlier `precommit-*` and `d3899c1cc` evidence roots are retained as superseded provenance only.
+  They must not be used to certify a successor tree.
 
 ### Certification gate
 

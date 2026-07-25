@@ -791,3 +791,75 @@ def test_first_create_preparation_failure_removes_uncommitted_ledger(
     )
     assert receipt["readback_verified"] is True
     assert len(read_workflow_artifact_history(ledger, private_root=private_root)) == 1
+
+
+def test_first_create_o_excl_race_does_not_delete_competing_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    private_root = tmp_path / "private"
+    ledger = private_root / "artifact.jsonl"
+    with pytest.raises(WorkflowArtifactLedgerError):
+        initialize_workflow_artifact(
+            _definition(),
+            ledger_path=ledger,
+            private_root=private_root,
+            idempotency_key="invalid-race-anchor",
+            now="not-a-timestamp",
+        )
+
+    original_open = artifact_ledger.open_ledger_file
+    victim = b"competing-path-must-survive"
+
+    def race_open(path: Path, flags: int, **kwargs: Any) -> int:
+        if flags & os.O_EXCL:
+            ledger.write_bytes(victim)
+            raise FileExistsError("injected competing path")
+        return original_open(path, flags, **kwargs)
+
+    monkeypatch.setattr(artifact_ledger, "open_ledger_file", race_open)
+    with pytest.raises(WorkflowArtifactLedgerError) as rejected:
+        initialize_workflow_artifact(
+            _definition(),
+            ledger_path=ledger,
+            private_root=private_root,
+            idempotency_key="race-init",
+            now=NOW,
+        )
+
+    assert rejected.value.code == "ledger_write_failed"
+    assert ledger.read_bytes() == victim
+
+
+def test_first_create_path_replacement_during_seek_preserves_replacement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    private_root = tmp_path / "private"
+    ledger = private_root / "artifact.jsonl"
+    moved_created = private_root / "moved-created.jsonl"
+    victim = b"replacement-must-survive"
+    original_lseek = artifact_ledger.os.lseek
+    replaced = False
+
+    def replace_before_seek(descriptor: int, offset: int, whence: int) -> int:
+        nonlocal replaced
+        if not replaced and ledger.exists() and stat.S_ISREG(os.fstat(descriptor).st_mode):
+            replaced = True
+            os.replace(ledger, moved_created)
+            ledger.write_bytes(victim)
+            raise OSError("injected path replacement before seek")
+        return original_lseek(descriptor, offset, whence)
+
+    monkeypatch.setattr(artifact_ledger.os, "lseek", replace_before_seek)
+    with pytest.raises(WorkflowArtifactLedgerError) as rejected:
+        initialize_workflow_artifact(
+            _definition(),
+            ledger_path=ledger,
+            private_root=private_root,
+            idempotency_key="replacement-init",
+            now=NOW,
+        )
+
+    assert rejected.value.code == "durability_unknown"
+    assert replaced
+    assert ledger.read_bytes() == victim
+    assert moved_created.read_bytes() == b""
