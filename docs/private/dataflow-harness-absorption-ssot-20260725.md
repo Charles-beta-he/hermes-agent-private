@@ -214,7 +214,7 @@ Candidate verification completed before immutable freeze:
 
 - Python related regression:
   `scripts/run_tests.sh tests/workflow_kernel tests/hermes_cli/test_workflow_runtime.py tests/contracts`
-  → 21 files, 548 tests passed, 0 failed.
+  → 21 files, 549 tests passed, 0 failed.
 - Python static checks:
   targeted `uv run ty check ...` and `uv run ruff check ...`
   → `All checks passed!` for both.
@@ -222,9 +222,11 @@ Candidate verification completed before immutable freeze:
   `pnpm --filter @hermes/workflow-contracts typecheck`, `test`, and `schema:check`
   → typecheck passed; 15 files / 269 tests passed; generated schemas match.
 - Artifact durability/adversarial slice:
-  23 tests passed, including one-write short-write rollback, first-create preparation cleanup,
-  `O_EXCL` competition preservation, path-replacement fail-closed cleanup, file/directory
-  `fsync` uncertainty retry, tamper rejection, and spawned exact-init contention.
+  24 tests passed, including one-write short-write rollback, first-create preparation cleanup,
+  `O_EXCL` competition preservation, path-replacement fail-closed cleanup, separate initialize/apply
+  exact-retry re-synchronization after `fsync` uncertainty, tamper rejection, and spawned exact-init
+  contention. Mutation exact retry must re-enter the authoritative writer transaction rather than
+  return from a pre-lock idempotency fast path.
 - Real CLI and wheel evidence is generated only after immutable freeze. The exact candidate commit/tree,
   evidence-root path, evidence-ledger digest, wheel digest, installed-runtime smoke, and verifier votes
   live in an external `candidate-evidence.json`/certification bundle keyed by that immutable identity;

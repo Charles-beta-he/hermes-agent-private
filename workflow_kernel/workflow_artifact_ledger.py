@@ -847,7 +847,18 @@ def apply_workflow_mutation(
             event["event_type"] == "mutation_committed"
             and event["payload"]["mutation"] == normalized
         ):
-            return _receipt_from_event(event)
+            # Exact retries must re-enter the authoritative writer transaction.
+            # A previous append may be visible after durability_unknown while its
+            # file/directory synchronization is still unconfirmed.
+            return _append_event_transaction(
+                ledger_path=ledger_path,
+                private_root=private_root,
+                artifact_id=event["artifact_id"],
+                event_type="mutation_committed",
+                payload=event["payload"],
+                idempotency_key=normalized["idempotency_key"],
+                occurred_at=now,
+            )
         _fail("idempotency_conflict", "idempotency key maps to another event")
     candidate, new_digest = _validated_candidate(normalized, state)
     return _append_event_transaction(

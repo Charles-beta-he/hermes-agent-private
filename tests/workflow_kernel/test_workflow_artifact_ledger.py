@@ -481,6 +481,66 @@ def test_idempotent_reapply_returns_original_receipt_and_conflict_is_rejected(
     assert rejected.value.code == "idempotency_conflict"
 
 
+def test_exact_apply_retry_resyncs_after_file_fsync_uncertainty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    private_root, ledger, state = _initialize(tmp_path)
+    mutation = _mutation(
+        state,
+        [
+            {
+                "op": "set_metadata",
+                "title": "Durability retry",
+                "goal": state["definition"]["goal"],
+                "non_goals": state["definition"]["non_goals"],
+                "constraints": state["definition"]["constraints"],
+            }
+        ],
+        key="apply-durability-retry",
+    )
+    real_fsync = artifact_ledger.os.fsync
+    failed = False
+
+    def descriptor_kind(descriptor: int) -> str:
+        return "directory" if stat.S_ISDIR(os.fstat(descriptor).st_mode) else "file"
+
+    def fail_first_file_sync(descriptor: int) -> None:
+        nonlocal failed
+        if not failed and descriptor_kind(descriptor) == "file":
+            failed = True
+            raise OSError("injected mutation file fsync failure")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(artifact_ledger.os, "fsync", fail_first_file_sync)
+    with pytest.raises(WorkflowArtifactLedgerError) as uncertain:
+        apply_workflow_mutation(
+            mutation,
+            ledger_path=ledger,
+            private_root=private_root,
+            now=LATER,
+        )
+    assert uncertain.value.code == "durability_unknown"
+    assert failed
+
+    retry_sync_kinds: list[str] = []
+
+    def track_retry(descriptor: int) -> None:
+        retry_sync_kinds.append(descriptor_kind(descriptor))
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(artifact_ledger.os, "fsync", track_retry)
+    receipt = apply_workflow_mutation(
+        mutation,
+        ledger_path=ledger,
+        private_root=private_root,
+        now="2026-07-25T03:02:00Z",
+    )
+
+    assert receipt["readback_verified"] is True
+    assert {"file", "directory"}.issubset(retry_sync_kinds)
+    assert len(read_workflow_artifact_history(ledger, private_root=private_root)) == 2
+
+
 def test_concurrent_writers_serialize_and_one_stale_candidate_loses(tmp_path: Path) -> None:
     private_root, ledger, state = _initialize(tmp_path)
     context = multiprocessing.get_context("spawn")
