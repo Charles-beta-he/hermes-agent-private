@@ -208,6 +208,15 @@ Commit:
 | No silent expansion | real CLI acknowledgement negative test dispatched before global startup/provider discovery; socket-deny and no-unrelated-state assertions; no network/external/taskpool/scheduler adapters |
 | Benchmark-local evaluation | regression matrix tagged procedural/simple/non-synthesis; no imported 93.3% claim |
 
+### P2 debt-clearing successor specification
+
+The prior immutable candidate `75deb01c0a7ff3c31cf0b56a3a6323080a7f8d3c` remains valid historical evidence but is superseded for debt-clearing work. Its two disclosed P2 findings define this successor's narrow scope:
+
+1. **Retry-branch path replacement regression evidence:** repository tests must separately force canonical-path replacement immediately before the final identity check for initialization exact retry and mutation exact retry. Both branches must return `durability_unknown`, preserve replacement bytes, keep detached history unchanged, and return no verified receipt. A mutation-sensitivity run must prove the tests fail when the canonical identity gate is removed.
+2. **Wheel build-method provenance:** the successor wheel must be built offline with build isolation disabled from an immutable disposable source archive. Hash-bound evidence must include the exact argv/cwd/source identity, relevant environment boundary, Python/uv/build-backend versions, stdout, stderr, exit code, wheel filename/size/SHA-256, and a receipt that binds those members.
+
+The successor must not change runtime behavior, public APIs, authority, network/external side-effect boundaries, or the trusted-private-root threat model. Any test, documentation, build receipt, artifact, packet, or claim change creates a new commit/tree/packet identity. Prior verifier votes transfer zero quorum credit. Closure requires fresh exact-tree architecture/correctness, security/concurrency/persistence, and wheel-provenance verdicts with P0=0, P1=0, and no remaining P2 in these two categories.
+
 ## 7. Fresh implementation evidence
 
 Candidate verification completed before immutable freeze:

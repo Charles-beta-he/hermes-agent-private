@@ -964,3 +964,113 @@ def test_existing_ledger_path_replacement_cannot_return_verified_receipt(
     assert uncertain.value.code == "durability_unknown"
     assert ledger.read_bytes() == replacement
     assert len(read_workflow_artifact_history(detached, private_root=private_root)) == 2
+
+
+def _replace_canonical_path_before_identity_check(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    ledger: Path,
+    detached: Path,
+    replacement: bytes,
+) -> None:
+    original_identity_check = artifact_ledger._require_canonical_ledger_identity
+    replaced = False
+
+    def replace_then_check(descriptor: int, anchor: Any) -> None:
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            os.replace(ledger, detached)
+            ledger.write_bytes(replacement)
+        original_identity_check(descriptor, anchor)
+
+    monkeypatch.setattr(
+        artifact_ledger,
+        "_require_canonical_ledger_identity",
+        replace_then_check,
+    )
+
+
+def test_exact_init_retry_rejects_path_replacement_before_identity_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    private_root = tmp_path / "private"
+    ledger = private_root / "artifact.jsonl"
+    detached = private_root / "detached-init.jsonl"
+    replacement = b'{"replacement":"init-retry"}\n'
+    definition = _definition()
+    receipt = initialize_workflow_artifact(
+        definition,
+        ledger_path=ledger,
+        private_root=private_root,
+        idempotency_key="init-path-replacement",
+        now=NOW,
+    )
+    _replace_canonical_path_before_identity_check(
+        monkeypatch,
+        ledger=ledger,
+        detached=detached,
+        replacement=replacement,
+    )
+
+    with pytest.raises(WorkflowArtifactLedgerError) as uncertain:
+        initialize_workflow_artifact(
+            definition,
+            ledger_path=ledger,
+            private_root=private_root,
+            idempotency_key="init-path-replacement",
+            now=LATER,
+        )
+
+    assert uncertain.value.code == "durability_unknown"
+    assert ledger.read_bytes() == replacement
+    history = read_workflow_artifact_history(detached, private_root=private_root)
+    assert len(history) == 1
+    assert history[0]["event_id"] == receipt["event_id"]
+
+
+def test_exact_apply_retry_rejects_path_replacement_before_identity_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    private_root, ledger, state = _initialize(tmp_path)
+    detached = private_root / "detached-apply.jsonl"
+    replacement = b'{"replacement":"apply-retry"}\n'
+    mutation = _mutation(
+        state,
+        [
+            {
+                "op": "set_metadata",
+                "title": "Apply retry identity",
+                "goal": state["definition"]["goal"],
+                "non_goals": state["definition"]["non_goals"],
+                "constraints": state["definition"]["constraints"],
+            }
+        ],
+        key="apply-path-replacement",
+    )
+    receipt = apply_workflow_mutation(
+        mutation,
+        ledger_path=ledger,
+        private_root=private_root,
+        now=LATER,
+    )
+    _replace_canonical_path_before_identity_check(
+        monkeypatch,
+        ledger=ledger,
+        detached=detached,
+        replacement=replacement,
+    )
+
+    with pytest.raises(WorkflowArtifactLedgerError) as uncertain:
+        apply_workflow_mutation(
+            mutation,
+            ledger_path=ledger,
+            private_root=private_root,
+            now="2026-07-25T03:02:00Z",
+        )
+
+    assert uncertain.value.code == "durability_unknown"
+    assert ledger.read_bytes() == replacement
+    history = read_workflow_artifact_history(detached, private_root=private_root)
+    assert len(history) == 2
+    assert history[-1]["event_id"] == receipt["event_id"]
