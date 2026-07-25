@@ -560,6 +560,26 @@ def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
     return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
 
 
+def _require_canonical_ledger_identity(descriptor: int, anchor: LedgerAnchor) -> None:
+    descriptor_identity = os.fstat(descriptor)
+    try:
+        path_identity = os.stat(
+            anchor.name,
+            dir_fd=anchor.directory_descriptor,
+            follow_symlinks=False,
+        )
+    except OSError as exc:
+        _fail(
+            "durability_unknown",
+            f"artifact ledger canonical path cannot be verified after commit: {exc}",
+        )
+    if not _same_file_identity(descriptor_identity, path_identity):
+        _fail(
+            "durability_unknown",
+            "artifact ledger canonical path changed during commit",
+        )
+
+
 def _cleanup_uncommitted_created_ledger(
     descriptor: int,
     anchor: LedgerAnchor,
@@ -606,6 +626,22 @@ def _append_event_transaction(
     occurred_at: str,
 ) -> dict[str, Any]:
     normalized_payload = _validate_payload(event_type, payload)
+    preflight_body: dict[str, Any] = {
+        "schema_version": "workflow_artifact_event_v1",
+        "artifact_id": artifact_id,
+        "sequence": 1,
+        "previous_event_id": None,
+        "idempotency_key": idempotency_key,
+        "occurred_at": occurred_at,
+        "event_type": event_type,
+        "payload": normalized_payload,
+    }
+    _normalized_event(
+        {
+            **preflight_body,
+            "event_id": derive_workflow_artifact_event_id_v1(preflight_body),
+        }
+    )
     with exclusive_ledger_lock(ledger_path, private_root=private_root) as anchor:
         if anchor is None:
             _fail("lock_anchor_missing", "artifact ledger lock did not provide an anchor")
@@ -638,6 +674,7 @@ def _append_event_transaction(
                 ):
                     os.fsync(descriptor)
                     os.fsync(anchor.directory_descriptor)
+                    _require_canonical_ledger_identity(descriptor, anchor)
                     return _receipt_from_event(existing)
                 if (
                     event_type == "mutation_committed"
@@ -647,6 +684,7 @@ def _append_event_transaction(
                 ):
                     os.fsync(descriptor)
                     os.fsync(anchor.directory_descriptor)
+                    _require_canonical_ledger_identity(descriptor, anchor)
                     return _receipt_from_event(existing)
                 _fail("idempotency_conflict", "idempotency key maps to another event")
 
@@ -759,6 +797,7 @@ def _append_event_transaction(
                 )
             ):
                 _fail("readback_mismatch", "artifact commit read-back does not match candidate")
+            _require_canonical_ledger_identity(descriptor, anchor)
             return _receipt_from_event(event)
         finally:
             if descriptor >= 0:

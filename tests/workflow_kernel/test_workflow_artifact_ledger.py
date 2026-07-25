@@ -711,6 +711,7 @@ def test_invalid_first_event_does_not_publish_an_empty_ledger(tmp_path: Path) ->
 
     assert rejected.value.code == "schema_invalid"
     assert not ledger.exists()
+    assert not private_root.exists()
 
 
 def test_short_first_write_removes_the_uncommitted_ledger(
@@ -743,15 +744,11 @@ def test_exact_retry_resyncs_file_and_directory_after_fsync_uncertainty(
 ) -> None:
     private_root = tmp_path / "private"
     ledger = private_root / "artifact.jsonl"
-    # Create and durably publish the lock anchor without creating the ledger.
-    with pytest.raises(WorkflowArtifactLedgerError):
-        initialize_workflow_artifact(
-            _definition(),
-            ledger_path=ledger,
-            private_root=private_root,
-            idempotency_key="invalid-anchor-probe",
-            now="not-a-timestamp",
-        )
+    # Provision the trusted private root and durable lock anchor explicitly.
+    with artifact_ledger.exclusive_ledger_lock(
+        ledger, private_root=private_root
+    ) as anchor:
+        assert anchor is not None
 
     real_fsync = artifact_ledger.os.fsync
     failed = False
@@ -923,3 +920,47 @@ def test_first_create_path_replacement_during_seek_preserves_replacement(
     assert replaced
     assert ledger.read_bytes() == victim
     assert moved_created.read_bytes() == b""
+
+
+def test_existing_ledger_path_replacement_cannot_return_verified_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    private_root, ledger, state = _initialize(tmp_path)
+    detached = private_root / "detached.jsonl"
+    replacement = b'{"replacement":true}\n'
+    mutation = _mutation(
+        state,
+        [
+            {
+                "op": "set_metadata",
+                "title": "Must not verify detached commit",
+                "goal": state["definition"]["goal"],
+                "non_goals": state["definition"]["non_goals"],
+                "constraints": state["definition"]["constraints"],
+            }
+        ],
+    )
+    original_write_all = artifact_ledger._write_all
+    replaced = False
+
+    def replace_before_write(descriptor: int, payload: bytes) -> None:
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            os.replace(ledger, detached)
+            ledger.write_bytes(replacement)
+        original_write_all(descriptor, payload)
+
+    monkeypatch.setattr(artifact_ledger, "_write_all", replace_before_write)
+
+    with pytest.raises(WorkflowArtifactLedgerError) as uncertain:
+        apply_workflow_mutation(
+            mutation,
+            ledger_path=ledger,
+            private_root=private_root,
+            now=LATER,
+        )
+
+    assert uncertain.value.code == "durability_unknown"
+    assert ledger.read_bytes() == replacement
+    assert len(read_workflow_artifact_history(detached, private_root=private_root)) == 2

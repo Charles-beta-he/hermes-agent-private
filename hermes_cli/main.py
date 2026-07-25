@@ -14551,6 +14551,16 @@ def main():
         cmd_version(args)
         return
 
+    # workflow-runtime is a bounded local-only control plane. Dispatch it before
+    # global startup/provider discovery so default-off validation cannot perform
+    # credential metadata probes or create unrelated Hermes state.
+    if getattr(args, "command", None) == "workflow-runtime":
+        if hasattr(args, "func"):
+            args.func(args)
+        else:
+            parser.print_help()
+        return
+
     # Discover Python plugins and register shell hooks once, before any
     # command that can fire lifecycle hooks.  Both are idempotent; gated
     # so introspection/management commands (hermes hooks list, cron

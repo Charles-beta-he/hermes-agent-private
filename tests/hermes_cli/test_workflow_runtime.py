@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -348,6 +349,94 @@ def test_artifact_cli_requires_explicit_write_local(tmp_path: Path, capsys) -> N
     assert payload["error"]["code"] == "write_local_flag_required"
     assert not ledger.exists()
     assert not Path(f"{ledger}.lock").exists()
+
+
+def test_real_artifact_cli_rejects_write_before_startup_or_network(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    definition = tmp_path / "definition.json"
+    ledger = tmp_path / "artifact.jsonl"
+    _write_json(definition, _definition())
+    script = """
+import socket
+import sys
+from pathlib import Path
+
+attempts = []
+def deny_connect(self, address):
+    attempts.append(repr(address))
+    raise RuntimeError(f"outbound attempt: {address!r}")
+socket.socket.connect = deny_connect
+
+from hermes_cli import main as cli_main
+sys.argv = [
+    "hermes", "workflow-runtime", "artifact-init",
+    "--definition", sys.argv[1],
+    "--artifact-ledger", sys.argv[2],
+    "--private-root", sys.argv[3],
+    "--idempotency-key", "offline-gate",
+    "--json",
+]
+try:
+    cli_main.main()
+except SystemExit as exc:
+    assert exc.code == 2, exc.code
+assert attempts == [], attempts
+assert not (Path.home() / ".hermes").exists()
+assert not Path(sys.argv[2]).exists()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(definition), str(ledger), str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[2],
+        env={**os.environ, "HOME": str(home)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_artifact_cli_write_gate_precedes_startup_handshake(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from hermes_cli import main as main_module
+
+    definition = tmp_path / "definition.json"
+    ledger = tmp_path / "artifact.jsonl"
+    _write_json(definition, _definition())
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("workflow-runtime must dispatch before global startup")
+
+    monkeypatch.setattr(main_module, "_prepare_agent_startup", forbidden)
+    monkeypatch.setattr(main_module, "_trigger_startup_handshake", forbidden)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "hermes",
+            "workflow-runtime",
+            "artifact-init",
+            "--definition",
+            str(definition),
+            "--artifact-ledger",
+            str(ledger),
+            "--private-root",
+            str(tmp_path),
+            "--idempotency-key",
+            "offline-gate",
+            "--json",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as rejected:
+        main_module.main()
+
+    assert rejected.value.code == 2
+    assert not ledger.exists()
 
 
 def test_artifact_cli_init_validate_apply_status_and_history(

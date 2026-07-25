@@ -177,13 +177,13 @@ Commit:
 1. Acquire the existing exclusive private-ledger writer lock.
 2. Read and replay under that same lock.
 3. Re-run all validation against the locked tip.
-4. Validate the complete candidate before first-ledger creation; create a missing ledger with descriptor-relative `O_EXCL` only after semantic validation succeeds.
+4. Validate the complete event envelope (including timestamp and idempotency key) plus the candidate before acquiring/creating the private-root lock or first ledger; repeat validation against the locked tip. Create a missing ledger with descriptor-relative `O_EXCL` only after validation succeeds.
 5. Build one canonical event and issue exactly one record write. A short write is never continued with a second append.
 6. `fsync` the ledger and, for first/empty-ledger publication, its containing directory.
 7. If first-ledger preparation (`fchmod`/append seek) or a partial append fails, sanitize the created descriptor, verify the descriptor and anchored path still identify the same single-linked inode, then remove only that exact uncommitted ledger and sync its directory. `O_EXCL` competition or path replacement must never delete the competing/replacement object. If exact cleanup cannot be confirmed, report `durability_unknown`.
 8. On a file or directory `fsync` failure after a complete write, report `durability_unknown`; an exact idempotent retry must re-sync both the ledger and directory before returning the original receipt.
 9. Read from the same anchored ledger descriptor and replay.
-10. Require revision/digest/event ID equality with the candidate.
+10. Require revision/digest/event ID equality with the candidate, then require the canonical no-follow path identity to still match the descriptor `(st_dev, st_ino)`. Missing/replaced canonical identity returns `durability_unknown`, never a verified receipt, and never touches the replacement object.
 11. Release the lock and return the receipt.
 
 ### Persistence and threat-model boundary
@@ -205,7 +205,7 @@ Commit:
 | Atomic commitment | short-write, partial-write rollback, torn-tail and read-back tests |
 | Receipt/read-back/replay | digest/event assertions and fresh-process CLI readback |
 | Runtime integration | compile/run accepts artifact ledger and binds resulting definition digest |
-| No silent expansion | CLI acknowledgement negative test; no network/external/taskpool/scheduler adapters |
+| No silent expansion | real CLI acknowledgement negative test dispatched before global startup/provider discovery; socket-deny and no-unrelated-state assertions; no network/external/taskpool/scheduler adapters |
 | Benchmark-local evaluation | regression matrix tagged procedural/simple/non-synthesis; no imported 93.3% claim |
 
 ## 7. Fresh implementation evidence
@@ -214,7 +214,7 @@ Candidate verification completed before immutable freeze:
 
 - Python related regression:
   `scripts/run_tests.sh tests/workflow_kernel tests/hermes_cli/test_workflow_runtime.py tests/contracts`
-  → 21 files, 549 tests passed, 0 failed.
+  → 21 files, 552 tests passed, 0 failed.
 - Python static checks:
   targeted `uv run ty check ...` and `uv run ruff check ...`
   → `All checks passed!` for both.
@@ -222,11 +222,16 @@ Candidate verification completed before immutable freeze:
   `pnpm --filter @hermes/workflow-contracts typecheck`, `test`, and `schema:check`
   → typecheck passed; 15 files / 269 tests passed; generated schemas match.
 - Artifact durability/adversarial slice:
-  24 tests passed, including one-write short-write rollback, first-create preparation cleanup,
+  25 tests passed, including one-write short-write rollback, first-create preparation cleanup,
   `O_EXCL` competition preservation, path-replacement fail-closed cleanup, separate initialize/apply
   exact-retry re-synchronization after `fsync` uncertainty, tamper rejection, and spawned exact-init
   contention. Mutation exact retry must re-enter the authoritative writer transaction rather than
-  return from a pre-lock idempotency fast path.
+  return from a pre-lock idempotency fast path. A verified receipt additionally requires canonical
+  path identity to still match the committed descriptor.
+- Real CLI local-control slice:
+  21 tests passed. `workflow-runtime` dispatches before global startup/provider discovery; default-off
+  artifact writes are rejected without socket attempts, provider credential resolution, unrelated
+  Hermes state creation, ledger creation, or lock creation.
 - Real CLI and wheel evidence is generated only after immutable freeze. The exact candidate commit/tree,
   evidence-root path, evidence-ledger digest, wheel digest, installed-runtime smoke, and verifier votes
   live in an external `candidate-evidence.json`/certification bundle keyed by that immutable identity;
