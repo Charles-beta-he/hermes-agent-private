@@ -639,15 +639,46 @@ def _append_event_transaction(
             project_workflow_artifact_events([*events, event])
             record = _compact_json(event) + b"\n"
             if descriptor < 0:
-                descriptor = open_ledger_file(
-                    ledger_path,
-                    os.O_RDWR | os.O_CREAT | os.O_EXCL,
-                    private_root=private_root,
-                    anchor=anchor,
-                    mode=PRIVATE_FILE_MODE,
-                )
-                os.fchmod(descriptor, PRIVATE_FILE_MODE)
-            record_offset = os.lseek(descriptor, 0, os.SEEK_END)
+                try:
+                    descriptor = open_ledger_file(
+                        ledger_path,
+                        os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                        private_root=private_root,
+                        anchor=anchor,
+                        mode=PRIVATE_FILE_MODE,
+                    )
+                    os.fchmod(descriptor, PRIVATE_FILE_MODE)
+                except OSError as exc:
+                    try:
+                        if descriptor >= 0:
+                            os.ftruncate(descriptor, 0)
+                        try:
+                            os.unlink(anchor.name, dir_fd=anchor.directory_descriptor)
+                        except FileNotFoundError:
+                            pass
+                        os.fsync(anchor.directory_descriptor)
+                    except OSError as cleanup_exc:
+                        _fail(
+                            "durability_unknown",
+                            "first-ledger preparation failed and cleanup could not be "
+                            f"confirmed: {exc}; cleanup: {cleanup_exc}",
+                        )
+                    _fail("ledger_write_failed", f"failed to prepare first ledger: {exc}")
+            try:
+                record_offset = os.lseek(descriptor, 0, os.SEEK_END)
+            except OSError as exc:
+                if created:
+                    try:
+                        os.ftruncate(descriptor, 0)
+                        os.unlink(anchor.name, dir_fd=anchor.directory_descriptor)
+                        os.fsync(anchor.directory_descriptor)
+                    except OSError as cleanup_exc:
+                        _fail(
+                            "durability_unknown",
+                            "first-ledger seek failed and cleanup could not be confirmed: "
+                            f"{exc}; cleanup: {cleanup_exc}",
+                        )
+                _fail("ledger_write_failed", f"failed to seek ledger append offset: {exc}")
             try:
                 _write_all(descriptor, record)
             except _LedgerWriteFailure as exc:

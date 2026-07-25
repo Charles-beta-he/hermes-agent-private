@@ -180,7 +180,7 @@ Commit:
 4. Validate the complete candidate before first-ledger creation; create a missing ledger with descriptor-relative `O_EXCL` only after semantic validation succeeds.
 5. Build one canonical event and issue exactly one record write. A short write is never continued with a second append.
 6. `fsync` the ledger and, for first/empty-ledger publication, its containing directory.
-7. On a partial append failure, truncate to the original offset and `fsync`; remove an uncommitted first ledger and sync its directory. If rollback fails, report `durability_unknown`.
+7. If first-ledger preparation (`fchmod`/append seek) or a partial append fails, truncate/remove the uncommitted first ledger and sync its directory. If rollback fails, report `durability_unknown`.
 8. On a file or directory `fsync` failure after a complete write, report `durability_unknown`; an exact idempotent retry must re-sync both the ledger and directory before returning the original receipt.
 9. Read from the same anchored ledger descriptor and replay.
 10. Require revision/digest/event ID equality with the candidate.
@@ -214,7 +214,7 @@ Candidate verification completed before immutable freeze:
 
 - Python related regression:
   `scripts/run_tests.sh tests/workflow_kernel tests/hermes_cli/test_workflow_runtime.py tests/contracts`
-  → 21 files, 544 tests passed, 0 failed.
+  → 21 files, 546 tests passed, 0 failed.
 - Python static checks:
   targeted `uv run ty check ...` and `uv run ruff check ...`
   → `All checks passed!` for both.
@@ -222,7 +222,7 @@ Candidate verification completed before immutable freeze:
   `pnpm --filter @hermes/workflow-contracts typecheck`, `test`, and `schema:check`
   → typecheck passed; 15 files / 269 tests passed; generated schemas match.
 - Artifact durability/adversarial slice:
-  19 tests passed, including one-write short-write rollback, first-create cleanup,
+  21 tests passed, including one-write short-write rollback, first-create preparation cleanup,
   file/directory `fsync` uncertainty retry, tamper rejection, and spawned exact-init contention.
 - Real CLI and wheel evidence root:
   `/Users/charles/.hermes/runs/dataflow-harness-absorption-final-evidence-20260725-precommit-04`.

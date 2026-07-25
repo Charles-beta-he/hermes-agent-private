@@ -736,3 +736,58 @@ def test_exact_retry_resyncs_file_and_directory_after_fsync_uncertainty(
     assert receipt["readback_verified"] is True
     assert {"file", "directory"}.issubset(retry_sync_kinds)
     assert len(read_workflow_artifact_history(ledger, private_root=private_root)) == 1
+
+
+@pytest.mark.parametrize("operation", ["fchmod", "lseek"])
+def test_first_create_preparation_failure_removes_uncommitted_ledger(
+    operation: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    private_root = tmp_path / "private"
+    ledger = private_root / "artifact.jsonl"
+    # Pre-provision the lock anchor so the injected regular-file failure targets the ledger.
+    with pytest.raises(WorkflowArtifactLedgerError):
+        initialize_workflow_artifact(
+            _definition(),
+            ledger_path=ledger,
+            private_root=private_root,
+            idempotency_key="invalid-preparation-anchor",
+            now="not-a-timestamp",
+        )
+
+    original = getattr(artifact_ledger.os, operation)
+    failed = False
+
+    def fail_regular_descriptor(descriptor: int, *args: Any) -> Any:
+        nonlocal failed
+        if (
+            not failed
+            and ledger.exists()
+            and stat.S_ISREG(os.fstat(descriptor).st_mode)
+        ):
+            failed = True
+            raise OSError(f"injected {operation} failure")
+        return original(descriptor, *args)
+
+    monkeypatch.setattr(artifact_ledger.os, operation, fail_regular_descriptor)
+    with pytest.raises(WorkflowArtifactLedgerError) as rejected:
+        initialize_workflow_artifact(
+            _definition(),
+            ledger_path=ledger,
+            private_root=private_root,
+            idempotency_key=f"failed-{operation}",
+            now=NOW,
+        )
+    assert rejected.value.code == "ledger_write_failed"
+    assert failed
+    assert not ledger.exists()
+
+    monkeypatch.setattr(artifact_ledger.os, operation, original)
+    receipt = initialize_workflow_artifact(
+        _definition(),
+        ledger_path=ledger,
+        private_root=private_root,
+        idempotency_key=f"retry-{operation}",
+        now=LATER,
+    )
+    assert receipt["readback_verified"] is True
+    assert len(read_workflow_artifact_history(ledger, private_root=private_root)) == 1
