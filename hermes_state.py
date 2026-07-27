@@ -743,6 +743,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     handoff_error TEXT,
     compression_failure_cooldown_until REAL,
     compression_failure_error TEXT,
+    compaction_count INTEGER NOT NULL DEFAULT 0,
+    summary_generation INTEGER NOT NULL DEFAULT 0,
     rewind_count INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (parent_session_id) REFERENCES sessions(id)
@@ -2580,6 +2582,8 @@ class SessionDB:
         thread_id: str = None,
         parent_session_id: str = None,
         cwd: str = None,
+        compaction_count: Optional[int] = None,
+        summary_generation: Optional[int] = None,
     ) -> None:
         """Insert a session row, enriching NULL metadata on conflict.
 
@@ -2603,9 +2607,10 @@ class SessionDB:
             conn.execute(
                 """INSERT INTO sessions (
                    id, source, user_id, session_key, chat_id, chat_type, thread_id,
-                   model, model_config, system_prompt, parent_session_id, cwd, started_at
+                   model, model_config, system_prompt, parent_session_id, cwd,
+                   compaction_count, summary_generation, started_at
                 )
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET
                        model = COALESCE(sessions.model, excluded.model),
                        model_config = COALESCE(sessions.model_config, excluded.model_config),
@@ -2629,6 +2634,8 @@ class SessionDB:
                     system_prompt,
                     parent_session_id,
                     cwd,
+                    int(compaction_count) if compaction_count is not None else 0,
+                    int(summary_generation) if summary_generation is not None else 0,
                     time.time(),
                 ),
             )
@@ -3471,6 +3478,145 @@ class SessionDB:
                 "clear_compression_failure_cooldown(%s) failed: %s",
                 session_id, exc,
             )
+
+    def get_compaction_state(self, session_id: str) -> Optional[Dict[str, int]]:
+        """Return durable compaction counters for a session, or None.
+
+        ``compaction_count`` is the cumulative number of compactions ever
+        applied to this logical conversation; ``summary_generation`` is the
+        current recursive-summary generation (how many times the live handoff
+        summary has been iteratively re-summarized since the last raw-evidence
+        rebase). Both survive process restart and session resume — the
+        compressor hydrates them via ``bind_session_state``. Returns None when
+        the session row does not exist so callers can distinguish "new
+        session" from "counters are zero".
+        """
+        if not session_id:
+            return None
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT compaction_count, summary_generation "
+                "FROM sessions WHERE id = ?",
+                (session_id,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "compaction_count": int(row["compaction_count"] or 0),
+            "summary_generation": int(row["summary_generation"] or 0),
+        }
+
+    def update_compaction_state(
+        self, session_id: str, compaction_count: int, summary_generation: int
+    ) -> None:
+        """Persist durable compaction counters for a session.
+
+        Used by the rotation compaction path (the new child session row must
+        inherit the lineage's cumulative counters). The in-place path persists
+        counters atomically inside :meth:`archive_and_compact` instead.
+        """
+        if not session_id:
+            return
+
+        def _do(conn):
+            conn.execute(
+                "UPDATE sessions SET compaction_count = ?, summary_generation = ? "
+                "WHERE id = ?",
+                (int(compaction_count), int(summary_generation), session_id),
+            )
+
+        self._execute_write(_do)
+
+    def get_compaction_rebase_messages(
+        self, session_id: str, *, max_lineage_depth: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Return raw rebase evidence across a rotation lineage, oldest first.
+
+        Ancestor sessions are immutable after legacy session rotation but their
+        messages remain ``active=1`` rather than being soft-archived. The current
+        session, by contrast, contributes only rows archived by in-place
+        compaction. Following ``parent_session_id`` therefore closes the evidence
+        gap without treating the current live transcript as durable history.
+
+        Summary rows are intentionally returned as batch/lineage delimiters;
+        :class:`ContextCompressor` removes their content and uses the boundaries
+        for protected-tail overlap detection.
+        """
+        depth_limit = max(1, int(max_lineage_depth))
+        with self._lock:
+            conn = self._conn
+            if conn is None:
+                return []
+            lineage: List[str] = []
+            seen: set[str] = set()
+            current: Optional[str] = session_id
+            while current:
+                if current in seen:
+                    raise sqlite3.DatabaseError(
+                        f"cycle detected in session lineage at {current}"
+                    )
+                if len(lineage) >= depth_limit:
+                    raise sqlite3.DatabaseError(
+                        f"session lineage exceeds max depth {depth_limit}"
+                    )
+                seen.add(current)
+                lineage.append(current)
+                row = conn.execute(
+                    "SELECT parent_session_id FROM sessions WHERE id = ?",
+                    (current,),
+                ).fetchone()
+                current = row["parent_session_id"] if row and row["parent_session_id"] else None
+
+        lineage.reverse()
+        evidence: List[Dict[str, Any]] = []
+        for lineage_id in lineage:
+            # Preserve every durable compaction archive from ancestors/current.
+            evidence.extend(self.get_compaction_archived_messages(lineage_id))
+            if lineage_id != session_id:
+                # A rotated ancestor keeps its final transcript active. It is
+                # immutable once the child is created, and includes the newest
+                # turns that may never have entered an in-place archive.
+                evidence.extend(self.get_messages(lineage_id))
+        return evidence
+
+    def get_compaction_archived_messages(
+        self, session_id: str
+    ) -> List[Dict[str, Any]]:
+        """Load the immutable compaction-archived rows for a session.
+
+        Returns ONLY rows soft-archived by :meth:`archive_and_compact`
+        (``active = 0 AND compacted = 1``) in insertion order — the durable
+        raw evidence a generation-limit rebase summarizes from. Rewind/undo
+        rows (``active = 0, compacted = 0``) are excluded: the user took
+        those back, so they are not evidence of the conversation. Live rows
+        (``active = 1``) are excluded too — the caller already holds the live
+        transcript.
+        """
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT * FROM messages WHERE session_id = ? "
+                "AND active = 0 AND compacted = 1 ORDER BY id",
+                (session_id,),
+            )
+            rows = cursor.fetchall()
+        result = []
+        for row in rows:
+            msg = dict(row)
+            if "content" in msg:
+                msg["content"] = self._decode_content(msg["content"])
+            if msg.get("tool_calls"):
+                try:
+                    msg["tool_calls"] = json.loads(msg["tool_calls"])
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(
+                        "Failed to deserialize tool_calls in "
+                        "get_compaction_archived_messages, falling back to []"
+                    )
+                    msg["tool_calls"] = []
+            result.append(msg)
+        return result
+
     # ──────────────────────────────────────────────────────────────────────
     # Compression locks
     # ──────────────────────────────────────────────────────────────────────
@@ -4980,7 +5126,12 @@ class SessionDB:
             return cursor.fetchone() is not None
 
     def archive_and_compact(
-        self, session_id: str, compacted_messages: List[Dict[str, Any]]
+        self,
+        session_id: str,
+        compacted_messages: List[Dict[str, Any]],
+        *,
+        compaction_count: Optional[int] = None,
+        summary_generation: Optional[int] = None,
     ) -> int:
         """Non-destructive in-place compaction for a single durable session id.
 
@@ -5004,6 +5155,12 @@ class SessionDB:
         This is the durability-preserving alternative to :meth:`replace_messages`
         for compaction. ``message_count`` is set to the ACTIVE (compacted) count,
         matching what the live load returns. Returns the new active count.
+
+        When ``compaction_count`` / ``summary_generation`` are provided, the
+        durable counters are updated in the SAME write transaction as the
+        archive+insert, so a crash can never persist an archive without its
+        counters (or counters without the archive) — the generation-limit
+        rebase logic depends on the two staying consistent.
         """
 
         def _do(conn):
@@ -5027,6 +5184,18 @@ class SessionDB:
                 "UPDATE sessions SET message_count = ?, tool_call_count = ? WHERE id = ?",
                 (inserted, tool_calls_total, session_id),
             )
+            if compaction_count is not None or summary_generation is not None:
+                conn.execute(
+                    "UPDATE sessions SET "
+                    "compaction_count = COALESCE(?, compaction_count), "
+                    "summary_generation = COALESCE(?, summary_generation) "
+                    "WHERE id = ?",
+                    (
+                        int(compaction_count) if compaction_count is not None else None,
+                        int(summary_generation) if summary_generation is not None else None,
+                        session_id,
+                    ),
+                )
             return inserted
 
         return self._execute_write(_do)

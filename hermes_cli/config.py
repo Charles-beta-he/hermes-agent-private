@@ -1421,6 +1421,11 @@ DEFAULT_CONFIG = {
                                       # Default False matches historical behavior; set to
                                       # True if you'd rather pause than silently lose
                                       # context turns when your aux model is flaky.
+        "max_summary_generations": 8,  # Stop recursively summarizing the existing
+                                      # handoff after this many generations. In-place
+                                      # sessions then rebuild from immutable archived
+                                      # originals; if those originals are unavailable,
+                                      # compression fails closed without dropping turns.
         "codex_gpt55_autoraise": True,  # Historical key name kept for compatibility.
                                       # When True, gpt-5.4 / gpt-5.5 on the ChatGPT Codex
                                       # OAuth route raise their compaction trigger to 85%
