@@ -659,6 +659,17 @@ def _compress_context_locked(
         except Exception:
             pass
 
+    # Snapshot the live compressor/session state before any lossy in-memory
+    # rewrite. If the durable in-place transaction fails, this is the rollback
+    # point: callers must receive the original transcript and counters/summary
+    # must continue to describe the durable DB state.
+    _pre_compression_state = {
+        "previous_summary": getattr(agent.context_compressor, "_previous_summary", None),
+        "compression_count": int(getattr(agent.context_compressor, "compression_count", 0)),
+        "summary_generation": int(getattr(agent.context_compressor, "summary_generation", 0)),
+    }
+    _pre_system_prompt = getattr(agent, "_cached_system_prompt", None)
+
     try:
         compressed = agent.context_compressor.compress(messages, current_tokens=approx_tokens, focus_topic=focus_topic, force=force)
     except TypeError:
@@ -674,6 +685,18 @@ def _compress_context_locked(
         # session isn't permanently blocked from future compression.
         _release_lock()
         raise
+
+    # Snapshot immediately after the compressor returns. commit_memory_session()
+    # below notifies every context engine via on_session_end(), which clears the
+    # compressor's per-session summary chain before the DB rewrite occurs. The
+    # snapshot is therefore the authoritative state produced by THIS successful
+    # compression and must be what we persist/rebind at the boundary.
+    _compaction_count_after_compress = int(
+        getattr(agent.context_compressor, "compression_count", 0)
+    )
+    _summary_generation_after_compress = int(
+        getattr(agent.context_compressor, "summary_generation", 0)
+    )
 
     # If compression aborted (aux LLM failed to produce a usable summary)
     # the compressor returns the input messages unchanged.  Surface the
@@ -760,7 +783,21 @@ def _compress_context_locked(
                     # for search/recovery (Teknium review — keep one durable id
                     # WITHOUT destroying history, unlike a hard replace_messages).
                     # See #38763.
-                    agent._session_db.archive_and_compact(agent.session_id, compressed)
+                    #
+                    # compaction_count / summary_generation are persisted in the
+                    # SAME write transaction as the archive+insert (see
+                    # SessionDB.archive_and_compact) so the durable counters can
+                    # never desync from the archive they describe: a crash
+                    # between "archive committed" and "counters committed"
+                    # would otherwise let a resumed session under-count its
+                    # recursive-summary depth and compound past
+                    # max_summary_generations without the rebase ever firing.
+                    agent._session_db.archive_and_compact(
+                        agent.session_id,
+                        compressed,
+                        compaction_count=_compaction_count_after_compress,
+                        summary_generation=_summary_generation_after_compress,
+                    )
                     # Reset the flush identity set so the next turn's appends are
                     # diffed against the COMPACTED transcript: the compacted dicts
                     # are passed as conversation_history next turn and skipped by
@@ -816,6 +853,8 @@ def _compress_context_locked(
                             model=agent.model,
                             model_config=agent._session_init_model_config,
                             parent_session_id=old_session_id,
+                            compaction_count=_compaction_count_after_compress,
+                            summary_generation=_summary_generation_after_compress,
                         )
                     except Exception as _cs_err:
                         # The child row could not be created (e.g. FK constraint,
@@ -856,6 +895,10 @@ def _compress_context_locked(
                         agent._session_db_created = True
                         raise
                     agent._session_db_created = True
+                    # Compaction counters were inserted atomically with the child
+                    # row above. No second write is allowed here: a crash or write
+                    # failure between child creation and counter persistence would
+                    # otherwise create a durable zero-generation continuation.
                     # Carry a persistent /goal onto the continuation session.
                     # Compression mints a fresh child id; load_goal does a flat
                     # per-session lookup with no parent walk, so without this an
@@ -897,18 +940,51 @@ def _compress_context_locked(
                 # Reset flush cursor — new session starts with no messages written
                 agent._last_flushed_db_idx = 0
             except Exception as e:
-                # If the rotation rolled back to the parent (orphan-avoidance
-                # above), agent.session_id is the still-indexed parent and
-                # old_session_id was cleared — so this is recovery, not an
-                # un-indexed orphan. Otherwise an earlier step failed before the
-                # child was created and the warning's original meaning holds.
-                if locals().get("old_session_id") is None and not in_place:
+                if in_place:
+                    compressor = agent.context_compressor
+                    compressor._previous_summary = _pre_compression_state["previous_summary"]
+                    compressor.compression_count = _pre_compression_state["compression_count"]
+                    compressor.summary_generation = _pre_compression_state["summary_generation"]
+                    compressor._last_compress_aborted = True
+                    compressor._last_summary_error = f"in-place compaction persistence failed: {e}"
+                    agent._cached_system_prompt = _pre_system_prompt
+                    agent._last_compaction_in_place = False
                     logger.warning(
-                        "Compression rotation aborted and rolled back to the "
-                        "parent session (%s): %s", agent.session_id or "?", e,
+                        "In-place Session DB compaction failed — restored live transcript "
+                        "and compressor state; no compaction boundary committed: %s", e,
                     )
-                else:
-                    logger.warning("Session DB compression split failed — new session will NOT be indexed: %s", e)
+                    existing_prompt = _pre_system_prompt
+                    if not existing_prompt:
+                        existing_prompt = agent._build_system_prompt(system_message)
+                    return messages, existing_prompt
+                # Child creation failed after the parent lifecycle callback had
+                # already reset the compressor. The parent was reopened above,
+                # so no durable compaction boundary exists: restore the live
+                # transcript and every lineage value to the pre-compression
+                # snapshot instead of continuing with an uncommitted summary.
+                if locals().get("old_session_id") is None:
+                    compressor = agent.context_compressor
+                    compressor._previous_summary = _pre_compression_state["previous_summary"]
+                    compressor.compression_count = _pre_compression_state["compression_count"]
+                    compressor.summary_generation = _pre_compression_state["summary_generation"]
+                    compressor._last_compress_aborted = True
+                    compressor._last_summary_error = f"rotation persistence failed: {e}"
+                    agent._cached_system_prompt = _pre_system_prompt
+                    agent._last_compaction_in_place = False
+                    logger.warning(
+                        "Compression rotation aborted and rolled back to parent "
+                        "session %s — restored live transcript and compressor "
+                        "state; no compaction boundary committed: %s",
+                        agent.session_id or "?", e,
+                    )
+                    existing_prompt = _pre_system_prompt
+                    if not existing_prompt:
+                        existing_prompt = agent._build_system_prompt(system_message)
+                    return messages, existing_prompt
+                logger.warning(
+                    "Session DB compression split failed — new session will NOT "
+                    "be indexed: %s", e,
+                )
 
         # Compaction-boundary bookkeeping, computed once. `old_session_id` is only
         # bound in the rotation branch; in-place leaves it unset. `_boundary_parent`

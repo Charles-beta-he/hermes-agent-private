@@ -1692,6 +1692,19 @@ def init_agent(
     compression_abort_on_summary_failure = str(
         _compression_cfg.get("abort_on_summary_failure", False)
     ).lower() in {"true", "1", "yes"}
+    # Recursive-summary generation cap: once the live handoff summary has been
+    # iteratively re-summarized this many times, the compressor rebases from
+    # immutable archived original rows instead of compounding another lossy
+    # pass. Default sits well below the >20-pass point users report material
+    # quality degradation at.
+    try:
+        compression_max_summary_generations = int(
+            _compression_cfg.get("max_summary_generations", 8)
+        )
+    except (TypeError, ValueError):
+        compression_max_summary_generations = 8
+    if compression_max_summary_generations < 1:
+        compression_max_summary_generations = 8
     # In-place compaction: when True, compress_context() rewrites the message
     # list + rebuilds the system prompt WITHOUT rotating the session id (no
     # parent_session_id chain, no `name #N` renumber). See #38763 and
@@ -1955,6 +1968,7 @@ def init_agent(
             api_mode=agent.api_mode,
             abort_on_summary_failure=compression_abort_on_summary_failure,
             max_tokens=agent.max_tokens,
+            max_summary_generations=compression_max_summary_generations,
         )
     _bind_session_state = getattr(agent.context_compressor, "bind_session_state", None)
     if callable(_bind_session_state):

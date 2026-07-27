@@ -227,6 +227,19 @@ _AUTO_FOCUS_MAX_CHARS = 700
 # back the old large-tool-output case where nothing can be compacted.
 _MAX_TAIL_MESSAGE_FLOOR = 8
 
+# Maximum recursive-summary generations before the compressor must rebase the
+# summary from immutable archived original messages instead of re-summarizing
+# its own previous summary again.  Each iterative update compounds lossy
+# abstraction; users report material quality degradation past ~20 recursive
+# passes, so the default sits well below that point.  Configurable via
+# ``compression.max_summary_generations``.
+_DEFAULT_MAX_SUMMARY_GENERATIONS = 8
+# Share of the compression threshold (which the feasibility check lowers to the
+# auxiliary summarizer's context window when needed) that a generation-limit
+# rebase may spend on serialized input evidence.  Leaves room for the prompt
+# template and the summary output inside the same aux context window.
+_REBASE_INPUT_BUDGET_RATIO = 0.60
+
 
 _PATH_MENTION_RE = re.compile(r"(?:/|~/?|[A-Za-z]:\\)[^\s`'\")\]}<>]+")
 
@@ -717,6 +730,11 @@ class ContextCompressor(ContextEngine):
         self._context_probed = False
         self._context_probe_persistable = False
         self._previous_summary = None
+        # New logical conversation — both per-lineage counters restart. Rotation
+        # preserves them through the durable child row and re-hydration rather
+        # than by leaking mutable state across session boundaries.
+        self.compression_count = 0
+        self.summary_generation = 0
         self._last_summary_error = None
         self._last_summary_dropped_count = 0
         self._last_summary_fallback_used = False
@@ -752,6 +770,8 @@ class ContextCompressor(ContextEngine):
         surface the moment the owning session ends.
         """
         self._previous_summary = None
+        self.compression_count = 0
+        self.summary_generation = 0
         self._last_summary_error = None
         self._last_summary_dropped_count = 0
         self._last_summary_fallback_used = False
@@ -769,12 +789,54 @@ class ContextCompressor(ContextEngine):
         self.awaiting_real_usage_after_compression = False
 
     def bind_session_state(self, session_db: Any = None, session_id: str = "") -> None:
-        """Bind the current session row so durable cooldowns can round-trip."""
+        """Bind the current session row so durable cooldowns can round-trip.
+
+        Also hydrates ``compression_count`` / ``summary_generation`` from the
+        durable ``sessions`` row when one already exists for *session_id* —
+        the resume path (process restart, gateway reconnect). A brand-new
+        session_id has no row yet, so ``get_compaction_state`` returns None
+        and the freshly-constructed in-memory zeros stand. Without this, a
+        process restart mid-lineage would silently reset the recursive-
+        summary generation counter to zero, letting compaction compound past
+        ``max_summary_generations`` unnoticed.
+        """
         self._session_db = session_db
         self._session_id = session_id or ""
+        self._compaction_state_hydration = "missing"
         self._summary_failure_cooldown_until = 0.0
         self._last_summary_error = None
         self.get_active_compression_failure_cooldown()
+
+        getter = getattr(session_db, "get_compaction_state", None)
+        if session_db is not None and self._session_id and callable(getter):
+            try:
+                durable = getter(self._session_id)
+            except sqlite3.Error as exc:
+                logger.debug(
+                    "compaction state hydration failed for session=%s: %s",
+                    self._session_id, exc,
+                )
+                durable = None
+                self._compaction_state_hydration = "failed"
+            except Exception as exc:
+                logger.debug(
+                    "compaction state hydration failed for session=%s: %s",
+                    self._session_id, exc,
+                )
+                durable = None
+                self._compaction_state_hydration = "failed"
+            if durable:
+                self.compression_count = int(
+                    durable.get(
+                        "compaction_count", getattr(self, "compression_count", 0)
+                    )
+                )
+                self.summary_generation = int(
+                    durable.get(
+                        "summary_generation", getattr(self, "summary_generation", 0)
+                    )
+                )
+                self._compaction_state_hydration = "loaded"
 
     def on_session_start(self, session_id: str, **kwargs) -> None:
         """Bind session-scoped compression state for a new or resumed session."""
@@ -1003,6 +1065,7 @@ class ContextCompressor(ContextEngine):
         api_mode: str = "",
         abort_on_summary_failure: bool = False,
         max_tokens: int | None = None,
+        max_summary_generations: int = _DEFAULT_MAX_SUMMARY_GENERATIONS,
     ):
         self.model = model
         self.base_url = base_url
@@ -1026,6 +1089,17 @@ class ContextCompressor(ContextEngine):
         # When False (default = historical behavior), insert a
         # deterministic "summary unavailable" handoff and drop the middle window.
         self.abort_on_summary_failure = abort_on_summary_failure
+        # Recursive-summary generation cap: once the live summary has been
+        # iteratively re-summarized this many times, the next compaction must
+        # rebase from immutable archived original rows (or fail closed if no
+        # raw evidence is readable) instead of compounding another lossy pass.
+        try:
+            max_summary_generations = int(max_summary_generations)
+        except (TypeError, ValueError):
+            max_summary_generations = _DEFAULT_MAX_SUMMARY_GENERATIONS
+        if max_summary_generations < 1:
+            max_summary_generations = _DEFAULT_MAX_SUMMARY_GENERATIONS
+        self.max_summary_generations = max_summary_generations
 
         self.context_length = get_model_context_length(
             model, base_url=base_url, api_key=api_key,
@@ -1042,6 +1116,10 @@ class ContextCompressor(ContextEngine):
             self.context_length, threshold_percent, self.max_tokens,
         )
         self.compression_count = 0
+        # Recursive-summary generation depth since the last raw-evidence
+        # rebase (or since the start of the lineage). Hydrated from durable
+        # session state in bind_session_state() so it survives resume.
+        self.summary_generation = 0
 
         # Derive token budgets: ratio is relative to the threshold, not total context
         target_tokens = int(self.threshold_tokens * self.summary_target_ratio)
@@ -1676,6 +1754,214 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
         self.summary_model = ""  # empty = use main model
         self._clear_compression_failure_cooldown()  # no cooldown — retry immediately
 
+    def _rebase_summary_from_archive(
+        self,
+        current_turns: List[Dict[str, Any]],
+        *,
+        focus_topic: Optional[str] = None,
+    ) -> Optional[str]:
+        """Rebase the recursive-summary chain from immutable archived originals.
+
+        Called once the live handoff summary has been iteratively re-summarized
+        ``max_summary_generations`` times. Generating yet another summary FROM
+        the existing summary would compound lossy abstraction indefinitely —
+        users report material quality degradation past ~20 recursive passes.
+        Instead, this pulls the durable original rows this session archived via
+        ``archive_and_compact`` (in-place compaction — the only mode with a
+        single durable lineage of archived rows to rebase from; sessions bound
+        to a store without this durable archive simply fail closed below),
+        excludes any row that is itself a past compaction summary, preserves
+        intentional repeated exchanges, removes only overlap proven by identical
+        durable message provenance, and bounds the deterministic evidence to the
+        auxiliary summarizer's input budget before handing it to
+        :meth:`_generate_summary` as a from-scratch prompt
+        — deliberately NOT an iterative update over the stale summary chain.
+
+        Returns the new summary string on success, or None if raw evidence
+        could not be read/found or the summarizer call itself failed. Callers
+        MUST treat None as fail-closed: return the live transcript unchanged,
+        never drop messages or archive on a failed rebase.
+        """
+        session_db = getattr(self, "_session_db", None)
+        session_id = getattr(self, "_session_id", "")
+        getter = getattr(session_db, "get_compaction_rebase_messages", None)
+        if not callable(getter):
+            # Backward-compatible adapter fallback for tests/third-party state
+            # stores that only expose current-session archive rows.
+            getter = getattr(session_db, "get_compaction_archived_messages", None)
+        if session_db is None or not session_id or not callable(getter):
+            self._last_summary_error = (
+                "no durable session store bound — cannot rebase from archived evidence"
+            )
+            return None
+
+        try:
+            archived = getter(session_id)
+        except sqlite3.Error as exc:
+            self._last_summary_error = f"archived evidence read failed: {exc}"
+            return None
+        except Exception as exc:
+            self._last_summary_error = f"archived evidence read failed: {exc}"
+            return None
+
+        if not isinstance(archived, list):
+            self._last_summary_error = "archived evidence reader returned a non-list payload"
+            return None
+
+        # Split the archive into compaction batches at archived summary rows.
+        # Summary markers are boundaries only. Distinct persisted rows are kept
+        # even when their text repeats; overlap is removable only when both sides
+        # carry the same durable session/message identity.
+        segments: List[List[Dict[str, Any]]] = []
+        segment: List[Dict[str, Any]] = []
+        for msg in archived:
+            if not isinstance(msg, dict):
+                continue
+            if self._is_context_summary_content(msg.get("content")):
+                if segment:
+                    segments.append(segment)
+                    segment = []
+                continue
+            segment.append(msg)
+        if segment:
+            segments.append(segment)
+
+        def _provenance(msg: Dict[str, Any]) -> Optional[tuple]:
+            """Return durable identity; content similarity is not provenance."""
+            message_id = msg.get("id")
+            session_id = msg.get("session_id")
+            if message_id is None or not session_id:
+                return None
+            return (str(session_id), int(message_id))
+
+        def _provenance_overlap(
+            left: List[Dict[str, Any]], right: List[Dict[str, Any]],
+        ) -> int:
+            for size in range(min(len(left), len(right)), 0, -1):
+                left_ids = [_provenance(msg) for msg in left[-size:]]
+                right_ids = [_provenance(msg) for msg in right[:size]]
+                if all(identity is not None for identity in left_ids) and left_ids == right_ids:
+                    return size
+            return 0
+
+        deduped: List[Dict[str, Any]] = []
+        for current in segments:
+            # Never infer protected-tail identity from role/content equality:
+            # an intentionally repeated exchange is still distinct evidence.
+            overlap = _provenance_overlap(deduped, current)
+            deduped.extend(current[overlap:])
+
+        if not deduped:
+            self._last_summary_error = (
+                "no durable raw evidence survived filtering — archived rows "
+                "were all prior compaction summaries or empty"
+            )
+            return None
+
+        # Merge the current compression window as one more batch. Remove only a
+        # provenance-identical archived suffix/current prefix; content equality
+        # alone is not evidence that an intentional repeat is a carried tail.
+        current_evidence = [msg for msg in current_turns if isinstance(msg, dict)]
+        current_overlap = _provenance_overlap(deduped, current_evidence)
+        combined_evidence = deduped + current_evidence[current_overlap:]
+
+        # Bound the ENTIRE rebase input, not just the archive portion. The old
+        # implementation appended an unbounded current window after the archive
+        # budget and could exceed the auxiliary model's context. Select a stable
+        # head+tail slice so earliest requirements and latest decisions/evidence
+        # both survive. Per-message cost uses the exact serializer, including its
+        # content/tool-argument truncation behavior.
+        char_budget = max(
+            1,
+            int(self.threshold_tokens * _REBASE_INPUT_BUDGET_RATIO * _CHARS_PER_TOKEN),
+        )
+        def _fit_endpoint(
+            msg: Dict[str, Any], budget: int, *, label: str, keep_tail: bool = False,
+        ) -> Optional[Dict[str, Any]]:
+            serialized = self._serialize_for_summary([msg])
+            if len(serialized) <= budget:
+                return msg
+            marker = f"[BUDGETED {label} ENDPOINT]\n"
+            low, high = 0, len(serialized)
+            fitted: Optional[Dict[str, Any]] = None
+            while low <= high:
+                payload_chars = (low + high) // 2
+                payload = (
+                    serialized[-payload_chars:]
+                    if keep_tail and payload_chars
+                    else serialized[:payload_chars]
+                )
+                candidate = {"role": "user", "content": marker + payload}
+                if len(self._serialize_for_summary([candidate])) <= budget:
+                    fitted = candidate
+                    low = payload_chars + 1
+                else:
+                    high = payload_chars - 1
+            return fitted
+
+        serialized_all = self._serialize_for_summary(combined_evidence)
+        if len(serialized_all) <= char_budget:
+            bounded = combined_evidence
+        elif len(combined_evidence) == 1:
+            serialized = serialized_all
+            if len(serialized) <= char_budget:
+                bounded = combined_evidence
+            else:
+                marker = "[BUDGETED RAW-EVIDENCE ENDPOINTS]\n"
+                low, high = 0, len(serialized)
+                fitted: Optional[Dict[str, Any]] = None
+                while low <= high:
+                    payload_chars = (low + high) // 2
+                    head_chars = (payload_chars + 1) // 2
+                    tail_chars = payload_chars // 2
+                    payload = serialized[:head_chars]
+                    if tail_chars:
+                        payload += (
+                            "\n...[middle evidence omitted for budget]...\n"
+                            + serialized[-tail_chars:]
+                        )
+                    candidate = {"role": "user", "content": marker + payload}
+                    if len(self._serialize_for_summary([candidate])) <= char_budget:
+                        fitted = candidate
+                        low = payload_chars + 1
+                    else:
+                        high = payload_chars - 1
+                bounded = [fitted] if fitted is not None else []
+        else:
+            # Reserve independent space for both endpoints first. An oversized
+            # earliest message may never consume the latest endpoint's share.
+            usable = max(0, char_budget - 8)
+            head_quota = usable // 2
+            tail_quota = usable - head_quota
+            first = _fit_endpoint(
+                combined_evidence[0], head_quota, label="EARLIEST",
+            )
+            last = _fit_endpoint(
+                combined_evidence[-1], tail_quota,
+                label="LATEST", keep_tail=True,
+            )
+            bounded = [msg for msg in (first, last) if msg is not None]
+
+        if not bounded or len(self._serialize_for_summary(bounded)) > char_budget:
+            self._last_summary_error = "raw evidence budget is too small for both endpoints"
+            return None
+
+        # Force the from-scratch prompt: the whole point of rebasing is to
+        # stop compounding a summary-of-a-summary, so the stale chain must not
+        # be fed back in even though it is about to be overwritten on success.
+        _saved_previous_summary = self._previous_summary
+        self._previous_summary = None
+        self._strict_rebase_provider_budget = True
+        try:
+            summary = self._generate_summary(bounded, focus_topic=focus_topic)
+        finally:
+            self._strict_rebase_provider_budget = False
+        if summary is None:
+            # Rebase did not happen — restore the prior chain so it remains
+            # the durable record instead of silently vanishing.
+            self._previous_summary = _saved_previous_summary
+        return summary
+
     def _generate_summary(
         self,
         turns_to_summarize: List[Dict[str, Any]],
@@ -1876,6 +2162,26 @@ Use this exact structure:
 FOCUS TOPIC: "{focus_topic}"
 This compaction should PRIORITISE preserving all information related to the focus topic above. For content related to "{focus_topic}", include full detail — exact values, file paths, command outputs, error messages, and decisions. For content NOT related to the focus topic, summarise more aggressively (brief one-liners or omit if truly irrelevant). The focus topic sections should receive roughly 60-70% of the summary token budget. Even for the focus topic, NEVER preserve API keys, tokens, passwords, or credentials — use [REDACTED]."""
 
+        max_output_tokens = int(summary_budget * 1.3)
+        if getattr(self, "_strict_rebase_provider_budget", False):
+            provider_messages = [{"role": "user", "content": prompt}]
+            framed_chars = len(
+                json.dumps(
+                    provider_messages,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+            context_chars = max(1, int(self.threshold_tokens * _CHARS_PER_TOKEN))
+            reserved_output_chars = max_output_tokens * _CHARS_PER_TOKEN
+            if framed_chars + reserved_output_chars > context_chars:
+                self._last_summary_error = (
+                    "complete rebase provider envelope exceeds context budget: "
+                    f"prompt_chars={framed_chars} output_tokens={max_output_tokens} "
+                    f"context_tokens={self.threshold_tokens}"
+                )
+                return None
+
         try:
             call_kwargs = {
                 "task": "compression",
@@ -1887,7 +2193,7 @@ This compaction should PRIORITISE preserving all information related to the focu
                     "api_mode": self.api_mode,
                 },
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": int(summary_budget * 1.3),
+                "max_tokens": max_output_tokens,
                 # timeout resolved from auxiliary.compression.timeout config by call_llm
             }
             if self.summary_model:
@@ -2818,6 +3124,13 @@ This compaction should PRIORITISE preserving all information related to the focu
             compress_end,
         )
         if summary_idx is not None:
+            if getattr(self, "_compaction_state_hydration", "missing") == "failed":
+                self._last_summary_error = (
+                    "durable compaction state unavailable for persisted summary — "
+                    "refusing to guess recursive generation"
+                )
+                self._last_compress_aborted = True
+                return messages
             if summary_body and not self._previous_summary:
                 self._previous_summary = summary_body
             turns_to_summarize = messages[max(compress_start, summary_idx + 1):compress_end]
@@ -2851,9 +3164,71 @@ This compaction should PRIORITISE preserving all information related to the focu
                 tail_msgs,
             )
 
+        # Legacy adapters and tests may restore a compressor through ``__new__``
+        # or an older serialized shape without the generation-governance fields.
+        # Normalize that compatibility state before either the limit check or
+        # the post-summary increment so a handoff remains usable rather than
+        # raising AttributeError mid-compression.
+        try:
+            self.summary_generation = max(
+                0, int(getattr(self, "summary_generation", 0))
+            )
+        except (TypeError, ValueError):
+            self.summary_generation = 0
+        try:
+            self.max_summary_generations = int(
+                getattr(
+                    self,
+                    "max_summary_generations",
+                    _DEFAULT_MAX_SUMMARY_GENERATIONS,
+                )
+            )
+        except (TypeError, ValueError):
+            self.max_summary_generations = _DEFAULT_MAX_SUMMARY_GENERATIONS
+        if self.max_summary_generations < 1:
+            self.max_summary_generations = _DEFAULT_MAX_SUMMARY_GENERATIONS
+
         # Phase 3: Generate structured summary
         summary_focus_topic = focus_topic or self._derive_auto_focus_topic(messages)
-        summary = self._generate_summary(turns_to_summarize, focus_topic=summary_focus_topic)
+        # Generation-limit boundary: once the live handoff summary has been
+        # iteratively re-summarized max_summary_generations times, rebase from
+        # immutable archived originals instead of compounding another lossy
+        # pass over the summary itself. Below the limit, behavior is
+        # unchanged from the historical iterative-update path.
+        _had_previous_summary_before_call = bool(self._previous_summary)
+        _rebase_from_archive = (
+            _had_previous_summary_before_call
+            and self.summary_generation >= self.max_summary_generations
+        )
+        if _rebase_from_archive:
+            summary = self._rebase_summary_from_archive(
+                turns_to_summarize, focus_topic=summary_focus_topic,
+            )
+            if summary is None:
+                # Fail closed (negative case: "Rebase failure must not archive
+                # or drop the current live transcript"). This is unconditional
+                # — independent of abort_on_summary_failure — because letting
+                # a rebase failure fall through to the destructive fallback
+                # path below would drop live messages while raw evidence was
+                # exactly what wasn't available to preserve them.
+                n_skipped = compress_end - compress_start
+                self._last_summary_dropped_count = 0
+                self._last_summary_fallback_used = False
+                self._last_compress_aborted = True
+                if not self.quiet_mode:
+                    logger.warning(
+                        "Generation-limit rebase failed (%s) — failing closed: "
+                        "%d message(s) preserved unchanged; the live transcript "
+                        "was NOT dropped or rotated. Retry with /compress once "
+                        "durable archived evidence is available, or start "
+                        "fresh with /new.",
+                        self._last_summary_error or "no durable raw evidence available",
+                        n_skipped,
+                    )
+                return messages
+        else:
+            summary = self._generate_summary(turns_to_summarize, focus_topic=summary_focus_topic)
+        _llm_summary_succeeded = bool(summary)
 
         # If summary generation failed, behavior splits on
         # ``abort_on_summary_failure`` (config: compression.abort_on_summary_failure):
@@ -3048,6 +3423,18 @@ This compaction should PRIORITISE preserving all information related to the focu
             compressed.append(msg)
 
         self.compression_count += 1
+        # Recursive-summary generation bookkeeping — only advances when an
+        # actual LLM summary succeeded (the deterministic static fallback
+        # below is a different degraded mode and does not participate in the
+        # recursive chain, so it deliberately leaves summary_generation
+        # untouched). A rebase always resets to generation 1 (fresh baseline);
+        # a from-scratch first summary also starts at 1; an iterative update
+        # over an existing summary advances the depth by one.
+        if _llm_summary_succeeded:
+            if _rebase_from_archive or not _had_previous_summary_before_call:
+                self.summary_generation = 1
+            else:
+                self.summary_generation += 1
 
         compressed = self._sanitize_tool_pairs(compressed)
 

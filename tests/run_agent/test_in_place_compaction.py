@@ -44,6 +44,7 @@ def _make_agent(session_db, session_id, *, in_place):
     agent.context_compressor._last_compress_aborted = False
     agent.context_compressor._last_summary_error = None
     agent.context_compressor.compression_count = 1
+    agent.context_compressor.summary_generation = 1
     return agent
 
 
@@ -100,6 +101,8 @@ class TestInPlaceCompaction:
                 "recent reply",
             ]
             assert row["message_count"] == 2  # live (active) count
+            assert row["compaction_count"] == 1
+            assert row["summary_generation"] == 1
             # NON-DESTRUCTIVE: the 8 seeded originals survive at active=0
             # alongside the 2 compacted rows — nothing was DELETEd.
             all_rows = db.get_messages(sid, include_inactive=True)
@@ -123,6 +126,45 @@ class TestInPlaceCompaction:
             assert agent._last_compaction_in_place is True
             # Live transcript actually shrank.
             assert len(compressed) == 2
+
+    def test_in_place_db_failure_restores_live_state_and_transcript(self):
+        """A failed durable rewrite must not leak compressed in-memory state."""
+        from hermes_state import SessionDB
+        from agent.conversation_compression import compress_context
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = SessionDB(db_path=Path(tmp) / "t.db")
+            sid = "20260619_persist_fail"
+            _seed(db, sid, "persist-fail")
+            agent = _make_agent(db, sid, in_place=True)
+            agent.context_compressor._previous_summary = "prior durable summary"
+            agent.context_compressor.compression_count = 4
+            agent.context_compressor.summary_generation = 3
+
+            def _advancing_compress(messages, **_kwargs):
+                agent.context_compressor._previous_summary = "new uncommitted summary"
+                agent.context_compressor.compression_count = 5
+                agent.context_compressor.summary_generation = 4
+                return [{"role": "user", "content": "compressed but not durable"}]
+
+            agent.context_compressor.compress = _advancing_compress
+            messages = [{"role": "user", "content": f"m{i}"} for i in range(8)]
+            with patch.object(
+                db,
+                "archive_and_compact",
+                side_effect=RuntimeError("simulated write failure"),
+            ):
+                returned, _ = compress_context(
+                    agent, messages, approx_tokens=100_000, system_message="sys"
+                )
+
+            assert returned == messages
+            assert agent.context_compressor._previous_summary == "prior durable summary"
+            assert agent.context_compressor.compression_count == 4
+            assert agent.context_compressor.summary_generation == 3
+            assert agent.context_compressor._last_compress_aborted is True
+            assert agent._last_compaction_in_place is False
+            assert len(db.get_messages_as_conversation(sid)) == 8
 
     def test_in_place_alternation_preserved(self):
         """The compacted list must not introduce consecutive same-role messages."""
@@ -213,6 +255,11 @@ class TestRotationFallbackWhenFlagOff:
             ).fetchall()
             assert len(child) == 1
             assert child[0]["title"] == "my-research #2"
+            assert db.get_compaction_state(agent.session_id) == {
+                "compaction_count": 1,
+                "summary_generation": 1,
+            }
+            assert agent.context_compressor.summary_generation == 1
             # Flush cursor reset for the new row.
             assert agent._last_flushed_db_idx == 0
             # Rotation mode does NOT set the in-place signal.
@@ -255,6 +302,7 @@ class TestInPlaceConfigDefault:
         from hermes_cli.config import DEFAULT_CONFIG
 
         assert DEFAULT_CONFIG["compression"].get("in_place") is True
+        assert DEFAULT_CONFIG["compression"].get("max_summary_generations") == 8
 
 
 class TestCompactedTurnsStaySearchable:

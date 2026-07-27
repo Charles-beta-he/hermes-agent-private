@@ -91,27 +91,101 @@ class TestGoalMigratesOnRotation:
 
 
 class TestOrphanRollbackOnCreateFailure:
-    def test_rolls_back_to_parent_when_child_create_fails(self, tmp_path: Path):
-        db = SessionDB(db_path=tmp_path / "state.db")
+    def test_rolls_back_transcript_and_compressor_state_when_child_create_fails(
+        self, tmp_path: Path
+    ):
+        db_path = tmp_path / "state.db"
+        db = SessionDB(db_path=db_path)
         parent = "PARENT_ORPHAN_ROT"
         db.create_session(parent, source="cli")
         agent = _build_agent_with_db(db, parent)
+        original = _msgs(8)
 
-        # Make the CHILD create_session raise, but let the initial parent
-        # end_session/reopen work. We patch create_session to blow up.
-        real_create = db.create_session
+        compressor = agent.context_compressor
+        compressor._previous_summary = "prior durable summary"
+        compressor.compression_count = 4
+        compressor.summary_generation = 3
+        db.update_compaction_state(
+            parent, compaction_count=4, summary_generation=3
+        )
+        setattr(agent, "_cached_system_prompt", "cached prompt before rotation")
+        memory_manager = MagicMock()
+        memory_manager.build_system_prompt.return_value = None
+        setattr(agent, "_memory_manager", memory_manager)
+        setattr(agent, "event_callback", MagicMock())
 
-        def _boom(*a, **k):
-            raise RuntimeError("FOREIGN KEY constraint failed")
+        def _compress(*_args, **_kwargs):
+            compressor._previous_summary = "new uncommitted summary"
+            compressor.compression_count = 5
+            compressor.summary_generation = 4
+            return [
+                {"role": "user", "content": "[CONTEXT COMPACTION] uncommitted"},
+                {"role": "assistant", "content": "recent reply"},
+            ]
+
+        compressor.compress.side_effect = _compress
+
+        # commit_memory_session() ends the old compressor lifecycle before the
+        # child row is written. Model the real reset so this regression catches
+        # failure to restore the pre-compression state.
+        def _reset_on_end(*_args, **_kwargs):
+            compressor._previous_summary = None
+            compressor.compression_count = 0
+            compressor.summary_generation = 0
+            compressor._last_compress_aborted = False
+
+        compressor.on_session_end.side_effect = _reset_on_end
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("simulated child create failure")
 
         with patch.object(db, "create_session", side_effect=_boom):
-            agent._compress_context(_msgs(), "sys", approx_tokens=120_000)
+            returned, returned_prompt = agent._compress_context(
+                original, "sys", approx_tokens=120_000
+            )
 
-        # The live id must roll back to the still-indexed parent — NOT a
-        # phantom child id that has no row in state.db.
+        # No durable boundary committed: live transcript and compressor state
+        # must still describe the reopened parent exactly.
+        assert returned is original
+        assert returned_prompt == "cached prompt before rotation"
+        assert getattr(agent, "_cached_system_prompt") == (
+            "cached prompt before rotation"
+        )
         assert agent.session_id == parent
         assert db.get_session(parent) is not None
-        _ = real_create  # silence unused
+        assert db.get_session(parent)["end_reason"] is None
+        assert compressor._previous_summary == "prior durable summary"
+        assert compressor.compression_count == 4
+        assert compressor.summary_generation == 3
+        assert compressor._last_compress_aborted is True
+        assert "rotation persistence failed" in compressor._last_summary_error
+
+        durable_parent = db.get_session(parent)
+        assert durable_parent is not None
+        assert durable_parent["compaction_count"] == 4
+        assert durable_parent["summary_generation"] == 3
+        active_contents = [
+            message["content"]
+            for message in db.get_messages_as_conversation(parent)
+        ]
+        assert active_contents == [f"m{i}" for i in range(8)]
+        compressor.on_session_start.assert_not_called()
+        getattr(agent, "_memory_manager").on_session_switch.assert_not_called()
+        getattr(agent, "event_callback").assert_not_called()
+
+        child_count = db._conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE parent_session_id = ?", (parent,)
+        ).fetchone()[0]
+        assert child_count == 0
+
+        # Reopen the DB to prove the parent remains the only resumable session.
+        db.close()
+        reopened = SessionDB(db_path=db_path)
+        assert reopened.get_session(parent)["end_reason"] is None
+        assert reopened._conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE parent_session_id = ?", (parent,)
+        ).fetchone()[0] == 0
+        reopened.close()
 
 
 class TestPlatformForwardedAtBoundary:
