@@ -1,8 +1,13 @@
-"""Event-governed Modular Workflow Kernel scaffold.
+"""Event-governed Modular Workflow Kernel."""
 
-Phase 26 is scaffold/compatibility only: existing scripts remain the public CLI
-entrypoints and no runtime switch is enabled here.
-"""
+from workflow_kernel.workflow_graph_runtime import (
+    LocalExecutionGrant,
+    RuntimeTaskBinding,
+    TaskContext,
+    WorkflowGraphRuntimeError,
+    execute_workflow_plan_v1,
+)
+
 
 PHASE = "45"
 RUNTIME_SWITCH_ENABLED = True
@@ -14,6 +19,17 @@ CAPABILITIES = (
     "append_only_ledger",
     "runtime_switch_readiness",
     "runtime_auto_enabled",
+    "workflow_execution_plan_local_graph_runtime",
+    "dependency_driven_scheduler",
 )
 
-__all__ = ["PHASE", "RUNTIME_SWITCH_ENABLED", "CAPABILITIES"]
+__all__ = [
+    "PHASE",
+    "RUNTIME_SWITCH_ENABLED",
+    "CAPABILITIES",
+    "LocalExecutionGrant",
+    "RuntimeTaskBinding",
+    "TaskContext",
+    "WorkflowGraphRuntimeError",
+    "execute_workflow_plan_v1",
+]
