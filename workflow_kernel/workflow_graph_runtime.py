@@ -14,11 +14,18 @@ import math
 import re
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from threading import Lock
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Sequence
 
 from workflow_kernel.workflow_definition import compile_workflow_definition_v1
+from workflow_kernel.workflow_execution_event_ledger import (
+    WorkflowExecutionLedgerSink,
+    compare_rfc3339_instants_v1,
+    derive_execution_approval_digest_v1,
+    derive_execution_ids_v1,
+)
 
 
 _SIDE_EFFECT_RANK = {
@@ -32,16 +39,21 @@ _ALLOWED_REDUCERS = {"mapping", "list", "first", "concat"}
 _ALLOWED_JOIN_POLICIES = {"require_success", "allow_skipped"}
 _ALLOWED_MODEL_TIERS = {"none", "cheap", "standard", "reasoning"}
 _ALLOWED_ISOLATION = {"in_process"}
-_TERMINAL = {"achieved", "failed", "blocked", "skipped"}
+_TERMINAL = {"achieved", "failed", "blocked", "skipped", "planned"}
 _GRANT_ID_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
 )
 _CONSUMED_GRANT_IDS: set[str] = set()
 _GRANT_REGISTRY_LOCK = Lock()
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_SESSION_ID = re.compile(r"[a-z][a-z0-9._-]{0,127}")
+_RFC3339 = re.compile(
+    r"(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})"
+)
 
 Runner = Callable[["TaskContext"], Any]
 Condition = Callable[["TaskContext"], bool]
+ExecutionEventSink = Callable[[Mapping[str, Any]], None]
 
 
 class WorkflowGraphRuntimeError(ValueError):
@@ -110,6 +122,29 @@ class TaskContext:
     outputs: Mapping[str, Any]
     model_tier: str
     isolation: str
+    run_id: str | None = None
+    step_id: str | None = None
+    attempt_id: str | None = None
+    effect_id: str | None = None
+    fencing_token: int | None = None
+
+
+@dataclass(frozen=True)
+class RuntimeExecutionSession:
+    """Exact authority-neutral identity for durable execution evidence."""
+
+    run_id: str
+    session_owner: str
+    lease_id: str
+    lease_expires_at: str
+    fencing_token: int
+    workflow_id: str
+    definition_digest: str
+    plan_digest: str
+    binding_digest: str
+    execution_mode: str = "apply"
+    policy_digest: str | None = None
+    approval_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +157,24 @@ class _AdmittedGrant:
     allowed_capabilities: frozenset[str]
     max_side_effect: str
     max_workers: int
+
+
+@dataclass(frozen=True)
+class _AdmittedExecutionSession:
+    """Detached durable-evidence identity used after caller admission."""
+
+    run_id: str
+    session_owner: str
+    lease_id: str
+    lease_expires_at: str
+    fencing_token: int
+    workflow_id: str
+    definition_digest: str
+    plan_digest: str
+    binding_digest: str
+    execution_mode: str
+    policy_digest: str | None
+    approval_digest: str | None
 
 
 def _validate_grant(grant: LocalExecutionGrant | None) -> _AdmittedGrant:
@@ -165,6 +218,122 @@ def _validate_grant(grant: LocalExecutionGrant | None) -> _AdmittedGrant:
         raise WorkflowGraphRuntimeError(
             "invalid_grant",
             "local execution grant has an invalid field or authority boundary",
+        )
+    return candidate
+
+
+def derive_runtime_apply_approval_digest_v1(
+    *,
+    run_id: str,
+    workflow_id: str,
+    plan_digest: str,
+    binding_digest: str,
+    policy_digest: str,
+) -> str:
+    """Bind apply evidence to one admitted run, plan, bindings, and policy.
+
+    This digest is evidence, not authority. The exact single-use local execution
+    grant remains the authority gate.
+    """
+
+    return derive_execution_approval_digest_v1(
+        run_id=run_id,
+        workflow_id=workflow_id,
+        plan_digest=plan_digest,
+        binding_digest=binding_digest,
+        policy_digest=policy_digest,
+    )
+
+
+def _validate_execution_session(
+    session: RuntimeExecutionSession | None,
+    event_sink: ExecutionEventSink | None,
+) -> _AdmittedExecutionSession | None:
+    """Single-read snapshot of optional durable-evidence identity."""
+
+    if (session is None) != (event_sink is None):
+        raise WorkflowGraphRuntimeError(
+            "durable_evidence_incomplete",
+            "execution session and event sink must be supplied together",
+        )
+    if session is None:
+        return None
+    if type(session) is not RuntimeExecutionSession:
+        raise WorkflowGraphRuntimeError(
+            "invalid_execution_session",
+            "runtime execution session subclasses are not accepted",
+        )
+    candidate = _AdmittedExecutionSession(
+        run_id=session.run_id,
+        session_owner=session.session_owner,
+        lease_id=session.lease_id,
+        lease_expires_at=session.lease_expires_at,
+        fencing_token=session.fencing_token,
+        workflow_id=session.workflow_id,
+        definition_digest=session.definition_digest,
+        plan_digest=session.plan_digest,
+        binding_digest=session.binding_digest,
+        execution_mode=session.execution_mode,
+        policy_digest=session.policy_digest,
+        approval_digest=session.approval_digest,
+    )
+    valid = (
+        type(candidate.run_id) is str
+        and _SESSION_ID.fullmatch(candidate.run_id) is not None
+        and type(candidate.session_owner) is str
+        and _SESSION_ID.fullmatch(candidate.session_owner) is not None
+        and type(candidate.lease_id) is str
+        and _SESSION_ID.fullmatch(candidate.lease_id) is not None
+        and type(candidate.lease_expires_at) is str
+        and _RFC3339.fullmatch(candidate.lease_expires_at) is not None
+        and type(candidate.fencing_token) is int
+        and 1 <= candidate.fencing_token <= 9_007_199_254_740_991
+        and type(candidate.workflow_id) is str
+        and _SESSION_ID.fullmatch(candidate.workflow_id) is not None
+        and type(candidate.definition_digest) is str
+        and _DIGEST.fullmatch(candidate.definition_digest) is not None
+        and type(candidate.plan_digest) is str
+        and _DIGEST.fullmatch(candidate.plan_digest) is not None
+        and type(candidate.binding_digest) is str
+        and _DIGEST.fullmatch(candidate.binding_digest) is not None
+        and type(candidate.execution_mode) is str
+        and candidate.execution_mode in {"apply", "dry_run"}
+        and (
+            candidate.policy_digest is None
+            or (
+                type(candidate.policy_digest) is str
+                and _DIGEST.fullmatch(candidate.policy_digest) is not None
+            )
+        )
+        and (
+            candidate.approval_digest is None
+            or (
+                type(candidate.approval_digest) is str
+                and _DIGEST.fullmatch(candidate.approval_digest) is not None
+            )
+        )
+        and type(event_sink) is WorkflowExecutionLedgerSink
+    )
+    valid_policy = (
+        candidate.execution_mode == "dry_run"
+        and candidate.policy_digest is not None
+        and candidate.approval_digest is None
+    ) or (
+        candidate.execution_mode == "apply"
+        and candidate.policy_digest is not None
+        and candidate.approval_digest
+        == derive_runtime_apply_approval_digest_v1(
+            run_id=candidate.run_id,
+            workflow_id=candidate.workflow_id,
+            plan_digest=candidate.plan_digest,
+            binding_digest=candidate.binding_digest,
+            policy_digest=candidate.policy_digest,
+        )
+    )
+    if not valid or not valid_policy:
+        raise WorkflowGraphRuntimeError(
+            "invalid_execution_session",
+            "runtime execution session has an invalid identity field",
         )
     return candidate
 
@@ -225,6 +394,22 @@ def _snapshot_binding(binding: RuntimeTaskBinding) -> RuntimeTaskBinding:
         join_policy=binding.join_policy,
         model_tier=binding.model_tier,
         isolation=binding.isolation,
+    )
+
+
+def derive_runtime_binding_digest_v1(
+    bindings: Sequence[RuntimeTaskBinding],
+) -> str:
+    """Digest detached serializable binding descriptors in task-id order."""
+
+    snapshots = tuple(_snapshot_binding(binding) for binding in bindings)
+    task_ids = [binding.task_id for binding in snapshots]
+    if len(task_ids) != len(set(task_ids)):
+        raise WorkflowGraphRuntimeError(
+            "binding_duplicate", "runtime binding digest input contains duplicate task ids"
+        )
+    return _digest(
+        [_binding_descriptor(binding) for binding in sorted(snapshots, key=lambda item: item.task_id)]
     )
 
 
@@ -394,6 +579,12 @@ def _admit(
     return task_by_id, binding_by_id, verifier_targets, target_verifiers, binding_digest
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace(
+        "+00:00", "Z"
+    )
+
+
 def execute_workflow_plan_v1(
     plan: Mapping[str, Any],
     definition: Mapping[str, Any],
@@ -402,6 +593,9 @@ def execute_workflow_plan_v1(
     *,
     conditions: Mapping[str, Condition] | None = None,
     grant: LocalExecutionGrant | None = None,
+    execution_session: RuntimeExecutionSession | None = None,
+    event_sink: ExecutionEventSink | None = None,
+    execution_clock: Callable[[], str] | None = None,
 ) -> dict[str, Any]:
     """Execute an admitted plan with dependency-driven local concurrency.
 
@@ -414,6 +608,17 @@ def execute_workflow_plan_v1(
     # admission. Injected runners may mutate their original containers while
     # execution is in flight; scheduling and receipt identity must remain bound
     # to the admitted bytes.
+    if execution_session is None and execution_clock is not None:
+        raise WorkflowGraphRuntimeError(
+            "durable_evidence_incomplete",
+            "execution clock requires an execution session and event sink",
+        )
+    if execution_clock is not None and not callable(execution_clock):
+        raise WorkflowGraphRuntimeError(
+            "invalid_execution_clock", "execution clock must be callable"
+        )
+    admitted_clock = execution_clock or _utc_now
+    admitted_session = _validate_execution_session(execution_session, event_sink)
     admitted_grant = _validate_grant(grant)
     try:
         admitted_plan = json.loads(_canonical_bytes(plan))
@@ -440,9 +645,130 @@ def execute_workflow_plan_v1(
         selected_conditions,
         admitted_grant,
     )
+    if admitted_session is not None:
+        session_matches = (
+            admitted_session.workflow_id
+            == admitted_plan["workflow_ref"]["workflow_id"]
+            and admitted_session.definition_digest == admitted_plan["definition_digest"]
+            and admitted_session.plan_digest == admitted_plan["plan_digest"]
+            and admitted_session.binding_digest == binding_digest
+        )
+        if not session_matches:
+            raise WorkflowGraphRuntimeError(
+                "execution_session_mismatch",
+                "durable execution identity is not bound to admitted graph bytes",
+            )
     if grant is None:  # narrowed for static analyzers; validation above already rejects None
         raise AssertionError("validated local grant unexpectedly missing")
+    admitted_event_sink = event_sink
+    execution_mode = (
+        admitted_session.execution_mode if admitted_session is not None else "apply"
+    )
+
+    def execution_ids(task_id: str) -> dict[str, str | None]:
+        if admitted_session is None:
+            return {"step_id": None, "attempt_id": None, "effect_id": None}
+        return derive_execution_ids_v1(
+            run_id=admitted_session.run_id,
+            plan_digest=admitted_session.plan_digest,
+            binding_digest=admitted_session.binding_digest,
+            task_id=task_id,
+            attempt=1,
+            side_effect=task_by_id[task_id]["side_effect"],
+        )
+
+    def read_execution_now() -> str:
+        try:
+            current = admitted_clock()
+            if type(current) is not str:
+                raise TypeError("clock result is not str")
+            compare_rfc3339_instants_v1(current, current)
+            return current
+        except Exception as exc:
+            raise WorkflowGraphRuntimeError(
+                "invalid_execution_clock",
+                f"execution clock failed strict RFC3339 validation: {type(exc).__name__}",
+            ) from exc
+
+    def emit_execution(
+        kind: str,
+        task_id: str | None = None,
+        *,
+        evidence_digest: str | None = None,
+        reason_code: str | None = None,
+        include_attempt: bool = True,
+    ) -> None:
+        if admitted_session is None:
+            return
+        if admitted_event_sink is None:
+            raise AssertionError("admitted execution session unexpectedly has no sink")
+        ids = execution_ids(task_id) if task_id is not None else {
+            "step_id": None,
+            "attempt_id": None,
+            "effect_id": None,
+        }
+        if not include_attempt:
+            ids = {"step_id": ids["step_id"], "attempt_id": None, "effect_id": None}
+        side_effect = task_by_id[task_id]["side_effect"] if task_id is not None else "none"
+        observation = MappingProxyType(
+            {
+                "run_id": admitted_session.run_id,
+                "occurred_at": read_execution_now(),
+                "identity": MappingProxyType(
+                    {
+                        "session_owner": admitted_session.session_owner,
+                        "lease_id": admitted_session.lease_id,
+                        "lease_expires_at": admitted_session.lease_expires_at,
+                        "fencing_token": admitted_session.fencing_token,
+                        "workflow_id": admitted_session.workflow_id,
+                        "definition_digest": admitted_session.definition_digest,
+                        "plan_digest": admitted_session.plan_digest,
+                        "binding_digest": admitted_session.binding_digest,
+                        "execution_mode": admitted_session.execution_mode,
+                        "policy_digest": admitted_session.policy_digest,
+                        "approval_digest": admitted_session.approval_digest,
+                    }
+                ),
+                "kind": kind,
+                "task_id": task_id,
+                **ids,
+                "side_effect": side_effect,
+                "evidence_digest": evidence_digest,
+                "reason_code": reason_code,
+            }
+        )
+        try:
+            admitted_event_sink(observation)
+        except WorkflowGraphRuntimeError:
+            raise
+        except Exception as exc:
+            raise WorkflowGraphRuntimeError(
+                "durable_evidence_failed",
+                f"durable event sink rejected {kind!r}: {type(exc).__name__}",
+            ) from exc
+
+    def lease_expired() -> bool:
+        if admitted_session is None:
+            return False
+        return (
+            compare_rfc3339_instants_v1(
+                read_execution_now(), admitted_session.lease_expires_at
+            )
+            >= 0
+        )
+
+    def ensure_active_lease(*, record_stale: bool) -> None:
+        if not lease_expired():
+            return
+        if record_stale:
+            emit_execution("stale_observed", reason_code="lease_expired")
+        raise WorkflowGraphRuntimeError(
+            "execution_lease_expired", "execution lease is no longer active"
+        )
+
+    ensure_active_lease(record_stale=False)
     grant.consume(admitted_grant.grant_id)
+    emit_execution("run_admitted")
 
     states = {task_id: "waiting" for task_id in task_by_id}
     outputs: dict[str, Any] = {}
@@ -471,6 +797,7 @@ def execute_workflow_plan_v1(
     def context_for(task_id: str) -> TaskContext:
         binding = binding_by_id[task_id]
         pairs = input_pairs(task_id)
+        ids = execution_ids(task_id)
         return TaskContext(
             task_id=task_id,
             inputs=pairs,
@@ -480,15 +807,29 @@ def execute_workflow_plan_v1(
             outputs=MappingProxyType(dict(pairs)),
             model_tier=binding.model_tier,
             isolation=binding.isolation,
+            run_id=admitted_session.run_id if admitted_session is not None else None,
+            step_id=ids["step_id"],
+            attempt_id=ids["attempt_id"],
+            effect_id=ids["effect_id"],
+            fencing_token=(
+                admitted_session.fencing_token if admitted_session is not None else None
+            ),
         )
 
     def skip(task_id: str) -> None:
         if states[task_id] == "waiting":
+            emit_execution("task_skipped", task_id, include_attempt=False)
             states[task_id] = "skipped"
             emit("skipped", task_id)
 
     def block(task_id: str, reason: str) -> None:
         if states[task_id] == "waiting":
+            emit_execution(
+                "task_blocked",
+                task_id,
+                reason_code="dependency_blocked",
+                include_attempt=False,
+            )
             states[task_id] = "blocked"
             failures[task_id] = reason
             emit("blocked", task_id)
@@ -496,6 +837,7 @@ def execute_workflow_plan_v1(
     def fail_verifier_targets(verifier_id: str, reason: str) -> None:
         for target in verifier_targets.get(verifier_id, []):
             if states[target] == "pending_verification":
+                emit_execution("task_failed", target, reason_code="verifier_failed")
                 states[target] = "failed"
                 accepted[target] = False
                 failures[target] = f"verifier {verifier_id!r} failed: {reason}"
@@ -516,6 +858,43 @@ def execute_workflow_plan_v1(
                 dependency_states = {
                     dependency: states[dependency] for dependency in task["depends_on"]
                 }
+
+                if (
+                    execution_mode == "dry_run"
+                    and task["side_effect"] == "local_write"
+                    and not any(
+                        state in {"failed", "blocked"}
+                        for state in dependency_states.values()
+                    )
+                    and all(state in _TERMINAL for state in dependency_states.values())
+                ):
+                    ensure_active_lease(record_stale=True)
+                    ids = execution_ids(task_id)
+                    emit_execution(
+                        "effect_planned",
+                        task_id,
+                        evidence_digest=_digest(
+                            {
+                                "schema_version": "workflow_effect_preview_v1",
+                                "task_id": task_id,
+                                "effect_id": ids["effect_id"],
+                                "policy_digest": admitted_session.policy_digest
+                                if admitted_session is not None
+                                else None,
+                            }
+                        ),
+                    )
+                    states[task_id] = "planned"
+                    emit("planned", task_id)
+                    progress = True
+                    continue
+
+                if execution_mode == "dry_run" and any(
+                    state == "planned" for state in dependency_states.values()
+                ):
+                    skip(task_id)
+                    progress = True
+                    continue
 
                 if task["role"] == "verify":
                     targets = verifier_targets.get(task_id, [])
@@ -592,12 +971,24 @@ def execute_workflow_plan_v1(
                                 context_for(task_id)
                             )
                         except Exception as exc:  # condition is an injected boundary
+                            emit_execution(
+                                "task_blocked",
+                                task_id,
+                                reason_code="condition_raised",
+                                include_attempt=False,
+                            )
                             states[task_id] = "failed"
                             failures[task_id] = f"condition raised: {type(exc).__name__}: {exc}"
                             emit("failed", task_id)
                             progress = True
                             continue
                         if type(selected) is not bool:
+                            emit_execution(
+                                "task_blocked",
+                                task_id,
+                                reason_code="condition_invalid",
+                                include_attempt=False,
+                            )
                             states[task_id] = "failed"
                             failures[task_id] = "condition did not return bool"
                             emit("failed", task_id)
@@ -611,6 +1002,10 @@ def execute_workflow_plan_v1(
                 if len(in_flight) >= admitted_grant.max_workers:
                     continue
                 binding = binding_by_id[task_id]
+                ensure_active_lease(record_stale=True)
+                emit_execution("task_started", task_id)
+                if task["side_effect"] == "local_write":
+                    emit_execution("effect_intent", task_id)
                 states[task_id] = "running"
                 emit("started", task_id)
                 in_flight[
@@ -637,11 +1032,13 @@ def execute_workflow_plan_v1(
             for future in sorted(completed, key=lambda item: in_flight[item]):
                 task_id = in_flight.pop(future)
                 task = task_by_id[task_id]
+                ensure_active_lease(record_stale=True)
                 try:
                     value = future.result()
                     _ensure_json_value(value)
                     value_snapshot = _json_clone(value)
                 except Exception as exc:  # runner is an injected boundary
+                    emit_execution("task_failed", task_id, reason_code="runner_raised")
                     states[task_id] = "failed"
                     stable_code = (
                         f"{exc.code}: "
@@ -656,9 +1053,21 @@ def execute_workflow_plan_v1(
                         fail_verifier_targets(task_id, failures[task_id])
                     continue
 
+                output_digest = _digest(value_snapshot)
+                if task["side_effect"] == "local_write":
+                    emit_execution(
+                        "effect_observed",
+                        task_id,
+                        evidence_digest=output_digest,
+                    )
                 outputs[task_id] = value_snapshot
                 if task["role"] == "verify":
                     if _accepted_verdict(value_snapshot):
+                        emit_execution(
+                            "task_succeeded",
+                            task_id,
+                            evidence_digest=output_digest,
+                        )
                         states[task_id] = "achieved"
                         accepted[task_id] = True
                         emit("achieved", task_id)
@@ -667,10 +1076,20 @@ def execute_workflow_plan_v1(
                                 continue
                             verifiers = target_verifiers[target]
                             if all(states[verifier] == "achieved" for verifier in verifiers):
+                                emit_execution(
+                                    "task_succeeded",
+                                    target,
+                                    evidence_digest=_digest(outputs[target]),
+                                )
                                 states[target] = "achieved"
                                 accepted[target] = True
                                 emit("accepted", target)
                     else:
+                        emit_execution(
+                            "task_failed",
+                            task_id,
+                            reason_code="verifier_rejected",
+                        )
                         states[task_id] = "failed"
                         failures[task_id] = "verifier returned a non-accepted verdict"
                         emit("failed", task_id)
@@ -682,6 +1101,11 @@ def execute_workflow_plan_v1(
                         if states[verifier] in {"failed", "blocked"}
                     ]
                     if unavailable_verifiers:
+                        emit_execution(
+                            "task_failed",
+                            task_id,
+                            reason_code="verifier_unavailable",
+                        )
                         states[task_id] = "failed"
                         failures[task_id] = (
                             "required verifier unavailable: "
@@ -692,6 +1116,11 @@ def execute_workflow_plan_v1(
                         states[task_id] = "pending_verification"
                         emit("produced", task_id)
                 else:
+                    emit_execution(
+                        "task_succeeded",
+                        task_id,
+                        evidence_digest=output_digest,
+                    )
                     states[task_id] = "achieved"
                     accepted[task_id] = True
                     emit("achieved", task_id)
@@ -715,17 +1144,29 @@ def execute_workflow_plan_v1(
         if task["role"] == "execute"
     ]
     has_accepted_execute = any(accepted[task_id] for task_id in execute_task_ids)
+    has_planned_execute = any(states[task_id] == "planned" for task_id in execute_task_ids)
     all_active_executes_accepted = all(
         states[task_id] == "skipped" or accepted[task_id]
         for task_id in execute_task_ids
     )
-    workflow_status = (
-        "success"
-        if has_accepted_execute
-        and all_active_executes_accepted
-        and not any(state in {"failed", "blocked"} for state in states.values())
-        else "failed"
-    )
+    if execution_mode == "dry_run":
+        workflow_status = (
+            "dry_run"
+            if has_planned_execute
+            and not any(
+                state in {"waiting", "running", "failed", "blocked"}
+                for state in states.values()
+            )
+            else "failed"
+        )
+    else:
+        workflow_status = (
+            "success"
+            if has_accepted_execute
+            and all_active_executes_accepted
+            and not any(state in {"failed", "blocked"} for state in states.values())
+            else "failed"
+        )
     core = {
         "schema_version": "workflow_graph_execution_receipt_v1",
         "status": workflow_status,
@@ -734,13 +1175,32 @@ def execute_workflow_plan_v1(
         "plan_digest": admitted_plan["plan_digest"],
         "binding_digest": binding_digest,
         "grant_id": admitted_grant.grant_id,
+        "execution_mode": execution_mode,
+        "policy_digest": admitted_session.policy_digest
+        if admitted_session is not None
+        else None,
+        "approval_digest": admitted_session.approval_digest
+        if admitted_session is not None
+        else None,
         "plan_authority_granted": False,
         "plan_executable": False,
         "nodes": node_receipts,
     }
+    core_digest = _digest(core)
+    ensure_active_lease(record_stale=True)
+    terminal_kind = {
+        "success": "run_succeeded",
+        "dry_run": "run_dry_run_completed",
+        "failed": "run_failed",
+    }[workflow_status]
+    emit_execution(
+        terminal_kind,
+        evidence_digest=core_digest,
+        reason_code=None if workflow_status in {"success", "dry_run"} else "workflow_failed",
+    )
     return {
         "core": core,
-        "core_digest": _digest(core),
+        "core_digest": core_digest,
         "timing": {
             "max_in_flight": max_in_flight,
             "events": events,

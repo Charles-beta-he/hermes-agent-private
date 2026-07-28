@@ -4,20 +4,29 @@ import copy
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from itertools import count
 from pathlib import Path
 from typing import Any, Callable
 
 import pytest
 
+import workflow_kernel.workflow_execution_event_ledger as execution_ledger
 import workflow_kernel.workflow_graph_runtime as graph_runtime
 from workflow_kernel.workflow_definition import compile_workflow_definition_v1
 from workflow_kernel.workflow_graph_runtime import (
     LocalExecutionGrant,
+    RuntimeExecutionSession,
     RuntimeTaskBinding,
     WorkflowGraphRuntimeError,
+    derive_runtime_apply_approval_digest_v1,
+    derive_runtime_binding_digest_v1,
     execute_workflow_plan_v1,
+)
+from workflow_kernel.workflow_execution_event_ledger import (
+    WorkflowExecutionLedgerSink,
+    read_workflow_execution_events,
+    replay_workflow_execution_events_v1,
 )
 
 
@@ -920,3 +929,496 @@ def test_receipt_core_is_json_roundtrippable_and_preserves_authority_neutral_pla
     assert receipt["core_digest"].startswith("sha256:")
     assert "started_at" not in receipt["core"]
     assert "events" in receipt["timing"]
+
+
+def _execution_session(
+    definition: dict[str, Any],
+    plan: dict[str, Any],
+    bindings: list[RuntimeTaskBinding],
+    *,
+    run_id: str,
+    execution_mode: str = "apply",
+    policy_digest: str | None = None,
+    approval_digest: str | None = None,
+) -> RuntimeExecutionSession:
+    binding_digest = derive_runtime_binding_digest_v1(bindings)
+    selected_policy_digest = policy_digest
+    selected_approval_digest = approval_digest
+    if execution_mode == "apply" and policy_digest is None and approval_digest is None:
+        selected_policy_digest = "sha256:" + "e" * 64
+        selected_approval_digest = derive_runtime_apply_approval_digest_v1(
+            run_id=run_id,
+            workflow_id=definition["workflow_id"],
+            plan_digest=plan["plan_digest"],
+            binding_digest=binding_digest,
+            policy_digest=selected_policy_digest,
+        )
+    return RuntimeExecutionSession(
+        run_id=run_id,
+        session_owner="worker-one",
+        lease_id=f"lease-{run_id}",
+        lease_expires_at="2026-07-28T01:00:00Z",
+        fencing_token=7,
+        workflow_id=definition["workflow_id"],
+        definition_digest=plan["definition_digest"],
+        plan_digest=plan["plan_digest"],
+        binding_digest=binding_digest,
+        execution_mode=execution_mode,
+        policy_digest=selected_policy_digest,
+        approval_digest=selected_approval_digest,
+    )
+
+
+def test_durable_execution_persists_exact_identity_and_effect_order(tmp_path: Path) -> None:
+    definition = _definition(
+        [
+            _task(
+                "implement",
+                "execute",
+                [],
+                side_effect="local_write",
+                capabilities=["write_file"],
+                writes=["artifact"],
+            ),
+            _task("verify", "verify", ["implement"], verifies=["implement"]),
+        ]
+    )
+    plan = compile_workflow_definition_v1(definition)
+    bindings = _bindings(definition)
+    session = _execution_session(
+        definition, plan, bindings, run_id="durable-success"
+    )
+    contexts: list[Any] = []
+    ledger_path = tmp_path / "durable-success.jsonl"
+    sink = WorkflowExecutionLedgerSink(ledger_path, private_root=tmp_path)
+
+    def implement(ctx: Any) -> dict[str, bool]:
+        contexts.append(ctx)
+        session.__dict__["fencing_token"] = 99
+        return {"written": True}
+
+    receipt = execute_workflow_plan_v1(
+        plan,
+        definition,
+        bindings,
+        {"implement": implement, "verify": lambda _ctx: True},
+        grant=_grant(plan),
+        execution_session=session,
+        event_sink=sink,
+        execution_clock=lambda: "2026-07-28T00:30:00Z",
+    )
+    events = read_workflow_execution_events(ledger_path, private_root=tmp_path)
+    replay = replay_workflow_execution_events_v1(events)
+
+    assert receipt["core"]["status"] == "success"
+    assert [event["kind"] for event in events] == [
+        "run_admitted",
+        "task_started",
+        "effect_intent",
+        "effect_observed",
+        "task_started",
+        "task_succeeded",
+        "task_succeeded",
+        "run_succeeded",
+    ]
+    assert replay["status"] == "succeeded"
+    assert replay["uncertain_effect_ids"] == []
+    assert contexts[0].run_id == "durable-success"
+    assert contexts[0].effect_id is not None
+    assert contexts[0].fencing_token == 7
+    assert {event["identity"]["fencing_token"] for event in events} == {7}
+
+
+def test_durable_sink_failure_before_effect_prevents_runner_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    definition = _definition(
+        [
+            _task(
+                "implement",
+                "execute",
+                [],
+                side_effect="local_write",
+                capabilities=["write_file"],
+                writes=["artifact"],
+            ),
+            _task("verify", "verify", ["implement"], verifies=["implement"]),
+        ]
+    )
+    plan = compile_workflow_definition_v1(definition)
+    bindings = _bindings(definition)
+    session = _execution_session(definition, plan, bindings, run_id="sink-failure")
+    observed: list[str] = []
+    runner_calls: list[str] = []
+    ledger_path = tmp_path / "sink-failure.jsonl"
+    sink = WorkflowExecutionLedgerSink(ledger_path, private_root=tmp_path)
+    real_append = execution_ledger.append_workflow_execution_event
+
+    def rejecting_append(
+        path: Path, event: dict[str, Any], *, private_root: Path
+    ) -> dict[str, Any]:
+        observed.append(event["kind"])
+        if event["kind"] == "effect_intent":
+            raise OSError("disk unavailable")
+        return real_append(path, event, private_root=private_root)
+
+    monkeypatch.setattr(execution_ledger, "append_workflow_execution_event", rejecting_append)
+
+    with pytest.raises(WorkflowGraphRuntimeError) as exc:
+        execute_workflow_plan_v1(
+            plan,
+            definition,
+            bindings,
+            {
+                "implement": lambda _ctx: runner_calls.append("called"),
+                "verify": lambda _ctx: True,
+            },
+            grant=_grant(plan),
+            execution_session=session,
+            event_sink=sink,
+            execution_clock=lambda: "2026-07-28T00:30:00Z",
+        )
+
+    assert exc.value.code == "durable_evidence_failed"
+    assert observed == ["run_admitted", "task_started", "effect_intent"]
+    assert runner_calls == []
+
+
+def test_noncanonical_execution_sink_fails_before_grant_consumption() -> None:
+    definition = _base_definition()
+    plan = compile_workflow_definition_v1(definition)
+    bindings = _bindings(definition)
+    session = _execution_session(definition, plan, bindings, run_id="memory-sink")
+    grant = _grant(plan)
+
+    with pytest.raises(WorkflowGraphRuntimeError) as exc:
+        execute_workflow_plan_v1(
+            plan,
+            definition,
+            bindings,
+            {task["id"]: (lambda _ctx: True) for task in definition["tasks"]},
+            grant=grant,
+            execution_session=session,
+            event_sink=lambda _event: None,
+        )
+
+    assert exc.value.code == "invalid_execution_session"
+    assert grant.consumed is False
+
+
+def test_execution_session_mismatch_fails_before_grant_consumption(tmp_path: Path) -> None:
+    definition = _base_definition()
+    plan = compile_workflow_definition_v1(definition)
+    bindings = _bindings(definition)
+    session = _execution_session(definition, plan, bindings, run_id="wrong-binding")
+    session.__dict__["binding_digest"] = "sha256:" + "0" * 64
+    assert session.policy_digest is not None
+    session.__dict__["approval_digest"] = derive_runtime_apply_approval_digest_v1(
+        run_id=session.run_id,
+        workflow_id=session.workflow_id,
+        plan_digest=session.plan_digest,
+        binding_digest=session.binding_digest,
+        policy_digest=session.policy_digest,
+    )
+    grant = _grant(plan)
+
+    with pytest.raises(WorkflowGraphRuntimeError) as exc:
+        execute_workflow_plan_v1(
+            plan,
+            definition,
+            bindings,
+            {task["id"]: (lambda _ctx: True) for task in definition["tasks"]},
+            grant=grant,
+            execution_session=session,
+            event_sink=WorkflowExecutionLedgerSink(
+                tmp_path / "mismatch.jsonl", private_root=tmp_path
+            ),
+        )
+
+    assert exc.value.code == "execution_session_mismatch"
+    assert grant.consumed is False
+
+
+def test_failed_effectful_run_preserves_uncertain_effect_evidence(tmp_path: Path) -> None:
+    definition = _definition(
+        [
+            _task(
+                "implement",
+                "execute",
+                [],
+                side_effect="local_write",
+                capabilities=["write_file"],
+                writes=["artifact"],
+            ),
+            _task("verify", "verify", ["implement"], verifies=["implement"]),
+        ]
+    )
+    plan = compile_workflow_definition_v1(definition)
+    bindings = _bindings(definition)
+    session = _execution_session(definition, plan, bindings, run_id="durable-failure")
+    ledger_path = tmp_path / "durable-failure.jsonl"
+    sink = WorkflowExecutionLedgerSink(ledger_path, private_root=tmp_path)
+
+    def fail_after_possible_effect(_ctx: Any) -> None:
+        raise RuntimeError("uncertain write")
+
+    receipt = execute_workflow_plan_v1(
+        plan,
+        definition,
+        bindings,
+        {"implement": fail_after_possible_effect, "verify": lambda _ctx: True},
+        grant=_grant(plan),
+        execution_session=session,
+        event_sink=sink,
+        execution_clock=lambda: "2026-07-28T00:30:00Z",
+    )
+    events = read_workflow_execution_events(ledger_path, private_root=tmp_path)
+    replay = replay_workflow_execution_events_v1(events)
+
+    assert receipt["core"]["status"] == "failed"
+    assert replay["status"] == "failed"
+    assert len(replay["uncertain_effect_ids"]) == 1
+    assert events[-1]["kind"] == "run_failed"
+    assert events[-1]["evidence_digest"] == receipt["core_digest"]
+
+
+def test_expired_execution_lease_fails_before_grant_consumption(tmp_path: Path) -> None:
+    definition = _base_definition()
+    plan = compile_workflow_definition_v1(definition)
+    bindings = _bindings(definition)
+    session = _execution_session(definition, plan, bindings, run_id="already-stale")
+    grant = _grant(plan)
+    ledger_path = tmp_path / "already-stale.jsonl"
+    sink = WorkflowExecutionLedgerSink(ledger_path, private_root=tmp_path)
+
+    with pytest.raises(WorkflowGraphRuntimeError) as exc:
+        execute_workflow_plan_v1(
+            plan,
+            definition,
+            bindings,
+            {task["id"]: (lambda _ctx: True) for task in definition["tasks"]},
+            grant=grant,
+            execution_session=session,
+            event_sink=sink,
+            execution_clock=lambda: "2026-07-28T01:00:00Z",
+        )
+
+    assert exc.value.code == "execution_lease_expired"
+    assert grant.consumed is False
+    assert not ledger_path.exists()
+
+
+def test_lease_expiry_after_effect_intent_records_stale_uncertain_effect(
+    tmp_path: Path,
+) -> None:
+    definition = _definition(
+        [
+            _task(
+                "implement",
+                "execute",
+                [],
+                side_effect="local_write",
+                capabilities=["write_file"],
+                writes=["artifact"],
+            ),
+            _task("verify", "verify", ["implement"], verifies=["implement"]),
+        ]
+    )
+    plan = compile_workflow_definition_v1(definition)
+    bindings = _bindings(definition)
+    session = _execution_session(definition, plan, bindings, run_id="expires-mid-effect")
+    ledger_path = tmp_path / "expires-mid-effect.jsonl"
+    sink = WorkflowExecutionLedgerSink(ledger_path, private_root=tmp_path)
+    clock_reads = count()
+
+    def crossing_clock() -> str:
+        if next(clock_reads) < 5:
+            return "2026-07-28T00:30:00Z"
+        return "2026-07-28T01:00:00Z"
+
+    with pytest.raises(WorkflowGraphRuntimeError) as exc:
+        execute_workflow_plan_v1(
+            plan,
+            definition,
+            bindings,
+            {"implement": lambda _ctx: {"possibly_written": True}, "verify": lambda _ctx: True},
+            grant=_grant(plan),
+            execution_session=session,
+            event_sink=sink,
+            execution_clock=crossing_clock,
+        )
+
+    events = read_workflow_execution_events(ledger_path, private_root=tmp_path)
+    replay = replay_workflow_execution_events_v1(events)
+    assert exc.value.code == "execution_lease_expired"
+    assert [event["kind"] for event in events] == [
+        "run_admitted",
+        "task_started",
+        "effect_intent",
+        "stale_observed",
+    ]
+    assert replay["status"] == "stale"
+    assert len(replay["uncertain_effect_ids"]) == 1
+
+
+def _single_write_definition() -> dict[str, Any]:
+    return _definition(
+        [
+            _task(
+                "implement",
+                "execute",
+                [],
+                side_effect="local_write",
+                capabilities=["write_file"],
+                writes=["artifact"],
+            ),
+            _task("verify", "verify", ["implement"], verifies=["implement"]),
+        ]
+    )
+
+
+def test_dry_run_plans_write_without_invoking_effect_or_verifier(tmp_path: Path) -> None:
+    definition = _single_write_definition()
+    plan = compile_workflow_definition_v1(definition)
+    bindings = _bindings(definition)
+    policy_digest = "sha256:" + "d" * 64
+    session = _execution_session(
+        definition,
+        plan,
+        bindings,
+        run_id="dry-run-one",
+        execution_mode="dry_run",
+        policy_digest=policy_digest,
+    )
+    calls: list[str] = []
+    ledger_path = tmp_path / "dry-run-one.jsonl"
+
+    receipt = execute_workflow_plan_v1(
+        plan,
+        definition,
+        bindings,
+        {
+            "implement": lambda _ctx: calls.append("effect"),
+            "verify": lambda _ctx: calls.append("verify") or True,
+        },
+        grant=_grant(plan),
+        execution_session=session,
+        event_sink=WorkflowExecutionLedgerSink(ledger_path, private_root=tmp_path),
+        execution_clock=lambda: "2026-07-28T00:30:00Z",
+    )
+    events = read_workflow_execution_events(ledger_path, private_root=tmp_path)
+    replay = replay_workflow_execution_events_v1(events)
+
+    assert calls == []
+    assert receipt["core"]["status"] == "dry_run"
+    assert receipt["core"]["nodes"]["implement"]["status"] == "planned"
+    assert receipt["core"]["nodes"]["verify"]["status"] == "skipped"
+    assert [event["kind"] for event in events] == [
+        "run_admitted",
+        "effect_planned",
+        "task_skipped",
+        "run_dry_run_completed",
+    ]
+    assert replay["status"] == "dry_run"
+    assert all(effect["status"] == "planned" for effect in replay["effects"].values())
+    assert events[0]["identity"]["policy_digest"] == policy_digest
+    assert events[0]["identity"]["approval_digest"] is None
+
+
+def test_apply_session_without_policy_bound_approval_fails_before_grant_consumption(
+    tmp_path: Path,
+) -> None:
+    definition = _base_definition()
+    plan = compile_workflow_definition_v1(definition)
+    bindings = _bindings(definition)
+    session = replace(
+        _execution_session(definition, plan, bindings, run_id="policy-apply-missing"),
+        policy_digest=None,
+        approval_digest=None,
+    )
+    grant = _grant(plan)
+
+    with pytest.raises(WorkflowGraphRuntimeError) as exc:
+        execute_workflow_plan_v1(
+            plan,
+            definition,
+            bindings,
+            {task["id"]: (lambda _ctx: True) for task in definition["tasks"]},
+            grant=grant,
+            execution_session=session,
+            event_sink=WorkflowExecutionLedgerSink(
+                tmp_path / "policy-apply-missing.jsonl", private_root=tmp_path
+            ),
+        )
+
+    assert exc.value.code == "invalid_execution_session"
+    assert grant.consumed is False
+
+
+def test_apply_policy_requires_exact_bound_approval_before_grant_consumption(
+    tmp_path: Path,
+) -> None:
+    definition = _single_write_definition()
+    plan = compile_workflow_definition_v1(definition)
+    bindings = _bindings(definition)
+    policy_digest = "sha256:" + "d" * 64
+    grant = _grant(plan)
+    rejected_session = _execution_session(
+        definition,
+        plan,
+        bindings,
+        run_id="policy-apply-rejected",
+        policy_digest=policy_digest,
+        approval_digest="sha256:" + "f" * 64,
+    )
+
+    with pytest.raises(WorkflowGraphRuntimeError) as exc:
+        execute_workflow_plan_v1(
+            plan,
+            definition,
+            bindings,
+            {"implement": lambda _ctx: True, "verify": lambda _ctx: True},
+            grant=grant,
+            execution_session=rejected_session,
+            event_sink=WorkflowExecutionLedgerSink(
+                tmp_path / "policy-apply-rejected.jsonl", private_root=tmp_path
+            ),
+            execution_clock=lambda: "2026-07-28T00:30:00Z",
+        )
+
+    assert exc.value.code == "invalid_execution_session"
+    assert grant.consumed is False
+
+    run_id = "policy-apply-accepted"
+    binding_digest = derive_runtime_binding_digest_v1(bindings)
+    approval_digest = derive_runtime_apply_approval_digest_v1(
+        run_id=run_id,
+        workflow_id=definition["workflow_id"],
+        plan_digest=plan["plan_digest"],
+        binding_digest=binding_digest,
+        policy_digest=policy_digest,
+    )
+    accepted_session = _execution_session(
+        definition,
+        plan,
+        bindings,
+        run_id=run_id,
+        policy_digest=policy_digest,
+        approval_digest=approval_digest,
+    )
+    ledger_path = tmp_path / "policy-apply-accepted.jsonl"
+    receipt = execute_workflow_plan_v1(
+        plan,
+        definition,
+        bindings,
+        {"implement": lambda _ctx: {"written": True}, "verify": lambda _ctx: True},
+        grant=_grant(plan),
+        execution_session=accepted_session,
+        event_sink=WorkflowExecutionLedgerSink(ledger_path, private_root=tmp_path),
+        execution_clock=lambda: "2026-07-28T00:30:00Z",
+    )
+
+    events = read_workflow_execution_events(ledger_path, private_root=tmp_path)
+    assert receipt["core"]["status"] == "success"
+    assert receipt["core"]["approval_digest"] == approval_digest
+    assert events[0]["identity"]["approval_digest"] == approval_digest

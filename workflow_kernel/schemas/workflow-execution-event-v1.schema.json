@@ -1,0 +1,69 @@
+{
+  "$id": "https://hermes-agent.local/schemas/workflow-execution-event-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hermes WorkflowExecutionEventV1",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "string", "const": "workflow_execution_event_v1"},
+    "run_id": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,127}$"},
+    "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "previous_event_id": {
+      "anyOf": [
+        {"type": "string", "pattern": "^wee_[0-9a-f]{64}$"},
+        {"type": "null"}
+      ]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "identity": {
+      "type": "object",
+      "properties": {
+        "session_owner": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,127}$"},
+        "lease_id": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,127}$"},
+        "lease_expires_at": {"type": "string", "format": "date-time"},
+        "fencing_token": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "workflow_id": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,127}$"},
+        "definition_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "plan_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "binding_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "execution_mode": {"type": "string", "enum": ["apply", "dry_run"]},
+        "policy_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
+        "approval_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]}
+      },
+      "required": [
+        "session_owner", "lease_id", "lease_expires_at", "fencing_token",
+        "workflow_id", "definition_digest", "plan_digest", "binding_digest",
+        "execution_mode", "policy_digest", "approval_digest"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "run_admitted", "task_started", "effect_intent", "effect_observed",
+        "effect_planned", "task_succeeded", "task_failed", "task_skipped", "task_blocked",
+        "run_succeeded", "run_dry_run_completed", "run_failed", "stale_observed"
+      ]
+    },
+    "task_id": {"anyOf": [{"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,127}$"}, {"type": "null"}]},
+    "step_id": {"anyOf": [{"type": "string", "pattern": "^wst_[0-9a-f]{64}$"}, {"type": "null"}]},
+    "attempt_id": {"anyOf": [{"type": "string", "pattern": "^wat_[0-9a-f]{64}$"}, {"type": "null"}]},
+    "effect_id": {"anyOf": [{"type": "string", "pattern": "^wef_[0-9a-f]{64}$"}, {"type": "null"}]},
+    "side_effect": {"type": "string", "enum": ["none", "local_read", "local_write", "external_read", "external_write"]},
+    "evidence_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
+    "reason_code": {"anyOf": [{"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,127}$"}, {"type": "null"}]},
+    "event_id": {"type": "string", "pattern": "^wee_[0-9a-f]{64}$"}
+  },
+  "required": [
+    "schema_version", "run_id", "sequence", "previous_event_id",
+    "idempotency_key", "occurred_at", "identity", "kind", "task_id",
+    "step_id", "attempt_id", "effect_id", "side_effect",
+    "evidence_digest", "reason_code", "event_id"
+  ],
+  "additionalProperties": false
+}

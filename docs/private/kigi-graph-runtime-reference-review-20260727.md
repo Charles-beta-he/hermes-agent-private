@@ -1,6 +1,6 @@
 # Kigi-CLI → Hermes unified graph runtime reference review
 
-Status: bounded local implementation verified; independent current-byte review APPROVE (P0=0, P1=0)
+Status: bounded local implementation verified; current-byte independent review pending after evidence-binding hardening
 Date: 2026-07-27; protocol amendment and closeout: 2026-07-28
 Target repo: `/Users/charles/.hermes/hermes-agent`
 Reference only: `/Users/charles/.hermes/runs/reference-repos/Kigi-CLI`
@@ -191,3 +191,72 @@ Rejected for this slice: Rust/product port; implicit external agents; automatic 
 | 14. Dynamic generation/save | 0.75 | existing module pool and asset decision scaffolding | their dedicated 6+6 tests pass; no autonomous authority-granting planner claimed |
 
 Total: **13.0 / 14 = 92.9%** for the scoped local unified-runtime rubric. This matrix does not promote Agent OS global certification.
+
+## 2026-07-28 continuation Spec Gate — durable execution protocol
+
+### Goal and evidence boundary
+
+Compose the approved local graph scheduler with profile-scoped append-only execution evidence. The composition must assign deterministic `run_id` / `step_id` / `attempt_id` / `effect_id` identities before a runner can perform a declared local effect, persist pre-effect intent before submission, preserve an uncertain-effect state when post-effect evidence cannot be durably recorded, and replay the ledger without invoking runners.
+
+### Source facts and boundaries
+
+- `workflow_run_event_v1` is a cross-language coarse run-status contract whose legal path is only `proposed → claimed → running → review → done`; it cannot represent graph failures, skipped/blocked nodes, attempts, effects, fencing, or compensation. This slice will not overload or silently change that v1 schema.
+- `workflow_loop_event_v1` is an authority-neutral observed loop projection with task pass/fail and expiry semantics. It cannot represent the graph runtime's skip/join semantics or effect identity, and it intentionally does not execute. This slice will compose with its principles and shared hardened storage primitives rather than pretend its current event vocabulary is graph-complete.
+- The graph runtime remains a single-shot local scheduler. Durable evidence does not grant authority; the existing exact `LocalExecutionGrant` remains mandatory and is consumed before any runner submission.
+- The hot ledger stores identifiers, policy metadata, reason codes, and evidence digests only—never raw runner output, credentials, or arbitrary external payloads.
+
+### Chosen additive path
+
+1. Add a strict `workflow_execution_event_v1` contract and profile-scoped append-only ledger using `runtime_state` no-follow locking/fsync primitives.
+2. Add an exact, snapshotted runtime execution session carrying run/session/lease/fencing identity. Deterministically derive step, attempt, and effect IDs from admitted plan/binding/session bytes.
+3. Add a fail-closed scheduler event sink. Persist `run_admitted`, `task_started`, and (for declared local writes) `effect_intent` before runner submission; persist outcome and terminal evidence afterward. Replay must expose an `effect_uncertain` projection when an intent has no durable outcome.
+4. Keep the contract extensible for later lease takeover/fencing enforcement and dry-run/approval/apply/compensation states; do not claim those later semantics in this first RED→GREEN slice.
+
+### Negative cases and required evidence
+
+- Missing or half-configured durable session/sink rejects before grant consumption and before runner invocation.
+- Caller mutation/subclass getters cannot swap run/session/lease/fencing identity after admission.
+- Ledger rejects mixed run, plan, binding, owner, lease, fencing token, broken links, sequence gaps, duplicate-key JSON, torn tails, symlink/hardlink targets, idempotency conflicts, and events after terminal state.
+- A durable sink failure before submission invokes no affected runner; a post-effect append failure never reports success and leaves replay evidence as uncertain rather than committed or rolled back.
+- Existing graph, loop, run-ledger, and cross-language v1 tests remain green. Independent current-byte review is required after the last fix.
+
+### Explicit non-goals for this slice
+
+No external dispatch, exactly-once-effect claim, automatic retry, lease takeover, heartbeat, compensation execution, dry-run approval, profile migration, schema replacement, push, deploy, or global Agent OS certification.
+
+## 2026-07-28 continuation Converge — implemented execution envelope
+
+The continuation intentionally expanded the original minimum ledger slice before closeout. The additive implementation remains local and preserves `workflow_run_event_v1` unchanged.
+
+### Material claims and implementation evidence
+
+| Claim | Implementation evidence | Negative/runtime evidence |
+|---|---|---|
+| Durable graph evidence | `workflow_execution_event_ledger.py`, `workflow-execution-event-v1.schema.json`, exact `WorkflowExecutionLedgerSink` admission | arbitrary/in-memory callbacks reject before grant consumption; event creation rejects impossible RFC3339 dates; canonical chain/replay and target tests; partial writes complete in a loop, while incomplete writes and failed outcome fsync roll back to the prior uncertain intent; rejected first event leaves no inode; orphan first success re-fsyncs its directory |
+| Stable effect identity | deterministic step/attempt/effect derivation from run, plan, binding, task and side-effect class | identity drift, broken chain, and invalid effect-shape tests fail closed |
+| Lease/stale-writer gate | immutable admitted session plus strict RFC3339 clock checks before admission, scheduling, result acceptance and terminal evidence | expired admission does not consume grant; post-intent expiry records `stale_observed`, rejects runner result, and preserves uncertain effect |
+| Fencing evidence | fencing token is part of every content-addressed event and immutable replay identity | concurrently opened stale sink cannot append after the newer identity; ledger remains on the newer token |
+| Idempotent evidence append | event ID, idempotency key, sequence and previous-event binding under exclusive file lock | concurrent sinks writing the exact same observation persist one event; conflicting same coordinate is rejected |
+| Dry-run suppression | `execution_mode=dry_run`, `effect_planned`, `run_dry_run_completed`, planned node/effect projection | local-write runner and dependent verifier are never called; dry-run approval evidence is forbidden |
+| Policy-bound apply | approval digest binds run, workflow, plan, bindings and policy; identity schema and replay validate the binding | incomplete or mismatched policy/approval rejects before grant consumption; evidence remains authority-neutral and a fresh exact grant is still required |
+| Explicit compensation | `workflow_compensation.py` reads and canonically replays the durable source ledger internally, requires the failed terminal event to bind the receipt core digest, and prepares a separate deterministic graph package bound to source run/core/terminal/effect/task and policy | forged caller snapshots are not accepted by the API; absent or non-derived effects, behavioral receipt containers, terminal receipt mismatch, and uncertain effects reject; package grants no authority; apply requires a new grant/session/ledger/approval and verifier |
+| Public API | `workflow_kernel/__init__.py` exports execution ledger, session, approval, replay and compensation entry points | import/static checks are included in the kernel verification |
+
+### Compensation boundary
+
+Compensation is a new run, never a mutation, truncation, or semantic rewrite of the source ledger. Preparation reads and replays the canonical durable ledger rather than accepting a caller-supplied snapshot. It requires the ledger's `run_failed` terminal event to carry the exact failed receipt core digest, matching replay identity, and a canonically derived `observed` effect whose durable task and receipt node are failed. An intent without observed outcome remains uncertain and must be reconciled by a human or a future explicit reconciler; this implementation will not guess whether the side effect happened.
+
+The generated compensation definition and plan are authority-neutral (`authority_granted=false`, `executable=false`). Apply requires a fresh exact `LocalExecutionGrant`, separately admitted execution session, policy-bound approval evidence, a new empty ledger, a bounded runner, and an independent verification runner.
+
+### Verification evidence at current pre-review bytes
+
+- `uv run pytest -q tests/workflow_kernel`: `275 passed in 3.78s`.
+- `uv run ruff check workflow_kernel tests/workflow_kernel`: `All checks passed!`.
+- Scoped `py_compile` plus `git diff --check`: exit 0.
+- Focused execution ledger/runtime/compensation suite after durable compensation source/terminal binding, complete-write looping, rollback-on-incomplete-write/fsync-failure, strict durable-sink admission, timestamp validation, mandatory policy-bound apply, and first-publication hardening: `79 passed in 1.03s`.
+
+These results are pre-independent-review evidence. Any code change after the review digest invalidates the approval and requires a new verification/review round.
+
+### Remaining explicit non-goals
+
+No distributed lease service, claim acquisition, lease renewal/heartbeat, takeover coordinator, cross-ledger global fencing registry, exactly-once side-effect guarantee, automatic effect retry, automatic uncertain-effect reconciliation, external dispatch, worktree merge, push, deploy, or Agent OS global certification is claimed. The current fencing guarantee is scoped to an admitted run identity and its append-only ledger; it is not a distributed lock service.
