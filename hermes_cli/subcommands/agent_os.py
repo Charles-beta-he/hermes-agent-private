@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from hermes_cli.agent_os_control_plane import (
@@ -26,11 +28,17 @@ from hermes_cli.agent_os_control_plane import (
     route_shadow,
     status,
 )
+from hermes_cli.personal_cognitive_reconciler import (
+    ReconciliationValidationError,
+    cognitive_schema,
+    reconcile_packet,
+    validation_error_payload,
+)
 
 
-def _emit(payload: dict[str, Any], *, as_json: bool) -> int:
+def _emit(payload: dict[str, Any], *, as_json: bool, sort_keys: bool = False) -> int:
     if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=sort_keys))
     else:
         print(format_summary(payload))
     return 0 if payload.get("ok", False) else 1
@@ -40,6 +48,39 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
     action = getattr(args, "agent_os_action", None) or "status"
     as_json = bool(getattr(args, "json", False))
     home = getattr(args, "home", None)
+    if action == "cognitive-schema":
+        return _emit(cognitive_schema(), as_json=True, sort_keys=True)
+    if action == "reconcile":
+        input_path = Path(getattr(args, "input", ""))
+        try:
+            packet = json.loads(input_path.read_text(encoding="utf-8"))
+            payload = reconcile_packet(packet, evaluation_time=datetime.now(timezone.utc))
+        except ReconciliationValidationError as exc:
+            payload = validation_error_payload(exc)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError, RecursionError, OverflowError) as exc:
+            payload = {
+                "ok": False,
+                "schema": "PersonalSemanticReconciliationResult.v1",
+                "state": "blocked",
+                "findings": [
+                    {
+                        "path": str(input_path),
+                        "code": "input_read_error",
+                        "message": str(exc),
+                    }
+                ],
+                "boundary": {
+                    "runtime_mutation": False,
+                    "capability_execution": False,
+                    "authority_expansion": False,
+                    "external_side_effects": False,
+                    "durable_semantic_writeback": False,
+                },
+            }
+        exit_code = _emit(payload, as_json=True, sort_keys=True)
+        if exit_code:
+            raise SystemExit(exit_code)
+        return 0
     if action == "doctor":
         return _emit(doctor(home), as_json=as_json)
     if action == "schema":
@@ -116,6 +157,7 @@ def build_agent_os_parser(subparsers) -> None:
         ("evidence", "Project read-only audit findings into ERG EvidenceNode records"),
         ("bootstrap-runtime", "Execute exact P4 local ERG runtime bootstrap boundary"),
         ("boundary-coverage", "Project/read back high-risk Agent OS boundary coverage without unscoped execution"),
+        ("cognitive-schema", "Show the stable read-only personal cognitive reconciliation contract"),
     ]:
         p = subs.add_parser(name, help=help_text)
         p.add_argument("--home", default=None, help="Hermes home to inspect")
@@ -125,6 +167,15 @@ def build_agent_os_parser(subparsers) -> None:
         if name == "boundary-coverage":
             p.add_argument("--destructive-canary", action="store_true", help="Run disposable local delete/restore canary smoke")
         p.set_defaults(func=cmd_agent_os)
+
+    reconcile = subs.add_parser(
+        "reconcile",
+        help="Validate and reconcile one personal semantic goal packet without execution",
+    )
+    reconcile.add_argument("--input", required=True, help="Explicit PersonalSemanticReconcileInput.v1 JSON path")
+    reconcile.add_argument("--home", default=None, help="Accepted for CLI consistency; reconciliation does not read it")
+    reconcile.add_argument("--json", action="store_true", help="Emit deterministic machine-readable JSON")
+    reconcile.set_defaults(func=cmd_agent_os)
 
     route = subs.add_parser(
         "route",
