@@ -34,6 +34,12 @@ from hermes_cli.personal_cognitive_reconciler import (
     reconcile_packet,
     validation_error_payload,
 )
+from hermes_cli.temporal_ledger_runtime import (
+    activate_runtime as activate_temporal_ledger_runtime,
+    deactivate_runtime as deactivate_temporal_ledger_runtime,
+    inspect_runtime as inspect_temporal_ledger_runtime,
+    runtime_status as temporal_ledger_runtime_status,
+)
 
 
 def _emit(payload: dict[str, Any], *, as_json: bool, sort_keys: bool = False) -> int:
@@ -42,6 +48,24 @@ def _emit(payload: dict[str, Any], *, as_json: bool, sort_keys: bool = False) ->
     else:
         print(format_summary(payload))
     return 0 if payload.get("ok", False) else 1
+
+
+def _emit_temporal(payload: dict[str, Any], *, as_json: bool) -> int:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    else:
+        state = payload.get("state") or payload.get("outcome") or payload.get("error_code") or "unknown"
+        print(f"Temporal Commitment Ledger Runtime: {'OK' if payload.get('ok') else 'ATTENTION'}")
+        print(f"state: {state}")
+        print(f"active: {payload.get('active')} trusted: {payload.get('trusted')}")
+        if payload.get("module_sha256"):
+            print(f"module_sha256: {payload.get('module_sha256')}")
+        if payload.get("ledger_path"):
+            print(f"ledger_path: {payload.get('ledger_path')}")
+        findings = payload.get("findings") or []
+        for finding in findings:
+            print(f"- {finding}")
+    return 0 if payload.get("ok") else 1
 
 
 def cmd_agent_os(args: argparse.Namespace) -> int:
@@ -127,6 +151,33 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
             ),
             as_json=as_json,
         )
+    if action == "temporal-ledger":
+        temporal_action = getattr(args, "temporal_ledger_action", None) or "status"
+        if temporal_action == "activate":
+            return _emit_temporal(
+                activate_temporal_ledger_runtime(
+                    home=home,
+                    authority_gate=getattr(args, "authority_gate", ""),
+                ),
+                as_json=as_json,
+            )
+        if temporal_action == "deactivate":
+            return _emit_temporal(
+                deactivate_temporal_ledger_runtime(
+                    home=home,
+                    authority_gate=getattr(args, "authority_gate", ""),
+                ),
+                as_json=as_json,
+            )
+        if temporal_action == "inspect":
+            return _emit_temporal(
+                inspect_temporal_ledger_runtime(
+                    home=home,
+                    as_of=getattr(args, "as_of", ""),
+                ),
+                as_json=as_json,
+            )
+        return _emit_temporal(temporal_ledger_runtime_status(home), as_json=as_json)
     return _emit(status(home), as_json=as_json)
 
 
@@ -233,3 +284,31 @@ def build_agent_os_parser(subparsers) -> None:
     harness.add_argument("--expected-previous-status", default=None, help="Optional expected current status for drift guard")
     harness.add_argument("--adapter-state-path", default=None, help="Optional state JSON path under Agent OS 08-executor")
     harness.set_defaults(func=cmd_agent_os)
+
+    temporal = subs.add_parser(
+        "temporal-ledger",
+        help="Operate the digest-bound local Temporal Commitment Ledger runtime",
+    )
+    temporal.set_defaults(func=cmd_agent_os)
+    temporal_subs = temporal.add_subparsers(dest="temporal_ledger_action")
+
+    temporal_status = temporal_subs.add_parser("status", help="Read back active runtime state and verify exact module bytes")
+    temporal_status.add_argument("--home", default=None, help="Hermes home to inspect")
+    temporal_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    temporal_status.set_defaults(func=cmd_agent_os)
+
+    for temporal_action in ("activate", "deactivate"):
+        action_parser = temporal_subs.add_parser(
+            temporal_action,
+            help=f"{temporal_action.title()} the profile-local runtime using an exact user AuthorityGrant",
+        )
+        action_parser.add_argument("--home", default=None, help="Hermes home to mutate")
+        action_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+        action_parser.add_argument("--authority-gate", required=True, help="Exact unexpired TemporalCommitmentRuntimeAuthority.v1 JSON path")
+        action_parser.set_defaults(func=cmd_agent_os)
+
+    temporal_inspect = temporal_subs.add_parser("inspect", help="Inspect the active canonical ledger without mutation")
+    temporal_inspect.add_argument("--home", default=None, help="Hermes home to inspect")
+    temporal_inspect.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    temporal_inspect.add_argument("--as-of", required=True, help="Timezone-aware ISO-8601 projection time")
+    temporal_inspect.set_defaults(func=cmd_agent_os)
