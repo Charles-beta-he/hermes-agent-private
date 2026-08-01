@@ -138,3 +138,108 @@ describe('governed workflow runtime contracts', () => {
     expect(manifest.properties.leaves.minProperties).toBe(1)
   })
 })
+
+describe('optional manifest leaf evidence kinds', () => {
+  const leafManifest = (leaf: Record<string, unknown>) => ({
+    schema_version: 'workflow_runtime_manifest_v1',
+    run_id: 'run-1',
+    identity_schema_version: 1,
+    baseline_ref: 'git:abc',
+    project_scope: '/tmp/project',
+    profile_scope: 'default',
+    tool_policy_ref: 'policy:local-pure-v1',
+    model_contract_ref: 'model:none',
+    authority_ref: 'authority:local',
+    max_concurrency: 1,
+    reservation_ttl_ms: 60_000,
+    hard_budget: usage,
+    leaves: {
+      inspect: {
+        adapter: 'local.echo',
+        isolation: 'in_process_trusted_pure',
+        input: null,
+        output_schema: {},
+        reserve: usage,
+        ...leaf,
+      },
+    },
+  })
+
+  it('accepts a declared non-empty unique evidence kind list', () => {
+    expect(
+      WorkflowRuntimeManifestV1Schema.safeParse(
+        leafManifest({ evidence_kinds: ['command', 'file'] }),
+      ).success,
+    ).toBe(true)
+  })
+
+  it('accepts a legacy leaf that declares no evidence kinds', () => {
+    expect(WorkflowRuntimeManifestV1Schema.safeParse(leafManifest({})).success).toBe(true)
+  })
+
+  it('rejects unknown evidence kinds', () => {
+    expect(
+      WorkflowRuntimeManifestV1Schema.safeParse(
+        leafManifest({ evidence_kinds: ['telemetry'] }),
+      ).success,
+    ).toBe(false)
+  })
+
+  it('rejects an empty declaration so absent and declared stay distinguishable', () => {
+    expect(
+      WorkflowRuntimeManifestV1Schema.safeParse(leafManifest({ evidence_kinds: [] })).success,
+    ).toBe(false)
+  })
+
+  it('rejects duplicate and oversized evidence kind lists', () => {
+    expect(
+      WorkflowRuntimeManifestV1Schema.safeParse(
+        leafManifest({ evidence_kinds: ['file', 'file'] }),
+      ).success,
+    ).toBe(false)
+    expect(
+      WorkflowRuntimeManifestV1Schema.safeParse(
+        leafManifest({
+          evidence_kinds: Array.from({ length: 17 }, (_, index) => `kind-${index}`),
+        }),
+      ).success,
+    ).toBe(false)
+  })
+
+  it('emits the optional evidence kind list in the generated manifest schema', () => {
+    const schema = toWorkflowRuntimeManifestV1JsonSchema() as {
+      properties: {
+        leaves: {
+          additionalProperties: {
+            properties: {
+              evidence_kinds?: {
+                type?: string
+                items?: { enum?: string[] }
+                minItems?: number
+                maxItems?: number
+                uniqueItems?: boolean
+              }
+            }
+            required: string[]
+          }
+        }
+      }
+    }
+    const leaf = schema.properties.leaves.additionalProperties
+    const evidenceKinds = leaf.properties.evidence_kinds
+
+    expect(leaf.required).not.toContain('evidence_kinds')
+    expect(evidenceKinds?.type).toBe('array')
+    expect(evidenceKinds?.items?.enum).toEqual([
+      'command',
+      'file',
+      'api',
+      'screenshot',
+      'log',
+      'readback',
+    ])
+    expect(evidenceKinds?.minItems).toBe(1)
+    expect(evidenceKinds?.maxItems).toBe(16)
+    expect(evidenceKinds?.uniqueItems).toBe(true)
+  })
+})

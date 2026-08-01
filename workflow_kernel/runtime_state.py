@@ -381,6 +381,44 @@ def _validate_private_file_target_at(directory_descriptor: int, name: str) -> No
         raise OSError(f"refusing unsafe private file target: {name}")
 
 
+def unlink_private_file_anchored(path: Path, *, private_root: Path) -> bool:
+    """Remove one private regular file through a no-follow parent descriptor.
+
+    The parent chain is opened without following symlinks, the leaf is checked
+    through that pinned descriptor, and the removal itself is descriptor
+    relative, so a directory swapped in after the check cannot redirect the
+    unlink outside the private root. Returns True when a file was removed and
+    False when it was already absent.
+    """
+    parent = _absolute_without_parent_refs(path.parent)
+    root = _absolute_without_parent_refs(private_root)
+    if parent != root and root not in parent.parents:
+        raise ValueError(f"artifact parent is outside private runtime root: {path}")
+    try:
+        parent_descriptor = _open_existing_directory_chain(parent)
+    except FileNotFoundError:
+        return False
+    try:
+        try:
+            info = os.stat(path.name, dir_fd=parent_descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+        ):
+            raise OSError(f"refusing unsafe private file target: {path}")
+        try:
+            os.unlink(path.name, dir_fd=parent_descriptor)
+        except FileNotFoundError:
+            return False
+        os.fsync(parent_descriptor)
+        return True
+    finally:
+        os.close(parent_descriptor)
+
+
 def write_private_file_atomic(
     path: Path, data: bytes, *, private_root: Path
 ) -> dict[str, str]:

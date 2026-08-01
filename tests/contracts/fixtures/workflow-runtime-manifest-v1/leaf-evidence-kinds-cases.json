@@ -1,0 +1,14 @@
+[
+  { "name": "valid legacy leaf without evidence kinds", "valid": true },
+  { "name": "valid declared evidence kinds", "valid": true, "value": ["command", "file"] },
+  { "name": "valid single declared evidence kind", "valid": true, "value": ["readback"] },
+  { "name": "valid full evidence kind set", "valid": true, "value": ["command", "file", "api", "screenshot", "log", "readback"] },
+  { "name": "invalid unknown evidence kind", "valid": false, "value": ["telemetry"] },
+  { "name": "invalid empty declaration", "valid": false, "value": [] },
+  { "name": "invalid duplicate evidence kind", "valid": false, "value": ["file", "file"] },
+  { "name": "invalid uppercase evidence kind alias", "valid": false, "value": ["FILE"] },
+  { "name": "invalid non-string evidence kind", "valid": false, "value": [1] },
+  { "name": "invalid non-array declaration", "valid": false, "value": "file" },
+  { "name": "invalid null declaration", "valid": false, "value": null },
+  { "name": "invalid oversized declaration", "valid": false, "value": ["command", "file", "api", "screenshot", "log", "readback", "command", "file", "api", "screenshot", "log", "readback", "command", "file", "api", "screenshot", "log"] }
+]

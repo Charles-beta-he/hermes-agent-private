@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { WorkflowEvidenceKindV1Schema } from './workflow-definition'
+
 export type JsonValue =
   | null
   | boolean
@@ -33,6 +35,15 @@ export const WorkflowRuntimeLeafV1Schema = z.strictObject({
   input: JsonValueSchema,
   output_schema: z.looseObject({}),
   reserve: WorkflowResourceUsageV1Schema,
+  evidence_kinds: z
+    .array(WorkflowEvidenceKindV1Schema)
+    .min(1)
+    .max(16)
+    .refine(
+      (kinds) => new Set(kinds).size === kinds.length,
+      'evidence kinds must be unique',
+    )
+    .optional(),
 })
 
 export const WorkflowRuntimeManifestV1Schema = z
@@ -132,6 +143,10 @@ export function toWorkflowRuntimeManifestV1JsonSchema(): Record<string, unknown>
   )
   const properties = schema.properties as Record<string, Record<string, unknown>>
   properties.leaves.minProperties = 1
+  const leaf = properties.leaves.additionalProperties as {
+    properties: Record<string, Record<string, unknown>>
+  }
+  leaf.properties.evidence_kinds.uniqueItems = true
   return schema
 }
 

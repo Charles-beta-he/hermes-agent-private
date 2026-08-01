@@ -33,7 +33,10 @@ from workflow_kernel.schema_formats import (
     parse_rfc3339_datetime,
     workflow_format_checker,
 )
-from workflow_kernel.workflow_definition import compile_workflow_definition_v1
+from workflow_kernel.workflow_definition import (
+    compile_acceptance_evidence_contract_v1,
+    compile_workflow_definition_v1,
+)
 from workflow_kernel.runtime_state import (
     exclusive_execution_lock,
     pin_runtime_path,
@@ -382,6 +385,23 @@ def _prepare(
             "leaf_set_mismatch",
             f"manifest leaf mismatch; missing={missing}, extra={extra}",
         )
+    # Declaration is enforcement: a leaf that declares evidence kinds must be
+    # able to satisfy its task acceptance contract.  A leaf that declares
+    # nothing keeps v1 admission behaviour, so invariant 8 is only enforced for
+    # the declared surface.
+    acceptance_evidence = compile_acceptance_evidence_contract_v1(
+        cast(Mapping[str, Any], definition)
+    )
+    for leaf_id in sorted(normalized_manifest["leaves"]):
+        declared = normalized_manifest["leaves"][leaf_id].get("evidence_kinds")
+        if declared is None:
+            continue
+        unsatisfiable = sorted(set(acceptance_evidence[leaf_id]) - set(declared))
+        if unsatisfiable:
+            _fail(
+                "acceptance_evidence_unsatisfiable",
+                f"{leaf_id}: declared evidence kinds cannot satisfy required acceptance evidence: {unsatisfiable}",
+            )
     adapters = _builtin_adapters()
     verifier_targets: dict[str, list[str]] = {}
     for link in plan["verifier_links"]:
@@ -876,7 +896,9 @@ def _run_workflow_once(
     running: dict[
         Future[tuple[_AdapterResult, int]], tuple[str, str, dict[str, dict[str, Any]]]
     ] = {}
-    attempts: dict[str, int] = {task_id: 0 for task_id in task_bindings}
+    attempts: dict[str, int] = {
+        task_id: existing["attempts"].get(task_id, 0) for task_id in task_bindings
+    }
 
     def append_packet(packet: dict[str, Any], suffix: str) -> None:
         nonlocal existing

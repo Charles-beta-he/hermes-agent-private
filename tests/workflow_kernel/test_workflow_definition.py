@@ -12,6 +12,7 @@ import pytest
 
 from workflow_kernel.workflow_definition import (
     WorkflowDefinitionError,
+    compile_acceptance_evidence_contract_v1,
     compile_workflow_definition_v1,
 )
 
@@ -328,6 +329,60 @@ def test_external_write_requires_human_gate() -> None:
     definition["stop_conditions"] = ["success", "terminal_failure"]
 
     _assert_error(definition, "human_gate_missing")
+
+
+def test_acceptance_evidence_contract_projects_sorted_unique_kinds_per_task() -> None:
+    definition = _valid_definition()
+    implement_acceptance = _task(definition, "implement")["acceptance"]
+    assert isinstance(implement_acceptance, list)
+    implement_acceptance.append(
+        {
+            "id": "implement-readback",
+            "claim": "readback confirms the change",
+            "evidence_required": ["readback", "command"],
+        }
+    )
+
+    contract = compile_acceptance_evidence_contract_v1(definition)
+
+    assert contract == {
+        "inspect": ["file"],
+        "plan": ["file"],
+        "implement": ["command", "file", "readback"],
+        "verify": ["command", "readback"],
+    }
+
+
+def test_acceptance_evidence_contract_fails_closed_on_invalid_definition() -> None:
+    definition = _valid_definition()
+    _task(definition, "implement")["depends_on"] = ["missing"]
+
+    with pytest.raises(WorkflowDefinitionError) as exc_info:
+        compile_acceptance_evidence_contract_v1(definition)
+
+    assert exc_info.value.code == "unknown_dependency"
+
+
+def test_acceptance_evidence_contract_rejects_schema_invalid_definition() -> None:
+    definition = _valid_definition()
+    definition["authority_granted"] = True
+
+    with pytest.raises(WorkflowDefinitionError) as exc_info:
+        compile_acceptance_evidence_contract_v1(definition)
+
+    assert exc_info.value.code == "schema_invalid"
+
+
+def test_acceptance_evidence_contract_does_not_mutate_input_or_plan() -> None:
+    definition = _valid_definition()
+    before = copy.deepcopy(definition)
+    plan_before = compile_workflow_definition_v1(definition)
+
+    compile_acceptance_evidence_contract_v1(definition)
+
+    assert definition == before
+    assert compile_workflow_definition_v1(definition) == plan_before
+    assert "acceptance_evidence" not in plan_before
 
 
 def test_rejects_incomplete_handoff_contract() -> None:

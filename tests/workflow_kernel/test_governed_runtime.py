@@ -2838,3 +2838,120 @@ def test_status_does_not_block_behind_an_active_execution(
 
     assert runner.exitcode == 0
     assert status.exitcode == 0
+
+
+def test_declared_leaf_evidence_kinds_must_cover_task_acceptance_evidence(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest()
+    manifest["leaves"]["implement"]["evidence_kinds"] = ["command"]
+    ledger_path = tmp_path / "run.jsonl"
+
+    with pytest.raises(WorkflowRuntimeError) as exc_info:
+        run_workflow(
+            _definition(),
+            manifest,
+            ledger_path=ledger_path,
+            private_root=tmp_path,
+            execute_grant=ExecuteGrant.local_only(),
+            now=NOW,
+        )
+
+    assert exc_info.value.code == "acceptance_evidence_unsatisfiable"
+    assert not ledger_path.exists()
+    # `hermes_test` is the shared fixture home; the gate must add nothing else.
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["hermes_test"]
+
+
+def test_compile_preview_shares_the_acceptance_evidence_admission_gate() -> None:
+    manifest = _manifest()
+    manifest["leaves"]["verify"]["evidence_kinds"] = ["file"]
+
+    with pytest.raises(WorkflowRuntimeError) as exc_info:
+        compile_runtime_preview(_definition(), manifest)
+
+    assert exc_info.value.code == "acceptance_evidence_unsatisfiable"
+
+
+def test_declared_leaf_evidence_kinds_covering_acceptance_are_admitted(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest()
+    for leaf in manifest["leaves"].values():
+        leaf["evidence_kinds"] = ["file", "readback"]
+
+    result = _run(tmp_path, manifest=manifest)
+
+    assert result["status"] == "run_completed"
+
+
+def test_undeclared_leaf_evidence_kinds_preserve_v1_admission(tmp_path: Path) -> None:
+    manifest = _manifest()
+    assert all("evidence_kinds" not in leaf for leaf in manifest["leaves"].values())
+
+    result = _run(tmp_path, manifest=manifest)
+
+    assert result["status"] == "run_completed"
+
+
+def test_declared_leaf_evidence_kinds_do_not_change_resume_identity() -> None:
+    manifest = _manifest()
+    declared = _manifest()
+    for leaf in declared["leaves"].values():
+        leaf["evidence_kinds"] = ["readback"]
+
+    baseline = compile_runtime_preview(_definition(), manifest)
+    with_declaration = compile_runtime_preview(_definition(), declared)
+
+    assert with_declaration["identity"] == baseline["identity"]
+    assert with_declaration["identity_hash"] == baseline["identity_hash"]
+
+
+def test_retry_attempt_count_survives_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    original_append = governed_runtime._append
+    failed_once = False
+
+    def fail_first_leaf_start(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal failed_once
+        event_type = args[3]
+        if event_type == "leaf_started" and not failed_once:
+            failed_once = True
+            raise OSError("leaf start append unavailable")
+        return original_append(*args, **kwargs)
+
+    monkeypatch.setattr(governed_runtime, "_append", fail_first_leaf_start)
+    with pytest.raises(OSError, match="leaf start append unavailable"):
+        _run(tmp_path)
+
+    monkeypatch.setattr(governed_runtime, "_append", original_append)
+    resumed = _run(tmp_path, resume=True, now=LATER)
+
+    events = read_execution_events(tmp_path / "run.jsonl", private_root=tmp_path)
+    inspect_reservations = [
+        event["payload"]["reservation_id"]
+        for event in events
+        if event["event_type"] == "budget_reserved"
+        and event["payload"]["task_id"] == "inspect"
+    ]
+
+    assert resumed["status"] == "run_completed"
+    assert len(inspect_reservations) == 2
+    assert [
+        reservation_id.split(":")[2] for reservation_id in inspect_reservations
+    ] == ["1", "2"]
+
+
+def test_execution_projection_derives_attempts_from_durable_events(
+    tmp_path: Path,
+) -> None:
+    _run(tmp_path)
+    events = read_execution_events(tmp_path / "run.jsonl", private_root=tmp_path)
+
+    projection = project_execution_events(events)
+    status = read_runtime_status(tmp_path / "run.jsonl", private_root=tmp_path)
+
+    assert projection["attempts"] == {"inspect": 1, "implement": 1, "verify": 1}
+    assert "attempts" not in status

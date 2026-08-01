@@ -22,6 +22,15 @@ TRANSITION_SCHEMA_PATH = REPO_ROOT / "schemas" / "workflow-run-transition-v1.sch
 RUN_EVENT_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "workflow-run-event-v1" / "cases.json"
 RUN_EVENT_NONBLANK_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "workflow-run-event-v1" / "nonblank-cases.json"
 RUN_EVENT_SCHEMA_PATH = REPO_ROOT / "schemas" / "workflow-run-event-v1.schema.json"
+RUNTIME_MANIFEST_SCHEMA_PATH = REPO_ROOT / "schemas" / "workflow-runtime-manifest-v1.schema.json"
+RUNTIME_MANIFEST_LEAF_EVIDENCE_CASES_PATH = (
+    REPO_ROOT
+    / "tests"
+    / "contracts"
+    / "fixtures"
+    / "workflow-runtime-manifest-v1"
+    / "leaf-evidence-kinds-cases.json"
+)
 RUN_EVENT_NONBLANK_FIELDS = (
     "run_id",
     "idempotency_key",
@@ -60,6 +69,40 @@ def _event_with_nonblank_field(field: str, value: str) -> dict:
     else:
         event[field] = value
     return event
+
+
+def _runtime_manifest(case: dict) -> dict:
+    usage = {
+        "spawns": 1,
+        "wall_ms": 1000,
+        "tool_calls": 0,
+        "tokens": 0,
+        "side_effect_ops": 0,
+    }
+    leaf = {
+        "adapter": "local.echo",
+        "isolation": "in_process_trusted_pure",
+        "input": None,
+        "output_schema": {},
+        "reserve": usage,
+    }
+    if "value" in case:
+        leaf["evidence_kinds"] = case["value"]
+    return {
+        "schema_version": "workflow_runtime_manifest_v1",
+        "run_id": "run-1",
+        "identity_schema_version": 1,
+        "baseline_ref": "git:abc",
+        "project_scope": "/tmp/project",
+        "profile_scope": "default",
+        "tool_policy_ref": "policy:local-pure-v1",
+        "model_contract_ref": "model:none",
+        "authority_ref": "authority:local",
+        "max_concurrency": 1,
+        "reservation_ttl_ms": 60000,
+        "hard_budget": usage,
+        "leaves": {"inspect": leaf},
+    }
 
 
 @pytest.mark.parametrize("case", _cases(EVIDENCE_CASES_PATH), ids=lambda case: case["name"])
@@ -142,6 +185,21 @@ def test_workflow_run_event_v1_portable_nonblank_parity(
         RUN_EVENT_SCHEMA_PATH,
         {"value": _event_with_nonblank_field(field, case["value"]), "valid": case["valid"]},
         f"WorkflowRunEventV1.{field}",
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    _cases(RUNTIME_MANIFEST_LEAF_EVIDENCE_CASES_PATH),
+    ids=lambda case: case["name"],
+)
+def test_workflow_runtime_manifest_v1_leaf_evidence_kinds_fixture_parity(
+    case: dict,
+) -> None:
+    _assert_schema_case(
+        RUNTIME_MANIFEST_SCHEMA_PATH,
+        {"value": _runtime_manifest(case), "valid": case["valid"]},
+        "WorkflowRuntimeManifestV1.leaves.evidence_kinds",
     )
 
 

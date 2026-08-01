@@ -458,6 +458,7 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
         "settled": _zero_resource(),
         "settlements": {},
         "started": {},
+        "attempts": {},
         "leaf_packets_by_id": {},
         "event_count": 0,
         "last_event_id": None,
@@ -559,6 +560,9 @@ def project_execution_events(events: list[dict[str, Any]]) -> dict[str, Any]:
                     f"reservation for {task_id} exceeds hard budget",
                 )
             state["reservations"][rid] = payload
+            # Durable retry attempts: each accepted reservation is one attempt,
+            # so resume derives the next attempt from the ledger, not memory.
+            state["attempts"][task_id] = state["attempts"].get(task_id, 0) + 1
         elif event_type == "budget_settled":
             rid = payload["reservation_id"]
             reservation = state["reservations"].get(rid)

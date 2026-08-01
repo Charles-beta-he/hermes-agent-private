@@ -434,3 +434,30 @@ def compile_workflow_definition_v1(
     plan["plan_digest"] = _canonical_digest(plan)
     _validate_schema(plan, "workflow-execution-plan-v1.schema.json")
     return plan
+
+
+def compile_acceptance_evidence_contract_v1(
+    definition: Mapping[str, Any],
+) -> dict[str, list[str]]:
+    """Project the per-task required acceptance evidence kinds.
+
+    The definition passes the full compiler validation first, so an invalid
+    definition fails closed instead of yielding a partial contract.  The
+    projection is pure and does not participate in the definition or plan
+    digest.
+    """
+
+    compile_workflow_definition_v1(definition)
+
+    tasks = definition["tasks"]
+    assert isinstance(tasks, list)
+    return {
+        task["id"]: sorted(
+            {
+                kind
+                for acceptance in task["acceptance"]
+                for kind in acceptance["evidence_required"]
+            }
+        )
+        for task in tasks
+    }

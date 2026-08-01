@@ -899,3 +899,76 @@ def test_private_atomic_write_cleanup_failure_closes_parent_and_preserves_primar
         assert artifact.read_bytes() == b"{}\n"
 
     assert opened_parent[-1] in closed
+
+
+# --- anchored private removal ---------------------------------------------------
+
+
+def _private_root_with_file(tmp_path: Path) -> tuple[Path, Path]:
+    private_root = tmp_path / "private"
+    (private_root / "targets").mkdir(mode=0o700, parents=True)
+    artifact = private_root / "targets" / "note.json"
+    artifact.write_text("{}", encoding="utf-8")
+    return private_root, artifact
+
+
+def test_unlink_private_file_anchored_removes_one_regular_file(tmp_path: Path) -> None:
+    private_root, artifact = _private_root_with_file(tmp_path)
+    assert (
+        runtime_state.unlink_private_file_anchored(artifact, private_root=private_root)
+        is True
+    )
+    assert not artifact.exists()
+    assert (
+        runtime_state.unlink_private_file_anchored(artifact, private_root=private_root)
+        is False
+    )
+
+
+def test_unlink_private_file_anchored_refuses_a_symlinked_leaf(tmp_path: Path) -> None:
+    private_root, artifact = _private_root_with_file(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    artifact.unlink()
+    artifact.symlink_to(outside)
+    with pytest.raises(OSError):
+        runtime_state.unlink_private_file_anchored(artifact, private_root=private_root)
+    assert outside.exists()
+    assert artifact.is_symlink()
+
+
+def test_unlink_private_file_anchored_refuses_a_symlinked_parent(
+    tmp_path: Path,
+) -> None:
+    private_root, artifact = _private_root_with_file(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    external = outside / artifact.name
+    external.write_text("{}", encoding="utf-8")
+    artifact.unlink()
+    artifact.parent.rmdir()
+    artifact.parent.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError):
+        runtime_state.unlink_private_file_anchored(artifact, private_root=private_root)
+    assert external.exists()
+
+
+def test_unlink_private_file_anchored_refuses_a_path_outside_the_private_root(
+    tmp_path: Path,
+) -> None:
+    private_root, _ = _private_root_with_file(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError):
+        runtime_state.unlink_private_file_anchored(outside, private_root=private_root)
+    assert outside.exists()
+
+
+def test_unlink_private_file_anchored_refuses_a_multiply_linked_file(
+    tmp_path: Path,
+) -> None:
+    private_root, artifact = _private_root_with_file(tmp_path)
+    os.link(artifact, artifact.with_name("second.json"))
+    with pytest.raises(OSError):
+        runtime_state.unlink_private_file_anchored(artifact, private_root=private_root)
+    assert artifact.exists()

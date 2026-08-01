@@ -148,6 +148,23 @@
               "side_effect_ops"
             ],
             "additionalProperties": false
+          },
+          "evidence_kinds": {
+            "minItems": 1,
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "command",
+                "file",
+                "api",
+                "screenshot",
+                "log",
+                "readback"
+              ]
+            },
+            "uniqueItems": true
           }
         },
         "required": [
