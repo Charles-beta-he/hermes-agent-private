@@ -1,0 +1,2572 @@
+{
+  "$id": "https://hermes-agent.local/schemas/workflow-effect-ledger-event-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "workflow_effect_ledger_event_v1",
+      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+    },
+    "effect_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "allOf": [
+        {
+          "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+        },
+        {
+          "pattern": "\\S"
+        }
+      ],
+      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "previous_event_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^wel_[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "allOf": [
+        {
+          "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+        },
+        {
+          "pattern": "\\S"
+        }
+      ],
+      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+    },
+    "occurred_at": {
+      "type": "string",
+      "pattern": "^(?:000[1-9]|00[1-9]\\d|0[1-9]\\d{2}|[1-9]\\d{3})-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "format": "date-time",
+      "$comment": "Grammar: pattern enforces normalized UTC/offset seconds form and year 0001-9999 (year 0000 excluded). JSON Schema cannot prove full calendar correctness (e.g. 2026-02-30). Public Python/TS parsers enforce calendar-valid timestamps and unpaired-surrogate rejection; treat schema acceptance of invalid calendar dates outside the pattern as a known limitation, not parity."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "claimed",
+        "intent_recorded",
+        "observation_recorded",
+        "reconciled",
+        "receipt_terminal",
+        "compensation_intent",
+        "compensation_observation",
+        "compensation_receipt"
+      ],
+      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+    },
+    "payload": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/__schema0"
+      }
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^wel_[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "effect_id",
+    "sequence",
+    "previous_event_id",
+    "idempotency_key",
+    "occurred_at",
+    "event_type",
+    "payload",
+    "event_id"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes WorkflowEffectLedgerEventV1",
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string",
+          "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+        },
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "claimed"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "command_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "target_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "owner": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "request_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "adapter_id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "operation": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "fence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "payload_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "effect_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "command_digest",
+              "target_digest",
+              "owner",
+              "request_digest",
+              "idempotency_key",
+              "adapter_id",
+              "operation",
+              "fence",
+              "payload_digest",
+              "effect_id"
+            ],
+            "additionalProperties": false,
+            "title": "Hermes EffectClaimedPayloadV1"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "intent_recorded"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "fence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "command_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "request_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "target_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "authority_binding_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "preflight_readback": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "preflight_readback_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "adapter_id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "operation": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "payload_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "effect_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "fence",
+              "command_digest",
+              "request_digest",
+              "target_digest",
+              "authority_binding_digest",
+              "preflight_readback",
+              "preflight_readback_digest",
+              "adapter_id",
+              "operation",
+              "payload_digest",
+              "idempotency_key",
+              "effect_id"
+            ],
+            "additionalProperties": false,
+            "title": "Hermes EffectIntentPayloadV1",
+            "$defs": {
+              "__schema0": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "observation_recorded"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "fence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "applied",
+                  "not_applied",
+                  "unknown"
+                ]
+              },
+              "adapter_result_digest": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "readback": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "readback_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "observation": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "const": "effect_observation_v1"
+                  },
+                  "effect_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "observation_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "classification": {
+                    "type": "string",
+                    "enum": [
+                      "applied",
+                      "not_applied",
+                      "unknown"
+                    ]
+                  },
+                  "fence": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "observed_at": {
+                    "type": "string",
+                    "pattern": "^(?:000[1-9]|00[1-9]\\d|0[1-9]\\d{2}|[1-9]\\d{3})-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                    "format": "date-time",
+                    "$comment": "Grammar: pattern enforces normalized UTC/offset seconds form and year 0001-9999 (year 0000 excluded). JSON Schema cannot prove full calendar correctness (e.g. 2026-02-30). Public Python/TS parsers enforce calendar-valid timestamps and unpaired-surrogate rejection; treat schema acceptance of invalid calendar dates outside the pattern as a known limitation, not parity."
+                  },
+                  "adapter_result_digest": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "effect_id",
+                  "observation_id",
+                  "classification",
+                  "fence",
+                  "observed_at",
+                  "adapter_result_digest",
+                  "readback"
+                ],
+                "additionalProperties": false,
+                "title": "Hermes EffectObservationV1"
+              },
+              "command_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "request_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "target_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "authority_binding_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "adapter_id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "operation": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "payload_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "effect_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "fence",
+              "classification",
+              "adapter_result_digest",
+              "readback",
+              "readback_digest",
+              "observation",
+              "command_digest",
+              "request_digest",
+              "target_digest",
+              "authority_binding_digest",
+              "adapter_id",
+              "operation",
+              "payload_digest",
+              "idempotency_key",
+              "effect_id"
+            ],
+            "additionalProperties": false,
+            "title": "Hermes EffectObservationPayloadV1",
+            "$defs": {
+              "__schema0": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "reconciled"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "applied",
+                  "not_applied"
+                ]
+              },
+              "fence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "command_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "request_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "target_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "evidence_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "adapter_id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "operation": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "payload_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "effect_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "authority_binding_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "readback": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "readback_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "classification",
+              "fence",
+              "command_digest",
+              "request_digest",
+              "target_digest",
+              "evidence_digest",
+              "adapter_id",
+              "operation",
+              "payload_digest",
+              "idempotency_key",
+              "effect_id",
+              "authority_binding_digest",
+              "readback",
+              "readback_digest"
+            ],
+            "additionalProperties": false,
+            "title": "Hermes EffectReconciledPayloadV1",
+            "$defs": {
+              "__schema0": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "receipt_terminal"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "fence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "result_classification": {
+                "type": "string",
+                "enum": [
+                  "applied",
+                  "not_applied"
+                ]
+              },
+              "receipt_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "command_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "request_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "target_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "authority_binding_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "observation_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "receipt": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "const": "effect_receipt_v1"
+                  },
+                  "effect_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "command_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "adapter_id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                  },
+                  "operation": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                  },
+                  "target": {
+                    "type": "object",
+                    "properties": {
+                      "target_kind": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      },
+                      "target_ref": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "target_kind",
+                      "target_ref"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "payload_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "authority_binding_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "fence": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "preflight_readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "post_readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "result_classification": {
+                    "type": "string",
+                    "enum": [
+                      "applied",
+                      "not_applied"
+                    ]
+                  },
+                  "compensation_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "reconcile_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "receipt_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "effect_id",
+                  "command_digest",
+                  "adapter_id",
+                  "operation",
+                  "target",
+                  "payload_digest",
+                  "authority_binding_digest",
+                  "idempotency_key",
+                  "fence",
+                  "preflight_readback",
+                  "post_readback",
+                  "result_classification",
+                  "compensation_ref",
+                  "reconcile_ref",
+                  "receipt_digest"
+                ],
+                "additionalProperties": false,
+                "title": "Hermes EffectReceiptV1"
+              },
+              "adapter_id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "operation": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "payload_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "effect_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "observation": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "const": "effect_observation_v1"
+                  },
+                  "effect_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "observation_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "classification": {
+                    "type": "string",
+                    "enum": [
+                      "applied",
+                      "not_applied",
+                      "unknown"
+                    ]
+                  },
+                  "fence": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "observed_at": {
+                    "type": "string",
+                    "pattern": "^(?:000[1-9]|00[1-9]\\d|0[1-9]\\d{2}|[1-9]\\d{3})-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                    "format": "date-time",
+                    "$comment": "Grammar: pattern enforces normalized UTC/offset seconds form and year 0001-9999 (year 0000 excluded). JSON Schema cannot prove full calendar correctness (e.g. 2026-02-30). Public Python/TS parsers enforce calendar-valid timestamps and unpaired-surrogate rejection; treat schema acceptance of invalid calendar dates outside the pattern as a known limitation, not parity."
+                  },
+                  "adapter_result_digest": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "effect_id",
+                  "observation_id",
+                  "classification",
+                  "fence",
+                  "observed_at",
+                  "adapter_result_digest",
+                  "readback"
+                ],
+                "additionalProperties": false,
+                "title": "Hermes EffectObservationV1"
+              }
+            },
+            "required": [
+              "fence",
+              "result_classification",
+              "receipt_digest",
+              "command_digest",
+              "request_digest",
+              "target_digest",
+              "authority_binding_digest",
+              "observation_digest",
+              "receipt",
+              "adapter_id",
+              "operation",
+              "payload_digest",
+              "idempotency_key",
+              "effect_id",
+              "observation"
+            ],
+            "additionalProperties": false,
+            "title": "Hermes EffectReceiptPayloadV1",
+            "$defs": {
+              "__schema0": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "compensation_intent"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "original_receipt_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "original_receipt": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "const": "effect_receipt_v1"
+                  },
+                  "effect_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "command_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "adapter_id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                  },
+                  "operation": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                  },
+                  "target": {
+                    "type": "object",
+                    "properties": {
+                      "target_kind": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      },
+                      "target_ref": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "target_kind",
+                      "target_ref"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "payload_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "authority_binding_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "fence": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "preflight_readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "post_readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "result_classification": {
+                    "type": "string",
+                    "enum": [
+                      "applied",
+                      "not_applied"
+                    ]
+                  },
+                  "compensation_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "reconcile_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "receipt_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "effect_id",
+                  "command_digest",
+                  "adapter_id",
+                  "operation",
+                  "target",
+                  "payload_digest",
+                  "authority_binding_digest",
+                  "idempotency_key",
+                  "fence",
+                  "preflight_readback",
+                  "post_readback",
+                  "result_classification",
+                  "compensation_ref",
+                  "reconcile_ref",
+                  "receipt_digest"
+                ],
+                "additionalProperties": false,
+                "title": "Hermes EffectReceiptV1"
+              },
+              "compensation_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "request_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "command_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "target_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "adapter_id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "operation": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "payload_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "effect_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "fence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "authority_binding_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "preflight_readback": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "preflight_readback_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "original_receipt_digest",
+              "original_receipt",
+              "compensation_ref",
+              "request_digest",
+              "command_digest",
+              "target_digest",
+              "adapter_id",
+              "operation",
+              "payload_digest",
+              "idempotency_key",
+              "effect_id",
+              "fence",
+              "authority_binding_digest",
+              "preflight_readback",
+              "preflight_readback_digest"
+            ],
+            "additionalProperties": false,
+            "title": "Hermes EffectCompensationIntentPayloadV1",
+            "$defs": {
+              "__schema0": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "compensation_observation"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "applied",
+                  "not_applied",
+                  "unknown"
+                ]
+              },
+              "observation": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "const": "effect_observation_v1"
+                  },
+                  "effect_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "observation_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "classification": {
+                    "type": "string",
+                    "enum": [
+                      "applied",
+                      "not_applied",
+                      "unknown"
+                    ]
+                  },
+                  "fence": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "observed_at": {
+                    "type": "string",
+                    "pattern": "^(?:000[1-9]|00[1-9]\\d|0[1-9]\\d{2}|[1-9]\\d{3})-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                    "format": "date-time",
+                    "$comment": "Grammar: pattern enforces normalized UTC/offset seconds form and year 0001-9999 (year 0000 excluded). JSON Schema cannot prove full calendar correctness (e.g. 2026-02-30). Public Python/TS parsers enforce calendar-valid timestamps and unpaired-surrogate rejection; treat schema acceptance of invalid calendar dates outside the pattern as a known limitation, not parity."
+                  },
+                  "adapter_result_digest": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "effect_id",
+                  "observation_id",
+                  "classification",
+                  "fence",
+                  "observed_at",
+                  "adapter_result_digest",
+                  "readback"
+                ],
+                "additionalProperties": false,
+                "title": "Hermes EffectObservationV1"
+              },
+              "readback": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "readback_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "original_receipt_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "original_receipt": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "const": "effect_receipt_v1"
+                  },
+                  "effect_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "command_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "adapter_id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                  },
+                  "operation": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                  },
+                  "target": {
+                    "type": "object",
+                    "properties": {
+                      "target_kind": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      },
+                      "target_ref": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "target_kind",
+                      "target_ref"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "payload_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "authority_binding_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "fence": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "preflight_readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "post_readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "result_classification": {
+                    "type": "string",
+                    "enum": [
+                      "applied",
+                      "not_applied"
+                    ]
+                  },
+                  "compensation_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "reconcile_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "receipt_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "effect_id",
+                  "command_digest",
+                  "adapter_id",
+                  "operation",
+                  "target",
+                  "payload_digest",
+                  "authority_binding_digest",
+                  "idempotency_key",
+                  "fence",
+                  "preflight_readback",
+                  "post_readback",
+                  "result_classification",
+                  "compensation_ref",
+                  "reconcile_ref",
+                  "receipt_digest"
+                ],
+                "additionalProperties": false,
+                "title": "Hermes EffectReceiptV1"
+              },
+              "fence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "command_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "request_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "target_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "adapter_id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "operation": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "payload_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "effect_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "authority_binding_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "classification",
+              "observation",
+              "readback",
+              "readback_digest",
+              "original_receipt_digest",
+              "original_receipt",
+              "fence",
+              "command_digest",
+              "request_digest",
+              "target_digest",
+              "adapter_id",
+              "operation",
+              "payload_digest",
+              "idempotency_key",
+              "effect_id",
+              "authority_binding_digest"
+            ],
+            "additionalProperties": false,
+            "title": "Hermes EffectCompensationObservationPayloadV1",
+            "$defs": {
+              "__schema0": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "compensation_receipt"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "receipt_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "receipt": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "const": "effect_receipt_v1"
+                  },
+                  "effect_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "command_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "adapter_id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                  },
+                  "operation": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                  },
+                  "target": {
+                    "type": "object",
+                    "properties": {
+                      "target_kind": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      },
+                      "target_ref": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "target_kind",
+                      "target_ref"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "payload_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "authority_binding_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "fence": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "preflight_readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "post_readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "result_classification": {
+                    "type": "string",
+                    "enum": [
+                      "applied",
+                      "not_applied"
+                    ]
+                  },
+                  "compensation_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "reconcile_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "receipt_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "effect_id",
+                  "command_digest",
+                  "adapter_id",
+                  "operation",
+                  "target",
+                  "payload_digest",
+                  "authority_binding_digest",
+                  "idempotency_key",
+                  "fence",
+                  "preflight_readback",
+                  "post_readback",
+                  "result_classification",
+                  "compensation_ref",
+                  "reconcile_ref",
+                  "receipt_digest"
+                ],
+                "additionalProperties": false,
+                "title": "Hermes EffectReceiptV1"
+              },
+              "original_receipt_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "original_receipt": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "const": "effect_receipt_v1"
+                  },
+                  "effect_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "command_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "adapter_id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                  },
+                  "operation": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+                  },
+                  "target": {
+                    "type": "object",
+                    "properties": {
+                      "target_kind": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      },
+                      "target_ref": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "allOf": [
+                          {
+                            "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                          },
+                          {
+                            "pattern": "\\S"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "target_kind",
+                      "target_ref"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "payload_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "authority_binding_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "fence": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "preflight_readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "post_readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "result_classification": {
+                    "type": "string",
+                    "enum": [
+                      "applied",
+                      "not_applied"
+                    ]
+                  },
+                  "compensation_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "reconcile_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "receipt_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "effect_id",
+                  "command_digest",
+                  "adapter_id",
+                  "operation",
+                  "target",
+                  "payload_digest",
+                  "authority_binding_digest",
+                  "idempotency_key",
+                  "fence",
+                  "preflight_readback",
+                  "post_readback",
+                  "result_classification",
+                  "compensation_ref",
+                  "reconcile_ref",
+                  "receipt_digest"
+                ],
+                "additionalProperties": false,
+                "title": "Hermes EffectReceiptV1"
+              },
+              "fence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "command_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "request_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "target_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "adapter_id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "operation": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+              },
+              "payload_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "effect_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "allOf": [
+                  {
+                    "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                  },
+                  {
+                    "pattern": "\\S"
+                  }
+                ]
+              },
+              "authority_binding_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "observation_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "observation": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "const": "effect_observation_v1"
+                  },
+                  "effect_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "observation_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "allOf": [
+                      {
+                        "pattern": "^[^\\u0000-\\u0008\\u000e-\\u001b\\u007f-\\u0084\\u0086-\\u009f\\ud800-\\udfff]*$"
+                      },
+                      {
+                        "pattern": "\\S"
+                      }
+                    ]
+                  },
+                  "classification": {
+                    "type": "string",
+                    "enum": [
+                      "applied",
+                      "not_applied",
+                      "unknown"
+                    ]
+                  },
+                  "fence": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "observed_at": {
+                    "type": "string",
+                    "pattern": "^(?:000[1-9]|00[1-9]\\d|0[1-9]\\d{2}|[1-9]\\d{3})-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                    "format": "date-time",
+                    "$comment": "Grammar: pattern enforces normalized UTC/offset seconds form and year 0001-9999 (year 0000 excluded). JSON Schema cannot prove full calendar correctness (e.g. 2026-02-30). Public Python/TS parsers enforce calendar-valid timestamps and unpaired-surrogate rejection; treat schema acceptance of invalid calendar dates outside the pattern as a known limitation, not parity."
+                  },
+                  "adapter_result_digest": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "readback": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "effect_id",
+                  "observation_id",
+                  "classification",
+                  "fence",
+                  "observed_at",
+                  "adapter_result_digest",
+                  "readback"
+                ],
+                "additionalProperties": false,
+                "title": "Hermes EffectObservationV1"
+              }
+            },
+            "required": [
+              "receipt_digest",
+              "receipt",
+              "original_receipt_digest",
+              "original_receipt",
+              "fence",
+              "command_digest",
+              "request_digest",
+              "target_digest",
+              "adapter_id",
+              "operation",
+              "payload_digest",
+              "idempotency_key",
+              "effect_id",
+              "authority_binding_digest",
+              "observation_digest",
+              "observation"
+            ],
+            "additionalProperties": false,
+            "title": "Hermes EffectCompensationReceiptPayloadV1",
+            "$defs": {
+              "__schema0": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

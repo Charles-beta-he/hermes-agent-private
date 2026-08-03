@@ -1,0 +1,1144 @@
+{
+  "schema_version": "semantic_relation_parity_v1",
+  "relation_count": 81,
+  "mismatch_count": 0,
+  "python_rows": [
+    {
+      "event_type": "claimed",
+      "relation_id": "claimed.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "claimed",
+      "relation_id": "claimed.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "claimed",
+      "relation_id": "claimed.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.original_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.original_must_be_applied",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.original_receipt_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.original_receipt_digest_hashes_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.preflight_readback_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.body_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.original_must_be_applied",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.original_receipt_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.original_receipt_digest_hashes_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.original_receipt_effect_id_eq_payload",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.readback_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.wrapper_classification_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.wrapper_fence_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.wrapper_readback_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.body_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.embedded_receipt_digest_hashes_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.observation_classification_eq_receipt",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.observation_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.observation_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.observation_fence_eq_payload",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.original_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.original_must_be_applied",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.original_receipt_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.original_receipt_digest_hashes_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.post_readback_eq_observation_readback",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.target_digest_eq_receipt_target_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_adapter_id_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_authority_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_command_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_fence_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_idempotency_key_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_operation_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_payload_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_receipt_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "intent_recorded",
+      "relation_id": "intent_recorded.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "intent_recorded",
+      "relation_id": "intent_recorded.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "intent_recorded",
+      "relation_id": "intent_recorded.preflight_readback_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "intent_recorded",
+      "relation_id": "intent_recorded.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.body_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.readback_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.wrapper_adapter_result_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.wrapper_classification_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.wrapper_fence_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.wrapper_readback_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.body_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.embedded_receipt_digest_hashes_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.observation_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.observation_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.observation_fence_eq_receipt_fence",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.target_digest_eq_receipt_target_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_adapter_id_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_authority_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_classification_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_command_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_fence_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_idempotency_key_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_operation_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_payload_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_receipt_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "reconciled",
+      "relation_id": "reconciled.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "reconciled",
+      "relation_id": "reconciled.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "reconciled",
+      "relation_id": "reconciled.readback_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "reconciled",
+      "relation_id": "reconciled.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    }
+  ],
+  "rows": [
+    {
+      "event_type": "claimed",
+      "relation_id": "claimed.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "claimed",
+      "relation_id": "claimed.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "claimed",
+      "relation_id": "claimed.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.original_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.original_must_be_applied",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.original_receipt_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.original_receipt_digest_hashes_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.preflight_readback_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_intent",
+      "relation_id": "compensation_intent.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.body_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.original_must_be_applied",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.original_receipt_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.original_receipt_digest_hashes_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.original_receipt_effect_id_eq_payload",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.readback_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.wrapper_classification_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.wrapper_fence_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_observation",
+      "relation_id": "compensation_observation.wrapper_readback_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.body_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.embedded_receipt_digest_hashes_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.observation_classification_eq_receipt",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.observation_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.observation_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.observation_fence_eq_payload",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.original_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.original_must_be_applied",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.original_receipt_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.original_receipt_digest_hashes_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.post_readback_eq_observation_readback",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.target_digest_eq_receipt_target_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_adapter_id_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_authority_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_command_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_fence_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_idempotency_key_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_operation_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_payload_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "compensation_receipt",
+      "relation_id": "compensation_receipt.wrapper_receipt_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "intent_recorded",
+      "relation_id": "intent_recorded.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "intent_recorded",
+      "relation_id": "intent_recorded.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "intent_recorded",
+      "relation_id": "intent_recorded.preflight_readback_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "intent_recorded",
+      "relation_id": "intent_recorded.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.body_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.readback_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.wrapper_adapter_result_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.wrapper_classification_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.wrapper_fence_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "observation_recorded",
+      "relation_id": "observation_recorded.wrapper_readback_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.body_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.embedded_receipt_digest_hashes_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.observation_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.observation_effect_id_eq_wrapper",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.observation_fence_eq_receipt_fence",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.target_digest_eq_receipt_target_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_adapter_id_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_authority_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_classification_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_command_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_fence_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_idempotency_key_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_operation_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_payload_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "receipt_terminal",
+      "relation_id": "receipt_terminal.wrapper_receipt_digest_eq_body",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "reconciled",
+      "relation_id": "reconciled.envelope_effect_id_eq_payload_effect_id",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "reconciled",
+      "relation_id": "reconciled.event_id_derivation",
+      "expected": "identity_mismatch",
+      "python_actual": "identity_mismatch",
+      "ts_actual": "identity_mismatch"
+    },
+    {
+      "event_type": "reconciled",
+      "relation_id": "reconciled.readback_digest_eq_canonical",
+      "expected": "payload_invalid",
+      "python_actual": "payload_invalid",
+      "ts_actual": "payload_invalid"
+    },
+    {
+      "event_type": "reconciled",
+      "relation_id": "reconciled.schema_version_fixed",
+      "expected": "schema_invalid",
+      "python_actual": "schema_invalid",
+      "ts_actual": "schema_invalid"
+    }
+  ],
+  "generator": "scripts/generate_workflow_effect_ledger_semantic_ssot_4a5b2.py + fill_semantic_relation_parity_ts.mjs"
+}

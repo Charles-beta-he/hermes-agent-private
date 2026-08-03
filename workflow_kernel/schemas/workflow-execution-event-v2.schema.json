@@ -1,0 +1,128 @@
+{
+  "$id": "https://hermes-agent.local/schemas/workflow-execution-event-v2.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "workflow_execution_event_v2",
+      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "previous_event_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^we2_[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+    },
+    "occurred_at": {
+      "type": "string",
+      "pattern": "^(?:000[1-9]|00[1-9]\\d|0[1-9]\\d{2}|[1-9]\\d{3})-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "format": "date-time",
+      "$comment": "Grammar: pattern enforces normalized UTC/offset seconds form and year 0001-9999 (year 0000 excluded). JSON Schema cannot prove full calendar correctness (e.g. 2026-02-30). Public Python/TS parsers enforce calendar-valid timestamps and unpaired-surrogate rejection; treat schema acceptance of invalid calendar dates outside the pattern as a known limitation, not parity."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "run_accepted",
+        "run_started",
+        "run_cancel_requested",
+        "budget_reserved",
+        "budget_settled",
+        "budget_released",
+        "leaf_started",
+        "leaf_packet",
+        "leaf_waiting_reconcile",
+        "effect_bound",
+        "effect_resolved",
+        "run_waiting_reconcile",
+        "run_verified",
+        "run_completed"
+      ],
+      "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+    },
+    "payload": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/__schema0"
+      }
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^we2_[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "sequence",
+    "previous_event_id",
+    "idempotency_key",
+    "occurred_at",
+    "event_type",
+    "payload",
+    "event_id"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes WorkflowExecutionEventV2",
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string",
+          "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+        },
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^(?:[^\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  }
+}

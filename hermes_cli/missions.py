@@ -258,6 +258,7 @@ class MissionStore:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS missions (
@@ -288,10 +289,72 @@ class MissionStore:
                     summary TEXT NOT NULL DEFAULT '',
                     payload_json TEXT NOT NULL,
                     created_at REAL NOT NULL,
+                    idempotency_key TEXT,
+                    request_digest TEXT,
+                    mission_revision INTEGER,
                     FOREIGN KEY(mission_id) REFERENCES missions(mission_id)
                 )
                 """
             )
+            event_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(mission_events)").fetchall()
+            }
+            for column, declaration in (
+                ("idempotency_key", "TEXT"),
+                ("request_digest", "TEXT"),
+                ("mission_revision", "INTEGER"),
+            ):
+                if column not in event_columns:
+                    conn.execute(f"ALTER TABLE mission_events ADD COLUMN {column} {declaration}")
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_events_idempotency
+                ON mission_events(mission_id, idempotency_key)
+                WHERE idempotency_key IS NOT NULL
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_events_revision
+                ON mission_events(mission_id, mission_revision)
+                WHERE mission_revision IS NOT NULL
+                """
+            )
+            expected_indexes = {
+                "idx_mission_events_idempotency": (
+                    ["mission_id", "idempotency_key"],
+                    "idempotency_key is not null",
+                ),
+                "idx_mission_events_revision": (
+                    ["mission_id", "mission_revision"],
+                    "mission_revision is not null",
+                ),
+            }
+            index_rows = {
+                str(row["name"]): row
+                for row in conn.execute("PRAGMA index_list(mission_events)").fetchall()
+            }
+            for index_name, (expected_columns, expected_predicate) in expected_indexes.items():
+                index_row = index_rows.get(index_name)
+                columns = [
+                    str(row["name"])
+                    for row in conn.execute(f'PRAGMA index_info("{index_name}")').fetchall()
+                ]
+                sql_row = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+                    (index_name,),
+                ).fetchone()
+                normalized_sql = " ".join(str(sql_row["sql"] if sql_row else "").lower().split())
+                predicate = normalized_sql.partition(" where ")[2]
+                if (
+                    index_row is None
+                    or int(index_row["unique"]) != 1
+                    or int(index_row["partial"]) != 1
+                    or columns != expected_columns
+                    or predicate != expected_predicate
+                ):
+                    raise RuntimeError("mission_schema_mismatch")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS mission_decisions (
@@ -476,6 +539,123 @@ class MissionStore:
             self.enqueue_flow_signal(event)
             self.dispatch_pending_flow_signals(mission_id)
         return event
+
+    def mission_revision(self, mission_id: str) -> int:
+        """Return the append-only event revision for one exact mission."""
+
+        with self._connect() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM missions WHERE mission_id = ?", (mission_id,)
+            ).fetchone()
+            if not exists:
+                raise KeyError(mission_id)
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM mission_events WHERE mission_id = ?",
+                (mission_id,),
+            ).fetchone()
+        return int(row["n"] if row else 0)
+
+    def append_stage_report_idempotent(
+        self,
+        mission_id: str,
+        *,
+        expected_revision: int,
+        idempotency_key: str,
+        request_digest: str,
+        summary: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Append one non-actionable stage report under SQLite CAS ownership.
+
+        Duplicate same-request calls return the original durable event.  This
+        dedicated path intentionally never calls the flow-signal machinery.
+        """
+
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            mission = conn.execute(
+                "SELECT 1 FROM missions WHERE mission_id = ?", (mission_id,)
+            ).fetchone()
+            if not mission:
+                raise KeyError(mission_id)
+            existing_rows = conn.execute(
+                """
+                SELECT * FROM mission_events
+                WHERE mission_id = ? AND idempotency_key = ?
+                """,
+                (mission_id, idempotency_key),
+            ).fetchall()
+            if len(existing_rows) > 1:
+                raise RuntimeError("readback_mismatch")
+            if existing_rows:
+                existing = existing_rows[0]
+                if existing["request_digest"] != request_digest:
+                    raise ValueError("idempotency_conflict")
+                conn.commit()
+                return self._event_from_row(existing)
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM mission_events WHERE mission_id = ?",
+                (mission_id,),
+            ).fetchone()
+            current_revision = int(row["n"] if row else 0)
+            if current_revision != expected_revision:
+                raise ValueError("revision_conflict")
+            created_at = _now()
+            event = {
+                "event_id": f"evt_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+                "mission_id": mission_id,
+                "event_type": "stage_report",
+                "summary": summary,
+                "payload": payload,
+                "created_at": created_at,
+                "idempotency_key": idempotency_key,
+                "request_digest": request_digest,
+                "mission_revision": current_revision + 1,
+            }
+            conn.execute(
+                """
+                INSERT INTO mission_events (
+                    event_id, mission_id, event_type, summary, payload_json,
+                    created_at, idempotency_key, request_digest, mission_revision
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event["event_id"],
+                    mission_id,
+                    "stage_report",
+                    summary,
+                    _json_dumps(payload),
+                    created_at,
+                    idempotency_key,
+                    request_digest,
+                    current_revision + 1,
+                ),
+            )
+            conn.execute(
+                "UPDATE missions SET updated_at = ? WHERE mission_id = ?",
+                (created_at, mission_id),
+            )
+            conn.commit()
+            durable = conn.execute(
+                "SELECT * FROM mission_events WHERE event_id = ?",
+                (event["event_id"],),
+            ).fetchone()
+            if not durable:
+                raise RuntimeError("readback_mismatch")
+            return self._event_from_row(durable)
+        except BaseException:
+            try:
+                if conn.in_transaction:
+                    conn.rollback()
+            except BaseException:
+                pass
+            raise
+        finally:
+            try:
+                conn.close()
+            except BaseException:
+                pass
 
     def enqueue_flow_signal(self, event: dict[str, Any]) -> MissionFlowSignal:
         """Append a pending signal for an actionable mission event.
@@ -1208,7 +1388,7 @@ class MissionStore:
         return "\n".join(lines)
 
     def _event_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
-        return {
+        event = {
             "event_id": row["event_id"],
             "mission_id": row["mission_id"],
             "event_type": row["event_type"],
@@ -1216,6 +1396,11 @@ class MissionStore:
             "payload": _json_loads(row["payload_json"], {}),
             "created_at": row["created_at"],
         }
+        columns = set(row.keys())
+        for key in ("idempotency_key", "request_digest", "mission_revision"):
+            if key in columns and row[key] is not None:
+                event[key] = row[key]
+        return event
 
     def _row_to_mission(self, row: sqlite3.Row) -> Mission:
         budget_raw = _json_loads(row["budget_json"], {})

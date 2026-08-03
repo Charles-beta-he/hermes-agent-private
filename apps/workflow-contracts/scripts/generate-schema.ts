@@ -24,6 +24,13 @@ import {
   toWorkflowLeafPacketV1JsonSchema,
   toWorkflowRuntimeManifestV1JsonSchema,
 } from '../src/workflow-runtime'
+import {
+  toEffectCommandV1JsonSchema,
+  toEffectObservationV1JsonSchema,
+  toEffectReceiptV1JsonSchema,
+  toWorkflowEffectLedgerEventV1JsonSchema,
+  toWorkflowExecutionEventV2JsonSchema,
+} from '../src/workflow-effect'
 
 const schemaDir = fileURLToPath(new URL('../../../schemas/', import.meta.url))
 const workflowKernelSchemaDir = fileURLToPath(
@@ -63,6 +70,17 @@ const schemas = [
     'workflow-execution-event-v1.schema.json',
     toWorkflowExecutionEventV1JsonSchema(),
   ],
+  [
+    'workflow-execution-event-v2.schema.json',
+    toWorkflowExecutionEventV2JsonSchema(),
+  ],
+  ['effect-command-v1.schema.json', toEffectCommandV1JsonSchema()],
+  ['effect-observation-v1.schema.json', toEffectObservationV1JsonSchema()],
+  ['effect-receipt-v1.schema.json', toEffectReceiptV1JsonSchema()],
+  [
+    'workflow-effect-ledger-event-v1.schema.json',
+    toWorkflowEffectLedgerEventV1JsonSchema(),
+  ],
 ] as const
 
 const serializedSchemas = new Map(
@@ -82,6 +100,11 @@ const packagedSchemaNames = [
   'workflow-runtime-manifest-v1.schema.json',
   'workflow-leaf-packet-v1.schema.json',
   'workflow-execution-event-v1.schema.json',
+  'workflow-execution-event-v2.schema.json',
+  'effect-command-v1.schema.json',
+  'effect-observation-v1.schema.json',
+  'effect-receipt-v1.schema.json',
+  'workflow-effect-ledger-event-v1.schema.json',
 ] as const
 
 const targets = [
