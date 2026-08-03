@@ -642,6 +642,38 @@ def _run_conductor_intent_router(agent: Any, user_message: str, *, active_tasks:
 
         router = ConversationIntentRouter(default_model_name=getattr(agent, "model", "") or "unknown")
         decision = router.classify(user_message or "", active_tasks=active_tasks or [])
+
+        # Compile one authority-negative role projection for every enabled
+        # main-loop input. This is deliberately separate from the agent's
+        # global/session fallback chain: it plans control, executor, reviewer,
+        # and evidence domains without invoking providers or mutating agent
+        # model state.
+        from agent.model_role_pipeline import UnifiedModelRolePipeline, infer_surfaces
+
+        role_policy = conductor.get("model_role_policy")
+        role_pipeline = UnifiedModelRolePipeline(
+            policy=role_policy if isinstance(role_policy, dict) else None
+        )
+        session_identity = str(getattr(agent, "session_id", "") or "local")
+        input_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"hermes-role-route:{session_identity}:{user_message or ''}",
+            )
+        )
+        agent_provider = str(getattr(agent, "provider", "") or "").strip()
+        agent_model = str(getattr(agent, "model", "") or "").strip()
+        live_control_model = (
+            {"provider": agent_provider, "model": agent_model}
+            if agent_provider and agent_model
+            else None
+        )
+        decision["model_role_pipeline"] = role_pipeline.compile_turn(
+            input_id=input_id,
+            source="conversation_loop",
+            surfaces=infer_surfaces(user_message or ""),
+            control_model=live_control_model,
+        )
         harness_config = conductor.get("complex_task_harness") if isinstance(conductor, dict) else {}
         harness_config = harness_config if isinstance(harness_config, dict) else {}
         if harness_config.get("enabled"):

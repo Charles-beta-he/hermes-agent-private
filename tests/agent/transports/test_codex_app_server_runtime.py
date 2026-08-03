@@ -571,6 +571,7 @@ class TestCodexAppServerCloseEscalation:
             ((4242, 0),),
         ]
 
+    @pytest.mark.live_system_guard_bypass
     def test_real_nested_descendant_is_not_left_running_after_group_close(self):
         import os
         import signal
