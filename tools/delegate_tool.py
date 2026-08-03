@@ -526,6 +526,24 @@ def _get_inherit_mcp_toolsets() -> bool:
     return is_truthy_value(cfg.get("inherit_mcp_toolsets"), default=True)
 
 
+def _resolve_child_relay_policy(parent_agent, delegation_cfg) -> tuple[bool, int]:
+    """Return explicit, non-expansive relay policy for a delegated child.
+
+    Parent relay settings are intentionally not inherited.  A child relays only
+    when the operator opts in via delegation.child_auto_relay, and its cap comes
+    from the child-specific key rather than the parent's larger allowance.
+    """
+    cfg = delegation_cfg if isinstance(delegation_cfg, dict) else {}
+    enabled = is_truthy_value(cfg.get("child_auto_relay"), default=False)
+    try:
+        cap = max(0, int(cfg.get("child_max_relay_count", 0) or 0))
+    except (TypeError, ValueError):
+        cap = 0
+    if not enabled or not bool(getattr(parent_agent, "auto_relay_enabled", False)):
+        return False, 0
+    return True, cap
+
+
 def _is_mcp_toolset_name(name: str) -> bool:
     """Return True for canonical MCP toolsets and their registered aliases."""
     if not name:
@@ -1298,6 +1316,22 @@ def _build_child_agent(
         # openrouter/pareto-code), so we keep it inherited even when the
         # provider is overridden — it's a no-op on any other model.
 
+    parent_graph_budget = getattr(parent_agent, "graph_budget", None)
+    share_graph_budget = is_truthy_value(
+        delegation_cfg.get("share_graph_budget"), default=True
+    )
+    if parent_graph_budget is not None and not share_graph_budget:
+        logger.warning(
+            "Ignoring delegation.share_graph_budget=false for a governed "
+            "execution graph; descendant budgets cannot mint independent capacity"
+        )
+    child_graph_budget = (
+        parent_graph_budget.fork_handle()
+        if parent_graph_budget is not None
+        and hasattr(parent_graph_budget, "fork_handle")
+        else parent_graph_budget
+    )
+
     child = AIAgent(
         base_url=effective_base_url,
         api_key=effective_api_key,
@@ -1328,22 +1362,21 @@ def _build_child_agent(
         provider_sort=child_provider_sort,
         openrouter_min_coding_score=child_openrouter_min_coding_score,
         tool_progress_callback=child_progress_cb,
-        iteration_budget=None,  # fresh budget per subagent
+        iteration_budget=None,  # fresh per-turn budget per subagent
+        graph_budget=child_graph_budget,
     )
+    # Novelty/stagnation is graph-scoped even when cumulative model-call
+    # admission is disabled, so descendants must not reset the all-history set.
+    if hasattr(parent_agent, "_tool_guardrails"):
+        getattr(child, "_tool_guardrails").share_graph_state_from(
+            getattr(parent_agent, "_tool_guardrails")
+        )
     child._print_fn = getattr(parent_agent, "_print_fn", None)
-    setattr(
-        child,
-        "auto_relay_enabled",
-        is_truthy_value(
-            getattr(parent_agent, "auto_relay_enabled", getattr(child, "auto_relay_enabled", True)),
-            default=bool(getattr(child, "auto_relay_enabled", True)),
-        ),
+    child_relay_enabled, child_relay_cap = _resolve_child_relay_policy(
+        parent_agent, delegation_cfg
     )
-    setattr(
-        child,
-        "max_relay_count",
-        max(0, int(getattr(parent_agent, "max_relay_count", getattr(child, "max_relay_count", 0)) or 0)),
-    )
+    setattr(child, "auto_relay_enabled", child_relay_enabled)
+    setattr(child, "max_relay_count", child_relay_cap)
     # Now the child exists, its session id can ride on every relayed event
     # (including the spawn_requested below — first emit happens after this).
     child_session_ref["session_id"] = getattr(child, "session_id", "") or ""

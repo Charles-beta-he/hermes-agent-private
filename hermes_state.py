@@ -24,6 +24,7 @@ import sqlite3
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from agent.memory_manager import sanitize_context
@@ -742,10 +743,58 @@ CREATE TABLE IF NOT EXISTS sessions (
     handoff_error TEXT,
     compression_failure_cooldown_until REAL,
     compression_failure_error TEXT,
+    compaction_count INTEGER NOT NULL DEFAULT 0,
+    summary_generation INTEGER NOT NULL DEFAULT 0,
     rewind_count INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (parent_session_id) REFERENCES sessions(id)
 );
+
+CREATE TABLE IF NOT EXISTS execution_graph_budgets (
+    id TEXT PRIMARY KEY,
+    max_total INTEGER NOT NULL CHECK (max_total >= 0),
+    used INTEGER NOT NULL DEFAULT 0 CHECK (used >= 0),
+    terminal_reason TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_execution_graphs (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    graph_id TEXT NOT NULL REFERENCES execution_graph_budgets(id)
+);
+
+CREATE TABLE IF NOT EXISTS execution_graph_reservations (
+    id TEXT PRIMARY KEY,
+    graph_id TEXT NOT NULL REFERENCES execution_graph_budgets(id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL CHECK (state IN ('reserved', 'committed', 'refunded')),
+    created_at REAL NOT NULL,
+    reconciled_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS execution_graph_guardrail_state (
+    graph_id TEXT PRIMARY KEY REFERENCES execution_graph_budgets(id) ON DELETE CASCADE,
+    no_progress_streak INTEGER NOT NULL DEFAULT 0,
+    halt_code TEXT,
+    halt_tool_name TEXT,
+    halt_count INTEGER NOT NULL DEFAULT 0,
+    halt_args_hash TEXT,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS execution_graph_guardrail_fingerprints (
+    graph_id TEXT NOT NULL REFERENCES execution_graph_budgets(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    PRIMARY KEY (graph_id, fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_graph_reservations_graph
+    ON execution_graph_reservations(graph_id, state);
+
+CREATE INDEX IF NOT EXISTS idx_session_execution_graphs_graph
+    ON session_execution_graphs(graph_id);
 
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2533,6 +2582,8 @@ class SessionDB:
         thread_id: str = None,
         parent_session_id: str = None,
         cwd: str = None,
+        compaction_count: Optional[int] = None,
+        summary_generation: Optional[int] = None,
     ) -> None:
         """Insert a session row, enriching NULL metadata on conflict.
 
@@ -2556,9 +2607,10 @@ class SessionDB:
             conn.execute(
                 """INSERT INTO sessions (
                    id, source, user_id, session_key, chat_id, chat_type, thread_id,
-                   model, model_config, system_prompt, parent_session_id, cwd, started_at
+                   model, model_config, system_prompt, parent_session_id, cwd,
+                   compaction_count, summary_generation, started_at
                 )
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET
                        model = COALESCE(sessions.model, excluded.model),
                        model_config = COALESCE(sessions.model_config, excluded.model_config),
@@ -2582,6 +2634,8 @@ class SessionDB:
                     system_prompt,
                     parent_session_id,
                     cwd,
+                    int(compaction_count) if compaction_count is not None else 0,
+                    int(summary_generation) if summary_generation is not None else 0,
                     time.time(),
                 ),
             )
@@ -2591,6 +2645,329 @@ class SessionDB:
         """Create a new session record. Returns the session_id."""
         self._insert_session_row(session_id, source, **kwargs)
         return session_id
+
+    def ensure_execution_graph_budget(
+        self, graph_id: str, max_total: int
+    ) -> Tuple[int, int]:
+        """Create/read a cumulative graph budget without ever expanding its cap."""
+        graph_id = str(graph_id or "").strip()
+        max_total = int(max_total)
+        if not graph_id or max_total <= 0:
+            raise ValueError("graph_id and a positive max_total are required")
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                "INSERT OR IGNORE INTO execution_graph_budgets "
+                "(id, max_total, used, created_at, updated_at) "
+                "VALUES (?, ?, 0, ?, ?)",
+                (graph_id, max_total, now, now),
+            )
+            # Configuration may tighten an existing graph but cannot mint more
+            # budget on resume/restart by presenting a larger value.
+            conn.execute(
+                "UPDATE execution_graph_budgets "
+                "SET max_total = MIN(max_total, ?), updated_at = ? WHERE id = ?",
+                (max_total, now, graph_id),
+            )
+            row = conn.execute(
+                "SELECT used, max_total FROM execution_graph_budgets WHERE id = ?",
+                (graph_id,),
+            ).fetchone()
+            return int(row["used"]), int(row["max_total"])
+
+        return self._execute_write(_do)
+
+    def reserve_execution_graph_call(
+        self, graph_id: str, max_total: int, owner_id: str
+    ) -> Optional[Tuple[int, str]]:
+        """Atomically reserve one provider-call slot and return its receipt ID."""
+        graph_id = str(graph_id or "").strip()
+        max_total = int(max_total)
+        owner_id = str(owner_id or "").strip()
+        if not graph_id or max_total <= 0 or not owner_id:
+            raise ValueError(
+                "graph_id, a positive max_total, and owner_id are required"
+            )
+        now = time.time()
+        reservation_id = uuid.uuid4().hex
+
+        def _do(conn):
+            conn.execute(
+                "INSERT OR IGNORE INTO execution_graph_budgets "
+                "(id, max_total, used, created_at, updated_at) "
+                "VALUES (?, ?, 0, ?, ?)",
+                (graph_id, max_total, now, now),
+            )
+            conn.execute(
+                "UPDATE execution_graph_budgets "
+                "SET max_total = MIN(max_total, ?), updated_at = ? WHERE id = ?",
+                (max_total, now, graph_id),
+            )
+            cursor = conn.execute(
+                "UPDATE execution_graph_budgets SET used = used + 1, updated_at = ? "
+                "WHERE id = ? AND terminal_reason IS NULL AND used < max_total",
+                (now, graph_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            conn.execute(
+                "INSERT INTO execution_graph_reservations "
+                "(id, graph_id, owner_id, state, created_at) "
+                "VALUES (?, ?, ?, 'reserved', ?)",
+                (reservation_id, graph_id, owner_id, now),
+            )
+            row = conn.execute(
+                "SELECT used FROM execution_graph_budgets WHERE id = ?", (graph_id,)
+            ).fetchone()
+            return int(row["used"]), reservation_id
+
+        return self._execute_write(_do)
+
+    def commit_execution_graph_call(
+        self, graph_id: str, reservation_id: str, owner_id: str
+    ) -> bool:
+        """Mark a provider-dispatched reservation committed exactly once."""
+        graph_id = str(graph_id or "").strip()
+        reservation_id = str(reservation_id or "").strip()
+        owner_id = str(owner_id or "").strip()
+        if not graph_id or not reservation_id or not owner_id:
+            raise ValueError("graph_id, reservation_id, and owner_id are required")
+        now = time.time()
+
+        def _do(conn):
+            cursor = conn.execute(
+                "UPDATE execution_graph_reservations "
+                "SET state = 'committed', reconciled_at = ? "
+                "WHERE id = ? AND graph_id = ? AND owner_id = ? "
+                "AND state = 'reserved'",
+                (now, reservation_id, graph_id, owner_id),
+            )
+            return cursor.rowcount == 1
+
+        return bool(self._execute_write(_do))
+
+    def refund_execution_graph_call(
+        self, graph_id: str, reservation_id: str, owner_id: str
+    ) -> int:
+        """Exactly-once refund of a reservation owned by the caller."""
+        graph_id = str(graph_id or "").strip()
+        reservation_id = str(reservation_id or "").strip()
+        owner_id = str(owner_id or "").strip()
+        if not graph_id or not reservation_id or not owner_id:
+            raise ValueError("graph_id, reservation_id, and owner_id are required")
+        now = time.time()
+
+        def _do(conn):
+            receipt = conn.execute(
+                "UPDATE execution_graph_reservations "
+                "SET state = 'refunded', reconciled_at = ? "
+                "WHERE id = ? AND graph_id = ? AND owner_id = ? "
+                "AND state = 'reserved'",
+                (now, reservation_id, graph_id, owner_id),
+            )
+            if receipt.rowcount == 1:
+                conn.execute(
+                    "UPDATE execution_graph_budgets "
+                    "SET used = used - 1, updated_at = ? "
+                    "WHERE id = ? AND used > 0",
+                    (now, graph_id),
+                )
+            row = conn.execute(
+                "SELECT used FROM execution_graph_budgets WHERE id = ?", (graph_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(graph_id)
+            return int(row["used"])
+
+        return self._execute_write(_do)
+
+    def get_execution_graph_budget(self, graph_id: str) -> Tuple[int, int]:
+        """Read the current durable execution-graph counter."""
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("SessionDB is closed")
+            row = self._conn.execute(
+                "SELECT used, max_total FROM execution_graph_budgets WHERE id = ?",
+                (graph_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(graph_id)
+        return int(row["used"]), int(row["max_total"])
+
+    def load_execution_graph_guardrail_state(self, graph_id: str) -> Dict[str, Any]:
+        """Load durable novelty fingerprints and sticky halt metadata."""
+        graph_id = str(graph_id or "").strip()
+        if not graph_id:
+            raise ValueError("graph_id is required")
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("SessionDB is closed")
+            state = self._conn.execute(
+                "SELECT no_progress_streak, halt_code, halt_tool_name, "
+                "halt_count, halt_args_hash FROM execution_graph_guardrail_state "
+                "WHERE graph_id = ?",
+                (graph_id,),
+            ).fetchone()
+            rows = self._conn.execute(
+                "SELECT fingerprint FROM execution_graph_guardrail_fingerprints "
+                "WHERE graph_id = ?",
+                (graph_id,),
+            ).fetchall()
+        return {
+            "fingerprints": {str(row["fingerprint"]) for row in rows},
+            "no_progress_streak": int(state["no_progress_streak"]) if state else 0,
+            "halt_code": str(state["halt_code"] or "") if state else "",
+            "halt_tool_name": str(state["halt_tool_name"] or "") if state else "",
+            "halt_count": int(state["halt_count"] or 0) if state else 0,
+            "halt_args_hash": str(state["halt_args_hash"] or "") if state else "",
+        }
+
+    def observe_execution_graph_guardrail_fingerprint(
+        self,
+        graph_id: str,
+        fingerprint: str,
+        *,
+        capacity: int,
+        halt_after: int,
+        hard_stop_enabled: bool,
+        tool_name: str,
+        args_hash: str,
+    ) -> Dict[str, Any]:
+        """Atomically observe novelty and persist graph-wide sticky halt state."""
+        graph_id = str(graph_id or "").strip()
+        fingerprint = str(fingerprint or "").strip()
+        capacity = max(int(capacity), 1)
+        halt_after = max(int(halt_after), 0)
+        if not graph_id or not fingerprint:
+            raise ValueError("graph_id and fingerprint are required")
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                "INSERT OR IGNORE INTO execution_graph_guardrail_state "
+                "(graph_id, no_progress_streak, updated_at) VALUES (?, 0, ?)",
+                (graph_id, now),
+            )
+            state = conn.execute(
+                "SELECT * FROM execution_graph_guardrail_state WHERE graph_id = ?",
+                (graph_id,),
+            ).fetchone()
+            if state["halt_code"]:
+                return dict(state) | {"capacity_exhausted": False}
+
+            known = conn.execute(
+                "SELECT 1 FROM execution_graph_guardrail_fingerprints "
+                "WHERE graph_id = ? AND fingerprint = ?",
+                (graph_id, fingerprint),
+            ).fetchone() is not None
+            count = int(conn.execute(
+                "SELECT COUNT(*) AS c FROM execution_graph_guardrail_fingerprints "
+                "WHERE graph_id = ?",
+                (graph_id,),
+            ).fetchone()["c"])
+            capacity_exhausted = not known and count >= capacity
+            streak = int(state["no_progress_streak"])
+            if known:
+                streak += 1
+            elif not capacity_exhausted:
+                conn.execute(
+                    "INSERT INTO execution_graph_guardrail_fingerprints "
+                    "(graph_id, fingerprint, created_at) VALUES (?, ?, ?)",
+                    (graph_id, fingerprint, now),
+                )
+                streak = 0
+
+            halt_code = ""
+            halt_count = 0
+            if hard_stop_enabled and capacity_exhausted:
+                halt_code = "graph_history_capacity_halt"
+                halt_count = capacity
+            elif hard_stop_enabled and halt_after > 0 and streak >= halt_after:
+                halt_code = "graph_no_progress_halt"
+                halt_count = streak
+            conn.execute(
+                "UPDATE execution_graph_guardrail_state SET "
+                "no_progress_streak = ?, halt_code = NULLIF(?, ''), "
+                "halt_tool_name = CASE WHEN ? = '' THEN NULL ELSE ? END, "
+                "halt_count = ?, halt_args_hash = CASE WHEN ? = '' THEN NULL ELSE ? END, "
+                "updated_at = ? WHERE graph_id = ?",
+                (
+                    streak, halt_code, halt_code, tool_name, halt_count,
+                    halt_code, args_hash, now, graph_id,
+                ),
+            )
+            return {
+                "no_progress_streak": streak,
+                "halt_code": halt_code,
+                "halt_tool_name": tool_name if halt_code else "",
+                "halt_count": halt_count,
+                "halt_args_hash": args_hash if halt_code else "",
+                "capacity_exhausted": capacity_exhausted,
+            }
+
+        return self._execute_write(_do)
+
+    def finalize_execution_graph_budget(self, graph_id: str, reason: str) -> bool:
+        """Persist a terminal reason only when no live receipt can refund."""
+        graph_id = str(graph_id or "").strip()
+        reason = str(reason or "unknown")[:200]
+        if not graph_id:
+            raise ValueError("graph_id is required")
+        now = time.time()
+
+        def _do(conn):
+            cursor = conn.execute(
+                "UPDATE execution_graph_budgets "
+                "SET terminal_reason = ?, updated_at = ? "
+                "WHERE id = ? AND terminal_reason IS NULL AND used >= max_total "
+                "AND NOT EXISTS ("
+                "SELECT 1 FROM execution_graph_reservations "
+                "WHERE graph_id = ? AND state = 'reserved'"
+                ")",
+                (reason, now, graph_id, graph_id),
+            )
+            return cursor.rowcount == 1
+
+        return bool(self._execute_write(_do))
+
+    def bind_session_execution_graph(self, session_id: str, graph_id: str) -> None:
+        """Bind a persisted session/continuation row to its root graph."""
+        def _do(conn):
+            conn.execute(
+                "INSERT INTO session_execution_graphs (session_id, graph_id) "
+                "VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET "
+                "graph_id = excluded.graph_id",
+                (session_id, graph_id),
+            )
+
+        self._execute_write(_do)
+
+    # Backward-compatible spelling used by early convergence prototypes.
+    link_session_execution_graph = bind_session_execution_graph
+
+    def resolve_session_execution_graph(self, session_id: str) -> Optional[str]:
+        """Resolve a direct or nearest-ancestor execution-graph binding."""
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("SessionDB is closed")
+            row = self._conn.execute(
+                """WITH RECURSIVE lineage(id, parent_session_id, depth) AS (
+                       SELECT id, parent_session_id, 0 FROM sessions WHERE id = ?
+                       UNION ALL
+                       SELECT s.id, s.parent_session_id, lineage.depth + 1
+                       FROM sessions s
+                       JOIN lineage ON s.id = lineage.parent_session_id
+                       WHERE lineage.depth < 100
+                   )
+                   SELECT seg.graph_id
+                   FROM lineage
+                   JOIN session_execution_graphs seg ON seg.session_id = lineage.id
+                   ORDER BY lineage.depth ASC
+                   LIMIT 1""",
+                (session_id,),
+            ).fetchone()
+        return str(row["graph_id"]) if row else None
 
     def record_gateway_session_peer(
         self,
@@ -3101,6 +3478,145 @@ class SessionDB:
                 "clear_compression_failure_cooldown(%s) failed: %s",
                 session_id, exc,
             )
+
+    def get_compaction_state(self, session_id: str) -> Optional[Dict[str, int]]:
+        """Return durable compaction counters for a session, or None.
+
+        ``compaction_count`` is the cumulative number of compactions ever
+        applied to this logical conversation; ``summary_generation`` is the
+        current recursive-summary generation (how many times the live handoff
+        summary has been iteratively re-summarized since the last raw-evidence
+        rebase). Both survive process restart and session resume — the
+        compressor hydrates them via ``bind_session_state``. Returns None when
+        the session row does not exist so callers can distinguish "new
+        session" from "counters are zero".
+        """
+        if not session_id:
+            return None
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT compaction_count, summary_generation "
+                "FROM sessions WHERE id = ?",
+                (session_id,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "compaction_count": int(row["compaction_count"] or 0),
+            "summary_generation": int(row["summary_generation"] or 0),
+        }
+
+    def update_compaction_state(
+        self, session_id: str, compaction_count: int, summary_generation: int
+    ) -> None:
+        """Persist durable compaction counters for a session.
+
+        Used by the rotation compaction path (the new child session row must
+        inherit the lineage's cumulative counters). The in-place path persists
+        counters atomically inside :meth:`archive_and_compact` instead.
+        """
+        if not session_id:
+            return
+
+        def _do(conn):
+            conn.execute(
+                "UPDATE sessions SET compaction_count = ?, summary_generation = ? "
+                "WHERE id = ?",
+                (int(compaction_count), int(summary_generation), session_id),
+            )
+
+        self._execute_write(_do)
+
+    def get_compaction_rebase_messages(
+        self, session_id: str, *, max_lineage_depth: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Return raw rebase evidence across a rotation lineage, oldest first.
+
+        Ancestor sessions are immutable after legacy session rotation but their
+        messages remain ``active=1`` rather than being soft-archived. The current
+        session, by contrast, contributes only rows archived by in-place
+        compaction. Following ``parent_session_id`` therefore closes the evidence
+        gap without treating the current live transcript as durable history.
+
+        Summary rows are intentionally returned as batch/lineage delimiters;
+        :class:`ContextCompressor` removes their content and uses the boundaries
+        for protected-tail overlap detection.
+        """
+        depth_limit = max(1, int(max_lineage_depth))
+        with self._lock:
+            conn = self._conn
+            if conn is None:
+                return []
+            lineage: List[str] = []
+            seen: set[str] = set()
+            current: Optional[str] = session_id
+            while current:
+                if current in seen:
+                    raise sqlite3.DatabaseError(
+                        f"cycle detected in session lineage at {current}"
+                    )
+                if len(lineage) >= depth_limit:
+                    raise sqlite3.DatabaseError(
+                        f"session lineage exceeds max depth {depth_limit}"
+                    )
+                seen.add(current)
+                lineage.append(current)
+                row = conn.execute(
+                    "SELECT parent_session_id FROM sessions WHERE id = ?",
+                    (current,),
+                ).fetchone()
+                current = row["parent_session_id"] if row and row["parent_session_id"] else None
+
+        lineage.reverse()
+        evidence: List[Dict[str, Any]] = []
+        for lineage_id in lineage:
+            # Preserve every durable compaction archive from ancestors/current.
+            evidence.extend(self.get_compaction_archived_messages(lineage_id))
+            if lineage_id != session_id:
+                # A rotated ancestor keeps its final transcript active. It is
+                # immutable once the child is created, and includes the newest
+                # turns that may never have entered an in-place archive.
+                evidence.extend(self.get_messages(lineage_id))
+        return evidence
+
+    def get_compaction_archived_messages(
+        self, session_id: str
+    ) -> List[Dict[str, Any]]:
+        """Load the immutable compaction-archived rows for a session.
+
+        Returns ONLY rows soft-archived by :meth:`archive_and_compact`
+        (``active = 0 AND compacted = 1``) in insertion order — the durable
+        raw evidence a generation-limit rebase summarizes from. Rewind/undo
+        rows (``active = 0, compacted = 0``) are excluded: the user took
+        those back, so they are not evidence of the conversation. Live rows
+        (``active = 1``) are excluded too — the caller already holds the live
+        transcript.
+        """
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT * FROM messages WHERE session_id = ? "
+                "AND active = 0 AND compacted = 1 ORDER BY id",
+                (session_id,),
+            )
+            rows = cursor.fetchall()
+        result = []
+        for row in rows:
+            msg = dict(row)
+            if "content" in msg:
+                msg["content"] = self._decode_content(msg["content"])
+            if msg.get("tool_calls"):
+                try:
+                    msg["tool_calls"] = json.loads(msg["tool_calls"])
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(
+                        "Failed to deserialize tool_calls in "
+                        "get_compaction_archived_messages, falling back to []"
+                    )
+                    msg["tool_calls"] = []
+            result.append(msg)
+        return result
+
     # ──────────────────────────────────────────────────────────────────────
     # Compression locks
     # ──────────────────────────────────────────────────────────────────────
@@ -4610,7 +5126,12 @@ class SessionDB:
             return cursor.fetchone() is not None
 
     def archive_and_compact(
-        self, session_id: str, compacted_messages: List[Dict[str, Any]]
+        self,
+        session_id: str,
+        compacted_messages: List[Dict[str, Any]],
+        *,
+        compaction_count: Optional[int] = None,
+        summary_generation: Optional[int] = None,
     ) -> int:
         """Non-destructive in-place compaction for a single durable session id.
 
@@ -4634,6 +5155,12 @@ class SessionDB:
         This is the durability-preserving alternative to :meth:`replace_messages`
         for compaction. ``message_count`` is set to the ACTIVE (compacted) count,
         matching what the live load returns. Returns the new active count.
+
+        When ``compaction_count`` / ``summary_generation`` are provided, the
+        durable counters are updated in the SAME write transaction as the
+        archive+insert, so a crash can never persist an archive without its
+        counters (or counters without the archive) — the generation-limit
+        rebase logic depends on the two staying consistent.
         """
 
         def _do(conn):
@@ -4657,6 +5184,18 @@ class SessionDB:
                 "UPDATE sessions SET message_count = ?, tool_call_count = ? WHERE id = ?",
                 (inserted, tool_calls_total, session_id),
             )
+            if compaction_count is not None or summary_generation is not None:
+                conn.execute(
+                    "UPDATE sessions SET "
+                    "compaction_count = COALESCE(?, compaction_count), "
+                    "summary_generation = COALESCE(?, summary_generation) "
+                    "WHERE id = ?",
+                    (
+                        int(compaction_count) if compaction_count is not None else None,
+                        int(summary_generation) if summary_generation is not None else None,
+                        session_id,
+                    ),
+                )
             return inserted
 
         return self._execute_write(_do)

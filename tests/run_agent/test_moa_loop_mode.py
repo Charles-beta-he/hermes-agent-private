@@ -486,6 +486,53 @@ moa:
     assert agg_call["tools"] is not None
 
 
+def test_moa_charges_each_reference_and_aggregator_dispatch(monkeypatch, tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    (home / "config.yaml").write_text(
+        """
+moa:
+  default_preset: review
+  presets:
+    review:
+      reference_models:
+        - provider: openrouter
+          model: advisor-a
+        - provider: openrouter
+          model: advisor-b
+      aggregator:
+        provider: openrouter
+        model: aggregator
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    physical_client = MagicMock()
+    physical_client.chat.completions.create.side_effect = [
+        _response("a"),
+        _response("b"),
+        _response("aggregate"),
+    ]
+
+    from agent import auxiliary_client
+    from agent.moa_loop import MoAChatCompletions
+
+    def fake_call_llm(**_kwargs):
+        return auxiliary_client._guarded_chat_completion_create(
+            physical_client, model="physical"
+        )
+
+    monkeypatch.setattr("agent.moa_loop.call_llm", fake_call_llm)
+    admissions = MagicMock(return_value=True)
+    facade = MoAChatCompletions("review", dispatch_callback=admissions)
+
+    response = facade.create(messages=[{"role": "user", "content": "question"}])
+
+    assert response.choices[0].message.content == "aggregate"
+    assert admissions.call_count == 3
+    assert physical_client.chat.completions.create.call_count == 3
+
+
 def test_moa_disabled_preset_skips_references(monkeypatch, tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()

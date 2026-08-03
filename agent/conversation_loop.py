@@ -40,6 +40,181 @@ from agent.continuation import (
 from agent.error_classifier import FailoverReason, classify_api_error
 from agent.iteration_budget import IterationBudget
 from agent.turn_context import build_turn_context
+
+
+def _graph_budget(agent: Any) -> Optional[IterationBudget]:
+    """Return the optional cumulative execution-graph budget."""
+    budget = getattr(agent, "graph_budget", None)
+    return budget if isinstance(budget, IterationBudget) else None
+
+
+def _iteration_budget_available(agent: Any) -> bool:
+    """True when another model call is permitted by every active budget."""
+    # Durable graph capacity is authoritative in SQLite. A sibling handle may
+    # refund after this handle observed exhaustion, so its cached ``remaining``
+    # must never suppress a fresh atomic reservation attempt.
+    return bool(
+        getattr(agent, "_budget_grace_call", False)
+        or agent.iteration_budget.remaining > 0
+    )
+
+
+def _consume_iteration_budgets(agent: Any) -> tuple[bool, str]:
+    """Atomically acquire the per-turn and cumulative graph call budgets."""
+    graph = _graph_budget(agent)
+    if getattr(agent, "_graph_budget_persistence_error", ""):
+        return False, "graph_budget_persistence_failed"
+    if (
+        graph is not None
+        and getattr(agent, "require_durable_graph_budget", False)
+        and not graph.is_persistent
+    ):
+        return False, "graph_budget_persistence_failed"
+    grace = bool(getattr(agent, "_budget_grace_call", False))
+    consumed_turn = False
+
+    if not grace:
+        if not agent.iteration_budget.consume():
+            return False, "budget_exhausted"
+        consumed_turn = True
+
+    consumed_graph = False
+    if graph is not None:
+        if not graph.consume():
+            if consumed_turn:
+                agent.iteration_budget.refund()
+            reason = (
+                "graph_budget_persistence_failed"
+                if graph.persistence_error
+                else "graph_budget_exhausted"
+            )
+            if reason == "graph_budget_exhausted":
+                # Persist terminal exhaustion only when the durable backend sees
+                # no sibling reservations that could still refund capacity.
+                graph.finalize(reason)
+            return False, reason
+        consumed_graph = True
+
+    agent._last_budget_reservation = (consumed_turn, consumed_graph)
+    if grace:
+        agent._budget_grace_call = False
+    return True, ""
+
+
+def _commit_iteration_graph_budget(agent: Any) -> bool:
+    """Acquire and commit exactly one graph admission for a physical dispatch.
+
+    The logical iteration pre-reserves the first dispatch so validation failures
+    can refund it.  Every later physical attempt (middleware retry, provider
+    fallback, stream reconnect, or MoA fan-out member) must acquire a fresh
+    reservation here.  The agent-level lock makes this atomic for concurrent MoA
+    advisors sharing one graph ledger.
+    """
+    lock = agent.__dict__.setdefault("_graph_dispatch_budget_lock", threading.RLock())
+
+    with lock:
+        reservation = getattr(agent, "_last_budget_reservation", (False, False))
+        if not isinstance(reservation, (tuple, list)) or len(reservation) != 2:
+            consumed_turn, consumed_graph = False, False
+        else:
+            consumed_turn, consumed_graph = bool(reservation[0]), bool(reservation[1])
+
+        graph = _graph_budget(agent)
+        if graph is None:
+            return True
+
+        if not consumed_graph:
+            if not graph.consume():
+                return False
+            consumed_graph = True
+            agent._last_budget_reservation = (consumed_turn, True)
+
+        if not graph.commit_reservation():
+            return False
+        agent._last_budget_reservation = (consumed_turn, False)
+        return True
+
+
+def _compress_context_with_dispatch_budget(
+    agent: Any, *args: Any, **kwargs: Any
+) -> Any:
+    """Gate every physical provider attempt made during context compression."""
+    from agent.auxiliary_client import physical_dispatch_gate
+
+    with physical_dispatch_gate(lambda: _commit_iteration_graph_budget(agent)):
+        return agent._compress_context(*args, **kwargs)
+
+
+def _refund_iteration_budgets(agent: Any, *, refund_graph: bool = True) -> None:
+    """Refund exactly the reservations made for a non-dispatched attempt.
+
+    ``refund_graph=False`` is used after an accountable provider dispatch: the
+    local retry slot is returned, while the cumulative graph reservation is
+    committed rather than made available to a later refund.
+    """
+    reservation = getattr(agent, "_last_budget_reservation", (False, False))
+    if not isinstance(reservation, (tuple, list)) or len(reservation) != 2:
+        consumed_turn, consumed_graph = False, False
+    else:
+        consumed_turn, consumed_graph = bool(reservation[0]), bool(reservation[1])
+    agent._last_budget_reservation = (False, False)
+    if consumed_turn:
+        agent.iteration_budget.refund()
+    graph = _graph_budget(agent)
+    if consumed_graph and graph is not None:
+        if refund_graph:
+            graph.refund()
+        else:
+            graph.commit_reservation()
+
+
+def _run_llm_execution_middleware_with_budget_reconciliation(
+    agent: Any,
+    middleware: Any,
+    api_kwargs: Dict[str, Any],
+    perform_api_call: Any,
+    **middleware_kwargs: Any,
+) -> Any:
+    """Refund a logical reservation when middleware suppresses provider dispatch."""
+    provider_path_entered = False
+
+    def tracked_perform_api_call(next_api_kwargs: Dict[str, Any]) -> Any:
+        nonlocal provider_path_entered
+        provider_path_entered = True
+        return perform_api_call(next_api_kwargs)
+
+    try:
+        response = middleware(
+            api_kwargs,
+            tracked_perform_api_call,
+            **middleware_kwargs,
+        )
+    except BaseException:
+        if not provider_path_entered:
+            _refund_iteration_budgets(agent)
+        raise
+
+    if not provider_path_entered:
+        _refund_iteration_budgets(agent)
+    return response
+
+
+
+def _run_codex_app_server_turn_with_budget(agent: Any, **kwargs: Any) -> Dict[str, Any]:
+    """Run the Codex turn while preserving pre-dispatch refund authority.
+
+    Session construction and local validation happen inside the runtime before
+    ``run_turn``. The session invokes the supplied dispatch gate only after
+    startup/initialize succeeds and immediately before sending ``turn/start``.
+    Any earlier failure leaves both reservations refundable.
+    """
+    try:
+        return agent._run_codex_app_server_turn(**kwargs)
+    except BaseException:
+        _refund_iteration_budgets(agent)
+        raise
+
+
 from agent.turn_retry_state import TurnRetryState
 from agent.memory_manager import build_memory_context_block
 from agent.message_sanitization import (
@@ -65,6 +240,7 @@ from agent.model_metadata import (
 )
 from agent.process_bootstrap import _install_safe_stdio
 from agent.prompt_caching import apply_anthropic_cache_control
+from agent.prompt_ledger import call_with_prompt_ledger
 from agent.retry_utils import (
     adaptive_rate_limit_backoff,
     is_zai_coding_overload_error,
@@ -527,6 +703,38 @@ def _run_conductor_intent_router(agent: Any, user_message: str, *, active_tasks:
 
         router = ConversationIntentRouter(default_model_name=getattr(agent, "model", "") or "unknown")
         decision = router.classify(user_message or "", active_tasks=active_tasks or [])
+
+        # Compile one authority-negative role projection for every enabled
+        # main-loop input. This is deliberately separate from the agent's
+        # global/session fallback chain: it plans control, executor, reviewer,
+        # and evidence domains without invoking providers or mutating agent
+        # model state.
+        from agent.model_role_pipeline import UnifiedModelRolePipeline, infer_surfaces
+
+        role_policy = conductor.get("model_role_policy")
+        role_pipeline = UnifiedModelRolePipeline(
+            policy=role_policy if isinstance(role_policy, dict) else None
+        )
+        session_identity = str(getattr(agent, "session_id", "") or "local")
+        input_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"hermes-role-route:{session_identity}:{user_message or ''}",
+            )
+        )
+        agent_provider = str(getattr(agent, "provider", "") or "").strip()
+        agent_model = str(getattr(agent, "model", "") or "").strip()
+        live_control_model = (
+            {"provider": agent_provider, "model": agent_model}
+            if agent_provider and agent_model
+            else None
+        )
+        decision["model_role_pipeline"] = role_pipeline.compile_turn(
+            input_id=input_id,
+            source="conversation_loop",
+            surfaces=infer_surfaces(user_message or ""),
+            control_model=live_control_model,
+        )
         harness_config = conductor.get("complex_task_harness") if isinstance(conductor, dict) else {}
         harness_config = harness_config if isinstance(harness_config, dict) else {}
         if harness_config.get("enabled"):
@@ -1272,7 +1480,31 @@ def _run_conversation_impl(
     # See agent/transports/codex_app_server_session.py for the adapter
     # and references/codex-app-server-runtime.md for the rationale.
     if agent.api_mode == "codex_app_server":
-        return agent._run_codex_app_server_turn(
+        _budget_ok, _budget_reason = _consume_iteration_budgets(agent)
+        if not _budget_ok:
+            if _budget_reason == "graph_budget_persistence_failed":
+                _budget_message = (
+                    "Execution graph ledger unavailable; Codex dispatch stopped "
+                    "fail-closed."
+                )
+            elif _budget_reason == "graph_budget_exhausted":
+                _gb = _graph_budget(agent)
+                _budget_message = (
+                    f"Execution graph budget exhausted "
+                    f"({_gb.used}/{_gb.max_total} model calls used)."
+                )
+            else:
+                _budget_message = "Iteration budget exhausted before Codex dispatch."
+            return {
+                "final_response": _budget_message,
+                "messages": messages,
+                "api_calls": 0,
+                "completed": False,
+                "failed": True,
+                "error": _budget_reason,
+            }
+        return _run_codex_app_server_turn_with_budget(
+            agent,
             user_message=user_message,
             original_user_message=original_user_message,
             messages=messages,
@@ -1280,7 +1512,10 @@ def _run_conversation_impl(
             should_review_memory=_should_review_memory,
         )
 
-    while (api_call_count < agent.max_iterations and agent.iteration_budget.remaining > 0) or agent._budget_grace_call:
+    while (
+        api_call_count < agent.max_iterations
+        or getattr(agent, "_budget_grace_call", False)
+    ) and _iteration_budget_available(agent):
         # Reset per-turn checkpoint dedup so each iteration can take one snapshot
         agent._checkpoint_mgr.new_turn()
 
@@ -1296,15 +1531,29 @@ def _run_conversation_impl(
         agent._api_call_count = api_call_count
         agent._touch_activity(f"starting API call #{api_call_count}")
 
-        # Grace call: the budget is exhausted but we gave the model one
-        # more chance.  Consume the grace flag so the loop exits after
-        # this iteration regardless of outcome.
-        if agent._budget_grace_call:
-            agent._budget_grace_call = False
-        elif not agent.iteration_budget.consume():
-            _turn_exit_reason = "budget_exhausted"
+        # A grace call may bypass only the local turn budget.  The cumulative
+        # graph budget remains a hard admission boundary.
+        _budget_ok, _budget_reason = _consume_iteration_budgets(agent)
+        if not _budget_ok:
+            _turn_exit_reason = _budget_reason
             if not agent.quiet_mode:
-                agent._safe_print(f"\n⚠️  Iteration budget exhausted ({agent.iteration_budget.used}/{agent.iteration_budget.max_total} iterations used)")
+                if _budget_reason == "graph_budget_exhausted":
+                    _gb = _graph_budget(agent)
+                    agent._safe_print(
+                        f"\n⚠️  Execution graph budget exhausted "
+                        f"({_gb.used}/{_gb.max_total} model calls used)"
+                    )
+                elif _budget_reason == "graph_budget_persistence_failed":
+                    agent._safe_print(
+                        "\n⚠️  Execution graph ledger unavailable; "
+                        "provider dispatch stopped fail-closed."
+                    )
+                else:
+                    agent._safe_print(
+                        f"\n⚠️  Iteration budget exhausted "
+                        f"({agent.iteration_budget.used}/"
+                        f"{agent.iteration_budget.max_total} iterations used)"
+                    )
             break
 
         # Fire step_callback for gateway hooks (agent:step event)
@@ -1620,7 +1869,7 @@ def _run_conversation_impl(
             api_call_count -= 1
             agent._api_call_count = api_call_count
             try:
-                agent.iteration_budget.refund()
+                _refund_iteration_budgets(agent)
             except Exception:
                 pass
             break
@@ -1671,7 +1920,8 @@ def _run_conversation_impl(
                 f"📦 Pre-API compression: ~{request_pressure_tokens:,} tokens "
                 f"near the context/output limit. Compacting before the next model call."
             )
-            messages, active_system_prompt = agent._compress_context(
+            messages, active_system_prompt = _compress_context_with_dispatch_budget(
+                agent,
                 messages,
                 system_message,
                 approx_tokens=request_pressure_tokens,
@@ -1699,7 +1949,7 @@ def _run_conversation_impl(
             )
             api_call_count -= 1
             agent._api_call_count = api_call_count
-            agent.iteration_budget.refund()
+            _refund_iteration_budgets(agent)
             continue
         
         # Thinking spinner for quiet mode (animated during API call)
@@ -1773,6 +2023,7 @@ def _run_conversation_impl(
                             continue
                         # No fallback available — surface buffered context
                         # so user sees the rate-limit message that led here.
+                        _refund_iteration_budgets(agent)
                         agent._flush_status_buffer()
                         agent._persist_session(messages, conversation_history)
                         return {
@@ -1954,15 +2205,88 @@ def _run_conversation_impl(
                         _use_streaming = False
 
                 def _perform_api_call(next_api_kwargs):
-                    if _use_streaming:
-                        return agent._interruptible_streaming_api_call(
-                            next_api_kwargs, on_first_delta=_stop_spinner
-                        )
-                    return agent._interruptible_api_call(next_api_kwargs)
+                    dispatch_state = {"gate_called": False}
+
+                    def _dispatch(provider_kwargs):
+
+                        def dispatch_gate():
+                            dispatch_state["gate_called"] = True
+                            return _commit_iteration_graph_budget(agent)
+
+                        try:
+                            graph_dispatch_gate = (
+                                dispatch_gate if _graph_budget(agent) is not None else None
+                            )
+
+                            def _accepts_dispatch_gate(callable_obj):
+                                try:
+                                    import inspect
+
+                                    parameters = inspect.signature(callable_obj).parameters
+                                except (TypeError, ValueError):
+                                    return True
+                                return "dispatch_gate" in parameters
+
+                            if _use_streaming:
+                                streaming_call = agent._interruptible_streaming_api_call
+                                if graph_dispatch_gate is None:
+                                    dispatch_state["gate_called"] = True
+                                    return streaming_call(
+                                        provider_kwargs,
+                                        on_first_delta=_stop_spinner,
+                                    )
+                                if not _accepts_dispatch_gate(streaming_call):
+                                    if not graph_dispatch_gate():
+                                        raise RuntimeError(
+                                            "graph budget exhausted before provider dispatch"
+                                        )
+                                    return streaming_call(
+                                        provider_kwargs,
+                                        on_first_delta=_stop_spinner,
+                                    )
+                                return streaming_call(
+                                    provider_kwargs,
+                                    on_first_delta=_stop_spinner,
+                                    dispatch_gate=graph_dispatch_gate,
+                                )
+                            api_call = agent._interruptible_api_call
+                            if graph_dispatch_gate is None:
+                                dispatch_state["gate_called"] = True
+                                return api_call(provider_kwargs)
+                            if not _accepts_dispatch_gate(api_call):
+                                if not graph_dispatch_gate():
+                                    raise RuntimeError(
+                                        "graph budget exhausted before provider dispatch"
+                                    )
+                                return api_call(provider_kwargs)
+                            return api_call(
+                                provider_kwargs, dispatch_gate=graph_dispatch_gate
+                            )
+                        except BaseException:
+                            # Client/request construction can fail before reaching the
+                            # physical dispatch boundary. Only that never-gated path is
+                            # refundable. A rejected durable commit retains its owned
+                            # receipt for diagnosis/reconciliation; any successful gate
+                            # is permanently charged even when the transport fails.
+                            if not dispatch_state["gate_called"]:
+                                _refund_iteration_budgets(agent)
+                            raise
+
+                    try:
+                        return call_with_prompt_ledger(agent, next_api_kwargs, _dispatch)
+                    except BaseException:
+                        # Prompt-ledger preparation and request recording happen before
+                        # _dispatch. Preserve the graph/turn refund contract when either
+                        # exits through BaseException without reaching the physical gate.
+                        if not dispatch_state["gate_called"]:
+                            _refund_iteration_budgets(agent)
+                        raise
 
                 from hermes_cli.middleware import run_llm_execution_middleware
 
-                response = run_llm_execution_middleware(
+                response = _run_llm_execution_middleware_with_budget_reconciliation(
+                    agent,
+                    run_llm_execution_middleware,
                     api_kwargs,
                     _perform_api_call,
                     original_request=_original_api_kwargs,
@@ -3834,7 +4158,8 @@ def _run_conversation_impl(
                     compression_attempts += 1
                     if compression_attempts <= max_compression_attempts:
                         original_len = len(messages)
-                        messages, active_system_prompt = agent._compress_context(
+                        messages, active_system_prompt = _compress_context_with_dispatch_budget(
+                            agent,
                             messages, system_message,
                             approx_tokens=approx_tokens,
                             task_id=effective_task_id,
@@ -4089,7 +4414,8 @@ def _run_conversation_impl(
 
                     original_len = len(messages)
                     original_tokens = estimate_messages_tokens_rough(messages)
-                    messages, active_system_prompt = agent._compress_context(
+                    messages, active_system_prompt = _compress_context_with_dispatch_budget(
+                        agent,
                         messages, system_message, approx_tokens=approx_tokens,
                         task_id=effective_task_id,
                     )
@@ -4312,7 +4638,8 @@ def _run_conversation_impl(
 
                     original_len = len(messages)
                     original_tokens = estimate_messages_tokens_rough(messages)
-                    messages, active_system_prompt = agent._compress_context(
+                    messages, active_system_prompt = _compress_context_with_dispatch_budget(
+                        agent,
                         messages, system_message, approx_tokens=approx_tokens,
                         task_id=effective_task_id,
                     )
@@ -4899,7 +5226,9 @@ def _run_conversation_impl(
 
         if _retry.restart_with_compressed_messages:
             api_call_count -= 1
-            agent.iteration_budget.refund()
+            # The provider attempt already happened. Return only the local
+            # retry slot; cumulative graph accounting remains monotonic.
+            _refund_iteration_budgets(agent, refund_graph=False)
             # Count compression restarts toward the retry limit to prevent
             # infinite loops when compression reduces messages but not enough
             # to fit the context window.
@@ -4912,9 +5241,10 @@ def _run_conversation_impl(
             # fallback chain and the partial content rolled back.  Re-issue
             # the API call against the now-active fallback provider.  Refund
             # the budget/count for the stalled attempt so the fallback gets a
-            # fair turn.
+            # fair local turn. The stalled provider dispatch still counts
+            # against the cumulative execution-graph budget.
             api_call_count -= 1
-            agent.iteration_budget.refund()
+            _refund_iteration_budgets(agent, refund_graph=False)
             _retry.restart_with_rebuilt_messages = False
             continue
 
@@ -5444,12 +5774,12 @@ def _run_conversation_impl(
                 # arrives.
                 agent._stream_needs_break = True
 
-                # Refund the iteration if the ONLY tool(s) called were
-                # execute_code (programmatic tool calling).  These are
-                # cheap RPC-style calls that shouldn't eat the budget.
+                # Refund only the local turn slot when the sole tool is
+                # execute_code. The preceding provider call is still an
+                # accountable graph call and must remain durably charged.
                 _tc_names = {tc.function.name for tc in assistant_message.tool_calls}
                 if _tc_names == {"execute_code"}:
-                    agent.iteration_budget.refund()
+                    _refund_iteration_budgets(agent, refund_graph=False)
                 
                 # Use real token counts from the API response to decide
                 # compression.  prompt_tokens + completion_tokens is the
@@ -5489,7 +5819,8 @@ def _run_conversation_impl(
 
                 if agent.compression_enabled and _compressor.should_compress(_real_tokens):
                     agent._safe_print("  ⟳ compacting context…")
-                    messages, active_system_prompt = agent._compress_context(
+                    messages, active_system_prompt = _compress_context_with_dispatch_budget(
+                        agent,
                         messages, system_message,
                         approx_tokens=agent.context_compressor.last_prompt_tokens,
                         task_id=effective_task_id,

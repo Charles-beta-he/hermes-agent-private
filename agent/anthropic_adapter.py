@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from hermes_constants import get_hermes_home
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from utils import base_url_host_matches, normalize_proxy_env_vars
 
 # NOTE: `import anthropic` is deliberately NOT at module top — the SDK pulls
@@ -903,13 +903,16 @@ def _read_claude_code_credentials_from_keychain() -> Optional[Dict[str, Any]]:
         return None
 
     raw = result.stdout.strip()
-    if not raw:
+    if not raw or not isinstance(raw, (str, bytes, bytearray)):
         return None
 
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         logger.debug("Keychain: credentials payload is not valid JSON")
+        return None
+    if not isinstance(data, dict):
+        logger.debug("Keychain: credentials payload is not an object")
         return None
 
     oauth_data = data.get("claudeAiOauth")
@@ -2754,6 +2757,7 @@ def create_anthropic_message(
     *,
     log_prefix: str = "",
     prefer_stream: bool = True,
+    dispatch_gate: Optional[Callable[[], bool]] = None,
 ) -> Any:
     """Create an Anthropic message, aggregating via stream when available.
 
@@ -2766,12 +2770,19 @@ def create_anthropic_message(
     """
     sanitize_anthropic_kwargs(api_kwargs, log_prefix=log_prefix)
 
+    def _require_dispatch_admission() -> None:
+        if dispatch_gate is not None and not dispatch_gate():
+            raise RuntimeError(
+                "graph budget commit failed before Anthropic provider dispatch"
+            )
+
     messages_api = getattr(client, "messages", None)
     stream_fn = getattr(messages_api, "stream", None)
     if prefer_stream and callable(stream_fn):
         stream_kwargs = dict(api_kwargs)
         stream_kwargs.pop("stream", None)
         try:
+            _require_dispatch_admission()
             with stream_fn(**stream_kwargs) as stream:
                 return stream.get_final_message()
         except Exception as exc:
@@ -2786,4 +2797,5 @@ def create_anthropic_message(
 
     create_kwargs = dict(api_kwargs)
     create_kwargs.pop("stream", None)
+    _require_dispatch_admission()
     return messages_api.create(**create_kwargs)

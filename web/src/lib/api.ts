@@ -1244,6 +1244,12 @@ export interface AgentOsStatusResponse {
   project: string;
   mode: string;
   runtime_effect: string;
+  missing?: string[];
+  projection?: { path?: string; node_count?: number; runtime_mutation?: boolean };
+  // findings entries may be plain strings or structured {level?, check, message}
+  // objects depending on backend version; consumers must validate each entry.
+  doctor?: { path?: string; ok?: boolean; findings?: unknown[] };
+  shadow?: { path?: string; ok?: boolean; records?: number; blocked_by_policy?: number; would_execute_anything?: boolean };
   procedure_validation: {
     available: boolean;
     trusted_read_only: boolean;
