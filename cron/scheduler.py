@@ -1371,6 +1371,66 @@ def _confirm_adapter_delivery(send_result) -> bool:
     return bool(getattr(send_result, "success"))
 
 
+
+def _extract_delivery_message_id(send_result) -> Optional[str]:
+    """Best-effort message id from SendResult / dict / platform raw payload."""
+    if send_result is None:
+        return None
+    if isinstance(send_result, dict):
+        mid = send_result.get("message_id") or send_result.get("id")
+        if mid not in (None, ""):
+            return str(mid)
+        raw = send_result.get("raw_response")
+        if isinstance(raw, dict):
+            nested = raw.get("message_id") or raw.get("id")
+            if nested not in (None, ""):
+                return str(nested)
+        return None
+    mid = getattr(send_result, "message_id", None)
+    if mid not in (None, ""):
+        return str(mid)
+    raw = getattr(send_result, "raw_response", None)
+    if isinstance(raw, dict):
+        nested = raw.get("message_id") or raw.get("id")
+        if nested not in (None, ""):
+            return str(nested)
+    return None
+
+
+def _record_primary_delivery_receipt(
+    *,
+    job: dict,
+    platform_name: str,
+    chat_id: Any,
+    thread_id: Any = None,
+    send_result=None,
+    source: str = "live_adapter",
+    status: Optional[str] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Persist Delivery Truth receipt; never raise into the delivery loop."""
+    try:
+        from cron.delivery_queue import record_primary_delivery_receipt
+
+        record_primary_delivery_receipt(
+            job=job,
+            target={"platform": platform_name, "chat_id": chat_id, "thread_id": thread_id},
+            message_id=_extract_delivery_message_id(send_result),
+            source=source,
+            output_file=job.get("_cron_output_file"),
+            status=status,
+            error=error,
+        )
+    except Exception as exc:  # noqa: BLE001 - receipt must not break delivery success path
+        logger.warning(
+            "Job '%s': failed to record primary delivery receipt for %s:%s: %s",
+            job.get("id", "?"),
+            platform_name,
+            chat_id,
+            exc,
+        )
+
+
 def _is_channel_dm_topic(
     runtime_adapter: Any,
     chat_id: Any,
@@ -1713,6 +1773,7 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 text_to_send = cleaned_delivery_content.strip()
                 adapter_ok = True
                 timed_out = False
+                send_result = None
                 if text_to_send:
                     from agent.async_utils import safe_schedule_threadsafe
 
@@ -1877,6 +1938,26 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 if adapter_ok:
                     logger.info("Job '%s': delivered to %s:%s via live adapter", job["id"], platform_name, chat_id)
                     delivered = True
+                    if timed_out:
+                        _record_primary_delivery_receipt(
+                            job=job,
+                            platform_name=platform_name,
+                            chat_id=chat_id,
+                            thread_id=thread_id,
+                            send_result=None,
+                            source="live_adapter_timeout_assumed",
+                            status="assumed_in_flight_unconfirmed",
+                            error="live adapter confirmation timed out after dispatch",
+                        )
+                    else:
+                        _record_primary_delivery_receipt(
+                            job=job,
+                            platform_name=platform_name,
+                            chat_id=chat_id,
+                            thread_id=thread_id,
+                            send_result=send_result,
+                            source="live_adapter",
+                        )
                     # Seed the thread session only now that delivery into it
                     # succeeded (deferred from thread-open above).
                     if opened_thread_id and not thread_seeded:
@@ -2015,6 +2096,14 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 continue
 
             logger.info("Job '%s': delivered to %s:%s", job["id"], platform_name, chat_id)
+            _record_primary_delivery_receipt(
+                job=job,
+                platform_name=platform_name,
+                chat_id=chat_id,
+                thread_id=thread_id,
+                send_result=result,
+                source="standalone",
+            )
             _maybe_mirror_cron_delivery(
                 job, platform_name, chat_id, mirror_text,
                 thread_id=thread_id, user_id=origin_user_id,
