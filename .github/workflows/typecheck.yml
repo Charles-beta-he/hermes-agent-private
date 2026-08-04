@@ -41,6 +41,7 @@ jobs:
         with:
           command: npm ci --ignore-scripts
       - run: npm test --workspace @hermes/workflow-contracts
+      - run: npm run schema:check --workspace @hermes/workflow-contracts
 
   # Production build of the desktop renderer. `typecheck` runs `tsc` only,
   # which does NOT exercise Vite/Rolldown module resolution — so an

@@ -1,0 +1,191 @@
+{
+  "$id": "https://hermes-agent.local/schemas/workflow-leaf-packet-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "workflow_leaf_packet_v1"
+    },
+    "leaf_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "baseline_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "blocked",
+        "cancelled",
+        "unverified"
+      ]
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "type",
+          "ref"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "uncertainty": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "spawns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "wall_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tool_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "side_effect_ops": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "spawns",
+        "wall_ms",
+        "tool_calls",
+        "tokens",
+        "side_effect_ops"
+      ],
+      "additionalProperties": false
+    },
+    "continuation": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "value_present": {
+      "type": "boolean"
+    },
+    "result": {
+      "$ref": "#/$defs/__schema0"
+    }
+  },
+  "required": [
+    "schema_version",
+    "leaf_id",
+    "input_hash",
+    "baseline_ref",
+    "authority_ref",
+    "status",
+    "claims",
+    "evidence",
+    "uncertainty",
+    "usage",
+    "continuation",
+    "value_present",
+    "result"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes WorkflowLeafPacketV1",
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -10,7 +10,8 @@
   "scripts": {
     "typecheck": "tsc -p . --noEmit",
     "test": "vitest run",
-    "schema:generate": "tsx scripts/generate-schema.ts"
+    "schema:generate": "tsx scripts/generate-schema.ts",
+    "schema:check": "tsx scripts/generate-schema.ts --check"
   },
   "dependencies": {
     "zod": "4.4.3"

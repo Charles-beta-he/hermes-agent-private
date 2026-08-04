@@ -1,0 +1,77 @@
+{
+  "$id": "https://hermes-agent.local/schemas/workflow-execution-event-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "workflow_execution_event_v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "previous_event_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^wee_[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "run_accepted",
+        "run_started",
+        "run_cancel_requested",
+        "budget_reserved",
+        "budget_settled",
+        "budget_released",
+        "leaf_started",
+        "leaf_packet",
+        "run_verified",
+        "run_completed"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {}
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^wee_[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "sequence",
+    "previous_event_id",
+    "idempotency_key",
+    "occurred_at",
+    "event_type",
+    "payload",
+    "event_id"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes WorkflowExecutionEventV1"
+}

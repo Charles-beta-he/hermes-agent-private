@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import select
+import sys
+import tempfile
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
@@ -12,6 +16,8 @@ from workflow_kernel.runtime_state import (
     ensure_private_directory,
     ensure_private_file,
     ensure_runtime_artifact_parent,
+    exclusive_execution_lock,
+    exclusive_existing_ledger_lock_read_only,
     exclusive_ledger_lock,
     limited_unattended_ledger_path,
     prefer_runtime_artifact,
@@ -26,13 +32,31 @@ def _concurrent_seed_worker(source: str, destination: str, start, results) -> No
     results.put(seed_jsonl_once(Path(source), Path(destination))["status"])
 
 
-def test_runtime_paths_are_profile_scoped_and_outside_repository(tmp_path: Path) -> None:
-    assert limited_unattended_ledger_path(tmp_path) == tmp_path / "state/workflow-kernel/limited-unattended/receipts.jsonl"
-    assert unattended_dry_run_dir(tmp_path) == tmp_path / "state/workflow-kernel/unattended-dry-run-scheduler"
-    assert unattended_dry_run_ledger_path(tmp_path) == tmp_path / "state/workflow-kernel/unattended-dry-run-scheduler/receipts.jsonl"
+def _seed_and_report(source: str, destination: str, results) -> None:
+    results.put(seed_jsonl_once(Path(source), Path(destination))["status"])
 
 
-def test_seed_jsonl_once_preserves_bytes_and_never_overwrites_runtime_history(tmp_path: Path) -> None:
+def test_runtime_paths_are_profile_scoped_and_outside_repository(
+    tmp_path: Path,
+) -> None:
+    assert (
+        limited_unattended_ledger_path(tmp_path)
+        == tmp_path / "state/workflow-kernel/limited-unattended/receipts.jsonl"
+    )
+    assert (
+        unattended_dry_run_dir(tmp_path)
+        == tmp_path / "state/workflow-kernel/unattended-dry-run-scheduler"
+    )
+    assert (
+        unattended_dry_run_ledger_path(tmp_path)
+        == tmp_path
+        / "state/workflow-kernel/unattended-dry-run-scheduler/receipts.jsonl"
+    )
+
+
+def test_seed_jsonl_once_preserves_bytes_and_never_overwrites_runtime_history(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "legacy.jsonl"
     destination = tmp_path / "state" / "receipts.jsonl"
     source.write_bytes(b'{"id":1}\n{"id":2}\n')
@@ -47,7 +71,9 @@ def test_seed_jsonl_once_preserves_bytes_and_never_overwrites_runtime_history(tm
     assert destination.read_bytes() == b'{"id":1}\n{"id":2}\n{"id":3}\n'
 
 
-def test_seed_jsonl_once_is_process_safe_and_never_overwrites_winner(tmp_path: Path) -> None:
+def test_seed_jsonl_once_is_process_safe_and_never_overwrites_winner(
+    tmp_path: Path,
+) -> None:
     first_source = tmp_path / "legacy-a.jsonl"
     second_source = tmp_path / "legacy-b.jsonl"
     destination = tmp_path / "state/receipts.jsonl"
@@ -57,7 +83,10 @@ def test_seed_jsonl_once_is_process_safe_and_never_overwrites_winner(tmp_path: P
     start = context.Event()
     results = context.Queue()
     processes = [
-        context.Process(target=_concurrent_seed_worker, args=(str(source), str(destination), start, results))
+        context.Process(
+            target=_concurrent_seed_worker,
+            args=(str(source), str(destination), start, results),
+        )
         for source in (first_source, second_source)
     ]
     for process in processes:
@@ -67,18 +96,104 @@ def test_seed_jsonl_once_is_process_safe_and_never_overwrites_winner(tmp_path: P
         process.join(timeout=15)
         assert process.exitcode == 0
 
-    assert sorted(results.get(timeout=2) for _ in processes) == ["already_exists", "seeded"]
-    assert destination.read_bytes() in {first_source.read_bytes(), second_source.read_bytes()}
+    assert sorted(results.get(timeout=2) for _ in processes) == [
+        "already_exists",
+        "seeded",
+    ]
+    assert destination.read_bytes() in {
+        first_source.read_bytes(),
+        second_source.read_bytes(),
+    }
 
 
-def test_seed_jsonl_once_allows_missing_legacy_without_creating_empty_ledger(tmp_path: Path) -> None:
+def test_seed_jsonl_once_does_not_reject_winner_during_transient_hardlink(
+    monkeypatch, tmp_path: Path
+) -> None:
+    first_source = tmp_path / "legacy-a.jsonl"
+    second_source = tmp_path / "legacy-b.jsonl"
+    destination = tmp_path / "state/receipts.jsonl"
+    first_source.write_bytes(b'{"source":"a"}\n')
+    second_source.write_bytes(b'{"source":"b"}\n')
+    link_created = Event()
+    allow_cleanup = Event()
+    real_link = runtime_state.os.link
+    results: list[str] = []
+    errors: list[BaseException] = []
+
+    def paused_link(*args, **kwargs) -> None:
+        real_link(*args, **kwargs)
+        link_created.set()
+        assert allow_cleanup.wait(5)
+
+    def seed(source: Path) -> None:
+        try:
+            results.append(str(seed_jsonl_once(source, destination)["status"]))
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    monkeypatch.setattr(runtime_state.os, "link", paused_link)
+    winner = Thread(target=seed, args=(first_source,))
+    winner.start()
+    assert link_created.wait(2)
+    contender = Thread(target=seed, args=(second_source,))
+    contender.start()
+    contender.join(timeout=0.2)
+    allow_cleanup.set()
+    winner.join(timeout=5)
+    contender.join(timeout=5)
+
+    assert not winner.is_alive()
+    assert not contender.is_alive()
+    assert errors == []
+    assert sorted(results) == ["already_exists", "seeded"]
+    assert destination.read_bytes() == first_source.read_bytes()
+
+
+def test_seed_with_existing_anchor_does_not_release_outer_parent_coordination(
+    tmp_path: Path,
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    results = context.Queue()
+    first_source = tmp_path / "legacy-a.jsonl"
+    second_source = tmp_path / "legacy-b.jsonl"
+    first_destination = tmp_path / "state/first.jsonl"
+    second_destination = tmp_path / "state/second.jsonl"
+    first_source.write_bytes(b'{"source":"a"}\n')
+    second_source.write_bytes(b'{"source":"b"}\n')
+
+    with exclusive_ledger_lock(first_destination, private_root=tmp_path) as anchor:
+        seed_jsonl_once(
+            first_source,
+            first_destination,
+            private_root=tmp_path,
+            anchor=anchor,
+        )
+        contender = context.Process(
+            target=_seed_and_report,
+            args=(str(second_source), str(second_destination), results),
+        )
+        contender.start()
+        contender.join(timeout=0.3)
+        assert contender.is_alive()
+
+    contender.join(timeout=5)
+    assert not contender.is_alive()
+    assert contender.exitcode == 0
+    assert results.get(timeout=1) == "seeded"
+
+
+def test_seed_jsonl_once_allows_missing_legacy_without_creating_empty_ledger(
+    tmp_path: Path,
+) -> None:
     destination = tmp_path / "state" / "receipts.jsonl"
     result = seed_jsonl_once(tmp_path / "missing.jsonl", destination)
     assert result["status"] == "legacy_missing"
     assert not destination.exists()
 
 
-def test_explicit_non_runtime_paths_keep_caller_managed_permissions(tmp_path: Path) -> None:
+def test_explicit_non_runtime_paths_keep_caller_managed_permissions(
+    tmp_path: Path,
+) -> None:
     explicit_parent = tmp_path / "explicit"
     explicit_parent.mkdir(mode=0o755)
     explicit_parent.chmod(0o755)
@@ -96,7 +211,9 @@ def test_explicit_non_runtime_paths_keep_caller_managed_permissions(tmp_path: Pa
     assert destination.stat().st_mode & 0o777 == 0o644
 
 
-def test_same_named_explicit_tree_is_not_treated_as_private_runtime(tmp_path: Path) -> None:
+def test_same_named_explicit_tree_is_not_treated_as_private_runtime(
+    tmp_path: Path,
+) -> None:
     caller_root = tmp_path / "caller/workflow-kernel"
     caller_root.mkdir(parents=True, mode=0o755)
     caller_root.chmod(0o755)
@@ -106,12 +223,14 @@ def test_same_named_explicit_tree_is_not_treated_as_private_runtime(tmp_path: Pa
     assert caller_root.stat().st_mode & 0o777 == 0o755
 
 
-def test_runtime_artifacts_are_private_even_when_they_already_exist(tmp_path: Path) -> None:
+def test_runtime_artifacts_are_private_even_when_they_already_exist(
+    tmp_path: Path,
+) -> None:
     private_root = tmp_path / "state/workflow-kernel"
     directory = private_root / "limited-unattended"
     directory.mkdir(parents=True, mode=0o755)
     artifact = directory / "receipts.jsonl"
-    artifact.write_text('{}\n', encoding="utf-8")
+    artifact.write_text("{}\n", encoding="utf-8")
     directory.chmod(0o755)
     artifact.chmod(0o644)
 
@@ -120,6 +239,22 @@ def test_runtime_artifacts_are_private_even_when_they_already_exist(tmp_path: Pa
 
     assert directory.stat().st_mode & 0o777 == 0o700
     assert artifact.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="macOS system-path alias regression"
+)
+def test_private_runtime_accepts_macos_system_var_alias_without_resolving_descendants() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as raw_directory:
+        private_root = Path(raw_directory) / "state/workflow-kernel"
+        ledger = private_root / "runtime/run.jsonl"
+
+        with exclusive_ledger_lock(ledger, private_root=private_root):
+            assert ledger.parent.is_dir()
+
+        assert private_root.stat().st_mode & 0o777 == 0o700
 
 
 def test_exclusive_ledger_lock_uses_private_lock_file(tmp_path: Path) -> None:
@@ -134,7 +269,229 @@ def test_exclusive_ledger_lock_uses_private_lock_file(tmp_path: Path) -> None:
     assert lock_path.exists()
 
 
-def test_exclusive_ledger_lock_rejects_symlink_without_chmodding_target(tmp_path: Path) -> None:
+@pytest.mark.skipif(
+    os.name == "nt", reason="POSIX parent-directory locking hardens leaf replacement"
+)
+def test_execution_owner_survives_lock_leaf_replacement(tmp_path: Path) -> None:
+    private_root = tmp_path / "state/workflow-kernel"
+    ledger = private_root / "runtime/run.jsonl"
+    owner_ready = Event()
+    owner_release = Event()
+    contender_entered = Event()
+
+    def owner() -> None:
+        with exclusive_execution_lock(ledger, private_root=private_root):
+            owner_ready.set()
+            assert owner_release.wait(5)
+
+    def contender() -> None:
+        with exclusive_execution_lock(ledger, private_root=private_root):
+            contender_entered.set()
+
+    owner_thread = Thread(target=owner)
+    owner_thread.start()
+    assert owner_ready.wait(2)
+    lock_path = ledger.with_name(f".{ledger.name}.execution.lock")
+    lock_path.unlink()
+    lock_path.write_bytes(b"")
+    lock_path.chmod(0o600)
+
+    contender_thread = Thread(target=contender)
+    contender_thread.start()
+    contender_was_blocked = not contender_entered.wait(0.25)
+    owner_release.set()
+    assert contender_entered.wait(2)
+    owner_thread.join(timeout=2)
+    contender_thread.join(timeout=2)
+    assert contender_was_blocked
+    assert not owner_thread.is_alive()
+    assert not contender_thread.is_alive()
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork semantics")
+def test_fork_child_cannot_reenter_parent_coordination(tmp_path: Path) -> None:
+    private_root = tmp_path / "state/workflow-kernel"
+    ledger = private_root / "runtime/run.jsonl"
+    read_fd, write_fd = os.pipe()
+
+    with exclusive_execution_lock(ledger, private_root=private_root):
+        child_pid = os.fork()
+        if child_pid == 0:  # pragma: no cover - assertions run in parent
+            try:
+                os.close(read_fd)
+                with exclusive_ledger_lock(ledger, private_root=private_root):
+                    os.write(write_fd, b"entered")
+            finally:
+                os._exit(0)
+        os.close(write_fd)
+        try:
+            ready, _, _ = select.select([read_fd], [], [], 0.25)
+            assert not ready, "fork child bypassed the parent coordination lock"
+        except BaseException:
+            os.kill(child_pid, 9)
+            os.waitpid(child_pid, 0)
+            os.close(read_fd)
+            raise
+
+    assert os.read(read_fd, 7) == b"entered"
+    os.close(read_fd)
+    assert os.waitpid(child_pid, 0)[1] == 0
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork semantics")
+def test_fork_child_does_not_retain_parent_lock_descriptors(tmp_path: Path) -> None:
+    private_root = tmp_path / "state/workflow-kernel"
+    ledger = private_root / "runtime/run.jsonl"
+    ready_read, ready_write = os.pipe()
+    release_read, release_write = os.pipe()
+
+    owner_pid = os.fork()
+    if owner_pid == 0:  # pragma: no cover - assertions run in parent
+        os.close(ready_read)
+        os.close(release_write)
+        with exclusive_execution_lock(ledger, private_root=private_root):
+            orphan_pid = os.fork()
+            if orphan_pid == 0:
+                os.write(ready_write, f"{os.getpid()}\n".encode("ascii"))
+                os.read(release_read, 1)
+                os._exit(0)
+            os._exit(0)
+
+    os.close(ready_write)
+    os.close(release_read)
+    assert os.read(ready_read, 32).strip()
+    assert os.waitpid(owner_pid, 0)[1] == 0
+
+    contender_entered = Event()
+
+    def contender() -> None:
+        with exclusive_execution_lock(ledger, private_root=private_root):
+            contender_entered.set()
+
+    contender_thread = Thread(target=contender)
+    contender_thread.start()
+    try:
+        assert contender_entered.wait(0.5), (
+            "fork child retained an inherited lock descriptor after owner exit"
+        )
+    finally:
+        os.write(release_write, b"x")
+        os.close(release_write)
+        os.close(ready_read)
+        contender_thread.join(timeout=2)
+
+    assert not contender_thread.is_alive()
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork semantics")
+@pytest.mark.parametrize("lock_kind", ["execution", "ledger", "read_only_ledger"])
+def test_fork_child_can_unwind_inherited_lock_context(
+    tmp_path: Path,
+    lock_kind: str,
+) -> None:
+    private_root = tmp_path / "state/workflow-kernel"
+    ledger = private_root / "runtime/run.jsonl"
+    if lock_kind == "read_only_ledger":
+        with exclusive_ledger_lock(ledger, private_root=private_root):
+            pass
+
+    if lock_kind == "execution":
+        lock_context = exclusive_execution_lock(ledger, private_root=private_root)
+    elif lock_kind == "ledger":
+        lock_context = exclusive_ledger_lock(ledger, private_root=private_root)
+    else:
+        lock_context = exclusive_existing_ledger_lock_read_only(
+            ledger, private_root=private_root
+        )
+
+    read_fd, write_fd = os.pipe()
+    child_pid = -1
+    in_child = False
+    try:
+        with lock_context:
+            child_pid = os.fork()
+            if child_pid == 0:  # pragma: no cover - assertions run in parent
+                in_child = True
+                os.close(read_fd)
+    except BaseException as exc:
+        if in_child:  # pragma: no cover - assertions run in parent
+            os.write(write_fd, f"ERROR:{type(exc).__name__}:{exc}".encode("utf-8"))
+            os.close(write_fd)
+            os._exit(0)
+        raise
+
+    if in_child:  # pragma: no cover - assertions run in parent
+        os.write(write_fd, b"OK")
+        os.close(write_fd)
+        os._exit(0)
+
+    os.close(write_fd)
+    ready, _, _ = select.select([read_fd], [], [], 2)
+    try:
+        assert ready, "fork child hung while unwinding an inherited lock context"
+        assert os.read(read_fd, 256) == b"OK"
+        assert os.waitpid(child_pid, 0)[1] == 0
+    except BaseException:
+        os.kill(child_pid, 9)
+        os.waitpid(child_pid, 0)
+        raise
+    finally:
+        os.close(read_fd)
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="POSIX parent-directory locking hardens leaf replacement"
+)
+@pytest.mark.parametrize("read_only_contender", [False, True])
+def test_ledger_owner_survives_lock_leaf_replacement(
+    tmp_path: Path,
+    read_only_contender: bool,
+) -> None:
+    private_root = tmp_path / "state/workflow-kernel"
+    ledger = private_root / "runtime/run.jsonl"
+    owner_ready = Event()
+    owner_release = Event()
+    contender_entered = Event()
+
+    def owner() -> None:
+        with exclusive_ledger_lock(ledger, private_root=private_root):
+            owner_ready.set()
+            assert owner_release.wait(5)
+
+    def contender() -> None:
+        if read_only_contender:
+            with exclusive_existing_ledger_lock_read_only(
+                ledger, private_root=private_root
+            ) as anchor:
+                assert anchor is not None
+                contender_entered.set()
+        else:
+            with exclusive_ledger_lock(ledger, private_root=private_root):
+                contender_entered.set()
+
+    owner_thread = Thread(target=owner)
+    owner_thread.start()
+    assert owner_ready.wait(2)
+    lock_path = ledger.with_name(f".{ledger.name}.lock")
+    lock_path.unlink()
+    lock_path.write_bytes(b"\0")
+    lock_path.chmod(0o600)
+
+    contender_thread = Thread(target=contender)
+    contender_thread.start()
+    contender_was_blocked = not contender_entered.wait(0.25)
+    owner_release.set()
+    assert contender_entered.wait(2)
+    owner_thread.join(timeout=2)
+    contender_thread.join(timeout=2)
+    assert contender_was_blocked
+    assert not owner_thread.is_alive()
+    assert not contender_thread.is_alive()
+
+
+def test_exclusive_ledger_lock_rejects_symlink_without_chmodding_target(
+    tmp_path: Path,
+) -> None:
     ledger = tmp_path / "explicit/receipts.jsonl"
     ledger.parent.mkdir()
     target = tmp_path / "target.txt"
@@ -150,7 +507,9 @@ def test_exclusive_ledger_lock_rejects_symlink_without_chmodding_target(tmp_path
     assert target.stat().st_mode & 0o777 == 0o644
 
 
-def test_ensure_private_file_rejects_symlink_without_chmodding_target(tmp_path: Path) -> None:
+def test_ensure_private_file_rejects_symlink_without_chmodding_target(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "target.txt"
     target.write_text("do not touch", encoding="utf-8")
     target.chmod(0o644)
@@ -163,7 +522,9 @@ def test_ensure_private_file_rejects_symlink_without_chmodding_target(tmp_path: 
     assert target.stat().st_mode & 0o777 == 0o644
 
 
-def test_private_runtime_rejects_symlinked_ancestor_without_creating_outside_tree(tmp_path: Path) -> None:
+def test_private_runtime_rejects_symlinked_ancestor_without_creating_outside_tree(
+    tmp_path: Path,
+) -> None:
     profile = tmp_path / "profile"
     outside = tmp_path / "outside"
     profile.mkdir()
@@ -180,7 +541,9 @@ def test_private_runtime_rejects_symlinked_ancestor_without_creating_outside_tre
     assert not (outside / "workflow-kernel").exists()
 
 
-def test_private_runtime_rejects_parent_component_escape_without_chmod(tmp_path: Path) -> None:
+def test_private_runtime_rejects_parent_component_escape_without_chmod(
+    tmp_path: Path,
+) -> None:
     private_root = tmp_path / "runtime"
     outside = tmp_path / "outside"
     outside.mkdir(mode=0o755)
@@ -195,7 +558,9 @@ def test_private_runtime_rejects_parent_component_escape_without_chmod(tmp_path:
     assert outside.stat().st_mode & 0o777 == 0o755
 
 
-def test_directory_chain_closes_next_descriptor_when_validation_fails(tmp_path: Path, monkeypatch) -> None:
+def test_directory_chain_closes_next_descriptor_when_validation_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
     original_open = os.open
     original_fstat = os.fstat
     original_close = os.close
@@ -226,9 +591,11 @@ def test_directory_chain_closes_next_descriptor_when_validation_fails(tmp_path: 
     assert opened[-1] in closed
 
 
-def test_private_file_fails_closed_without_no_follow_support(tmp_path: Path, monkeypatch) -> None:
+def test_private_file_fails_closed_without_no_follow_support(
+    tmp_path: Path, monkeypatch
+) -> None:
     artifact = tmp_path / "artifact.jsonl"
-    artifact.write_text('{}\n', encoding="utf-8")
+    artifact.write_text("{}\n", encoding="utf-8")
     monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
 
     with pytest.raises(OSError, match="no-follow semantics unsupported"):
@@ -261,19 +628,30 @@ def phase55_report(marker: str) -> str:
 
 def phase55_paths(tmp_path: Path) -> tuple[Path, Path, Path]:
     snapshot_root = tmp_path / "repo"
-    snapshot = snapshot_root / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
-    runtime = tmp_path / "profile/state/workflow-kernel/unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+    snapshot = (
+        snapshot_root
+        / "docs/private/workflow-kernel-unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+    )
+    runtime = (
+        tmp_path
+        / "profile/state/workflow-kernel/unattended-dry-run-scheduler/workflow_kernel_unattended_dry_run_scheduler_20260613_phase55.json"
+    )
     return snapshot_root, snapshot, runtime
 
 
-def test_control_tower_phase55_path_prefers_valid_profile_runtime_report(tmp_path: Path, monkeypatch) -> None:
+def test_control_tower_phase55_path_prefers_valid_profile_runtime_report(
+    tmp_path: Path, monkeypatch
+) -> None:
     snapshot_root, snapshot, runtime = phase55_paths(tmp_path)
     snapshot.parent.mkdir(parents=True)
     snapshot.write_text(phase55_report("snapshot"), encoding="utf-8")
     monkeypatch.setattr(control_tower, "get_hermes_home", lambda: tmp_path / "profile")
 
     assert control_tower._workflow_kernel_phase55_path(snapshot_root) == snapshot
-    assert control_tower._workflow_kernel_phase55_source(snapshot_root) == "frozen_baseline"
+    assert (
+        control_tower._workflow_kernel_phase55_source(snapshot_root)
+        == "frozen_baseline"
+    )
     runtime.parent.mkdir(parents=True)
     runtime.write_text(phase55_report("runtime"), encoding="utf-8")
     assert control_tower._workflow_kernel_phase55_path(snapshot_root) == runtime
@@ -284,7 +662,9 @@ def test_control_tower_phase55_path_prefers_valid_profile_runtime_report(tmp_pat
 
 
 @pytest.mark.parametrize("invalid_runtime", ["{not-json", "[]", '{"phase":54}'])
-def test_control_tower_phase55_falls_back_when_runtime_report_is_invalid(tmp_path: Path, monkeypatch, invalid_runtime: str) -> None:
+def test_control_tower_phase55_falls_back_when_runtime_report_is_invalid(
+    tmp_path: Path, monkeypatch, invalid_runtime: str
+) -> None:
     snapshot_root, snapshot, runtime = phase55_paths(tmp_path)
     snapshot.parent.mkdir(parents=True)
     snapshot.write_text(phase55_report("snapshot"), encoding="utf-8")
@@ -293,10 +673,15 @@ def test_control_tower_phase55_falls_back_when_runtime_report_is_invalid(tmp_pat
     monkeypatch.setattr(control_tower, "get_hermes_home", lambda: tmp_path / "profile")
 
     assert control_tower._workflow_kernel_phase55_path(snapshot_root) == snapshot
-    assert control_tower._workflow_kernel_phase55_source(snapshot_root) == "frozen_baseline"
+    assert (
+        control_tower._workflow_kernel_phase55_source(snapshot_root)
+        == "frozen_baseline"
+    )
 
 
-def test_control_tower_phase55_falls_back_when_runtime_path_is_directory(tmp_path: Path, monkeypatch) -> None:
+def test_control_tower_phase55_falls_back_when_runtime_path_is_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
     snapshot_root, snapshot, runtime = phase55_paths(tmp_path)
     snapshot.parent.mkdir(parents=True)
     snapshot.write_text(phase55_report("snapshot"), encoding="utf-8")
@@ -304,10 +689,15 @@ def test_control_tower_phase55_falls_back_when_runtime_path_is_directory(tmp_pat
     monkeypatch.setattr(control_tower, "get_hermes_home", lambda: tmp_path / "profile")
 
     assert control_tower._workflow_kernel_phase55_path(snapshot_root) == snapshot
-    assert control_tower._workflow_kernel_phase55_source(snapshot_root) == "frozen_baseline"
+    assert (
+        control_tower._workflow_kernel_phase55_source(snapshot_root)
+        == "frozen_baseline"
+    )
 
 
-def test_control_tower_phase55_falls_back_when_runtime_report_is_unreadable(tmp_path: Path, monkeypatch) -> None:
+def test_control_tower_phase55_falls_back_when_runtime_report_is_unreadable(
+    tmp_path: Path, monkeypatch
+) -> None:
     snapshot_root, snapshot, runtime = phase55_paths(tmp_path)
     snapshot.parent.mkdir(parents=True)
     snapshot.write_text(phase55_report("snapshot"), encoding="utf-8")
@@ -324,7 +714,10 @@ def test_control_tower_phase55_falls_back_when_runtime_report_is_unreadable(tmp_
     monkeypatch.setattr(Path, "read_text", guarded_read_text)
 
     assert control_tower._workflow_kernel_phase55_path(snapshot_root) == snapshot
-    assert control_tower._workflow_kernel_phase55_source(snapshot_root) == "frozen_baseline"
+    assert (
+        control_tower._workflow_kernel_phase55_source(snapshot_root)
+        == "frozen_baseline"
+    )
 
 
 @pytest.mark.parametrize(
@@ -365,10 +758,15 @@ def test_control_tower_phase55_falls_back_when_runtime_safety_invariant_is_inval
     monkeypatch.setattr(control_tower, "get_hermes_home", lambda: tmp_path / "profile")
 
     assert control_tower._workflow_kernel_phase55_path(snapshot_root) == snapshot
-    assert control_tower._workflow_kernel_phase55_source(snapshot_root) == "frozen_baseline"
+    assert (
+        control_tower._workflow_kernel_phase55_source(snapshot_root)
+        == "frozen_baseline"
+    )
 
 
-def test_private_atomic_write_stays_anchored_when_parent_path_is_swapped(tmp_path, monkeypatch):
+def test_private_atomic_write_stays_anchored_when_parent_path_is_swapped(
+    tmp_path, monkeypatch
+):
     private_root = tmp_path / "state/workflow-kernel"
     parent = private_root / "reports"
     parked = private_root / "reports-parked"
@@ -388,7 +786,9 @@ def test_private_atomic_write_stays_anchored_when_parent_path_is_swapped(tmp_pat
         return original_replace(source, destination, **kwargs)
 
     monkeypatch.setattr(runtime_state.os, "replace", swap_then_replace)
-    result = runtime_state.write_private_file_atomic(artifact, b'{"safe":true}\n', private_root=private_root)
+    result = runtime_state.write_private_file_atomic(
+        artifact, b'{"safe":true}\n', private_root=private_root
+    )
 
     assert result["path"] == str(artifact)
     assert not (outside / artifact.name).exists()
@@ -409,7 +809,9 @@ def test_private_directory_creation_fsyncs_each_new_parent_entry(tmp_path, monke
     assert len(fsynced) == 2
 
 
-def test_private_ledger_transaction_stays_anchored_when_parent_path_is_swapped(tmp_path):
+def test_private_ledger_transaction_stays_anchored_when_parent_path_is_swapped(
+    tmp_path,
+):
     private_root = tmp_path / "state/workflow-kernel"
     parent = private_root / "limited-unattended"
     parked = private_root / "limited-unattended-parked"
@@ -419,11 +821,15 @@ def test_private_ledger_transaction_stays_anchored_when_parent_path_is_swapped(t
     legacy = tmp_path / "legacy.jsonl"
     legacy.write_text('{"seed":true}\n', encoding="utf-8")
 
-    with runtime_state.exclusive_ledger_lock(ledger, private_root=private_root) as anchor:
+    with runtime_state.exclusive_ledger_lock(
+        ledger, private_root=private_root
+    ) as anchor:
         assert anchor is not None
         parent.rename(parked)
         parent.symlink_to(outside, target_is_directory=True)
-        runtime_state.seed_jsonl_once(legacy, ledger, private_root=private_root, anchor=anchor)
+        runtime_state.seed_jsonl_once(
+            legacy, ledger, private_root=private_root, anchor=anchor
+        )
         descriptor = runtime_state.open_ledger_file(
             ledger,
             os.O_APPEND | os.O_WRONLY,
@@ -435,7 +841,9 @@ def test_private_ledger_transaction_stays_anchored_when_parent_path_is_swapped(t
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
-        anchored = runtime_state.read_ledger_bytes(ledger, private_root=private_root, anchor=anchor)
+        anchored = runtime_state.read_ledger_bytes(
+            ledger, private_root=private_root, anchor=anchor
+        )
 
     assert anchored == b'{"seed":true}\n{"append":true}\n'
     assert (parked / ledger.name).read_bytes() == anchored
@@ -481,9 +889,13 @@ def test_private_atomic_write_cleanup_failure_closes_parent_and_preserves_primar
 
     if replace_fails:
         with pytest.raises(OSError, match="primary replace failure"):
-            runtime_state.write_private_file_atomic(artifact, b'{}\n', private_root=private_root)
+            runtime_state.write_private_file_atomic(
+                artifact, b"{}\n", private_root=private_root
+            )
     else:
-        runtime_state.write_private_file_atomic(artifact, b'{}\n', private_root=private_root)
-        assert artifact.read_bytes() == b'{}\n'
+        runtime_state.write_private_file_atomic(
+            artifact, b"{}\n", private_root=private_root
+        )
+        assert artifact.read_bytes() == b"{}\n"
 
     assert opened_parent[-1] in closed

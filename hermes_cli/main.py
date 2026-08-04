@@ -307,6 +307,7 @@ from hermes_cli.subcommands.plugins import build_plugins_parser
 from hermes_cli.subcommands.portfolio import build_portfolio_parser
 from hermes_cli.subcommands.agent_os import build_agent_os_parser
 from hermes_cli.subcommands.complex_task_harness import build_complex_task_harness_parser
+from hermes_cli.subcommands.workflow_runtime import build_workflow_runtime_parser
 from hermes_cli.subcommands.mcp import build_mcp_parser
 from hermes_cli.subcommands.codegraph import build_codegraph_parser
 from hermes_cli.subcommands.context import build_context_parser
@@ -12597,7 +12598,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "prompt-size",
         "selfcheck", "send", "sessions", "setup",
         "skills", "slack", "status", "tools", "uninstall", "update",
-        "version", "webhook", "whatsapp", "whatsapp-cloud", "chat", "secrets", "security",
+        "version", "webhook", "whatsapp", "whatsapp-cloud", "workflow-runtime", "chat", "secrets", "security",
         # Help-ish invocations — plugin commands not being listed in
         # top-level --help is an acceptable trade-off for skipping an
         # expensive eager import of every bundled plugin module.
@@ -13509,6 +13510,9 @@ def main():
     # complex-task-harness command — local LazyCodex/OmO-inspired receipts
     # =========================================================================
     build_complex_task_harness_parser(subparsers)
+
+    # Governed workflow runtime — default-off, trusted-pure local adapters only
+    build_workflow_runtime_parser(subparsers)
 
     # =========================================================================
     # plugins command  (parser built in hermes_cli/subcommands/plugins.py)
@@ -14545,6 +14549,16 @@ def main():
     # Handle --version flag
     if args.version:
         cmd_version(args)
+        return
+
+    # workflow-runtime is a bounded local-only control plane. Dispatch it before
+    # global startup/provider discovery so default-off validation cannot perform
+    # credential metadata probes or create unrelated Hermes state.
+    if getattr(args, "command", None) == "workflow-runtime":
+        if hasattr(args, "func"):
+            args.func(args)
+        else:
+            parser.print_help()
         return
 
     # Discover Python plugins and register shell hooks once, before any

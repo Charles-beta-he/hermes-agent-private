@@ -909,6 +909,17 @@ DEFAULT_CONFIG = {
     "fallback_providers": [],
     "credential_pool_strategies": {},
     "toolsets": ["hermes-cli"],
+    # Default-off image-output intent observation. Shadow mode records a
+    # versioned recommendation and current-turn alignment only; it never changes
+    # tool_choice or executes image_generate. "enforce" is rejected until a
+    # separate production certification opens that boundary.
+    "image_intent_routing": {
+        "enabled": False,
+        "mode": "shadow",
+        "kill_switch": False,
+        "ledger_enabled": False,
+        "ledger_path": "",
+    },
     # Global active chat session cap across CLI, TUI/dashboard, and messaging.
     # None/0 = unbounded.
     "max_concurrent_sessions": None,

@@ -1567,7 +1567,7 @@ def _handle_image_generate(args, **kw):
 _GENERIC_IMAGE_DESCRIPTION = IMAGE_GENERATE_SCHEMA["description"]
 
 
-def _active_image_capabilities() -> Dict[str, Any]:
+def get_active_image_capabilities() -> Dict[str, Any]:
     """Best-effort: return the active backend/model's image capabilities.
 
     Resolution order mirrors the runtime dispatch:
@@ -1580,7 +1580,17 @@ def _active_image_capabilities() -> Dict[str, Any]:
     info: Dict[str, Any] = {"modalities": ["text"], "max_reference_images": 0}
 
     configured_provider = _read_configured_image_provider()
+    configured_model = _read_configured_image_model()
     if configured_provider and configured_provider != "fal":
+        unavailable: Dict[str, Any] = {
+            "provider": configured_provider,
+            "model": configured_model or "",
+            "configured_provider": configured_provider,
+            "configured_model": configured_model or "",
+            "available": False,
+            "modalities": [],
+            "max_reference_images": 0,
+        }
         try:
             from agent.image_gen_registry import get_provider
             from hermes_cli.plugins import _ensure_plugins_discovered
@@ -1593,8 +1603,16 @@ def _active_image_capabilities() -> Dict[str, Any]:
                     caps = provider.capabilities() or {}
                 except Exception:  # noqa: BLE001
                     caps = {}
+                available = True
+                try:
+                    available = provider.is_available()
+                except Exception:  # noqa: BLE001
+                    available = False
                 info["provider"] = provider.display_name
-                info["model"] = _read_configured_image_model() or (provider.default_model() or "")
+                info["model"] = configured_model or (provider.default_model() or "")
+                info["configured_provider"] = configured_provider
+                info["configured_model"] = configured_model or ""
+                info["available"] = available is True
                 if caps.get("modalities"):
                     info["modalities"] = list(caps["modalities"])
                 if caps.get("max_reference_images"):
@@ -1602,12 +1620,16 @@ def _active_image_capabilities() -> Dict[str, Any]:
                 return info
         except Exception:  # noqa: BLE001
             pass
+        return unavailable
 
     # In-tree FAL path (provider unset or == "fal").
     try:
         model_id, meta = _resolve_fal_model()
         info["provider"] = "FAL.ai"
         info["model"] = meta.get("display", model_id)
+        info["configured_provider"] = configured_provider or "fal"
+        info["configured_model"] = configured_model or ""
+        info["available"] = True
         if meta.get("edit_endpoint"):
             info["modalities"] = ["text", "image"]
             info["max_reference_images"] = int(meta.get("max_reference_images") or 1)
@@ -1618,6 +1640,11 @@ def _active_image_capabilities() -> Dict[str, Any]:
         pass
 
     return info
+
+
+def _active_image_capabilities() -> Dict[str, Any]:
+    """Compatibility wrapper for existing callers and monkeypatch-based tests."""
+    return get_active_image_capabilities()
 
 
 def _build_dynamic_image_schema() -> Dict[str, Any]:
