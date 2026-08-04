@@ -80,6 +80,70 @@ def _append_receipt(receipt: dict[str, Any]) -> None:
         fh.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def record_primary_delivery_receipt(
+    *,
+    job: dict[str, Any],
+    target: dict[str, Any],
+    message_id: Any = None,
+    source: str = "live_adapter",
+    output_file: str | Path | None = None,
+    status: str | None = None,
+    error: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Record a receipt for the primary (non-pending-queue) delivery path.
+
+    Live-adapter / standalone success used to only log \"delivered to ...\" without
+    writing ``delivery_receipts.jsonl``. Delivery Truth audits require a durable
+    message_id (or an explicit unconfirmed status) so job ok ≠ user-visible proof.
+    """
+    now = time.time()
+    job_id = str(job.get("id") or "")
+    mid = message_id if message_id not in (None, "") else None
+    if mid is not None:
+        mid = str(mid)
+    if status is None:
+        status = "sent_verified" if mid else "sent_ok_without_message_id"
+    receipt = {
+        "schema_version": _SCHEMA_VERSION,
+        "id": "cron-delivery-receipt-"
+        + hashlib.sha256(
+            json.dumps(
+                {
+                    "job_id": job_id,
+                    "target": _canonical_target(target),
+                    "message_id": mid or "",
+                    "source": str(source or ""),
+                    "ts": now,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:20],
+        "pending_delivery_id": None,
+        "job_id": job_id,
+        "job_name": str(job.get("name") or job_id),
+        "target": _canonical_target(target),
+        "status": status,
+        "created_at": _utc_ts(now),
+        "created_at_epoch": now,
+        "message_id": mid,
+        "error_type": (str(error)[:500] if error else None),
+        "external_send_executed": status
+        in {"sent_verified", "sent_ok_without_message_id", "assumed_in_flight_unconfirmed"},
+        "payload_body_persisted": bool(output_file),
+        "token_value_persisted": False,
+        "source": str(source or "primary"),
+        "output_file": str(output_file) if output_file is not None else None,
+    }
+    if extra:
+        for key, value in extra.items():
+            if key not in receipt:
+                receipt[key] = value
+    _append_receipt(receipt)
+    return receipt
+
+
 def enqueue_pending_delivery(
     *,
     job: dict[str, Any],

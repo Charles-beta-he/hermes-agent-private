@@ -3948,6 +3948,117 @@ class TestDeliverResultLiveAdapterUnconfirmed:
         assert result is None
         standalone_send.assert_not_awaited()
 
+    def test_confirmed_success_writes_primary_receipt_with_message_id(self, tmp_path, monkeypatch):
+        """Live-adapter confirmed delivery must leave a Delivery Truth receipt."""
+        from gateway.config import Platform
+        from concurrent.futures import Future
+        from gateway.platforms.base import SendResult
+        import cron.delivery_queue as dq
+
+        receipts_file = tmp_path / "cron" / "delivery_receipts.jsonl"
+        monkeypatch.setattr(dq, "DELIVERY_RECEIPTS_FILE", receipts_file)
+
+        adapter = AsyncMock()
+        send_value = SendResult(success=True, message_id="msg-99")
+        adapter.send.return_value = send_value
+
+        pconfig = MagicMock()
+        pconfig.enabled = True
+        mock_cfg = MagicMock()
+        mock_cfg.platforms = {Platform.TELEGRAM: pconfig}
+
+        loop = MagicMock()
+        loop.is_running.return_value = True
+
+        completed_future = Future()
+        completed_future.set_result(send_value)
+
+        def fake_run_coro(coro, _loop):
+            coro.close()
+            return completed_future
+
+        job = {
+            "id": "receipt-job",
+            "name": "receipt-job",
+            "deliver": "origin",
+            "origin": {"platform": "telegram", "chat_id": "123"},
+            "_cron_output_file": str(tmp_path / "out.md"),
+        }
+
+        with patch("gateway.config.load_gateway_config", return_value=mock_cfg), \
+             patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}), \
+             patch("asyncio.run_coroutine_threadsafe", side_effect=fake_run_coro):
+            result = _deliver_result(
+                job,
+                "Hello world",
+                adapters={Platform.TELEGRAM: adapter},
+                loop=loop,
+            )
+
+        assert result is None
+        lines = [json.loads(line) for line in receipts_file.read_text().splitlines()]
+        assert len(lines) == 1
+        assert lines[0]["status"] == "sent_verified"
+        assert lines[0]["message_id"] == "msg-99"
+        assert lines[0]["job_id"] == "receipt-job"
+        assert lines[0]["source"] == "live_adapter"
+        assert lines[0]["pending_delivery_id"] is None
+
+    def test_standalone_success_writes_primary_receipt(self, tmp_path, monkeypatch):
+        """Standalone fallback success must also write a message_id receipt."""
+        from gateway.config import Platform
+        from concurrent.futures import Future
+        import cron.delivery_queue as dq
+        import json as _json
+
+        receipts_file = tmp_path / "cron" / "delivery_receipts.jsonl"
+        monkeypatch.setattr(dq, "DELIVERY_RECEIPTS_FILE", receipts_file)
+
+        adapter = AsyncMock()
+        adapter.send.return_value = None
+
+        pconfig = MagicMock()
+        pconfig.enabled = True
+        mock_cfg = MagicMock()
+        mock_cfg.platforms = {Platform.TELEGRAM: pconfig}
+
+        loop = MagicMock()
+        loop.is_running.return_value = True
+
+        completed_future = Future()
+        completed_future.set_result(None)
+
+        def fake_run_coro(coro, _loop):
+            coro.close()
+            return completed_future
+
+        job = {
+            "id": "standalone-receipt-job",
+            "name": "standalone-receipt-job",
+            "deliver": "origin",
+            "origin": {"platform": "telegram", "chat_id": "123"},
+        }
+        standalone_send = AsyncMock(return_value={"success": True, "message_id": "sa-7"})
+
+        with patch("gateway.config.load_gateway_config", return_value=mock_cfg), \
+             patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}), \
+             patch("asyncio.run_coroutine_threadsafe", side_effect=fake_run_coro), \
+             patch("tools.send_message_tool._send_to_platform", new=standalone_send):
+            result = _deliver_result(
+                job,
+                "Hello standalone",
+                adapters={Platform.TELEGRAM: adapter},
+                loop=loop,
+            )
+
+        assert result is None
+        standalone_send.assert_awaited_once()
+        lines = [_json.loads(line) for line in receipts_file.read_text().splitlines()]
+        assert len(lines) == 1
+        assert lines[0]["status"] == "sent_verified"
+        assert lines[0]["message_id"] == "sa-7"
+        assert lines[0]["source"] == "standalone"
+
 
 class TestDeliverOriginUnresolvableIsLocal:
     """Regression for #43014.

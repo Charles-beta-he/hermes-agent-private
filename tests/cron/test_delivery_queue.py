@@ -97,3 +97,59 @@ def test_drain_pending_deliveries_keeps_failed_item_with_attempt_count(tmp_path,
     assert len(items) == 1
     assert items[0]["attempts"] == 1
     assert items[0]["last_error"] == "still down"
+
+
+def test_record_primary_delivery_receipt_verified_with_message_id(tmp_path, monkeypatch):
+    from cron import delivery_queue
+
+    receipts_file = tmp_path / "cron" / "delivery_receipts.jsonl"
+    monkeypatch.setattr(delivery_queue, "DELIVERY_RECEIPTS_FILE", receipts_file)
+
+    receipt = delivery_queue.record_primary_delivery_receipt(
+        job={"id": "c01e", "name": "aihot"},
+        target={"platform": "telegram", "chat_id": "5524172309", "thread_id": None},
+        message_id="11118",
+        source="live_adapter",
+        output_file="/tmp/out.md",
+    )
+    assert receipt["status"] == "sent_verified"
+    assert receipt["message_id"] == "11118"
+    assert receipt["pending_delivery_id"] is None
+    assert receipt["source"] == "live_adapter"
+    lines = [json.loads(line) for line in receipts_file.read_text().splitlines()]
+    assert lines[0]["message_id"] == "11118"
+
+
+def test_record_primary_delivery_receipt_without_message_id_is_unconfirmed(tmp_path, monkeypatch):
+    from cron import delivery_queue
+
+    receipts_file = tmp_path / "cron" / "delivery_receipts.jsonl"
+    monkeypatch.setattr(delivery_queue, "DELIVERY_RECEIPTS_FILE", receipts_file)
+
+    receipt = delivery_queue.record_primary_delivery_receipt(
+        job={"id": "job-x", "name": "x"},
+        target={"platform": "telegram", "chat_id": "1"},
+        message_id=None,
+        source="live_adapter",
+    )
+    assert receipt["status"] == "sent_ok_without_message_id"
+    assert receipt["message_id"] is None
+    assert receipt["external_send_executed"] is True
+
+
+def test_record_primary_delivery_receipt_assumed_timeout_status(tmp_path, monkeypatch):
+    from cron import delivery_queue
+
+    receipts_file = tmp_path / "cron" / "delivery_receipts.jsonl"
+    monkeypatch.setattr(delivery_queue, "DELIVERY_RECEIPTS_FILE", receipts_file)
+
+    receipt = delivery_queue.record_primary_delivery_receipt(
+        job={"id": "job-t", "name": "t"},
+        target={"platform": "telegram", "chat_id": "1"},
+        source="live_adapter_timeout_assumed",
+        status="assumed_in_flight_unconfirmed",
+        error="timed out after dispatch",
+    )
+    assert receipt["status"] == "assumed_in_flight_unconfirmed"
+    assert receipt["message_id"] is None
+    assert "timed out" in (receipt["error_type"] or "")
