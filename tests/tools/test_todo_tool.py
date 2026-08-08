@@ -5,6 +5,44 @@ import json
 from tools.todo_tool import TodoStore, todo_tool
 
 
+class TestStructuredContinuation:
+    def test_defaults_to_manual_and_requires_explicit_structured_update(self):
+        store = TodoStore()
+        assert store.continuation_mode() == "manual"
+
+        payload = json.loads(todo_tool(
+            todos=[{"id": "1", "content": "Task", "status": "pending"}],
+            continuation_mode="whole_goal",
+            store=store,
+        ))
+
+        assert payload["continuation"]["mode"] == "whole_goal"
+        assert store.continuation_mode() == "whole_goal"
+
+    def test_structured_manual_update_revokes_whole_goal_continuation(self):
+        store = TodoStore()
+        store.set_continuation_mode("whole_goal")
+
+        payload = json.loads(todo_tool(continuation_mode="manual", store=store))
+
+        assert payload["continuation"]["mode"] == "manual"
+        assert store.continuation_mode() == "manual"
+
+    def test_replacing_goal_resets_continuation_unless_same_call_reauthorizes(self):
+        store = TodoStore()
+        store.set_continuation_mode("whole_goal")
+
+        store.write([{"id": "new", "content": "New goal", "status": "pending"}])
+        assert store.continuation_mode() == "manual"
+
+        payload = json.loads(todo_tool(
+            todos=[{"id": "newer", "content": "Newer goal", "status": "pending"}],
+            continuation_mode="whole_goal",
+            store=store,
+        ))
+        assert payload["continuation"]["mode"] == "whole_goal"
+
+
 class TestWriteAndRead:
     def test_write_replaces_list(self):
         store = TodoStore()

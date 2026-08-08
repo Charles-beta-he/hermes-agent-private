@@ -286,94 +286,34 @@ def _is_auto_relay_exit_reason(reason: str | None) -> bool:
     return text == "budget_exhausted" or text.startswith("max_iterations_reached") or text == "self_advance_checkpoint"
 
 
-_SELF_ADVANCE_INTENT_MARKERS = (
-    "自推进",
-    "全盘推进",
-    "最高授权",
-    "继续推进",
-    "安全内推",
-    "自动推进",
-)
-_SELF_ADVANCE_CHECKPOINT_MARKERS = (
-    "下一轮我会",
-    "下一步我会",
-    "后续我会",
-    "我会继续",
-    "继续推进",
-    "下一安全切片",
-)
-_SELF_ADVANCE_HARD_GATE_MARKERS = (
-    "需要你授权",
-    "需要用户授权",
-    "需要单独授权",
-    "需要显式授权",
-    "不能继续",
-    "无法继续",
-    "阻塞",
-    "停在",
-    "TestFlight",
-    "App Store",
-    "生产发布",
-    "外发",
-    "凭证",
-    "支付",
-    "destructive",
-    "delete",
-)
-
-
-def _flatten_text_for_checkpoint(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        parts: list[str] = []
-        for item in value:
-            if isinstance(item, dict):
-                text = item.get("text") or item.get("content") or ""
-                if isinstance(text, str):
-                    parts.append(text)
-            elif isinstance(item, str):
-                parts.append(item)
-        return "\n".join(parts)
-    return str(value)
-
-
-def _has_self_advance_intent(*, user_message: Any, original_user_message: Any = None, messages: list[dict[str, Any]] | None = None) -> bool:
-    texts = [_flatten_text_for_checkpoint(user_message), _flatten_text_for_checkpoint(original_user_message)]
-    for message in reversed(messages or []):
-        if not isinstance(message, dict) or message.get("role") != "user":
-            continue
-        texts.append(_flatten_text_for_checkpoint(message.get("content")))
-        if len(texts) >= 6:
-            break
-    haystack = "\n".join(texts)
-    return any(marker in haystack for marker in _SELF_ADVANCE_INTENT_MARKERS)
-
-
-def _is_self_advance_checkpoint_response(final_response: str | None) -> bool:
-    text = str(final_response or "")
-    if not text.strip():
+def _has_open_todo_work(todo_items: Any) -> bool:
+    if not isinstance(todo_items, list):
         return False
-    if not any(marker in text for marker in _SELF_ADVANCE_CHECKPOINT_MARKERS):
-        return False
-    return not any(marker in text for marker in _SELF_ADVANCE_HARD_GATE_MARKERS)
+    return any(
+        isinstance(item, dict) and item.get("status") in {"pending", "in_progress"}
+        for item in todo_items
+    )
 
 
 def _self_advance_checkpoint_reason(
     *,
     final_response: str | None,
-    user_message: Any,
-    original_user_message: Any = None,
-    messages: list[dict[str, Any]] | None = None,
+    continuation_mode: str = "manual",
+    todo_items: list[dict[str, Any]] | None = None,
     interrupted: bool = False,
+    **_legacy_context: Any,
 ) -> str | None:
-    if interrupted:
+    """Return a relay reason from structured state only.
+
+    Natural-language responses and request text are deliberately excluded from
+    this decision. The todo tool owns the explicit continuation contract, while
+    normal tool-level authority and approval checks remain unchanged.
+    """
+    if interrupted or not str(final_response or "").strip():
         return None
-    if not _is_self_advance_checkpoint_response(final_response):
+    if continuation_mode != "whole_goal":
         return None
-    if not _has_self_advance_intent(user_message=user_message, original_user_message=original_user_message, messages=messages):
+    if not _has_open_todo_work(todo_items):
         return None
     return "self_advance_checkpoint"
 

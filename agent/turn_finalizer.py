@@ -474,11 +474,17 @@ def finalize_turn(
         _self_advance_checkpoint_reason,
         _try_auto_relay,
     )
+    try:
+        _todo_items = agent._todo_store.read()
+        _continuation_mode = agent._todo_store.continuation_mode()
+    except Exception:
+        logger.debug("self-advance todo read failed", exc_info=True)
+        _todo_items = []
+        _continuation_mode = "manual"
     _checkpoint_reason = _self_advance_checkpoint_reason(
         final_response=final_response,
-        user_message=user_message,
-        original_user_message=original_user_message,
-        messages=messages,
+        continuation_mode=_continuation_mode,
+        todo_items=_todo_items,
         interrupted=interrupted,
     )
     if _checkpoint_reason and not _auto_relay_summary:

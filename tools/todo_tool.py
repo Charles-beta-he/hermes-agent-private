@@ -20,6 +20,7 @@ from typing import Dict, Any, List, Optional
 
 # Valid status values for todo items
 VALID_STATUSES = {"pending", "in_progress", "completed", "cancelled"}
+VALID_CONTINUATION_MODES = {"manual", "whole_goal"}
 
 # Bounds on persisted todo state. The todo list is a planning aid the model
 # re-reads after every context-compression event (see format_for_injection),
@@ -50,6 +51,19 @@ class TodoStore:
 
     def __init__(self):
         self._items: List[Dict[str, str]] = []
+        self._continuation_mode = "manual"
+
+    def set_continuation_mode(self, mode: str) -> str:
+        """Persist the structured turn-continuation contract."""
+        normalized = str(mode or "").strip().lower()
+        if normalized not in VALID_CONTINUATION_MODES:
+            raise ValueError(f"invalid continuation mode: {mode!r}")
+        self._continuation_mode = normalized
+        return normalized
+
+    def continuation_mode(self) -> str:
+        """Return the current structured continuation mode."""
+        return self._continuation_mode
 
     def write(self, todos: List[Dict[str, Any]], merge: bool = False) -> List[Dict[str, str]]:
         """
@@ -61,7 +75,10 @@ class TodoStore:
                    existing items by id and append new ones.
         """
         if not merge:
-            # Replace mode: new list entirely
+            # Replacing the list starts a new goal boundary. Continuation
+            # authority is fail-closed unless the same todo call explicitly
+            # supplies a new structured continuation contract.
+            self._continuation_mode = "manual"
             self._items = [self._validate(t) for t in self._dedupe_by_id(todos)]
         else:
             # Merge mode: update existing items by id, append new ones
@@ -136,6 +153,8 @@ class TodoStore:
             return None
 
         lines = ["[Your active task list was preserved across context compression]"]
+        if self._continuation_mode == "whole_goal":
+            lines.append("[Structured continuation: mode=whole_goal]")
         for item in active_items:
             marker = markers.get(item["status"], "[?]")
             lines.append(f"- {marker} {item['id']}. {item['content']} ({item['status']})")
@@ -199,6 +218,7 @@ class TodoStore:
 def todo_tool(
     todos: Optional[List[Dict[str, Any]]] = None,
     merge: bool = False,
+    continuation_mode: Optional[str] = None,
     store: Optional[TodoStore] = None,
 ) -> str:
     """
@@ -215,6 +235,12 @@ def todo_tool(
     if store is None:
         return tool_error("TodoStore not initialized")
 
+    normalized_continuation_mode = None
+    if continuation_mode is not None:
+        normalized_continuation_mode = str(continuation_mode).strip().lower()
+        if normalized_continuation_mode not in VALID_CONTINUATION_MODES:
+            return tool_error(f"invalid continuation mode: {continuation_mode!r}")
+
     if todos is not None:
         # Guard: LLM sometimes sends todos as a JSON string instead of a list
         if isinstance(todos, str):
@@ -230,6 +256,9 @@ def todo_tool(
     else:
         items = store.read()
 
+    if normalized_continuation_mode is not None:
+        store.set_continuation_mode(normalized_continuation_mode)
+
     # Build summary counts
     pending = sum(1 for i in items if i["status"] == "pending")
     in_progress = sum(1 for i in items if i["status"] == "in_progress")
@@ -238,6 +267,7 @@ def todo_tool(
 
     return json.dumps({
         "todos": items,
+        "continuation": {"mode": store.continuation_mode()},
         "summary": {
             "total": len(items),
             "pending": pending,
@@ -309,6 +339,16 @@ TODO_SCHEMA = {
                     "false (default): replace the entire list."
                 ),
                 "default": False
+            },
+            "continuation_mode": {
+                "type": "string",
+                "enum": ["manual", "whole_goal"],
+                "description": (
+                    "Structured continuation contract. Use whole_goal only after "
+                    "the user explicitly authorizes autonomous continuation for "
+                    "the current goal; use manual when that authority is absent "
+                    "or revoked. Omit to preserve the current mode."
+                )
             }
         },
         "required": []
@@ -324,7 +364,11 @@ registry.register(
     toolset="todo",
     schema=TODO_SCHEMA,
     handler=lambda args, **kw: todo_tool(
-        todos=args.get("todos"), merge=args.get("merge", False), store=kw.get("store")),
+        todos=args.get("todos"),
+        merge=args.get("merge", False),
+        continuation_mode=args.get("continuation_mode"),
+        store=kw.get("store"),
+    ),
     check_fn=check_todo_requirements,
     emoji="📋",
 )

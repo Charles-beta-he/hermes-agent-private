@@ -3676,16 +3676,24 @@ class AIAgent:
             try:
                 data = json.loads(content)
                 if "todos" in data and isinstance(data["todos"], list):
-                    last_todo_response = data["todos"]
+                    last_todo_response = data
                     break
             except (json.JSONDecodeError, TypeError):
                 continue
 
         if last_todo_response:
-            # Replay the items into the store (replace mode)
-            self._todo_store.write(last_todo_response, merge=False)
+            # Replay the structured todo snapshot. Older responses omit the
+            # continuation contract and therefore remain manual by default.
+            items = last_todo_response["todos"]
+            self._todo_store.write(items, merge=False)
+            continuation = last_todo_response.get("continuation")
+            if isinstance(continuation, dict):
+                try:
+                    self._todo_store.set_continuation_mode(continuation.get("mode", "manual"))
+                except ValueError:
+                    logger.warning("Skipping invalid todo continuation mode during hydration")
             if not self.quiet_mode:
-                self._vprint(f"{self.log_prefix}📋 Restored {len(last_todo_response)} todo item(s) from history")
+                self._vprint(f"{self.log_prefix}📋 Restored {len(items)} todo item(s) from history")
         _set_interrupt(False)
 
     @classmethod
