@@ -299,16 +299,25 @@ _WHOLE_GOAL_MARKER_RE = re.compile(
     r"(?:自推进|全盘推进|自动推进|继续推进|whole[-_ ]?goal|auto[-_ ]?advance|loop(?:\s*任务)?)",
     re.IGNORECASE,
 )
+_WHOLE_GOAL_REVOKE_ACTION_RE = re.compile(
+    r"(?:停止|暂停|取消|撤销|关闭|终止|结束|退出|中止|关掉|停用|禁止|"
+    r"\b(?:disable|stop|revoke|cancel|close|pause|halt|suspend|abort|quit|exit|terminate|cease|end)\b|"
+    r"turn\s+off|shut\s+off)",
+    re.IGNORECASE,
+)
 _WHOLE_GOAL_REVOKE_RE = re.compile(
-    r"^(?:(?:请|please)\s*)?(?:(?:我(?:现在)?|现在|立即|i|now)\s*)?"
-    r"(?:停止|暂停|取消|撤销|不要|别再|不再|disable|stop|revoke|no\s+longer).{0,32}"
+    r"^[^?？\n]{0,48}?"
+    r"(?:停止|暂停|取消|撤销|关闭|终止|结束|退出|中止|关掉|停用|禁止|不要|勿|别|别再|不再|"
+    r"\b(?:disable|stop|revoke|cancel|close|pause|halt|suspend|abort|quit|exit|terminate|cease|end)\b|"
+    r"turn\s+off|shut\s+off|no\s+longer).{0,32}"
     r"(?:自推进|全盘推进|自动推进|继续推进|whole[-_ ]?goal|auto[-_ ]?advance|loop)|"
     r"^(?:(?:我|现在)\s*)?只(?:想让你|需要你)?汇报",
     re.IGNORECASE,
 )
 _WHOLE_GOAL_NEGATED_GRANT_RE = re.compile(
-    r"^(?:(?:我)?(?:授权你|允许你|同意你|你可以)|i\s+(?:authorize|allow)\s+you\s+to)"
-    r".{0,24}(?:不要|别再|不再|停止|暂停|取消|not\s+to|stop|disable).{0,24}"
+    r"^(?:(?:我)?(?:授权你|允许你|同意你|你可以)|i\s+(?:authorize|allow)\s+you(?:\s+to)?)"
+    r".{0,24}(?:不要|别再|不再|停止|暂停|取消|关闭|终止|结束|退出|中止|关掉|停用|禁止|"
+    r"not(?:\s+to)?|stop|disable|close|pause|halt|suspend|abort|quit|exit|terminate|cease|shut\s+off).{0,24}"
     r"(?:自推进|全盘推进|自动推进|继续推进|whole[-_ ]?goal|auto[-_ ]?advance|loop)",
     re.IGNORECASE,
 )
@@ -341,10 +350,39 @@ _WHOLE_GOAL_DIRECT_GRANTS = frozenset({
     "enablewholegoal",
     "autoadvance",
 })
+_WHOLE_GOAL_META_PREFIX_RE = re.compile(
+    r"^(?:(?:请您|麻烦你|请|您|麻烦)\s*)*(?:"
+    r"解释|复述|引用|假设|"
+    r"分析(?=.*(?:含义|意思|风险|会怎样|会发生什么|这句话))"
+    r")|"
+    r"^(?:(?:please|could\s+you|would\s+you|can\s+you)\s+)*(?:"
+    r"explain|quote|suppose|assume|analy[sz]e(?=.*(?:meaning|risk|what\s+happens))"
+    r")",
+    re.IGNORECASE,
+)
+_WHOLE_GOAL_INTERNAL_REVOKE_SEPARATOR_RE = re.compile(
+    r"((?:停止|暂停|取消|撤销|关闭|终止|结束|退出|中止|关掉|停用|禁止|不要|勿|别|别再|不再|"
+    r"\b(?:disable|stop|revoke|cancel|close|pause|halt|suspend|abort|quit|exit|terminate|cease|end)\b|"
+    r"turn\s+off|shut\s+off|no\s+longer).{0,24}?)[，,]\s*"
+    r"(?=(?:自推进|全盘推进|自动推进|继续推进|whole[-_ ]?goal|auto[-_ ]?advance|loop))",
+    re.IGNORECASE,
+)
+_WHOLE_GOAL_CLAUSE_SPLIT_RE = re.compile(
+    r"[，,。;；\n]+|(?:但是|但|不过|然而|而是|然后|随后|再者)|"
+    r"(?:再|完?后|之后|并且?|同时|接着|最终|最后)(?=(?:请|立即|现在)?(?:停止|暂停|取消|撤销|关闭|终止|结束|退出|中止|关掉|停用|禁止|不要|勿|别|disable|stop|revoke|cancel|close|pause|halt|suspend|abort|quit|exit|terminate|cease|turn\s+off|shut\s+off|end))|"
+    r"\b(?:but|however|then|and|also|finally)\b(?=\s*(?:please\s+)?(?:disable|stop|revoke|cancel|close|pause|halt|suspend|abort|quit|exit|terminate|cease|turn\s+off|shut\s+off|end|do\s+not|not))",
+    re.IGNORECASE,
+)
 _WHOLE_GOAL_DOUBLE_NEGATION_MARKERS = (
     "不要停止",
     "不要暂停",
     "不要取消",
+    "别停止",
+    "别暂停",
+    "别取消",
+    "不想让你停止",
+    "不希望你停止",
+    "无需停止",
     "取消停止",
 )
 _WHOLE_GOAL_NON_DIRECTIVE_MARKERS = (
@@ -381,6 +419,10 @@ _WHOLE_GOAL_NON_DIRECTIVE_MARKERS = (
     "仅作示例",
     "只是举例",
     "只是引用",
+    "纯属引用",
+    "this is an example",
+    "explain this phrase",
+    "quote only",
     "征求我同意",
     "先征求",
     "每步确认",
@@ -449,6 +491,46 @@ _SELF_ADVANCE_HARD_GATE_MARKERS = (
     "testflight",
     "app store connect",
     "payment confirmation",
+    "approval is required",
+    "confirmation is required",
+    "to publish",
+    "publish the release",
+    "publish release",
+    "publish to",
+    "to deploy",
+    "deploy to",
+    "production release",
+    "production rollout",
+    "requires payment",
+    "payment required",
+    "needs payment",
+    "make payment",
+    "process payment",
+    "send externally",
+    "send to customer",
+    "send to a customer",
+    "send to client",
+    "send to a client",
+    "to customer",
+    "to a customer",
+    "to client",
+    "to a client",
+    "external dispatch",
+    "push to",
+    "发布到生产",
+    "生产发布",
+    "部署到生产",
+    "生产部署",
+    "上线生产",
+    "需要支付",
+    "等待支付",
+    "进行支付",
+    "执行支付",
+    "付款",
+    "发给客户",
+    "发送给客户",
+    "外部发送",
+    "外发",
     "delete production",
     "destroy production",
     "destructive operation",
@@ -459,7 +541,7 @@ _SELF_ADVANCE_HARD_GATE_MARKERS = (
 
 def _contains_self_advance_hard_gate(final_response: Any) -> bool:
     """Use prose only as a fail-closed denial signal, never as authority."""
-    normalized = re.sub(r"\s+", " ", str(final_response or "")).casefold()
+    normalized = re.sub(r"\s+", " ", str(final_response or "")).casefold().replace("您", "你")
     return any(marker in normalized for marker in _SELF_ADVANCE_HARD_GATE_MARKERS)
 
 
@@ -491,26 +573,62 @@ def _has_explicit_revoke_boundary(text: str) -> bool:
     return False
 
 
-def _whole_goal_continuation_directive(user_message: Any) -> str | None:
-    """Classify an explicit root-user continuation directive conservatively."""
-    text = _flatten_root_user_text(user_message).strip()
+def _whole_goal_clause_directive(
+    text: str, *, has_message_marker: bool = False
+) -> str | None:
+    """Classify one bounded clause; neutral context in one clause cannot mask another."""
+    text = text.strip()
     if not text:
         return None
     folded = text.casefold()
-    if any(marker in folded for marker in _WHOLE_GOAL_DOUBLE_NEGATION_MARKERS):
-        return None
+    has_marker = bool(_WHOLE_GOAL_MARKER_RE.search(text))
+    if (has_marker or has_message_marker) and any(
+        marker in folded for marker in _WHOLE_GOAL_DOUBLE_NEGATION_MARKERS
+    ):
+        return "neutral"
+    if _WHOLE_GOAL_META_PREFIX_RE.search(text):
+        return "neutral"
     if _has_explicit_revoke_boundary(text):
         return "manual"
+    if "?" in text or "？" in text:
+        return "neutral"
+    if re.search(r"[吗么呢嘛]\s*[。.!！]*$", text):
+        return "neutral"
+    if any(marker in folded for marker in _WHOLE_GOAL_NON_DIRECTIVE_MARKERS):
+        return "neutral"
+    if _WHOLE_GOAL_NEGATED_GRANT_RE.search(text):
+        return "manual"
+    if _WHOLE_GOAL_REVOKE_RE.search(text):
+        return "manual"
+    if has_message_marker and _WHOLE_GOAL_REVOKE_ACTION_RE.search(text):
+        return "manual"
+    return None
+
+
+def _whole_goal_continuation_directive(user_message: Any) -> str | None:
+    """Classify root-user grants message-wide and revokes in bounded clauses."""
+    text = _flatten_root_user_text(user_message).strip()
+    if not text:
+        return None
+    has_message_marker = bool(_WHOLE_GOAL_MARKER_RE.search(text))
+    revoke_scan_text = _WHOLE_GOAL_INTERNAL_REVOKE_SEPARATOR_RE.sub(r"\1 ", text)
+    for clause in _WHOLE_GOAL_CLAUSE_SPLIT_RE.split(revoke_scan_text):
+        if _whole_goal_clause_directive(
+            clause, has_message_marker=has_message_marker
+        ) == "manual":
+            return "manual"
+
+    folded = text.casefold()
+    if any(marker in folded for marker in _WHOLE_GOAL_DOUBLE_NEGATION_MARKERS):
+        return None
+    if _WHOLE_GOAL_META_PREFIX_RE.search(text):
+        return None
     if "?" in text or "？" in text:
         return None
     if re.search(r"[吗么呢嘛]\s*[。.!！]*$", text):
         return None
     if any(marker in folded for marker in _WHOLE_GOAL_NON_DIRECTIVE_MARKERS):
         return None
-    if _WHOLE_GOAL_NEGATED_GRANT_RE.search(text):
-        return "manual"
-    if _WHOLE_GOAL_REVOKE_RE.search(text):
-        return "manual"
     compact = re.sub(r"[\s，,。.!！;；:_-]+", "", text).casefold()
     if compact in _WHOLE_GOAL_DIRECT_GRANTS:
         return "whole_goal"

@@ -77,6 +77,45 @@ def test_whole_goal_directive_classifier_is_explicit_and_revocable():
     assert _whole_goal_continuation_directive("我授权你不要自动推进") == "manual"
     assert _whole_goal_continuation_directive("我允许你停止自动推进") == "manual"
     assert _whole_goal_continuation_directive("I authorize you to stop auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("I authorize you not to auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("Actually, stop auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("I now revoke auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("cancel auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("turn off auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("end whole-goal") == "manual"
+    assert _whole_goal_continuation_directive("关闭自动推进") == "manual"
+    assert _whole_goal_continuation_directive("终止 whole-goal") == "manual"
+    assert _whole_goal_continuation_directive("退出自动推进 loop") == "manual"
+    assert _whole_goal_continuation_directive("pause auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("halt whole-goal") == "manual"
+    assert _whole_goal_continuation_directive("suspend auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("abort whole-goal") == "manual"
+    assert _whole_goal_continuation_directive("quit auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("shut off whole-goal") == "manual"
+    assert _whole_goal_continuation_directive("请停止，自动推进太危险了") == "manual"
+    assert _whole_goal_continuation_directive("请停止，我觉得自动推进太危险了") == "manual"
+    assert _whole_goal_continuation_directive("请停止。自动推进太危险了") == "manual"
+    assert _whole_goal_continuation_directive("请停止；自动推进太危险了") == "manual"
+    assert _whole_goal_continuation_directive("请停止\n自动推进太危险了") == "manual"
+    assert _whole_goal_continuation_directive("继续推进，请停止") == "manual"
+    assert _whole_goal_continuation_directive("取消自动推进但不要停止测试") == "manual"
+    assert _whole_goal_continuation_directive("please stop, auto-advance is risky") == "manual"
+    assert _whole_goal_continuation_directive("please stop, i think auto-advance is risky") == "manual"
+    assert _whole_goal_continuation_directive("continue whole-goal, please stop") == "manual"
+    assert _whole_goal_continuation_directive("不要停止，自动推进很好") is None
+    assert _whole_goal_continuation_directive("我暂时停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("我已经撤销自动推进") == "manual"
+    assert _whole_goal_continuation_directive("我决定停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("现在请停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("请您停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("您停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("麻烦停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("麻烦你停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("我要求停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("Could you stop auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("Would you please stop whole-goal") == "manual"
+    assert _whole_goal_continuation_directive("请勿自动推进") == "manual"
+    assert _whole_goal_continuation_directive("请别自动推进") == "manual"
     assert _whole_goal_continuation_directive("停止自动推进，好吗？") == "manual"
     assert _whole_goal_continuation_directive("取消自动推进，是不是更安全") == "manual"
     assert _whole_goal_continuation_directive("不要再自动推进了，为什么会跑偏") == "manual"
@@ -91,6 +130,9 @@ def test_whole_goal_directive_classifier_is_explicit_and_revocable():
     assert _whole_goal_continuation_directive("停止自动推进，会不会丢进度") == "manual"
     assert _whole_goal_continuation_directive("授权自动推进不是我的意思") is None
     assert _whole_goal_continuation_directive("授权自动推进仅作示例") is None
+    assert _whole_goal_continuation_directive("我授权你自动推进，纯属引用") is None
+    assert _whole_goal_continuation_directive("continue whole-goal: explain this phrase") is None
+    assert _whole_goal_continuation_directive("authorize you to auto-advance: this is an example") is None
     assert _whole_goal_continuation_directive("不要停止自动推进") is None
     assert _whole_goal_continuation_directive("授权自动推进吗") is None
     assert _whole_goal_continuation_directive("授权自动推进是不是表示后台运行") is None
@@ -98,6 +140,26 @@ def test_whole_goal_directive_classifier_is_explicit_and_revocable():
     assert _whole_goal_continuation_directive("授权自动推进的风险") is None
     assert _whole_goal_continuation_directive("授权自动推进：这是一句示例") is None
     assert _whole_goal_continuation_directive("请解释自动推进") is None
+    assert _whole_goal_continuation_directive("请您解释停止自动推进的含义") is None
+    assert _whole_goal_continuation_directive("麻烦你分析停止自动推进会怎样") is None
+    assert _whole_goal_continuation_directive("Please explain stop auto-advance") is None
+    assert _whole_goal_continuation_directive("停止自动推进，并解释原因") == "manual"
+    assert _whole_goal_continuation_directive("分析完后停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("解释一下再停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("解释一下并停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("解释清楚并停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("解释之后停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("explain and stop auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("无需停止自动推进并取消自动推进") == "manual"
+    assert _whole_goal_continuation_directive("Assume tests pass, stop auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("无需停止当前测试，请取消自动推进") == "manual"
+    assert _whole_goal_continuation_directive("别停止手上的活，停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("extend auto-advance") is None
+    assert _whole_goal_continuation_directive("他说，我授权你自动推进") is None
+    assert _whole_goal_continuation_directive("我原本想说，继续推进") is None
+    assert _whole_goal_continuation_directive("上一条消息是这样的，我授权你自动推进") is None
+    assert _whole_goal_continuation_directive("He said, continue whole-goal") is None
+    assert _whole_goal_continuation_directive("继续推进，无需停止自动推进") is None
     assert _whole_goal_continuation_directive("继续推进，但每步都先征求我同意") is None
     assert _whole_goal_continuation_directive("授权你自动推进，但先问我再执行每一步") is None
     assert _whole_goal_continuation_directive("我授权你自动推进") == "whole_goal"
@@ -139,6 +201,16 @@ def test_whole_goal_directive_application_separates_persistent_and_turn_state():
     assert _apply_whole_goal_continuation_directive(
         agent, "我授权你不要自动推进"
     ) == "manual"
+    assert store.continuation_mode() == "manual"
+    assert agent._turn_continuation_requested is False
+
+    assert _apply_whole_goal_continuation_directive(agent, "继续推进") == "whole_goal"
+    assert _apply_whole_goal_continuation_directive(agent, "我决定停止自动推进") == "manual"
+    assert store.continuation_mode() == "manual"
+    assert agent._turn_continuation_requested is False
+
+    assert _apply_whole_goal_continuation_directive(agent, "继续推进") == "whole_goal"
+    assert _apply_whole_goal_continuation_directive(agent, "I authorize you not to auto-advance") == "manual"
     assert store.continuation_mode() == "manual"
     assert agent._turn_continuation_requested is False
 
@@ -350,6 +422,14 @@ def test_self_advance_open_todos_do_not_bypass_hard_gate_or_create_authority():
         "The next step requires confirmation.",
         "The next step is waiting for user input.",
         "A human decision is required.",
+        "Your approval is required before deploy.",
+        "需要您确认后继续。",
+        "下一步将发布到生产。",
+        "下一步将部署到生产。",
+        "The next step is to publish the release.",
+        "The next step is to deploy to production.",
+        "The next step requires payment.",
+        "The next step sends data to a customer.",
     ):
         assert _self_advance_checkpoint_reason(
             final_response=hard_gate,
@@ -361,6 +441,13 @@ def test_self_advance_open_todos_do_not_bypass_hard_gate_or_create_authority():
 
 
 def test_self_advance_response_wording_cannot_override_structured_contract():
+    assert _self_advance_checkpoint_reason(
+        final_response="Client-side deployment config and payment parser tests are complete; 支付模块测试通过。",
+        continuation_mode="whole_goal",
+        turn_continuation_requested=True,
+        todo_items=[{"id": "b7", "content": "Continue local tests", "status": "pending"}],
+        interrupted=False,
+    ) == "self_advance_checkpoint"
     assert _self_advance_checkpoint_reason(
         final_response="contains any natural-language blocker or progress wording",
         continuation_mode="whole_goal",
