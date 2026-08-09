@@ -159,6 +159,23 @@ def build_mission_parser(subparsers) -> None:
     stage.add_argument("--json", action="store_true", help="Emit JSON")
     stage.set_defaults(func=cmd_mission)
 
+    review_complete = sub.add_parser(
+        "review-complete",
+        help="Record a durable exact-candidate review verdict and enqueue an advancement signal",
+    )
+    review_complete.add_argument("mission_id")
+    review_complete.add_argument(
+        "--verdict",
+        required=True,
+        choices=["APPROVE", "AMEND", "BLOCK", "NO_VERDICT", "STALE"],
+        help="Reviewer verdict",
+    )
+    review_complete.add_argument("--candidate-digest", required=True, help="Exact reviewed candidate identity")
+    review_complete.add_argument("--evidence", action="append", help="Durable verdict or command evidence. Repeatable")
+    review_complete.add_argument("--reviewer", required=True, help="Isolated reviewer identity")
+    review_complete.add_argument("--json", action="store_true", help="Emit JSON")
+    review_complete.set_defaults(func=cmd_mission)
+
     decide = sub.add_parser("decide", help="Answer a decision request and resume its mission")
     decide.add_argument("decision_id")
     decide.add_argument("answer", nargs="+", help="Decision answer text")

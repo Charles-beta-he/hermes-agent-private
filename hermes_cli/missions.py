@@ -17,6 +17,7 @@ Design invariants:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import os
@@ -43,6 +44,7 @@ VALID_EVENT_TYPES = {
     "stage_report",
     "decision_requested",
     "decision_recorded",
+    "review_completed",
     "budget_exhausted",
     "flow_signal_enqueued",
     "flow_signal_dispatched",
@@ -55,6 +57,7 @@ ACTIONABLE_FLOW_EVENT_TYPES = {
     "mission_enabled",
     "mission_resumed",
     "decision_recorded",
+    "review_completed",
     "taskpool_status_changed",
 }
 
@@ -287,6 +290,7 @@ class MissionStore:
                     event_type TEXT NOT NULL,
                     summary TEXT NOT NULL DEFAULT '',
                     payload_json TEXT NOT NULL,
+                    idempotency_key TEXT,
                     created_at REAL NOT NULL,
                     FOREIGN KEY(mission_id) REFERENCES missions(mission_id)
                 )
@@ -323,7 +327,17 @@ class MissionStore:
                 )
                 """
             )
+            event_columns = {row["name"] for row in conn.execute("PRAGMA table_info(mission_events)").fetchall()}
+            if "idempotency_key" not in event_columns:
+                conn.execute("ALTER TABLE mission_events ADD COLUMN idempotency_key TEXT")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_mission_events_mission_time ON mission_events(mission_id, created_at)")
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_events_idempotency
+                ON mission_events(mission_id, event_type, idempotency_key)
+                WHERE idempotency_key IS NOT NULL
+                """
+            )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_mission_decisions_open ON mission_decisions(mission_id, status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_mission_flow_signals_pending ON mission_flow_signals(mission_id, status, created_at)")
 
@@ -453,6 +467,7 @@ class MissionStore:
         payload: dict[str, Any] | None = None,
         *,
         enqueue_flow: bool = True,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         if event_type not in VALID_EVENT_TYPES:
             raise ValueError(f"invalid mission event type: {event_type}")
@@ -466,13 +481,42 @@ class MissionStore:
             "payload": payload or {},
             "created_at": _now(),
         }
+        normalized_idempotency_key = idempotency_key.strip() if idempotency_key else None
+        inserted = False
         with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO mission_events (event_id, mission_id, event_type, summary, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (event["event_id"], mission_id, event_type, summary, _json_dumps(payload or {}), event["created_at"]),
-            )
-            conn.execute("UPDATE missions SET updated_at = ? WHERE mission_id = ?", (event["created_at"], mission_id))
-        if enqueue_flow and event_type in ACTIONABLE_FLOW_EVENT_TYPES:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO mission_events (
+                        event_id, mission_id, event_type, summary, payload_json, idempotency_key, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event["event_id"],
+                        mission_id,
+                        event_type,
+                        summary,
+                        _json_dumps(payload or {}),
+                        normalized_idempotency_key,
+                        event["created_at"],
+                    ),
+                )
+                conn.execute("UPDATE missions SET updated_at = ? WHERE mission_id = ?", (event["created_at"], mission_id))
+                inserted = True
+            except sqlite3.IntegrityError:
+                if normalized_idempotency_key is None:
+                    raise
+                row = conn.execute(
+                    """
+                    SELECT * FROM mission_events
+                    WHERE mission_id = ? AND event_type = ? AND idempotency_key = ?
+                    """,
+                    (mission_id, event_type, normalized_idempotency_key),
+                ).fetchone()
+                if not row:
+                    raise
+                event = self._event_from_row(row)
+        if inserted and enqueue_flow and event_type in ACTIONABLE_FLOW_EVENT_TYPES:
             self.enqueue_flow_signal(event)
             self.dispatch_pending_flow_signals(mission_id)
         return event
@@ -1049,6 +1093,43 @@ class MissionStore:
         }
         event = self.append_event(mission_id, "stage_report", summary, payload)
         return event
+
+    def append_review_completion(
+        self,
+        mission_id: str,
+        *,
+        verdict: str,
+        candidate_digest: str,
+        evidence: Iterable[str] = (),
+        reviewer: str,
+    ) -> dict[str, Any]:
+        """Record a durable exact-candidate review edge and wake the mission."""
+
+        if not self.get_mission(mission_id):
+            raise KeyError(mission_id)
+        normalized_verdict = verdict.strip().upper()
+        if normalized_verdict not in {"APPROVE", "AMEND", "BLOCK", "NO_VERDICT", "STALE"}:
+            raise ValueError("review verdict must be APPROVE, AMEND, BLOCK, NO_VERDICT, or STALE")
+        normalized_digest = candidate_digest.strip()
+        if not normalized_digest:
+            raise ValueError("review candidate digest is required")
+        normalized_reviewer = reviewer.strip()
+        if not normalized_reviewer:
+            raise ValueError("reviewer identity is required")
+        payload = {
+            "candidate_digest": normalized_digest,
+            "evidence": [str(x).strip() for x in evidence if str(x).strip()],
+            "reviewer": normalized_reviewer,
+            "verdict": normalized_verdict,
+        }
+        idempotency_key = hashlib.sha256(_json_dumps(payload).encode("utf-8")).hexdigest()
+        return self.append_event(
+            mission_id,
+            "review_completed",
+            f"{normalized_reviewer} returned {normalized_verdict} for {normalized_digest}",
+            payload,
+            idempotency_key=idempotency_key,
+        )
 
     def tick(self, mission_id: str, *, dry_run: bool = True) -> dict[str, Any]:
         mission = self.get_mission(mission_id)
@@ -1646,6 +1727,19 @@ def cmd_mission(args: argparse.Namespace) -> int:
                 _print_json(event)
             else:
                 print(f"Stage report recorded: {event['event_id']}")
+            return 0
+        if command == "review-complete":
+            event = store.append_review_completion(
+                args.mission_id,
+                verdict=args.verdict,
+                candidate_digest=args.candidate_digest,
+                evidence=args.evidence or [],
+                reviewer=args.reviewer,
+            )
+            if args.json:
+                _print_json(event)
+            else:
+                print(f"Review completion recorded: {event['event_id']}")
             return 0
         if command == "decide":
             decision = store.answer_decision(args.decision_id, " ".join(args.answer))

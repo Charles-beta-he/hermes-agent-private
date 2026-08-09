@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from hermes_cli.missions import (
@@ -375,6 +377,82 @@ def test_recover_flow_signal_backlog_is_dry_run_then_audited_local_apply(tmp_pat
     recovered_events = store.list_events_by_type(mission.mission_id, "flow_signal_recovered", limit=1)
     assert recovered_events[0]["payload"]["reason"] == "unit bounded recovery"
     assert recovered_events[0]["payload"]["runner"]["why"] == "recovery is local-ledger only and non-recursive"
+
+
+def test_review_completed_event_is_actionable_flow_signal(tmp_path: Path) -> None:
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="Resume immediately after exact-candidate review",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=5),
+        enable=True,
+    )
+    store.tick(mission.mission_id, dry_run=False)
+
+    event = store.append_review_completion(
+        mission.mission_id,
+        verdict="APPROVE",
+        candidate_digest="sha256:abc123",
+        evidence=["/tmp/review-verdict.json"],
+        reviewer="isolated-read-only-reviewer",
+    )
+
+    assert event["event_type"] == "review_completed"
+    assert event["payload"] == {
+        "candidate_digest": "sha256:abc123",
+        "evidence": ["/tmp/review-verdict.json"],
+        "reviewer": "isolated-read-only-reviewer",
+        "verdict": "APPROVE",
+    }
+    pending = store.pending_flow_signals(mission.mission_id)
+    assert len(pending) == 1
+    assert pending[0].source_event_id == event["event_id"]
+    assert pending[0].signal_type == "review_completed"
+
+    duplicate = store.append_review_completion(
+        mission.mission_id,
+        verdict="APPROVE",
+        candidate_digest="sha256:abc123",
+        evidence=["/tmp/review-verdict.json"],
+        reviewer="isolated-read-only-reviewer",
+    )
+    assert duplicate["event_id"] == event["event_id"]
+    assert store.count_events(mission.mission_id, {"review_completed"}) == 1
+    assert len(store.pending_flow_signals(mission.mission_id)) == 1
+    refreshed = store.get_mission(mission.mission_id)
+    assert refreshed is not None
+    assert refreshed.status == "active"
+
+
+def test_review_completed_exact_duplicates_are_atomic_under_concurrency(tmp_path: Path) -> None:
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="Deduplicate concurrent exact-candidate review retries",
+        cadence="every 1h",
+        deliver="local",
+        budget=MissionBudget(max_ticks=5),
+        enable=True,
+    )
+    store.tick(mission.mission_id, dry_run=False)
+    barrier = threading.Barrier(8)
+
+    def submit() -> dict[str, object]:
+        barrier.wait()
+        return store.append_review_completion(
+            mission.mission_id,
+            verdict="APPROVE",
+            candidate_digest="sha256:concurrent",
+            evidence=["/tmp/review-verdict.json"],
+            reviewer="isolated-read-only-reviewer",
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        events = list(executor.map(lambda _index: submit(), range(8)))
+
+    assert len({str(event["event_id"]) for event in events}) == 1
+    assert store.count_events(mission.mission_id, {"review_completed"}) == 1
+    assert len(store.pending_flow_signals(mission.mission_id)) == 1
 
 
 def test_taskpool_status_event_is_actionable_flow_signal(tmp_path: Path) -> None:
