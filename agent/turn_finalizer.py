@@ -484,6 +484,9 @@ def finalize_turn(
     _checkpoint_reason = _self_advance_checkpoint_reason(
         final_response=final_response,
         continuation_mode=_continuation_mode,
+        turn_continuation_requested=bool(
+            getattr(agent, "_turn_continuation_requested", False)
+        ),
         todo_items=_todo_items,
         interrupted=interrupted,
     )

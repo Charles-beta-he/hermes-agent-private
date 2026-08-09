@@ -75,10 +75,8 @@ class TodoStore:
                    existing items by id and append new ones.
         """
         if not merge:
-            # Replacing the list starts a new goal boundary. Continuation
-            # authority is fail-closed unless the same todo call explicitly
-            # supplies a new structured continuation contract.
-            self._continuation_mode = "manual"
+            # Todo mutations are model-owned planning state. They must not
+            # create or revoke runtime-owned continuation authority.
             self._items = [self._validate(t) for t in self._dedupe_by_id(todos)]
         else:
             # Merge mode: update existing items by id, append new ones
@@ -235,11 +233,8 @@ def todo_tool(
     if store is None:
         return tool_error("TodoStore not initialized")
 
-    normalized_continuation_mode = None
     if continuation_mode is not None:
-        normalized_continuation_mode = str(continuation_mode).strip().lower()
-        if normalized_continuation_mode not in VALID_CONTINUATION_MODES:
-            return tool_error(f"invalid continuation mode: {continuation_mode!r}")
+        return tool_error("continuation_mode is runtime-owned")
 
     if todos is not None:
         # Guard: LLM sometimes sends todos as a JSON string instead of a list
@@ -255,9 +250,6 @@ def todo_tool(
         items = store.write(todos, merge)
     else:
         items = store.read()
-
-    if normalized_continuation_mode is not None:
-        store.set_continuation_mode(normalized_continuation_mode)
 
     # Build summary counts
     pending = sum(1 for i in items if i["status"] == "pending")
@@ -339,16 +331,6 @@ TODO_SCHEMA = {
                     "false (default): replace the entire list."
                 ),
                 "default": False
-            },
-            "continuation_mode": {
-                "type": "string",
-                "enum": ["manual", "whole_goal"],
-                "description": (
-                    "Structured continuation contract. Use whole_goal only after "
-                    "the user explicitly authorizes autonomous continuation for "
-                    "the current goal; use manual when that authority is absent "
-                    "or revoked. Omit to preserve the current mode."
-                )
             }
         },
         "required": []

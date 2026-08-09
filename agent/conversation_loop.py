@@ -295,23 +295,275 @@ def _has_open_todo_work(todo_items: Any) -> bool:
     )
 
 
+_WHOLE_GOAL_MARKER_RE = re.compile(
+    r"(?:自推进|全盘推进|自动推进|继续推进|whole[-_ ]?goal|auto[-_ ]?advance|loop(?:\s*任务)?)",
+    re.IGNORECASE,
+)
+_WHOLE_GOAL_REVOKE_RE = re.compile(
+    r"^(?:(?:请|please)\s*)?(?:(?:我(?:现在)?|现在|立即|i|now)\s*)?"
+    r"(?:停止|暂停|取消|撤销|不要|别再|不再|disable|stop|revoke|no\s+longer).{0,32}"
+    r"(?:自推进|全盘推进|自动推进|继续推进|whole[-_ ]?goal|auto[-_ ]?advance|loop)|"
+    r"^(?:(?:我|现在)\s*)?只(?:想让你|需要你)?汇报",
+    re.IGNORECASE,
+)
+_WHOLE_GOAL_NEGATED_GRANT_RE = re.compile(
+    r"^(?:(?:我)?(?:授权你|允许你|同意你|你可以)|i\s+(?:authorize|allow)\s+you\s+to)"
+    r".{0,24}(?:不要|别再|不再|停止|暂停|取消|not\s+to|stop|disable).{0,24}"
+    r"(?:自推进|全盘推进|自动推进|继续推进|whole[-_ ]?goal|auto[-_ ]?advance|loop)",
+    re.IGNORECASE,
+)
+_WHOLE_GOAL_GRANT_RE = re.compile(
+    r"^(?:"
+    r"请(?:你)?\s*(?:继续推进|全盘推进|自动推进|自推进|推动\s*loop(?:\s*任务)?|"
+    r"执行.{0,32}(?:whole[-_ ]?goal|auto[-_ ]?advance|自动推进|自推进)|"
+    r"开启.{0,16}(?:auto[-_ ]?advance|自动推进|自推进))|"
+    r"(?:我(?:现在)?授权你|授权你|允许你|同意你|给你.{0,24}授权|你可以|"
+    r"认可.{0,32}你可以).{0,64}"
+    r"(?:自推进|全盘推进|自动推进|继续推进|whole[-_ ]?goal|auto[-_ ]?advance|loop(?:\s*任务)?)|"
+    r"(?:继续推进|全盘推进|自动推进|自推进|推动\s*loop(?:\s*任务)?)|"
+    r"(?:enable|authorize\s+you\s+to|continue).{0,32}"
+    r"(?:whole[-_ ]?goal|auto[-_ ]?advance|autonomously)"
+    r")(?:了|吧)?(?:[。!！]|[，,;；:：]\s*.+)?$",
+    re.IGNORECASE,
+)
+_WHOLE_GOAL_DIRECT_GRANTS = frozenset({
+    "自推进",
+    "全盘推进",
+    "自动推进",
+    "继续推进",
+    "授权自动推进",
+    "授权自推进",
+    "允许自动推进",
+    "开启自动推进",
+    "我授权你自动推进",
+    "推动loop任务",
+    "继续loop",
+    "enablewholegoal",
+    "autoadvance",
+})
+_WHOLE_GOAL_DOUBLE_NEGATION_MARKERS = (
+    "不要停止",
+    "不要暂停",
+    "不要取消",
+    "取消停止",
+)
+_WHOLE_GOAL_NON_DIRECTIVE_MARKERS = (
+    "不是我的意思",
+    "并非我的意思",
+    "并非授权",
+    "不代表授权",
+    "这句话是什么意思",
+    "是什么",
+    "什么",
+    "如何",
+    "怎么",
+    "为何",
+    "为什么",
+    "是否",
+    "能否",
+    "可否",
+    "会不会",
+    "要不要",
+    "如何理解",
+    "怎么理解",
+    "会怎样",
+    "会发生什么",
+    "有什么影响",
+    "有什么风险",
+    "这句话",
+    "意味着什么",
+    "是指什么",
+    "是不是",
+    "的风险",
+    "请解释",
+    "解释一下",
+    "这是一句示例",
+    "仅作示例",
+    "只是举例",
+    "只是引用",
+    "征求我同意",
+    "先征求",
+    "每步确认",
+    "逐步确认",
+    "先确认",
+    "先问我",
+    "等我同意",
+    "不要停止",
+    "不要暂停",
+    "不要取消",
+    "取消停止",
+)
+_SELF_ADVANCE_HARD_GATE_MARKERS = (
+    "需要人工",
+    "人工确认",
+    "人工批准",
+    "需要确认",
+    "需要批准",
+    "需要审批",
+    "等待确认",
+    "等待批准",
+    "等待审批",
+    "待确认",
+    "待批准",
+    "待审批",
+    "需要选择",
+    "等你选择",
+    "等待人工",
+    "等待用户",
+    "等待你确认",
+    "等你确认",
+    "需要你确认",
+    "需你确认",
+    "需要你授权",
+    "需你授权",
+    "等你授权",
+    "等待授权",
+    "需要授权",
+    "需要凭证",
+    "输入凭证",
+    "human gate",
+    "human approval",
+    "human confirmation",
+    "human decision",
+    "requires human",
+    "awaiting approval",
+    "waiting for approval",
+    "needs approval",
+    "need approval",
+    "requires approval",
+    "need your approval",
+    "needs your approval",
+    "requires your approval",
+    "awaiting confirmation",
+    "waiting for confirmation",
+    "needs confirmation",
+    "requires confirmation",
+    "waiting for user",
+    "needs user input",
+    "requires user input",
+    "needs authorization",
+    "requires authorization",
+    "credential entry",
+    "password prompt",
+    "sudo prompt",
+    "testflight",
+    "app store connect",
+    "payment confirmation",
+    "delete production",
+    "destroy production",
+    "destructive operation",
+    "删除生产",
+    "破坏性操作",
+)
+
+
+def _contains_self_advance_hard_gate(final_response: Any) -> bool:
+    """Use prose only as a fail-closed denial signal, never as authority."""
+    normalized = re.sub(r"\s+", " ", str(final_response or "")).casefold()
+    return any(marker in normalized for marker in _SELF_ADVANCE_HARD_GATE_MARKERS)
+
+
+def _flatten_root_user_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, list):
+        return str(value or "")
+    parts: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            text = item.get("text") or item.get("content")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts)
+
+
+def _has_explicit_revoke_boundary(text: str) -> bool:
+    """Recognize revoke requests before question/meta filtering without overmatching consequence questions."""
+    for pattern in (_WHOLE_GOAL_NEGATED_GRANT_RE, _WHOLE_GOAL_REVOKE_RE):
+        match = pattern.search(text)
+        if match is None:
+            continue
+        suffix = text[match.end():].strip()
+        if re.match(r"^(?:了|吧)?(?:[。!！]|[，,;；:：]|$)", suffix):
+            return True
+    return False
+
+
+def _whole_goal_continuation_directive(user_message: Any) -> str | None:
+    """Classify an explicit root-user continuation directive conservatively."""
+    text = _flatten_root_user_text(user_message).strip()
+    if not text:
+        return None
+    folded = text.casefold()
+    if any(marker in folded for marker in _WHOLE_GOAL_DOUBLE_NEGATION_MARKERS):
+        return None
+    if _has_explicit_revoke_boundary(text):
+        return "manual"
+    if "?" in text or "？" in text:
+        return None
+    if re.search(r"[吗么呢嘛]\s*[。.!！]*$", text):
+        return None
+    if any(marker in folded for marker in _WHOLE_GOAL_NON_DIRECTIVE_MARKERS):
+        return None
+    if _WHOLE_GOAL_NEGATED_GRANT_RE.search(text):
+        return "manual"
+    if _WHOLE_GOAL_REVOKE_RE.search(text):
+        return "manual"
+    compact = re.sub(r"[\s，,。.!！;；:_-]+", "", text).casefold()
+    if compact in _WHOLE_GOAL_DIRECT_GRANTS:
+        return "whole_goal"
+    if _WHOLE_GOAL_GRANT_RE.search(text) and _WHOLE_GOAL_MARKER_RE.search(text):
+        return "whole_goal"
+    return None
+
+
+def _apply_whole_goal_continuation_directive(agent: Any, user_message: Any) -> str | None:
+    """Apply trusted root-user continuation state and set turn relay admission."""
+    store = getattr(agent, "_todo_store", None)
+    if store is None or not callable(getattr(store, "continuation_mode", None)):
+        setattr(agent, "_turn_continuation_requested", False)
+        return None
+
+    if getattr(agent, "_auto_relay_active", False):
+        inherited = (
+            store.continuation_mode() == "whole_goal"
+            and bool(getattr(agent, "_relay_chain_continuation_requested", False))
+        )
+        setattr(agent, "_turn_continuation_requested", inherited)
+        return "whole_goal" if inherited else None
+
+    directive = _whole_goal_continuation_directive(user_message)
+    if directive is not None:
+        store.set_continuation_mode(directive)
+    admitted = directive == "whole_goal"
+    setattr(agent, "_relay_chain_continuation_requested", admitted)
+    setattr(agent, "_turn_continuation_requested", admitted)
+    return directive
+
+
 def _self_advance_checkpoint_reason(
     *,
     final_response: str | None,
     continuation_mode: str = "manual",
+    turn_continuation_requested: bool = False,
     todo_items: list[dict[str, Any]] | None = None,
     interrupted: bool = False,
     **_legacy_context: Any,
 ) -> str | None:
-    """Return a relay reason from structured state only.
+    """Return a relay reason from runtime-owned structured state only.
 
-    Natural-language responses and request text are deliberately excluded from
-    this decision. The todo tool owns the explicit continuation contract, while
-    normal tool-level authority and approval checks remain unchanged.
+    Natural-language assistant responses and model-authored todo metadata are
+    excluded from authority. A genuine root-user directive owns persistent mode,
+    while a separate per-turn bit prevents unrelated answers from being relayed.
+    Normal tool-level authority and approval checks remain unchanged.
     """
     if interrupted or not str(final_response or "").strip():
         return None
-    if continuation_mode != "whole_goal":
+    if continuation_mode != "whole_goal" or not turn_continuation_requested:
+        return None
+    if _contains_self_advance_hard_gate(final_response):
         return None
     if not _has_open_todo_work(todo_items):
         return None
@@ -1387,6 +1639,7 @@ def _run_conversation_impl(
     # after the upstream prologue refactor, while recursive relay turns preserve
     # their count through the _auto_relay_active flag.
     _reset_auto_relay_count_for_root_turn(agent)
+    _apply_whole_goal_continuation_directive(agent, original_user_message)
 
     _run_conductor_intent_router(agent, user_message=user_message)
     _run_image_intent_shadow_router(

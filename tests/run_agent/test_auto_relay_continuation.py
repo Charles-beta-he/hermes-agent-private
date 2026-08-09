@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 
 from agent.conversation_loop import (
+    _apply_whole_goal_continuation_directive,
     _build_auto_relay_prompt,
     _build_recurrent_task_state_hint,
     _capture_auto_relay_summary,
@@ -10,9 +11,11 @@ from agent.conversation_loop import (
     _reset_auto_relay_count_for_root_turn,
     _should_auto_relay,
     _try_auto_relay,
+    _whole_goal_continuation_directive,
     _write_auto_relay_packet,
 )
 from agent.iteration_budget import IterationBudget
+from tools.todo_tool import TodoStore
 
 
 def test_auto_relay_recognizes_budget_and_max_iteration_exits():
@@ -60,6 +63,102 @@ def test_reset_auto_relay_count_only_for_root_turns():
     agent._auto_relay_active = True
     _reset_auto_relay_count_for_root_turn(agent)
     assert agent._relay_count == 2
+
+
+def test_whole_goal_directive_classifier_is_explicit_and_revocable():
+    assert _whole_goal_continuation_directive("继续推进") == "whole_goal"
+    assert _whole_goal_continuation_directive("授权你执行 whole-goal 自动推进") == "whole_goal"
+    assert _whole_goal_continuation_directive("停止自动推进，只汇报进度") == "manual"
+    assert _whole_goal_continuation_directive("我现在撤销自动推进") == "manual"
+    assert _whole_goal_continuation_directive("现在停止 whole-goal") == "manual"
+    assert _whole_goal_continuation_directive("Please stop auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("I revoke whole-goal") == "manual"
+    assert _whole_goal_continuation_directive("我只想让你汇报进度") == "manual"
+    assert _whole_goal_continuation_directive("我授权你不要自动推进") == "manual"
+    assert _whole_goal_continuation_directive("我允许你停止自动推进") == "manual"
+    assert _whole_goal_continuation_directive("I authorize you to stop auto-advance") == "manual"
+    assert _whole_goal_continuation_directive("停止自动推进，好吗？") == "manual"
+    assert _whole_goal_continuation_directive("取消自动推进，是不是更安全") == "manual"
+    assert _whole_goal_continuation_directive("不要再自动推进了，为什么会跑偏") == "manual"
+    assert _whole_goal_continuation_directive("是否会自动推进？") is None
+    assert _whole_goal_continuation_directive("之前好像有过自推进方案，是否改改能完善？") is None
+    assert _whole_goal_continuation_directive("如果用户说‘授权自动推进’，会怎样？") is None
+    assert _whole_goal_continuation_directive("停止自动推进会丢失进度吗？") is None
+    assert _whole_goal_continuation_directive("停止自动推进会怎样") is None
+    assert _whole_goal_continuation_directive("授权你自动推进会发生什么") is None
+    assert _whole_goal_continuation_directive("自动推进，是什么") is None
+    assert _whole_goal_continuation_directive("授权你自动推进，如何运作") is None
+    assert _whole_goal_continuation_directive("停止自动推进，会不会丢进度") == "manual"
+    assert _whole_goal_continuation_directive("授权自动推进不是我的意思") is None
+    assert _whole_goal_continuation_directive("授权自动推进仅作示例") is None
+    assert _whole_goal_continuation_directive("不要停止自动推进") is None
+    assert _whole_goal_continuation_directive("授权自动推进吗") is None
+    assert _whole_goal_continuation_directive("授权自动推进是不是表示后台运行") is None
+    assert _whole_goal_continuation_directive("授权自动推进意味着什么") is None
+    assert _whole_goal_continuation_directive("授权自动推进的风险") is None
+    assert _whole_goal_continuation_directive("授权自动推进：这是一句示例") is None
+    assert _whole_goal_continuation_directive("请解释自动推进") is None
+    assert _whole_goal_continuation_directive("继续推进，但每步都先征求我同意") is None
+    assert _whole_goal_continuation_directive("授权你自动推进，但先问我再执行每一步") is None
+    assert _whole_goal_continuation_directive("我授权你自动推进") == "whole_goal"
+    assert _whole_goal_continuation_directive(
+        "授权你自动推进，不要 push"
+    ) == "whole_goal"
+
+
+def test_whole_goal_directive_application_separates_persistent_and_turn_state():
+    store = TodoStore()
+    agent = SimpleNamespace(_todo_store=store, _auto_relay_active=False)
+
+    assert _apply_whole_goal_continuation_directive(agent, "继续推进") == "whole_goal"
+    assert store.continuation_mode() == "whole_goal"
+    assert agent._turn_continuation_requested is True
+
+    assert _apply_whole_goal_continuation_directive(agent, "今天星期几？") is None
+    assert store.continuation_mode() == "whole_goal"
+    assert agent._turn_continuation_requested is False
+
+    assert _apply_whole_goal_continuation_directive(
+        agent, "我现在撤销自动推进，只汇报进度"
+    ) == "manual"
+    assert store.continuation_mode() == "manual"
+    assert agent._turn_continuation_requested is False
+
+    assert _apply_whole_goal_continuation_directive(
+        agent, "授权自动推进会怎样"
+    ) is None
+    assert store.continuation_mode() == "manual"
+    assert agent._turn_continuation_requested is False
+
+    assert _apply_whole_goal_continuation_directive(
+        agent, "我授权你自动推进"
+    ) == "whole_goal"
+    assert store.continuation_mode() == "whole_goal"
+    assert agent._turn_continuation_requested is True
+
+    assert _apply_whole_goal_continuation_directive(
+        agent, "我授权你不要自动推进"
+    ) == "manual"
+    assert store.continuation_mode() == "manual"
+    assert agent._turn_continuation_requested is False
+
+
+def test_synthetic_relay_inherits_but_cannot_create_whole_goal_mode():
+    store = TodoStore()
+    agent = SimpleNamespace(_todo_store=store, _auto_relay_active=True)
+
+    assert _apply_whole_goal_continuation_directive(
+        agent, "[Auto-relay] summary mentions 自动推进"
+    ) is None
+    assert agent._turn_continuation_requested is False
+
+    store.set_continuation_mode("whole_goal")
+    assert _apply_whole_goal_continuation_directive(agent, "[Auto-relay]") is None
+    assert agent._turn_continuation_requested is False
+
+    agent._relay_chain_continuation_requested = True
+    assert _apply_whole_goal_continuation_directive(agent, "[Auto-relay]") == "whole_goal"
+    assert agent._turn_continuation_requested is True
 
 
 def test_capture_auto_relay_summary_requires_authoritative_handoff():
@@ -142,6 +241,7 @@ def test_self_advance_structured_whole_goal_contract_requests_relay():
     assert _self_advance_checkpoint_reason(
         final_response=response,
         continuation_mode="whole_goal",
+        turn_continuation_requested=True,
         todo_items=[{"id": "next", "content": "Next", "status": "pending"}],
         interrupted=False,
     ) == "self_advance_checkpoint"
@@ -154,6 +254,25 @@ def test_self_advance_manual_contract_does_not_relay_open_work():
         todo_items=[{"id": "next", "content": "Next", "status": "pending"}],
         interrupted=False,
     ) is None
+
+
+def test_self_advance_whole_goal_contract_requires_turn_admission():
+    open_todos = [{"id": "next", "content": "Next", "status": "pending"}]
+
+    assert _self_advance_checkpoint_reason(
+        final_response="ordinary answer while older work remains open",
+        continuation_mode="whole_goal",
+        turn_continuation_requested=False,
+        todo_items=open_todos,
+        interrupted=False,
+    ) is None
+    assert _self_advance_checkpoint_reason(
+        final_response="bounded progress checkpoint",
+        continuation_mode="whole_goal",
+        turn_continuation_requested=True,
+        todo_items=open_todos,
+        interrupted=False,
+    ) == "self_advance_checkpoint"
 
 
 def test_self_advance_open_todos_relay_progress_report_without_future_tense_marker():
@@ -175,6 +294,7 @@ def test_self_advance_open_todos_relay_progress_report_without_future_tense_mark
         original_user_message="进度",
         messages=messages,
         continuation_mode="whole_goal",
+        turn_continuation_requested=True,
         todo_items=[
             {"id": "b8-1", "content": "Model B8", "status": "pending"},
             {"id": "b8-2", "content": "Write RED tests", "status": "pending"},
@@ -190,6 +310,8 @@ def test_self_advance_open_todos_do_not_bypass_hard_gate_or_create_authority():
         user_message="继续推进",
         original_user_message="继续推进",
         messages=[{"role": "user", "content": "继续推进"}],
+        continuation_mode="whole_goal",
+        turn_continuation_requested=True,
         todo_items=open_todos,
         interrupted=False,
     ) is None
@@ -198,6 +320,8 @@ def test_self_advance_open_todos_do_not_bypass_hard_gate_or_create_authority():
         user_message="普通问答",
         original_user_message="普通问答",
         messages=[{"role": "user", "content": "普通问答"}],
+        continuation_mode="whole_goal",
+        turn_continuation_requested=False,
         todo_items=open_todos,
         interrupted=False,
     ) is None
@@ -206,15 +330,41 @@ def test_self_advance_open_todos_do_not_bypass_hard_gate_or_create_authority():
         user_message="继续推进",
         original_user_message="继续推进",
         messages=[{"role": "user", "content": "继续推进"}],
+        continuation_mode="whole_goal",
+        turn_continuation_requested=True,
         todo_items=open_todos,
         interrupted=False,
     ) is None
+    assert _self_advance_checkpoint_reason(
+        final_response="The next step requires a testflight approval.",
+        continuation_mode="whole_goal",
+        turn_continuation_requested=True,
+        todo_items=open_todos,
+        interrupted=False,
+    ) is None
+    for hard_gate in (
+        "下一步需要确认。",
+        "下一步等待审批。",
+        "下一步等你选择。",
+        "The next step needs approval.",
+        "The next step requires confirmation.",
+        "The next step is waiting for user input.",
+        "A human decision is required.",
+    ):
+        assert _self_advance_checkpoint_reason(
+            final_response=hard_gate,
+            continuation_mode="whole_goal",
+            turn_continuation_requested=True,
+            todo_items=open_todos,
+            interrupted=False,
+        ) is None
 
 
 def test_self_advance_response_wording_cannot_override_structured_contract():
     assert _self_advance_checkpoint_reason(
         final_response="contains any natural-language blocker or progress wording",
         continuation_mode="whole_goal",
+        turn_continuation_requested=True,
         todo_items=[{"id": "b8", "content": "B8", "status": "pending"}],
         interrupted=False,
     ) == "self_advance_checkpoint"
