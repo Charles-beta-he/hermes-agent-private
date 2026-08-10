@@ -2617,6 +2617,27 @@ class TestAdaptiveSpawnAdmissionShadow(unittest.TestCase):
         self.assertEqual(result["recommendation"], "shadow_deny")
         self.assertEqual(result["reason_codes"], ["orchestrator_depth_limit"])
 
+    def test_depth_boundary_matrix_is_relation_safe_for_both_roles(self):
+        rows = [
+            ("leaf", 1, 2, "shadow_allow", "leaf_requires_no_recursive_authority"),
+            ("leaf", 2, 2, "shadow_allow", "leaf_requires_no_recursive_authority"),
+            ("leaf", 3, 2, "shadow_abstain", "invalid_shadow_input"),
+            ("orchestrator", 1, 2, "shadow_abstain", "missing_decomposition_contract"),
+            ("orchestrator", 2, 2, "shadow_deny", "orchestrator_depth_limit"),
+            ("orchestrator", 3, 2, "shadow_abstain", "invalid_shadow_input"),
+        ]
+        for role, depth, maximum, recommendation, reason in rows:
+            with self.subTest(role=role, depth=depth, maximum=maximum):
+                result = _evaluate_adaptive_spawn_shadow(
+                    requested_role=role,
+                    child_depth=depth,
+                    max_spawn_depth=maximum,
+                    task_count=1,
+                    max_concurrent_children=3,
+                )
+                self.assertEqual(result["recommendation"], recommendation)
+                self.assertEqual(result["reason_codes"], [reason])
+
     def test_invalid_inputs_abstain_without_throwing(self):
         invalid_rows = [
             {"requested_role": "unknown", "child_depth": 1, "max_spawn_depth": 1,
