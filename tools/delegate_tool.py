@@ -351,6 +351,58 @@ def _normalize_role(r: Optional[str]) -> str:
     return "leaf"
 
 
+def _evaluate_adaptive_spawn_shadow(
+    *,
+    requested_role: str,
+    child_depth: int,
+    max_spawn_depth: int,
+    task_count: int,
+    max_concurrent_children: int,
+) -> Dict[str, Any]:
+    """Compute non-authoritative spawn advice from already-parsed scalars.
+
+    Phase 0/1 deliberately has no decomposition contract, persistence, logging,
+    or execution authority. The caller must discard this result. Keeping the
+    evaluator pure makes it possible to certify the policy seam before any
+    adaptive-depth rollout changes runtime behavior.
+    """
+
+    def decision(recommendation: str, reason: str) -> Dict[str, Any]:
+        return {
+            "schema_version": "hermes_adaptive_delegation_admission_shadow_v1",
+            "mode": "shadow_only",
+            "recommendation": recommendation,
+            "reason_codes": [reason],
+            "enforced": False,
+            "authority_effect": "none",
+        }
+
+    integer_inputs = (
+        child_depth,
+        max_spawn_depth,
+        task_count,
+        max_concurrent_children,
+    )
+    if (
+        type(requested_role) is not str
+        or requested_role not in {"leaf", "orchestrator"}
+        or any(type(value) is not int for value in integer_inputs)
+        or child_depth < 1
+        or max_spawn_depth < 1
+        or task_count < 1
+        or max_concurrent_children < 1
+    ):
+        return decision("shadow_abstain", "invalid_shadow_input")
+
+    if task_count > max_concurrent_children:
+        return decision("shadow_deny", "task_count_exceeds_concurrency")
+    if requested_role == "leaf":
+        return decision("shadow_allow", "leaf_requires_no_recursive_authority")
+    if child_depth >= max_spawn_depth:
+        return decision("shadow_deny", "orchestrator_depth_limit")
+    return decision("shadow_abstain", "missing_decomposition_contract")
+
+
 def _get_max_concurrent_children() -> int:
     """Read delegation.max_concurrent_children from config, falling back to
     DELEGATION_MAX_CONCURRENT_CHILDREN env var, then the default (3).
@@ -2431,7 +2483,7 @@ def delegate_task(
     background = is_truthy_value(background, default=False) if background is not None else False
 
     # Depth limit — configurable via delegation.max_spawn_depth,
-    # default 2 for parity with the original MAX_DEPTH constant.
+    # default 1 for parity with the original MAX_DEPTH constant.
     depth = getattr(parent_agent, "_delegate_depth", 0)
     max_spawn = _get_max_spawn_depth()
     if depth >= max_spawn:
@@ -2531,6 +2583,20 @@ def delegate_task(
             # Per-task role beats top-level; normalise again so unknown
             # per-task values warn and degrade to leaf uniformly.
             effective_role = _normalize_role(t.get("role") or top_role)
+            # Phase 0/1 compute-only shadow. This output is intentionally
+            # discarded: existing hard gates and _build_child_agent remain the
+            # sole execution/authority path. An evaluator defect must be
+            # observationally equivalent to the seam not existing.
+            try:
+                _evaluate_adaptive_spawn_shadow(
+                    requested_role=effective_role,
+                    child_depth=depth + 1,
+                    max_spawn_depth=max_spawn,
+                    task_count=n_tasks,
+                    max_concurrent_children=max_children,
+                )
+            except Exception:
+                pass
             child = _build_child_agent(
                 task_index=i,
                 goal=t["goal"],
