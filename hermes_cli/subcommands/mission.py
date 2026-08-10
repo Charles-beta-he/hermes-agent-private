@@ -20,6 +20,10 @@ def build_mission_parser(subparsers) -> None:
             "human decisions before risky side effects."
         ),
     )
+    # Mission handlers expose stable shell-style semantic exit codes. Keep this
+    # propagation opt-in so unrelated legacy/plugin handlers retain the CLI's
+    # historical return-discard behavior.
+    parser.set_defaults(_propagate_exit_code=True)
     parser.add_argument("--db", help="Override missions SQLite DB path (test/debug)")
     sub = parser.add_subparsers(dest="mission_command")
 
@@ -175,6 +179,17 @@ def build_mission_parser(subparsers) -> None:
     review_complete.add_argument("--reviewer", required=True, help="Isolated reviewer identity")
     review_complete.add_argument("--json", action="store_true", help="Emit JSON")
     review_complete.set_defaults(func=cmd_mission)
+
+    continue_cmd = sub.add_parser(
+        "continue",
+        help="Request the next event-driven Mission tick from the latest executable tick",
+    )
+    continue_cmd.add_argument("mission_id")
+    continue_cmd.add_argument("--continuation-token", required=True, help="Opaque fencing token from the latest tick prompt")
+    continue_cmd.add_argument("--next-step", required=True, help="Next dependency-safe bounded step")
+    continue_cmd.add_argument("--evidence", action="append", required=True, help="Durable stage/readback evidence. Repeatable")
+    continue_cmd.add_argument("--json", action="store_true", help="Emit JSON")
+    continue_cmd.set_defaults(func=cmd_mission)
 
     decide = sub.add_parser("decide", help="Answer a decision request and resume its mission")
     decide.add_argument("decision_id")

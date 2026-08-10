@@ -282,6 +282,41 @@ def test_cli_review_complete_records_actionable_signal(tmp_path, capsys):
     assert [signal.signal_type for signal in signals] == ["review_completed"]
 
 
+def test_cli_continue_records_tick_bound_actionable_signal(tmp_path, capsys):
+    from hermes_cli.missions import cmd_mission
+
+    db = str(tmp_path / "missions.db")
+    store = MissionStore(tmp_path / "missions.db")
+    mission = store.create_mission(
+        direction="Resume immediately after a closed local slice",
+        cadence="every 1h",
+        budget=MissionBudget(max_ticks=3),
+        enable=True,
+    )
+    token = store.tick(mission.mission_id, dry_run=False)["continuation_token"]
+    report = store.append_stage_report(
+        mission.mission_id,
+        summary="CLI source tick closed",
+        evidence=["CLI fixture readback"],
+        next_step="run the next dependency-safe slice",
+    )
+
+    args = argparse.Namespace(
+        db=db,
+        mission_command="continue",
+        mission_id=mission.mission_id,
+        continuation_token=token,
+        next_step="run the next dependency-safe slice",
+        evidence=[f"stage_report:{report['event_id']}"],
+        json=True,
+    )
+    assert cmd_mission(args) == 0
+    event = json.loads(capsys.readouterr().out)
+    assert event["event_type"] == "continuation_requested"
+    signals = store.pending_flow_signals(mission.mission_id)
+    assert [signal.signal_type for signal in signals] == ["continuation_requested"]
+
+
 def test_cli_json_shape_roundtrip(tmp_path, capsys):
     from hermes_cli.missions import cmd_mission
 

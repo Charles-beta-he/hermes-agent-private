@@ -45,9 +45,12 @@ VALID_EVENT_TYPES = {
     "decision_requested",
     "decision_recorded",
     "review_completed",
+    "continuation_requested",
     "budget_exhausted",
     "flow_signal_enqueued",
+    "flow_signal_dispatch_started",
     "flow_signal_dispatched",
+    "flow_signal_dispatch_rejected",
     "flow_signal_recovered",
     "maintenance_tick",
     "taskpool_status_changed",
@@ -58,8 +61,13 @@ ACTIONABLE_FLOW_EVENT_TYPES = {
     "mission_resumed",
     "decision_recorded",
     "review_completed",
+    "continuation_requested",
     "taskpool_status_changed",
 }
+
+
+class DispatchOutcomeUnknownError(RuntimeError):
+    """A durable scheduler intent exists without a matching success audit."""
 
 
 @dataclass
@@ -261,6 +269,10 @@ class MissionStore:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            # Serialize schema inspection and legacy ALTER TABLE migrations.
+            # Without an early write reservation, concurrent initializers can
+            # both observe a missing column and race the same ALTER statement.
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS missions (
@@ -471,6 +483,8 @@ class MissionStore:
     ) -> dict[str, Any]:
         if event_type not in VALID_EVENT_TYPES:
             raise ValueError(f"invalid mission event type: {event_type}")
+        if event_type == "continuation_requested":
+            raise ValueError("continuation_requested must use append_continuation_request")
         if not self.get_mission(mission_id):
             raise KeyError(mission_id)
         event = {
@@ -483,6 +497,7 @@ class MissionStore:
         }
         normalized_idempotency_key = idempotency_key.strip() if idempotency_key else None
         inserted = False
+        replay_signal: MissionFlowSignal | None = None
         with self._connect() as conn:
             try:
                 conn.execute(
@@ -501,7 +516,6 @@ class MissionStore:
                         event["created_at"],
                     ),
                 )
-                conn.execute("UPDATE missions SET updated_at = ? WHERE mission_id = ?", (event["created_at"], mission_id))
                 inserted = True
             except sqlite3.IntegrityError:
                 if normalized_idempotency_key is None:
@@ -516,64 +530,131 @@ class MissionStore:
                 if not row:
                     raise
                 event = self._event_from_row(row)
-        if inserted and enqueue_flow and event_type in ACTIONABLE_FLOW_EVENT_TYPES:
-            self.enqueue_flow_signal(event)
-            self.dispatch_pending_flow_signals(mission_id)
+            if inserted:
+                conn.execute("UPDATE missions SET updated_at = ? WHERE mission_id = ?", (event["created_at"], mission_id))
+                if enqueue_flow and event_type in ACTIONABLE_FLOW_EVENT_TYPES:
+                    self._enqueue_flow_signal_in_transaction(conn, event)
+        if enqueue_flow and event_type in ACTIONABLE_FLOW_EVENT_TYPES:
+            should_dispatch = inserted
+            if not inserted:
+                # Heal events written by an older build that crashed before its
+                # transaction-external flow-signal insert. Receipt replay with
+                # an existing signal must not repeat scheduler side effects.
+                with self._connect() as conn:
+                    replay_signal, should_dispatch = self._enqueue_flow_signal_in_transaction(conn, event)
+            if should_dispatch:
+                self.dispatch_pending_flow_signals(mission_id)
+            elif replay_signal is not None:
+                unknown_signal = self._pending_flow_dispatch_outcome_unknown(mission_id)
+                if unknown_signal is not None:
+                    raise DispatchOutcomeUnknownError(
+                        f"scheduler dispatch outcome unknown for signal {unknown_signal.signal_id}"
+                    )
         return event
 
-    def enqueue_flow_signal(self, event: dict[str, Any]) -> MissionFlowSignal:
-        """Append a pending signal for an actionable mission event.
-
-        The signal is the event-driven SSOT edge.  It records that a state change
-        wants an immediate advancement tick; the actual agent work is still
-        gated by the existing mission cron/agent runner.
-        """
-
+    def _enqueue_flow_signal_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        event: dict[str, Any],
+    ) -> tuple[MissionFlowSignal, bool]:
+        audit_idempotency_key = f"flow_signal_enqueued:{event['event_id']}"
+        audit_row = conn.execute(
+            """
+            SELECT * FROM mission_events
+            WHERE mission_id = ? AND event_type = 'flow_signal_enqueued'
+              AND idempotency_key = ?
+            ORDER BY rowid ASC LIMIT 1
+            """,
+            (event["mission_id"], audit_idempotency_key),
+        ).fetchone()
+        if audit_row is None:
+            legacy_rows = conn.execute(
+                "SELECT * FROM mission_events WHERE mission_id = ? AND event_type = 'flow_signal_enqueued' AND idempotency_key IS NULL ORDER BY rowid ASC",
+                (event["mission_id"],),
+            ).fetchall()
+            audit_row = next(
+                (
+                    row
+                    for row in legacy_rows
+                    if _json_loads(row["payload_json"], {}).get("source_event_id") == event["event_id"]
+                ),
+                None,
+            )
+        audit_payload = _json_loads(audit_row["payload_json"], {}) if audit_row else {}
+        restored_signal_id = audit_payload.get("signal_id")
         signal = MissionFlowSignal(
-            signal_id=f"sig_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+            signal_id=(
+                restored_signal_id
+                if isinstance(restored_signal_id, str) and restored_signal_id.strip()
+                else f"sig_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+            ),
             mission_id=event["mission_id"],
             source_event_id=event["event_id"],
             signal_type=event["event_type"],
             payload={"summary": event.get("summary", ""), "event_payload": event.get("payload") or {}},
             created_at=_now(),
         )
-        inserted = False
-        with self._connect() as conn:
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO mission_flow_signals (
-                        signal_id, mission_id, source_event_id, signal_type, status, payload_json, created_at, consumed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        signal.signal_id,
-                        signal.mission_id,
-                        signal.source_event_id,
-                        signal.signal_type,
-                        signal.status,
-                        _json_dumps(signal.payload),
-                        signal.created_at,
-                        signal.consumed_at,
-                    ),
-                )
-                inserted = True
-            except sqlite3.IntegrityError:
-                row = conn.execute(
-                    "SELECT * FROM mission_flow_signals WHERE source_event_id = ?",
-                    (signal.source_event_id,),
-                ).fetchone()
-                if row:
-                    return self._row_to_flow_signal(row)
-                raise
-        if inserted:
-            self.append_event(
-                signal.mission_id,
-                "flow_signal_enqueued",
-                f"event-driven signal enqueued for {signal.signal_type}",
-                {"signal_id": signal.signal_id, "source_event_id": signal.source_event_id, "signal_type": signal.signal_type},
-                enqueue_flow=False,
+        try:
+            conn.execute(
+                """
+                INSERT INTO mission_flow_signals (
+                    signal_id, mission_id, source_event_id, signal_type, status, payload_json, created_at, consumed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal.signal_id,
+                    signal.mission_id,
+                    signal.source_event_id,
+                    signal.signal_type,
+                    signal.status,
+                    _json_dumps(signal.payload),
+                    signal.created_at,
+                    signal.consumed_at,
+                ),
             )
+        except sqlite3.IntegrityError:
+            row = conn.execute(
+                "SELECT * FROM mission_flow_signals WHERE source_event_id = ?",
+                (signal.source_event_id,),
+            ).fetchone()
+            if row:
+                return self._row_to_flow_signal(row), False
+            raise
+        if audit_row is not None:
+            return signal, True
+        audit_event_id = f"evt_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        audit_summary = f"event-driven signal enqueued for {signal.signal_type}"
+        audit_payload = {
+            "signal_id": signal.signal_id,
+            "source_event_id": signal.source_event_id,
+            "signal_type": signal.signal_type,
+        }
+        conn.execute(
+            """
+            INSERT INTO mission_events (
+                event_id, mission_id, event_type, summary, payload_json, idempotency_key, created_at
+            ) VALUES (?, ?, 'flow_signal_enqueued', ?, ?, ?, ?)
+            """,
+            (
+                audit_event_id,
+                signal.mission_id,
+                audit_summary,
+                _json_dumps(audit_payload),
+                audit_idempotency_key,
+                signal.created_at,
+            ),
+        )
+        conn.execute(
+            "UPDATE missions SET updated_at = ? WHERE mission_id = ?",
+            (signal.created_at, signal.mission_id),
+        )
+        return signal, True
+
+    def enqueue_flow_signal(self, event: dict[str, Any]) -> MissionFlowSignal:
+        """Idempotently ensure a durable signal exists for an actionable event."""
+
+        with self._connect() as conn:
+            signal, _inserted = self._enqueue_flow_signal_in_transaction(conn, event)
         return signal
 
     def pending_flow_signals(self, mission_id: str, *, limit: int = 20) -> list[MissionFlowSignal]:
@@ -582,7 +663,7 @@ class MissionStore:
                 """
                 SELECT * FROM mission_flow_signals
                 WHERE mission_id = ? AND status = 'pending'
-                ORDER BY created_at ASC
+                ORDER BY created_at ASC, signal_id ASC
                 LIMIT ?
                 """,
                 (mission_id, int(limit)),
@@ -598,7 +679,7 @@ class MissionStore:
                 """
                 SELECT * FROM mission_flow_signals
                 WHERE mission_id = ? AND status = 'pending' AND created_at <= ?
-                ORDER BY created_at ASC
+                ORDER BY created_at ASC, signal_id ASC
                 LIMIT ?
                 """,
                 (mission_id, cutoff, int(limit)),
@@ -619,6 +700,194 @@ class MissionStore:
                 row = conn.execute("SELECT * FROM mission_flow_signals WHERE signal_id = ?", (signal_id,)).fetchone()
         return self._row_to_flow_signal(row)
 
+    def _claim_flow_signal_dispatch(
+        self,
+        signal: MissionFlowSignal,
+        *,
+        job_id: str,
+        run_due: bool,
+    ) -> str:
+        """Atomically claim one external scheduler attempt for a signal/job edge.
+
+        SQLite cannot atomically commit with the jobs.json scheduler update. A
+        durable intent therefore precedes the external effect. If a process
+        dies after claiming, later callers report an unknown outcome instead of
+        duplicating the scheduler side effect or fabricating a success audit.
+        """
+
+        operation_suffix = f"{signal.signal_id}:{job_id}:run_due={int(run_due)}"
+        started_key = f"flow_signal_dispatch_started:{operation_suffix}"
+        success_key = f"flow_signal_dispatched:{operation_suffix}"
+        created_at = _now()
+        with self._connect() as conn:
+            success = conn.execute(
+                """
+                SELECT 1 FROM mission_events
+                WHERE mission_id = ? AND event_type = 'flow_signal_dispatched'
+                  AND idempotency_key = ?
+                LIMIT 1
+                """,
+                (signal.mission_id, success_key),
+            ).fetchone()
+            if success:
+                return "already_dispatched"
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO mission_events (
+                        event_id, mission_id, event_type, summary, payload_json, idempotency_key, created_at
+                    ) VALUES (?, ?, 'flow_signal_dispatch_started', ?, ?, ?, ?)
+                    """,
+                    (
+                        f"evt_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+                        signal.mission_id,
+                        f"scheduler dispatch intent recorded for {job_id}",
+                        _json_dumps(
+                            {
+                                "signal_id": signal.signal_id,
+                                "job_id": job_id,
+                                "run_due": bool(run_due),
+                            }
+                        ),
+                        started_key,
+                        created_at,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                started = conn.execute(
+                    """
+                    SELECT 1 FROM mission_events
+                    WHERE mission_id = ? AND event_type = 'flow_signal_dispatch_started'
+                      AND idempotency_key = ?
+                    LIMIT 1
+                    """,
+                    (signal.mission_id, started_key),
+                ).fetchone()
+                if started:
+                    return "dispatch_outcome_unknown"
+                raise
+            conn.execute(
+                "UPDATE missions SET updated_at = ? WHERE mission_id = ?",
+                (created_at, signal.mission_id),
+            )
+        return "claimed"
+
+    def _flow_dispatch_outcome_unknown(
+        self,
+        signal: MissionFlowSignal,
+        *,
+        run_due: bool = False,
+    ) -> bool:
+        """Return whether a durable dispatch intent lacks its success audit."""
+
+        started_prefix = f"flow_signal_dispatch_started:{signal.signal_id}:"
+        mode_suffix = f":run_due={int(run_due)}"
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT idempotency_key FROM mission_events
+                WHERE mission_id = ? AND event_type = 'flow_signal_dispatch_started'
+                  AND idempotency_key IS NOT NULL
+                """,
+                (signal.mission_id,),
+            ).fetchall()
+            for row in rows:
+                started_key = str(row["idempotency_key"] or "")
+                if not started_key.startswith(started_prefix) or not started_key.endswith(mode_suffix):
+                    continue
+                success_key = started_key.replace(
+                    "flow_signal_dispatch_started:",
+                    "flow_signal_dispatched:",
+                    1,
+                )
+                success = conn.execute(
+                    """
+                    SELECT 1 FROM mission_events
+                    WHERE mission_id = ? AND event_type = 'flow_signal_dispatched'
+                      AND idempotency_key = ?
+                    LIMIT 1
+                    """,
+                    (signal.mission_id, success_key),
+                ).fetchone()
+                if not success:
+                    return True
+        return False
+
+    def _release_rejected_flow_dispatch_claim(
+        self,
+        signal: MissionFlowSignal,
+        *,
+        job_id: str,
+        run_due: bool,
+    ) -> None:
+        """Release a claim when the scheduler proves that no trigger occurred."""
+
+        operation_suffix = f"{signal.signal_id}:{job_id}:run_due={int(run_due)}"
+        started_key = f"flow_signal_dispatch_started:{operation_suffix}"
+        success_key = f"flow_signal_dispatched:{operation_suffix}"
+        created_at = _now()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            success = conn.execute(
+                """
+                SELECT 1 FROM mission_events
+                WHERE mission_id = ? AND event_type = 'flow_signal_dispatched'
+                  AND idempotency_key = ? LIMIT 1
+                """,
+                (signal.mission_id, success_key),
+            ).fetchone()
+            if success:
+                return
+            conn.execute(
+                """
+                DELETE FROM mission_events
+                WHERE mission_id = ? AND event_type = 'flow_signal_dispatch_started'
+                  AND idempotency_key = ?
+                """,
+                (signal.mission_id, started_key),
+            )
+            conn.execute(
+                """
+                INSERT INTO mission_events (
+                    event_id, mission_id, event_type, summary, payload_json, idempotency_key, created_at
+                ) VALUES (?, ?, 'flow_signal_dispatch_rejected', ?, ?, NULL, ?)
+                """,
+                (
+                    f"evt_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+                    signal.mission_id,
+                    f"scheduler rejected dispatch for {job_id}; claim released",
+                    _json_dumps({"signal_id": signal.signal_id, "job_id": job_id, "run_due": bool(run_due)}),
+                    created_at,
+                ),
+            )
+            conn.execute(
+                "UPDATE missions SET updated_at = ? WHERE mission_id = ?",
+                (created_at, signal.mission_id),
+            )
+
+    def _pending_flow_dispatch_outcome_unknown(
+        self,
+        mission_id: str,
+        *,
+        run_due: bool = False,
+    ) -> MissionFlowSignal | None:
+        """Return the oldest pending signal with an unresolved dispatch intent."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM mission_flow_signals
+                WHERE mission_id = ? AND status = 'pending'
+                ORDER BY created_at ASC, signal_id ASC
+                """,
+                (mission_id,),
+            ).fetchall()
+        for row in rows:
+            signal = self._row_to_flow_signal(row)
+            if self._flow_dispatch_outcome_unknown(signal, run_due=run_due):
+                return signal
+        return None
+
     def dispatch_pending_flow_signals(self, mission_id: str, *, run_due: bool = False) -> dict[str, Any]:
         """Ask existing mission cron jobs to run soon when pending signals exist.
 
@@ -633,20 +902,71 @@ class MissionStore:
         pending = self.pending_flow_signals(mission_id, limit=1)
         if not pending:
             return {"status": "noop", "reason": "no_pending_signals", "triggered_jobs": [], "runner": {"status": "not_requested"}}
+        mission = self.get_mission(mission_id)
+        if not mission:
+            raise KeyError(mission_id)
+        used_ticks = self.count_events(mission_id, {"tick_prompt_created"})
+        if (
+            mission.status != "active"
+            or self.open_decisions(mission_id)
+            or (mission.budget.max_ticks is not None and used_ticks >= mission.budget.max_ticks)
+        ):
+            return {
+                "status": "pending_blocked",
+                "reason": "mission_not_executable",
+                "signal_id": pending[0].signal_id,
+                "triggered_jobs": [],
+                "runner": {"status": "not_requested"},
+            }
         jobs = self._find_cron_jobs_for_mission(mission_id)
+        runnable_jobs = self._runnable_cron_jobs(jobs)
+        if len(runnable_jobs) > 1:
+            return {
+                "status": "pending_blocked",
+                "reason": "ambiguous_enabled_mission_jobs",
+                "signal_id": pending[0].signal_id,
+                "triggered_jobs": [],
+                "runner": {"status": "not_requested"},
+            }
         triggered: list[str] = []
         try:
             from cron.jobs import trigger_job
         except Exception:
             trigger_job = None  # type: ignore[assignment]
-        if trigger_job is not None:
-            for job in jobs:
-                job_id = str(job.get("id") or "").strip()
-                if not job_id:
-                    continue
-                result = trigger_job(job_id)
-                if result:
-                    triggered.append(job_id)
+        if not runnable_jobs or trigger_job is None:
+            return {
+                "status": "pending_no_cron",
+                "signal_id": pending[0].signal_id,
+                "triggered_jobs": [],
+                "runner": {"status": "not_requested"},
+            }
+        job_id = str(runnable_jobs[0].get("id") or "").strip()
+        if not job_id:
+            return {
+                "status": "pending_no_cron",
+                "signal_id": pending[0].signal_id,
+                "triggered_jobs": [],
+                "runner": {"status": "not_requested"},
+            }
+        claim = self._claim_flow_signal_dispatch(pending[0], job_id=job_id, run_due=run_due)
+        if claim == "already_dispatched":
+            return {
+                "status": "already_dispatched",
+                "signal_id": pending[0].signal_id,
+                "triggered_jobs": [],
+                "runner": {"status": "not_requested"},
+            }
+        if claim == "dispatch_outcome_unknown":
+            return {
+                "status": "pending_blocked",
+                "reason": "dispatch_outcome_unknown",
+                "signal_id": pending[0].signal_id,
+                "triggered_jobs": [],
+                "runner": {"status": "not_requested"},
+            }
+        result = trigger_job(job_id)
+        if result:
+            triggered.append(job_id)
         runner: dict[str, Any] = {"status": "not_requested"}
         if run_due:
             if not triggered:
@@ -666,9 +986,23 @@ class MissionStore:
                 f"event-driven signal scheduled {len(triggered)} cron job(s)",
                 {"signal_id": pending[0].signal_id, "triggered_jobs": triggered, "run_due": bool(run_due), "runner": runner},
                 enqueue_flow=False,
+                idempotency_key=(
+                    f"flow_signal_dispatched:{pending[0].signal_id}:{job_id}:run_due={int(run_due)}"
+                ),
             )
             return {"status": "dispatched", "signal_id": pending[0].signal_id, "triggered_jobs": triggered, "runner": runner}
-        return {"status": "pending_no_cron", "signal_id": pending[0].signal_id, "triggered_jobs": [], "runner": runner}
+        self._release_rejected_flow_dispatch_claim(
+            pending[0],
+            job_id=job_id,
+            run_due=run_due,
+        )
+        return {
+            "status": "pending_blocked",
+            "reason": "scheduler_trigger_rejected",
+            "signal_id": pending[0].signal_id,
+            "triggered_jobs": [],
+            "runner": runner,
+        }
 
     def recover_flow_signal_backlog(
         self,
@@ -703,7 +1037,7 @@ class MissionStore:
                 """
                 SELECT * FROM mission_flow_signals
                 WHERE mission_id = ? AND status = 'pending' AND created_at <= ?
-                ORDER BY created_at ASC
+                ORDER BY created_at ASC, signal_id ASC
                 LIMIT ?
                 """,
                 (mission_id, cutoff, max_signals),
@@ -940,6 +1274,9 @@ class MissionStore:
         stale_signals = self.stale_flow_signals(mission_id, limit=20)
         script_path = _hermes_home() / "scripts" / mission_tick_script_name(mission_id)
         cron_jobs = self._find_cron_jobs_for_mission(mission_id)
+        runnable_cron_jobs = self._runnable_cron_jobs(cron_jobs)
+        unresolved_dispatch = self._pending_flow_dispatch_outcome_unknown(mission_id)
+        stalled_tick = self._stalled_executable_tick(mission_id, older_than_seconds=900)
         checks = []
         def add(name: str, status: str, detail: str = "") -> None:
             checks.append({"name": name, "status": status, "detail": detail})
@@ -952,8 +1289,23 @@ class MissionStore:
         add("tick budget", budget_status, f"{used_ticks}/{mission.budget.max_ticks}")
         add("pending flow signals", "warn" if pending_signals and not cron_jobs else "ok", str(len(pending_signals)))
         add("stale flow signals", "warn" if stale_signals else "ok", str(len(stale_signals)))
+        add(
+            "dispatch outcome unknown",
+            "warn" if unresolved_dispatch else "ok",
+            unresolved_dispatch.signal_id if unresolved_dispatch else "none",
+        )
+        add(
+            "stalled executable tick",
+            "warn" if stalled_tick else "ok",
+            str(stalled_tick.get("event_id")) if stalled_tick else "none",
+        )
         add("tick script", "ok" if script_path.exists() else "warn", str(script_path))
         add("cron job", "ok" if cron_jobs else "warn", f"{len(cron_jobs)} matching job(s)")
+        add(
+            "cron runnable",
+            "ok" if runnable_cron_jobs else "warn",
+            f"{len(runnable_cron_jobs)}/{len(cron_jobs)} enabled matching job(s)",
+        )
         return {
             "mission": mission_to_dict(mission),
             "checks": checks,
@@ -979,7 +1331,38 @@ class MissionStore:
             raise KeyError(mission_id)
         stale_signals = self.stale_flow_signals(mission_id, older_than_seconds=older_than_seconds, limit=20)
         cron_jobs = self._find_cron_jobs_for_mission(mission_id)
+        runnable_cron_jobs = self._runnable_cron_jobs(cron_jobs)
+        unresolved_dispatch = self._pending_flow_dispatch_outcome_unknown(mission_id)
+        stalled_tick = self._stalled_executable_tick(
+            mission_id,
+            older_than_seconds=older_than_seconds,
+        )
+        open_decisions = self.open_decisions(mission_id)
         issues: list[dict[str, Any]] = []
+        if mission.status == "active" and cron_jobs and not runnable_cron_jobs:
+            issues.append(
+                {
+                    "code": "mission_flow_scheduler_paused",
+                    "message": "mission is active, but every matching mission cron job is disabled or paused",
+                    "recommended_command": f"hermes mission doctor {mission_id} --json",
+                }
+            )
+        if unresolved_dispatch is not None:
+            issues.append(
+                {
+                    "code": "mission_flow_dispatch_outcome_unknown",
+                    "message": "a durable scheduler dispatch intent has no matching success audit",
+                    "recommended_command": f"hermes mission doctor {mission_id} --json",
+                }
+            )
+        if mission.status == "active" and not open_decisions and stalled_tick is not None:
+            issues.append(
+                {
+                    "code": "mission_tick_stalled",
+                    "message": "an executable mission tick has no later durable closure or progress event",
+                    "recommended_command": f"hermes mission doctor {mission_id} --json",
+                }
+            )
         if stale_signals and not cron_jobs:
             issues.append(
                 {
@@ -1058,7 +1441,7 @@ class MissionStore:
         for job in jobs:
             if not isinstance(job, dict):
                 continue
-            if job.get("script") == script_name or mission_id in str(job.get("name", "")) or mission_id in str(job.get("prompt", "")):
+            if job.get("script") == script_name:
                 matches.append({
                     "id": job.get("id"),
                     "name": job.get("name"),
@@ -1068,6 +1451,54 @@ class MissionStore:
                     "script": job.get("script"),
                 })
         return matches
+
+    @staticmethod
+    def _runnable_cron_jobs(jobs: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            job for job in jobs
+            if job.get("enabled") is True and job.get("state") != "paused"
+        ]
+
+    def _stalled_executable_tick(
+        self,
+        mission_id: str,
+        *,
+        older_than_seconds: int,
+    ) -> dict[str, Any] | None:
+        cutoff = _now() - max(0, int(older_than_seconds))
+        closing_types = {
+            "stage_report",
+            "continuation_requested",
+            "review_completed",
+            "decision_requested",
+            "mission_paused",
+            "mission_cancelled",
+            "mission_completed",
+            "mission_failed",
+        }
+        with self._connect() as conn:
+            tick = conn.execute(
+                """
+                SELECT rowid AS ledger_rowid, * FROM mission_events
+                WHERE mission_id = ? AND event_type = 'tick_prompt_created'
+                  AND created_at <= ?
+                ORDER BY rowid DESC LIMIT 1
+                """,
+                (mission_id, cutoff),
+            ).fetchone()
+            if tick is None:
+                return None
+            placeholders = ",".join("?" for _ in closing_types)
+            later = conn.execute(
+                f"""
+                SELECT 1 FROM mission_events
+                WHERE mission_id = ? AND rowid > ?
+                  AND event_type IN ({placeholders})
+                LIMIT 1
+                """,
+                (mission_id, tick["ledger_rowid"], *sorted(closing_types)),
+            ).fetchone()
+        return None if later else self._event_from_row(tick)
 
     def append_stage_report(
         self,
@@ -1131,7 +1562,328 @@ class MissionStore:
             idempotency_key=idempotency_key,
         )
 
+    def _validate_continuation_admission_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        mission_id: str,
+        mission_row: sqlite3.Row,
+        continuation_token: str,
+        next_step: str,
+        evidence: list[str],
+    ) -> sqlite3.Row:
+        open_decision = conn.execute(
+            "SELECT 1 FROM mission_decisions WHERE mission_id = ? AND status = 'open' LIMIT 1",
+            (mission_id,),
+        ).fetchone()
+        if mission_row["status"] != "active" or open_decision:
+            raise ValueError("continuation requires an active mission with no open decisions")
+        budget_raw = _json_loads(mission_row["budget_json"], {})
+        max_ticks = budget_raw.get("max_ticks")
+        used_ticks_row = conn.execute(
+            "SELECT COUNT(*) AS used_ticks FROM mission_events WHERE mission_id = ? AND event_type = 'tick_prompt_created'",
+            (mission_id,),
+        ).fetchone()
+        if max_ticks is not None and used_ticks_row and used_ticks_row["used_ticks"] >= max_ticks:
+            raise ValueError("continuation requires remaining tick budget")
+        latest_tick = conn.execute(
+            """
+            SELECT rowid AS ledger_rowid, * FROM mission_events
+            WHERE mission_id = ? AND event_type = 'tick_prompt_created'
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (mission_id,),
+        ).fetchone()
+        if not latest_tick:
+            raise ValueError("continuation requires an executable mission tick")
+        latest_payload = _json_loads(latest_tick["payload_json"], {})
+        if latest_payload.get("continuation_token") != continuation_token:
+            raise ValueError("stale continuation token: only the latest executable tick may continue")
+        report_ids = [item.removeprefix("stage_report:") for item in evidence if item.startswith("stage_report:")]
+        if not report_ids:
+            raise ValueError("continuation requires a current tick stage report evidence reference")
+        for report_id in report_ids:
+            report = conn.execute(
+                """
+                SELECT rowid AS ledger_rowid, * FROM mission_events
+                WHERE mission_id = ? AND event_id = ? AND event_type = 'stage_report'
+                """,
+                (mission_id, report_id),
+            ).fetchone()
+            if not report or report["ledger_rowid"] <= latest_tick["ledger_rowid"]:
+                raise ValueError("continuation requires a current tick stage report evidence reference")
+            report_payload = _json_loads(report["payload_json"], {})
+            if (
+                bool(report_payload.get("needs_user"))
+                or report_payload.get("next_step") != next_step
+                or not report_payload.get("evidence")
+            ):
+                raise ValueError("continuation requires a current tick stage report bound to the next step")
+        return latest_tick
+
+    def append_continuation_request(
+        self,
+        mission_id: str,
+        *,
+        continuation_token: str,
+        next_step: str,
+        evidence: Iterable[str] = (),
+    ) -> dict[str, Any]:
+        """Fence one durable continuation request to the latest executable tick."""
+
+        normalized_token = continuation_token.strip()
+        normalized_next_step = next_step.strip()
+        normalized_evidence = [str(item).strip() for item in evidence if str(item).strip()]
+        if not normalized_token:
+            raise ValueError("continuation token is required")
+        if not normalized_next_step:
+            raise ValueError("continuation next step is required")
+        if not normalized_evidence:
+            raise ValueError("continuation evidence is required")
+        payload = {
+            "continuation_token": normalized_token,
+            "evidence": normalized_evidence,
+            "next_step": normalized_next_step,
+        }
+        event = {
+            "event_id": f"evt_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+            "mission_id": mission_id,
+            "event_type": "continuation_requested",
+            "summary": f"continuation requested: {normalized_next_step}",
+            "payload": payload,
+            "created_at": _now(),
+        }
+        should_dispatch = False
+        replay_signal: MissionFlowSignal | None = None
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            mission_row = conn.execute(
+                "SELECT status, budget_json FROM missions WHERE mission_id = ?",
+                (mission_id,),
+            ).fetchone()
+            if not mission_row:
+                raise KeyError(mission_id)
+            existing = conn.execute(
+                """
+                SELECT * FROM mission_events
+                WHERE mission_id = ? AND event_type = 'continuation_requested' AND idempotency_key = ?
+                """,
+                (mission_id, normalized_token),
+            ).fetchone()
+            if existing:
+                existing_event = self._event_from_row(existing)
+                if existing_event["payload"] != payload:
+                    raise ValueError("continuation idempotency conflict for this tick token")
+                event = existing_event
+                try:
+                    self._validate_continuation_admission_in_transaction(
+                        conn,
+                        mission_id=mission_id,
+                        mission_row=mission_row,
+                        continuation_token=normalized_token,
+                        next_step=normalized_next_step,
+                        evidence=normalized_evidence,
+                    )
+                except ValueError:
+                    # Receipt replay remains successful, but stale/revoked state
+                    # must never recreate or redispatch executable authority.
+                    should_dispatch = False
+                else:
+                    replay_signal, signal_inserted = self._enqueue_flow_signal_in_transaction(conn, event)
+                    should_dispatch = signal_inserted
+            else:
+                self._validate_continuation_admission_in_transaction(
+                    conn,
+                    mission_id=mission_id,
+                    mission_row=mission_row,
+                    continuation_token=normalized_token,
+                    next_step=normalized_next_step,
+                    evidence=normalized_evidence,
+                )
+                conn.execute(
+                    """
+                    INSERT INTO mission_events (
+                        event_id, mission_id, event_type, summary, payload_json, idempotency_key, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event["event_id"],
+                        mission_id,
+                        event["event_type"],
+                        event["summary"],
+                        _json_dumps(payload),
+                        normalized_token,
+                        event["created_at"],
+                    ),
+                )
+                conn.execute(
+                    "UPDATE missions SET updated_at = ? WHERE mission_id = ?",
+                    (event["created_at"], mission_id),
+                )
+                self._enqueue_flow_signal_in_transaction(conn, event)
+                should_dispatch = True
+        if should_dispatch:
+            self.dispatch_pending_flow_signals(mission_id)
+        elif replay_signal is not None:
+            unknown_signal = self._pending_flow_dispatch_outcome_unknown(mission_id)
+            if unknown_signal is not None:
+                raise DispatchOutcomeUnknownError(
+                    f"scheduler dispatch outcome unknown for signal {unknown_signal.signal_id}"
+                )
+        return event
+
+    def _allocate_executable_tick(self, mission_id: str) -> dict[str, Any]:
+        exhausted = False
+        result: dict[str, Any] | None = None
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            mission_row = conn.execute("SELECT * FROM missions WHERE mission_id = ?", (mission_id,)).fetchone()
+            if not mission_row:
+                raise KeyError(mission_id)
+            mission = self._row_to_mission(mission_row)
+            decision_rows = conn.execute(
+                "SELECT * FROM mission_decisions WHERE mission_id = ? AND status = 'open' ORDER BY created_at ASC",
+                (mission_id,),
+            ).fetchall()
+            open_decisions = [self._row_to_decision(row) for row in decision_rows]
+            if open_decisions:
+                return {
+                    "status": "blocked_on_human",
+                    "mission": mission_to_dict(mission),
+                    "open_decisions": [decision_to_dict(item) for item in open_decisions],
+                    "prompt": "",
+                }
+            if mission.status != "active":
+                return {
+                    "status": "noop",
+                    "reason": f"mission status is {mission.status}",
+                    "mission": mission_to_dict(mission),
+                    "prompt": "",
+                }
+            used_row = conn.execute(
+                "SELECT COUNT(*) AS n FROM mission_events WHERE mission_id = ? AND event_type = 'tick_prompt_created'",
+                (mission_id,),
+            ).fetchone()
+            used_ticks = int(used_row["n"] if used_row else 0)
+            if mission.budget.max_ticks is not None and used_ticks >= mission.budget.max_ticks:
+                now = _now()
+                conn.execute("UPDATE missions SET status = 'paused', updated_at = ? WHERE mission_id = ?", (now, mission_id))
+                for event_type, summary, payload in (
+                    ("mission_paused", "max tick budget exhausted", {"status": "paused"}),
+                    ("budget_exhausted", "max tick budget exhausted", {"max_ticks": mission.budget.max_ticks}),
+                ):
+                    conn.execute(
+                        """
+                        INSERT INTO mission_events (
+                            event_id, mission_id, event_type, summary, payload_json, idempotency_key, created_at
+                        ) VALUES (?, ?, ?, ?, ?, NULL, ?)
+                        """,
+                        (
+                            f"evt_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+                            mission_id,
+                            event_type,
+                            summary,
+                            _json_dumps(payload),
+                            now,
+                        ),
+                    )
+                exhausted = True
+            else:
+                signal_rows = conn.execute(
+                    """
+                    SELECT * FROM mission_flow_signals
+                    WHERE mission_id = ? AND status = 'pending'
+                    ORDER BY created_at ASC, signal_id ASC
+                    LIMIT 50
+                    """,
+                    (mission_id,),
+                ).fetchall()
+                pending_signals = [self._row_to_flow_signal(row) for row in signal_rows]
+                signal = pending_signals[0] if pending_signals else None
+                event_rows = conn.execute(
+                    "SELECT * FROM mission_events WHERE mission_id = ? ORDER BY created_at DESC LIMIT 12",
+                    (mission_id,),
+                ).fetchall()
+                answered_rows = conn.execute(
+                    "SELECT * FROM mission_decisions WHERE mission_id = ? AND status = 'answered' ORDER BY answered_at DESC LIMIT 5",
+                    (mission_id,),
+                ).fetchall()
+                continuation_token = f"ctn_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}"
+                prompt = build_tick_prompt(
+                    mission,
+                    [self._event_from_row(row) for row in event_rows],
+                    [self._row_to_decision(row) for row in answered_rows],
+                    trigger_signal=signal,
+                    coalesced_signal_count=len(pending_signals),
+                    continuation_token=continuation_token,
+                )
+                mode = "event" if signal else "maintenance"
+                payload: dict[str, Any] = {
+                    "continuation_token": continuation_token,
+                    "dry_run": False,
+                    "mode": mode,
+                    "used_ticks_before": used_ticks,
+                }
+                if signal:
+                    payload["signal"] = flow_signal_to_dict(signal)
+                now = _now()
+                conn.execute(
+                    """
+                    INSERT INTO mission_events (
+                        event_id, mission_id, event_type, summary, payload_json, idempotency_key, created_at
+                    ) VALUES (?, ?, 'tick_prompt_created', 'mission tick prompt generated', ?, NULL, ?)
+                    """,
+                    (
+                        f"evt_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+                        mission_id,
+                        _json_dumps(payload),
+                        now,
+                    ),
+                )
+                if pending_signals:
+                    signal_ids = [item.signal_id for item in pending_signals]
+                    placeholders = ",".join("?" for _ in signal_ids)
+                    conn.execute(
+                        f"UPDATE mission_flow_signals SET status = 'consumed', consumed_at = ? WHERE mission_id = ? AND status = 'pending' AND signal_id IN ({placeholders})",
+                        (now, mission_id, *signal_ids),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO mission_events (
+                            event_id, mission_id, event_type, summary, payload_json, idempotency_key, created_at
+                        ) VALUES (?, ?, 'maintenance_tick', 'periodic maintenance tick generated without pending event signal', ?, NULL, ?)
+                        """,
+                        (
+                            f"evt_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+                            mission_id,
+                            _json_dumps({"used_ticks_before": used_ticks}),
+                            now,
+                        ),
+                    )
+                conn.execute("UPDATE missions SET updated_at = ? WHERE mission_id = ?", (now, mission_id))
+                result = {
+                    "status": "prompt_created",
+                    "mission": mission_to_dict(mission),
+                    "prompt": prompt,
+                    "mode": mode,
+                    "signal": flow_signal_to_dict(signal) if signal else None,
+                    "continuation_token": continuation_token,
+                }
+        if exhausted:
+            return {
+                "status": "budget_exhausted",
+                "mission": mission_to_dict(self.get_mission(mission_id)),
+                "prompt": "",
+            }
+        if result is None:  # pragma: no cover - every transaction branch returns or sets a result
+            raise RuntimeError("mission tick allocation produced no result")
+        return result
+
     def tick(self, mission_id: str, *, dry_run: bool = True) -> dict[str, Any]:
+        if not dry_run:
+            return self._allocate_executable_tick(mission_id)
         mission = self.get_mission(mission_id)
         if not mission:
             raise KeyError(mission_id)
@@ -1152,16 +1904,20 @@ class MissionStore:
             return {"status": "budget_exhausted", "mission": mission_to_dict(self.get_mission(mission_id)), "prompt": ""}
         pending_signals = self.pending_flow_signals(mission_id, limit=50)
         signal = pending_signals[0] if pending_signals else None
+        continuation_token = None if dry_run else f"ctn_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}"
         prompt = build_tick_prompt(
             mission,
             self.list_events(mission_id, limit=12),
             self.answered_decisions(mission_id, limit=5),
             trigger_signal=signal,
             coalesced_signal_count=len(pending_signals),
+            continuation_token=continuation_token,
         )
         event_type = "tick_dry_run" if dry_run else "tick_prompt_created"
         mode = "event" if signal else "maintenance"
         payload: dict[str, Any] = {"dry_run": dry_run, "used_ticks_before": used_ticks, "mode": mode}
+        if continuation_token:
+            payload["continuation_token"] = continuation_token
         if signal:
             payload["signal"] = flow_signal_to_dict(signal)
         self.append_event(mission_id, event_type, "mission tick prompt generated", payload, enqueue_flow=False)
@@ -1183,6 +1939,7 @@ class MissionStore:
             "prompt": prompt,
             "mode": mode,
             "signal": flow_signal_to_dict(signal) if signal else None,
+            "continuation_token": continuation_token,
         }
 
     def count_events(self, mission_id: str, event_types: set[str]) -> int:
@@ -1440,6 +2197,7 @@ def build_tick_prompt(
     *,
     trigger_signal: MissionFlowSignal | None = None,
     coalesced_signal_count: int = 1,
+    continuation_token: str | None = None,
 ) -> str:
     """Build the bounded user-role prompt for one mission advancement tick."""
 
@@ -1460,6 +2218,13 @@ def build_tick_prompt(
         trigger = "periodic maintenance watchdog: no pending event signal; inspect health, drift, and next safe bounded step"
     max_turns = mission.budget.max_turns_per_tick or 8
     total_budget = mission.budget.max_total_usd if mission.budget.max_total_usd is not None else "not-set"
+    continuation_rule = (
+        f'''7. After the stage report is durable, if another dependency-safe bounded step exists and no human/authority/evidence gate is open, request exactly one fenced continuation. The stage report's next_step must exactly match this request:
+   hermes mission continue {mission.mission_id} --continuation-token {continuation_token} --next-step "<next bounded step>" --evidence "stage_report:<event_id>" --evidence "<fresh readback>"
+   This only wakes the governed runner; it does not approve code, expand authority, or bypass budget. Do not call it when stopping on a gate.'''
+        if continuation_token
+        else "7. This is a dry-run prompt: do not request continuation from it."
+    )
     return f"""[Hermes Mission Tick]
 Mission ID: {mission.mission_id}
 Stage: {mission.stage}
@@ -1501,6 +2266,8 @@ Rules:
 5. If user input is needed, create the durable decision gate instead of only describing it:
    hermes mission handoff {mission.mission_id} --question "<decision needed>" --option "<option A>" --option "<option B>" --recommend "<recommended option>"
 6. End with a concise stage report: progress, evidence, risks, next step, and whether user input is needed.
+{continuation_rule}
+8. Do not leave a required review in ephemeral background delegation: a scheduled session can end before that result returns. Complete it synchronously or through a durable external process with an immutable result artifact and explicit `hermes mission review-complete` callback; otherwise write a blocked stage report and keep the writer paused.
 """.strip()
 
 
@@ -1741,6 +2508,18 @@ def cmd_mission(args: argparse.Namespace) -> int:
             else:
                 print(f"Review completion recorded: {event['event_id']}")
             return 0
+        if command == "continue":
+            event = store.append_continuation_request(
+                args.mission_id,
+                continuation_token=args.continuation_token,
+                next_step=args.next_step,
+                evidence=args.evidence or [],
+            )
+            if args.json:
+                _print_json(event)
+            else:
+                print(f"Continuation requested: {event['event_id']}")
+            return 0
         if command == "decide":
             decision = store.answer_decision(args.decision_id, " ".join(args.answer))
             if args.json:
@@ -1777,7 +2556,7 @@ def cmd_mission(args: argparse.Namespace) -> int:
             report = store.report(args.mission_id, limit=args.limit)
             print(report)
             return 0
-    except (KeyError, ValueError) as exc:
+    except (KeyError, ValueError, DispatchOutcomeUnknownError) as exc:
         print(f"Error: {exc}")
         return 2
     print("Run `hermes mission --help` for usage.")

@@ -14621,12 +14621,16 @@ def main():
         cmd_chat(args)
         return
 
-    # Execute the command
+    # Execute the command. Mission handlers opt into shell-style return-code
+    # propagation; legacy and plugin handlers retain historical discard semantics.
     if hasattr(args, "func"):
-        args.func(args)
-    else:
-        parser.print_help()
+        result = args.func(args)
+        if getattr(args, "_propagate_exit_code", False):
+            return result
+        return None
+    parser.print_help()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
