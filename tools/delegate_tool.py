@@ -394,6 +394,8 @@ def _evaluate_adaptive_spawn_shadow(
     ):
         return decision("shadow_abstain", "invalid_shadow_input")
 
+    if child_depth > max_spawn_depth:
+        return decision("shadow_abstain", "invalid_shadow_input")
     if task_count > max_concurrent_children:
         return decision("shadow_deny", "task_count_exceeds_concurrency")
     if requested_role == "leaf":

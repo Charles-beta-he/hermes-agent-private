@@ -96,6 +96,7 @@ Required semantics:
 - task count beyond the provided cap: `shadow_deny`;
 - orchestrator at the static depth floor: `shadow_deny`;
 - orchestrator below the static ceiling: `shadow_abstain` with `missing_decomposition_contract`;
+- child depth beyond the provided static maximum: `shadow_abstain` as a relationally invalid input;
 - malformed input: deterministic `shadow_abstain`, never an exception.
 
 The result is advisory data only and must not be used in a runtime branch.
