@@ -33,6 +33,11 @@ class CLIAgentSetupMixin:
         resumed_runtime = getattr(self, "_resumed_smart_routing_runtime", None)
         if isinstance(resumed_runtime, dict):
             runtime = dict(resumed_runtime)
+            if (
+                str(runtime.get("provider") or "") != str(getattr(self, "provider", "") or "")
+                or str(runtime.get("model") or "") != str(getattr(self, "model", "") or "")
+            ):
+                return
             setattr(self.agent, "_smart_routing_runtime", runtime)
             init_config = getattr(self.agent, "_session_init_model_config", None)
             if isinstance(init_config, dict):
@@ -57,14 +62,27 @@ class CLIAgentSetupMixin:
         if resolved_id != requested_id:
             self.session_id = resolved_id
             self._resume_runtime_resolved_from = requested_id
-        meta = self._session_db.get_session(self.session_id)
+        try:
+            meta = self._session_db.get_session(self.session_id)
+        except Exception:
+            return
         raw_config = meta.get("model_config") if isinstance(meta, dict) else None
         try:
             config = json.loads(raw_config) if isinstance(raw_config, str) else raw_config
         except (TypeError, ValueError):
             return
         route = config.get("smart_routing_runtime") if isinstance(config, dict) else None
-        if not isinstance(route, dict) or "api_key" in route:
+        allowed_route_fields = {
+            "session_id",
+            "provider",
+            "model",
+            "base_url",
+            "api_mode",
+            "tier",
+        }
+        if not isinstance(route, dict) or not set(route).issubset(allowed_route_fields):
+            return
+        if any(not isinstance(value, str) for value in route.values()):
             return
         provider = str(route.get("provider") or "").strip()
         model = str(route.get("model") or "").strip()

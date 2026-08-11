@@ -5,6 +5,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cli import HermesCLI
 
 
@@ -113,10 +115,53 @@ def test_resume_rejects_smart_route_bound_to_another_session():
         assert shell._init_agent() is False
 
 
-def test_resume_rejects_persisted_secret_material():
+@pytest.mark.parametrize(
+    "secret_key",
+    ["api_key", "token", "secret", "password", "database_url"],
+)
+def test_resume_rejects_persisted_secret_material(secret_key):
     meta = _session_meta()
     config = json.loads(meta["model_config"])
-    config["smart_routing_runtime"]["api_key"] = "must-not-be-restored"
+    config["smart_routing_runtime"][secret_key] = "must-not-be-restored"
+    meta["model_config"] = json.dumps(config)
+    db = MagicMock()
+    db.get_session.return_value = meta
+    db.resolve_resume_session_id.return_value = SESSION_ID
+    shell = _resume_cli(db)
+
+    shell._restore_resumed_smart_routing_runtime()
+
+    assert shell.model == "gpt-5.6-sol"
+    assert getattr(shell, "_resumed_smart_routing_runtime", None) is None
+
+
+def test_resume_fails_closed_when_session_metadata_read_raises():
+    db = MagicMock()
+    db.resolve_resume_session_id.return_value = SESSION_ID
+    db.get_session.side_effect = RuntimeError("database unavailable")
+    shell = _resume_cli(db)
+
+    shell._restore_resumed_smart_routing_runtime()
+
+    assert shell.model == "gpt-5.6-sol"
+    assert getattr(shell, "_resumed_smart_routing_runtime", None) is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("session_id", {"bad": "shape"}),
+        ("provider", ["openai-codex"]),
+        ("model", {"name": "gpt-5.5"}),
+        ("base_url", ["https://example.invalid"]),
+        ("api_mode", {"mode": "responses"}),
+        ("tier", ["SIMPLE"]),
+    ],
+)
+def test_resume_rejects_non_string_runtime_fields(field, value):
+    meta = _session_meta()
+    config = json.loads(meta["model_config"])
+    config["smart_routing_runtime"][field] = value
     meta["model_config"] = json.dumps(config)
     db = MagicMock()
     db.get_session.return_value = meta
@@ -157,6 +202,27 @@ def test_resume_resolves_compression_descendant_before_restoring_route():
     assert getattr(shell, "_resume_runtime_resolved_from") == SESSION_ID
 
 
+def test_restored_runtime_is_not_projected_after_credential_fallback_changes_runtime():
+    shell = HermesCLI.__new__(HermesCLI)
+    route = json.loads(_session_meta()["model_config"])["smart_routing_runtime"]
+    shell.agent = SimpleNamespace(
+        provider="fallback-provider",
+        model="fallback-model",
+        _session_init_model_config={},
+        _smart_routing_entrypoint_eligible=True,
+    )
+    shell.provider = "fallback-provider"
+    shell.model = "fallback-model"
+    shell._smart_routing_entrypoint_eligible = False
+    setattr(shell, "_resumed_smart_routing_runtime", route)
+
+    shell._project_smart_routing_entrypoint_eligibility()
+
+    assert shell.agent._smart_routing_entrypoint_eligible is False
+    assert not hasattr(shell.agent, "_smart_routing_runtime")
+    assert "smart_routing_runtime" not in shell.agent._session_init_model_config
+
+
 def test_restored_runtime_is_projected_to_agent_durable_config():
     shell = HermesCLI.__new__(HermesCLI)
     route = json.loads(_session_meta()["model_config"])["smart_routing_runtime"]
@@ -165,6 +231,8 @@ def test_restored_runtime_is_projected_to_agent_durable_config():
         _smart_routing_entrypoint_eligible=True,
     )
     shell._smart_routing_entrypoint_eligible = False
+    shell.provider = route["provider"]
+    shell.model = route["model"]
     setattr(shell, "_resumed_smart_routing_runtime", route)
 
     shell._project_smart_routing_entrypoint_eligibility()
