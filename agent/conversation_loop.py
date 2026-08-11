@@ -1342,7 +1342,37 @@ def _route_smart_model_for_turn(
     conversation_history: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     """Route only at the cache-safe boundary before turn setup/model calls."""
-    from agent.model_router import maybe_route_session
+    from agent.model_router import maybe_route_session, resolve_routing_policy
+
+    session_id = str(getattr(agent, "session_id", "") or "")
+    bound_session = str(getattr(agent, "_smart_routing_session_id", "") or "")
+    if bound_session == session_id and bool(
+        getattr(agent, "_smart_routing_applied", False)
+    ):
+        return {"status": "skipped_already_applied"}
+
+    policy_session = str(
+        getattr(agent, "_smart_routing_policy_session_id", "") or ""
+    )
+    cached_enabled = (
+        getattr(agent, "_smart_routing_policy_enabled", None)
+        if policy_session == session_id
+        else None
+    )
+    config = None
+    if cached_enabled is None:
+        try:
+            from hermes_cli.config import load_config_readonly
+
+            loaded = load_config_readonly()
+            config = loaded if isinstance(loaded, dict) else {}
+        except Exception:
+            config = {}
+        cached_enabled = resolve_routing_policy(config).enabled
+        agent._smart_routing_policy_session_id = session_id
+        agent._smart_routing_policy_enabled = cached_enabled
+    if cached_enabled is not True:
+        return {"status": "disabled"}
 
     history = conversation_history
     if not history:
@@ -1369,6 +1399,7 @@ def _route_smart_model_for_turn(
         agent,
         user_message=user_message,
         messages=messages,
+        config=config,
     )
 
 

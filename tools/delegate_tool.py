@@ -3264,6 +3264,16 @@ def _route_task_creds(
         _receipt("skipped_explicit_delegation_model")
         return creds
 
+    parent_session_id = str(getattr(parent_agent, "session_id", "") or "")
+    if getattr(parent_agent, "_smart_routing_entrypoint_eligible", False) is not True:
+        _receipt("skipped_parent_entrypoint_not_eligible")
+        return creds
+    if parent_session_id and str(
+        getattr(parent_agent, "_smart_routing_user_override_session_id", "") or ""
+    ) == parent_session_id:
+        _receipt("skipped_parent_explicit_override")
+        return creds
+
     apply_to_delegation = smart.get("apply_to_delegation", True)
     if not isinstance(apply_to_delegation, bool):
         _receipt("skipped_invalid_apply_to_delegation")

@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from agent.model_router import (
     RouteTarget,
     _parse_classifier_tier,
@@ -319,6 +321,7 @@ def test_switch_failure_is_truthfully_receipted_and_original_runtime_survives(tm
 
 def test_delegation_routes_fresh_child_credentials_and_records_resolution(tmp_path):
     parent = SimpleNamespace(
+        _smart_routing_entrypoint_eligible=True,
         session_id="parent-session",
         model="parent-model",
         provider="parent-provider",
@@ -360,8 +363,89 @@ def test_delegation_routes_fresh_child_credentials_and_records_resolution(tmp_pa
     assert receipt["status"] == "routing_credentials_resolved"
 
 
+@pytest.mark.parametrize(
+    ("eligible", "override_session", "expected_status"),
+    [
+        (False, "", "skipped_parent_entrypoint_not_eligible"),
+        (True, "parent-pinned", "skipped_parent_explicit_override"),
+    ],
+)
+def test_parent_runtime_authority_blocks_delegation_routing(
+    tmp_path, eligible, override_session, expected_status
+):
+    receipt_path = tmp_path / "model-routing.jsonl"
+    parent = SimpleNamespace(
+        session_id="parent-pinned",
+        model="pinned-model",
+        provider="pinned-provider",
+        _smart_routing_entrypoint_eligible=eligible,
+        _smart_routing_user_override_session_id=override_session,
+    )
+    base = {
+        "model": None,
+        "provider": None,
+        "base_url": None,
+        "api_key": None,
+        "api_mode": None,
+    }
+    classifier = MagicMock(return_value="REASONING")
+    resolver = MagicMock()
+
+    unchanged = _route_task_creds(
+        base,
+        "Prove the architecture invariants",
+        parent,
+        config=_legacy_config(),
+        classifier=classifier,
+        runtime_resolver=resolver,
+        receipt_path=receipt_path,
+    )
+
+    assert unchanged == base
+    classifier.assert_not_called()
+    resolver.assert_not_called()
+    receipt = json.loads(receipt_path.read_text().strip())
+    assert receipt["status"] == expected_status
+    assert receipt["selected"] is None
+    assert receipt["actual"] == {
+        "provider": "pinned-provider",
+        "model": "pinned-model",
+    }
+
+
+def test_direct_parent_without_authority_marker_blocks_delegation_routing(tmp_path):
+    classifier = MagicMock(return_value="REASONING")
+    resolver = MagicMock()
+    base = {
+        "model": None,
+        "provider": None,
+        "base_url": None,
+        "api_key": None,
+        "api_mode": None,
+    }
+
+    unchanged = _route_task_creds(
+        base,
+        "Prove the architecture invariants",
+        SimpleNamespace(
+            session_id="direct-parent",
+            model="direct-model",
+            provider="direct-provider",
+        ),
+        config=_legacy_config(),
+        classifier=classifier,
+        runtime_resolver=resolver,
+        receipt_path=tmp_path / "model-routing.jsonl",
+    )
+
+    assert unchanged == base
+    classifier.assert_not_called()
+    resolver.assert_not_called()
+
+
 def test_explicit_delegation_model_wins_over_smart_routing(tmp_path):
     parent = SimpleNamespace(
+        _smart_routing_entrypoint_eligible=True,
         session_id="parent-session",
         model="parent-model",
         provider="parent-provider",
@@ -395,6 +479,7 @@ def test_explicit_delegation_model_wins_over_smart_routing(tmp_path):
 
 def test_explicit_delegation_api_key_pin_wins_over_smart_routing(tmp_path):
     parent = SimpleNamespace(
+        _smart_routing_entrypoint_eligible=True,
         session_id="parent-session",
         model="parent-model",
         provider="parent-provider",
@@ -431,6 +516,7 @@ def test_explicit_delegation_api_key_pin_wins_over_smart_routing(tmp_path):
 def test_disabled_delegation_routing_emits_no_resolution_receipt(tmp_path):
     receipt_path = tmp_path / "model-routing.jsonl"
     parent = SimpleNamespace(
+        _smart_routing_entrypoint_eligible=True,
         session_id="parent-session",
         model="parent-model",
         provider="parent-provider",
@@ -457,6 +543,7 @@ def test_apply_to_delegation_false_preserves_parent_inheritance(tmp_path):
     config = _legacy_config()
     config["smart_model_routing"]["apply_to_delegation"] = False
     parent = SimpleNamespace(
+        _smart_routing_entrypoint_eligible=True,
         session_id="parent-session",
         model="parent-model",
         provider="parent-provider",
@@ -491,6 +578,7 @@ def test_apply_to_delegation_false_preserves_parent_inheritance(tmp_path):
 def test_batch_child_routing_is_independent_under_concurrency(tmp_path):
     config = _legacy_config()
     parent = SimpleNamespace(
+        _smart_routing_entrypoint_eligible=True,
         session_id="parent-batch",
         model="parent-model",
         provider="parent-provider",
@@ -557,6 +645,7 @@ def test_batch_child_routing_is_independent_under_concurrency(tmp_path):
 def test_turn_start_wiring_supplies_history_plus_current_user(monkeypatch):
     from agent.conversation_loop import _route_smart_model_for_turn
 
+    monkeypatch.setattr("hermes_cli.config.load_config_readonly", _legacy_config)
     calls = []
     monkeypatch.setattr(
         "agent.model_router.maybe_route_session",
@@ -577,6 +666,77 @@ def test_turn_start_wiring_supplies_history_plus_current_user(monkeypatch):
     assert calls[0][1]["user_message"] == "current"
     assert calls[0][1]["messages"][-1] == {"role": "user", "content": "current"}
     assert len(calls[0][1]["messages"]) == 3
+
+
+def test_turn_start_disabled_policy_skips_history_and_caches_gate(monkeypatch):
+    from agent.conversation_loop import _route_smart_model_for_turn
+
+    config_loads = MagicMock(return_value={})
+    durable_reads = MagicMock(side_effect=AssertionError("disabled routing read history"))
+    monkeypatch.setattr("hermes_cli.config.load_config_readonly", config_loads)
+    agent = SimpleNamespace(
+        session_id="disabled-session",
+        _session_db=SimpleNamespace(get_messages=durable_reads),
+    )
+
+    first = _route_smart_model_for_turn(
+        agent, user_message="first", conversation_history=None
+    )
+    second = _route_smart_model_for_turn(
+        agent, user_message="second", conversation_history=None
+    )
+
+    assert first["status"] == "disabled"
+    assert second["status"] == "disabled"
+    config_loads.assert_called_once_with()
+    durable_reads.assert_not_called()
+
+
+def test_turn_start_already_applied_skips_config_and_history(monkeypatch):
+    from agent.conversation_loop import _route_smart_model_for_turn
+
+    config_loads = MagicMock(side_effect=AssertionError("already-applied routing loaded config"))
+    durable_reads = MagicMock(side_effect=AssertionError("already-applied routing read history"))
+    monkeypatch.setattr("hermes_cli.config.load_config_readonly", config_loads)
+    agent = SimpleNamespace(
+        session_id="applied-session",
+        _smart_routing_session_id="applied-session",
+        _smart_routing_applied=True,
+        _session_db=SimpleNamespace(get_messages=durable_reads),
+    )
+
+    result = _route_smart_model_for_turn(
+        agent, user_message="next", conversation_history=None
+    )
+
+    assert result["status"] == "skipped_already_applied"
+    config_loads.assert_not_called()
+    durable_reads.assert_not_called()
+
+
+def test_turn_start_new_session_rearms_after_applied_fast_path(monkeypatch):
+    from agent.conversation_loop import _route_smart_model_for_turn
+
+    monkeypatch.setattr("hermes_cli.config.load_config_readonly", _legacy_config)
+    calls = []
+    monkeypatch.setattr(
+        "agent.model_router.maybe_route_session",
+        lambda agent, **kwargs: calls.append((agent, kwargs)) or {"status": "applied"},
+    )
+    agent = SimpleNamespace(
+        session_id="new-session",
+        _smart_routing_session_id="old-session",
+        _smart_routing_applied=True,
+    )
+
+    result = _route_smart_model_for_turn(
+        agent,
+        user_message="first",
+        conversation_history=[{"role": "user", "content": "old"}],
+    )
+
+    assert result["status"] == "applied"
+    assert len(calls) == 1
 
 
 def test_turn_start_uses_durable_history_when_caller_omits_it(monkeypatch):
@@ -783,6 +943,7 @@ def test_configured_classifier_receives_current_agent_runtime(monkeypatch):
 
 def test_explicit_delegation_command_pin_wins_over_smart_routing(tmp_path):
     parent = SimpleNamespace(
+        _smart_routing_entrypoint_eligible=True,
         session_id="parent-command-pin",
         model="parent-model",
         provider="copilot-acp",
@@ -1312,6 +1473,7 @@ def test_string_false_apply_to_delegation_fails_closed(tmp_path):
     config = _legacy_config()
     config["smart_model_routing"]["apply_to_delegation"] = "false"
     parent = SimpleNamespace(
+        _smart_routing_entrypoint_eligible=True,
         session_id="parent-malformed-apply",
         model="parent-model",
         provider="parent-provider",
