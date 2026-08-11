@@ -139,6 +139,7 @@ def test_new_session_routes_once_and_receipt_binds_actual_runtime(tmp_path):
         model="gpt-5.6-sol",
         provider="openai-codex",
         base_url="https://example.invalid",
+        api_mode="responses",
         api_key="",
         _smart_routing_entrypoint_eligible=True,
         switch_model=MagicMock(),
@@ -159,6 +160,7 @@ def test_new_session_routes_once_and_receipt_binds_actual_runtime(tmp_path):
         agent.model = kwargs["new_model"]
         agent.provider = kwargs["new_provider"]
         agent.base_url = kwargs["base_url"]
+        agent.api_mode = kwargs["api_mode"]
 
     agent.switch_model.side_effect = switch_model
 
@@ -191,6 +193,8 @@ def test_new_session_routes_once_and_receipt_binds_actual_runtime(tmp_path):
         "session_id": "session-new",
         "provider": "openai-codex",
         "model": "gpt-5.5",
+        "base_url": "https://routed.invalid",
+        "api_mode": "chat_completions",
         "tier": "MEDIUM",
     }
     agent.switch_model.assert_called_once()
@@ -1224,6 +1228,26 @@ def test_main_session_process_source_route_fails_closed(tmp_path):
     )
     assert result["status"] == "unsupported_hot_switch_runtime"
     agent.switch_model.assert_not_called()
+
+
+def test_rebind_smart_routing_runtime_to_compression_descendant():
+    from agent.model_router import rebind_smart_routing_runtime
+
+    agent = SimpleNamespace(
+        _smart_routing_runtime={
+            "session_id": "parent",
+            "provider": "openai-codex",
+            "model": "gpt-5.5",
+            "base_url": "",
+            "api_mode": "responses",
+            "tier": "SIMPLE",
+        },
+        _session_init_model_config={"max_iterations": 90},
+    )
+
+    assert rebind_smart_routing_runtime(agent, "descendant") is True
+    assert agent._smart_routing_runtime["session_id"] == "descendant"
+    assert agent._session_init_model_config["smart_routing_runtime"] == agent._smart_routing_runtime
 
 
 def test_successful_route_updates_durable_model_config_before_session_create(tmp_path):
