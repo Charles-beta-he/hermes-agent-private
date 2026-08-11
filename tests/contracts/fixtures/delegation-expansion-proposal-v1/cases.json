@@ -1,0 +1,53 @@
+[
+  {
+    "name": "valid plan-bound frontier",
+    "valid": true,
+    "value": {
+      "schema_version": "delegation_expansion_proposal_v1",
+      "plan_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "child_task_ids": ["inspect-a", "inspect-b"],
+      "synthesis_task_id": "synthesize"
+    }
+  },
+  {
+    "name": "invalid duplicate child task id",
+    "valid": false,
+    "value": {
+      "schema_version": "delegation_expansion_proposal_v1",
+      "plan_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "child_task_ids": ["inspect-a", "inspect-a"],
+      "synthesis_task_id": "synthesize"
+    }
+  },
+  {
+    "name": "invalid empty child frontier",
+    "valid": false,
+    "value": {
+      "schema_version": "delegation_expansion_proposal_v1",
+      "plan_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "child_task_ids": [],
+      "synthesis_task_id": "synthesize"
+    }
+  },
+  {
+    "name": "invalid digest",
+    "valid": false,
+    "value": {
+      "schema_version": "delegation_expansion_proposal_v1",
+      "plan_digest": "aaaaaaaa",
+      "child_task_ids": ["inspect-a"],
+      "synthesis_task_id": "synthesize"
+    }
+  },
+  {
+    "name": "invalid unknown field",
+    "valid": false,
+    "value": {
+      "schema_version": "delegation_expansion_proposal_v1",
+      "plan_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "child_task_ids": ["inspect-a"],
+      "synthesis_task_id": "synthesize",
+      "authority_granted": true
+    }
+  }
+]

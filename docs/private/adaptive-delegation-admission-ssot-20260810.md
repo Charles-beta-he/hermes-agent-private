@@ -4,6 +4,8 @@ schema: hermes_adaptive_delegation_admission_ssot_v1
 id: adaptive-delegation-admission-20260810
 status: proposed_compute_only_shadow
 baseline_head: 94248a19e3a158b8d2c20f98fa811e77d9c783f0
+phase2_successor_base: 373a52f377b618e081cabc630b7a56b938a96dba
+phase2_status: candidate_contract_only
 
 ## Objective model
 
@@ -141,11 +143,63 @@ git restore tools/delegate_tool.py tests/tools/test_delegate.py
 git clean -f docs/private/adaptive-delegation-admission-ssot-20260810.md
 ```
 
+## Phase 2 contract reconciliation — canonical graph reuse
+
+The target base already contains a stronger canonical decomposition boundary than this
+Phase 0/1 note originally accounted for:
+
+- `WorkflowDefinitionV1` is the authored decomposition contract;
+- `compile_workflow_definition_v1` validates task identity, dependency closure and
+  acyclicity, unordered write ownership, authority monotonicity, evidence requirements,
+  independent verification, loop bounds, stop conditions and handoff completeness;
+- `WorkflowExecutionPlanV1` is its deterministic, digest-bound, authority-neutral
+  projection with `authority_granted=false` and `executable=false`.
+
+Those assets are present in the exact `private/main` base used by this successor slice.
+They remain the single source of truth for children/tasks, dependency edges,
+writes/resources, owner identity, task authority, acceptance evidence and graph rank.
+Adaptive delegation must compose with them; it must not introduce a second unrelated
+`ExpansionProposal` DAG or copy those fields into a drifting schema.
+
+The only missing Phase 2 object was therefore a narrow delegation-specific admission
+envelope. This slice defines `DelegationExpansionProposalV1`, which references an exact
+compiled plan and selects:
+
+- `plan_digest` — exact identity of the already validated canonical plan;
+- `child_task_ids` — a unique, non-empty subset of plan tasks proposed as one direct
+  fan-out frontier;
+- `synthesis_task_id` — one distinct plan task transitively downstream of every selected
+  child.
+
+The proposal owns no authority and no budget. `requested_child_nodes` is a derived
+count of the immediate selected frontier only; it is not a total-tree budget request.
+Remaining tree budget, current depth, concurrency, pause state,
+kill-switch state, caller capabilities and side-effect ceiling are central admission
+context owned by the runtime, never caller-provided proposal fields. Per-child budget is
+assigned only after central admission; descendants cannot self-declare or widen it.
+
+A deterministic contract-only validator compiles the definition, binds the proposal
+to the resulting plan digest, requires selected children to form an antichain, requires the
+synthesis node to be a strict descendant of every child, and emits only a non-executable,
+authority-neutral projection. It must not import into or branch the live `delegate_task`
+path until tree-wide budget and cancellation gates exist.
+
+Phase 2 non-goals:
+
+- no second graph schema, planner, model call, prompt/schema field or public tool field;
+- no runtime registration, child construction, scheduling, execution or persistence;
+- no new config/environment key, telemetry, log field or gateway behavior;
+- no inference that a valid proposal authorizes delegation;
+- no weakening or replacement of existing depth, concurrency, role, pause or
+  kill-switch gates.
+
 ## Future phases — not authorized by this SSOT
 
 A future `adaptive_v1` enforcement phase must separately define and certify:
 
-- a versioned `ExpansionProposal` with decomposition rank, children, dependency edges, write/resource ownership, synthesis owner, evidence contract and budget split;
+- central admission context that consumes the inert `DelegationExpansionProposalV1`
+  projection while retaining `WorkflowDefinitionV1` / `WorkflowExecutionPlanV1` as the
+  only decomposition DAG;
 - a tree-wide node/spawn budget distinct from the existing model-call `IterationBudget`;
 - global active-node backpressure and structured cancellation;
 - deterministic central admission, with descendants unable to widen inherited authority or budgets;

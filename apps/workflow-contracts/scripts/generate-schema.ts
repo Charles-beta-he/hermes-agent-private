@@ -2,6 +2,10 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 import { toClosureV1JsonSchema } from '../src/closure'
+import {
+  toDelegationExpansionProjectionV1JsonSchema,
+  toDelegationExpansionProposalV1JsonSchema,
+} from '../src/delegation-expansion-proposal'
 import { toEvidenceV1JsonSchema } from '../src/evidence'
 import { toVerifierVoteV1JsonSchema } from '../src/verifier-vote'
 import { toWorkflowDefinitionV1JsonSchema } from '../src/workflow-definition'
@@ -34,6 +38,14 @@ const schemas = [
   ['evidence-v1.schema.json', toEvidenceV1JsonSchema()],
   ['verifier-vote-v1.schema.json', toVerifierVoteV1JsonSchema()],
   ['closure-v1.schema.json', toClosureV1JsonSchema()],
+  [
+    'delegation-expansion-proposal-v1.schema.json',
+    toDelegationExpansionProposalV1JsonSchema(),
+  ],
+  [
+    'delegation-expansion-projection-v1.schema.json',
+    toDelegationExpansionProjectionV1JsonSchema(),
+  ],
   ['workflow-definition-v1.schema.json', toWorkflowDefinitionV1JsonSchema()],
   ['workflow-artifact-v1.schema.json', toWorkflowArtifactV1JsonSchema()],
   ['workflow-mutation-v1.schema.json', toWorkflowMutationV1JsonSchema()],
@@ -71,6 +83,8 @@ const serializedSchemas = new Map(
 
 const packagedSchemaNames = [
   'workflow-run-event-v1.schema.json',
+  'delegation-expansion-proposal-v1.schema.json',
+  'delegation-expansion-projection-v1.schema.json',
   'workflow-definition-v1.schema.json',
   'workflow-artifact-v1.schema.json',
   'workflow-mutation-v1.schema.json',
