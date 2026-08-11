@@ -450,6 +450,17 @@ def _receipt_base(agent: Any, *, scope: str, decision: Optional[RouteDecision] =
 def _persist_runtime_identity(agent: Any, session_id: str) -> None:
     """Keep fresh and pre-created session rows aligned with the active runtime."""
     model_config = dict(getattr(agent, "_session_init_model_config", {}) or {})
+    route_runtime = dict(getattr(agent, "_smart_routing_runtime", {}) or {})
+    durable_route = {
+        "session_id": str(session_id),
+        "provider": str(getattr(agent, "provider", "") or ""),
+        "model": str(getattr(agent, "model", "") or ""),
+        "base_url": str(getattr(agent, "base_url", "") or ""),
+        "api_mode": str(getattr(agent, "api_mode", "") or ""),
+        "tier": str(route_runtime.get("tier") or ""),
+    }
+    model_config["smart_routing_runtime"] = durable_route
+    agent._smart_routing_runtime = dict(durable_route)
     session_db = getattr(agent, "_session_db", None)
     session_db_created = bool(getattr(agent, "_session_db_created", False))
     if session_db is not None and session_db_created:

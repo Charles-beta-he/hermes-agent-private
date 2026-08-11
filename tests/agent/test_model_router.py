@@ -1257,6 +1257,14 @@ def test_successful_route_updates_durable_model_config_before_session_create(tmp
         "model": "gpt-5.5", "provider": "openai-codex",
         "base_url": "https://new.invalid", "api_mode": "codex_responses",
     }.items()
+    assert agent._session_init_model_config["smart_routing_runtime"] == {
+        "session_id": "session-durable",
+        "provider": "openai-codex",
+        "model": "gpt-5.5",
+        "base_url": "https://new.invalid",
+        "api_mode": "codex_responses",
+        "tier": "MEDIUM",
+    }
 
 
 def test_successful_route_updates_existing_session_db_row(tmp_path):
