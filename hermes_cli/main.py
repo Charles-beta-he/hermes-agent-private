@@ -255,6 +255,37 @@ def _try_termux_ultrafast_version() -> bool:
 if _try_termux_ultrafast_version():
     raise SystemExit(0)
 
+
+def _try_semantic_projection_read_only_fastpath() -> bool:
+    """Dispatch the semantic projector before mutable Hermes bootstrap imports.
+
+    The public command promises no durable writeback.  Importing the ordinary
+    CLI stack initializes logging, state, caches, and startup receipts before
+    argparse dispatch, so this exact read-only surface must take a smaller path.
+    """
+    if sys.argv[1:3] != ["agent-os", "semantic-project"]:
+        return False
+
+    import argparse as _argparse
+
+    parser = _argparse.ArgumentParser(prog="hermes agent-os semantic-project")
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--evaluation-time", default=None)
+    parser.add_argument("--home", default=None)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(sys.argv[3:])
+    args.agent_os_action = "semantic-project"
+
+    from hermes_cli.subcommands.agent_os import cmd_agent_os
+
+    cmd_agent_os(args)
+    return True
+
+
+if _try_semantic_projection_read_only_fastpath():
+    raise SystemExit(0)
+
+
 import argparse
 import hashlib
 import json
