@@ -1355,6 +1355,15 @@ def test_successful_route_round_trips_real_session_db_without_secrets(tmp_path):
                 "max_iterations": 90,
                 "service_tier": "priority",
                 "reasoning_config": {"enabled": True, "effort": "high"},
+                "api_key": "old-secret-not-preserved",
+                "smart_routing_runtime": {
+                    "session_id": session_id,
+                    "provider": "stale-provider",
+                    "model": "stale-model",
+                    "base_url": "https://stale.invalid",
+                    "api_mode": "chat_completions",
+                    "tier": "SIMPLE",
+                },
             },
         )
         agent = SimpleNamespace(
@@ -1395,6 +1404,7 @@ def test_successful_route_round_trips_real_session_db_without_secrets(tmp_path):
         )
 
         row = db.get_session(session_id)
+        assert row is not None
         persisted = json.loads(row["model_config"])
         assert result["status"] == "applied"
         assert row["model"] == "gpt-5.5"
@@ -1408,6 +1418,15 @@ def test_successful_route_round_trips_real_session_db_without_secrets(tmp_path):
         }.items()
         assert "api_key" not in persisted
         assert "secret-not-persisted" not in row["model_config"]
+        assert "old-secret-not-preserved" not in row["model_config"]
+        assert persisted["smart_routing_runtime"] == {
+            "session_id": session_id,
+            "provider": "openai-codex",
+            "model": "gpt-5.5",
+            "base_url": "https://new.invalid",
+            "api_mode": "codex_responses",
+            "tier": "MEDIUM",
+        }
     finally:
         db.close()
 

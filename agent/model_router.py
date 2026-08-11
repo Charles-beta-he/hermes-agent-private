@@ -494,6 +494,8 @@ def _persist_runtime_identity(agent: Any, session_id: str) -> None:
                 model_config = latest
         except Exception:
             logger.warning("failed to read durable runtime identity", exc_info=True)
+    # The active route always replaces a stale marker from a pre-created row.
+    model_config["smart_routing_runtime"] = dict(durable_route)
     # Runtime identity persistence is intentionally non-secret even if an older
     # row or initialization snapshot accidentally contains a credential field.
     model_config.pop("api_key", None)
