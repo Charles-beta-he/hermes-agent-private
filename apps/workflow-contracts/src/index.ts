@@ -4,6 +4,14 @@ export {
   toClosureV1JsonSchema,
 } from './closure'
 export {
+  type DelegationExpansionProposalV1,
+  DelegationExpansionProposalV1Schema,
+  type DelegationExpansionProjectionV1,
+  DelegationExpansionProjectionV1Schema,
+  toDelegationExpansionProposalV1JsonSchema,
+  toDelegationExpansionProjectionV1JsonSchema,
+} from './delegation-expansion-proposal'
+export {
   EvidenceV1Schema,
   toEvidenceV1JsonSchema,
   type EvidenceV1,

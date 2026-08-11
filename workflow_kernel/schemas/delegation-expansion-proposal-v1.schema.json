@@ -1,0 +1,37 @@
+{
+  "$id": "https://hermes-agent.local/schemas/delegation-expansion-proposal-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "delegation_expansion_proposal_v1"
+    },
+    "plan_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "child_task_ids": {
+      "minItems": 1,
+      "maxItems": 256,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+      },
+      "uniqueItems": true
+    },
+    "synthesis_task_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "plan_digest",
+    "child_task_ids",
+    "synthesis_task_id"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes DelegationExpansionProposalV1"
+}
