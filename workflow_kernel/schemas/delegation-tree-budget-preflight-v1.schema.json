@@ -1,0 +1,114 @@
+{
+  "$id": "https://hermes-agent.local/schemas/delegation-tree-budget-preflight-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "hermes_delegation_tree_budget_preflight_v1"
+    },
+    "tree_budget_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+    },
+    "snapshot_revision": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "budget_snapshot_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "proposal_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "requested_child_nodes": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 256
+    },
+    "capacity_fit_at_snapshot": {
+      "type": "boolean"
+    },
+    "reason_codes": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "string",
+          "enum": [
+            "tree_capacity_available_at_snapshot",
+            "tree_capacity_insufficient_at_snapshot"
+          ]
+        }
+      ]
+    },
+    "authority_granted": {
+      "type": "boolean",
+      "const": false
+    },
+    "executable": {
+      "type": "boolean",
+      "const": false
+    },
+    "reservation_committed": {
+      "type": "boolean",
+      "const": false
+    },
+    "ledger_mutated": {
+      "type": "boolean",
+      "const": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "tree_budget_id",
+    "snapshot_revision",
+    "budget_snapshot_digest",
+    "proposal_digest",
+    "requested_child_nodes",
+    "capacity_fit_at_snapshot",
+    "reason_codes",
+    "authority_granted",
+    "executable",
+    "reservation_committed",
+    "ledger_mutated"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes DelegationTreeBudgetPreflightV1",
+  "oneOf": [
+    {
+      "properties": {
+        "capacity_fit_at_snapshot": {
+          "const": true
+        },
+        "reason_codes": {
+          "const": [
+            "tree_capacity_available_at_snapshot"
+          ]
+        }
+      },
+      "required": [
+        "capacity_fit_at_snapshot",
+        "reason_codes"
+      ]
+    },
+    {
+      "properties": {
+        "capacity_fit_at_snapshot": {
+          "const": false
+        },
+        "reason_codes": {
+          "const": [
+            "tree_capacity_insufficient_at_snapshot"
+          ]
+        }
+      },
+      "required": [
+        "capacity_fit_at_snapshot",
+        "reason_codes"
+      ]
+    }
+  ]
+}
