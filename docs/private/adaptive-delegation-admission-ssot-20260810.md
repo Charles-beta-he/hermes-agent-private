@@ -173,6 +173,9 @@ compiled plan and selects:
 
 The proposal owns no authority and no budget. `requested_child_nodes` is a derived
 count of the immediate selected frontier only; it is not a total-tree budget request.
+The published Draft 2020-12 projection schema encodes the same count relation with
+bounded `oneOf` branches for frontier sizes 1 through 256, so raw JSON Schema
+consumers cannot accept a count that contradicts `child_task_ids.length`.
 Remaining tree budget, current depth, concurrency, pause state,
 kill-switch state, caller capabilities and side-effect ceiling are central admission
 context owned by the runtime, never caller-provided proposal fields. Per-child budget is
@@ -192,6 +195,63 @@ Phase 2 non-goals:
 - no inference that a valid proposal authorizes delegation;
 - no weakening or replacement of existing depth, concurrency, role, pause or
   kill-switch gates.
+
+## Phase 3 contract-only capacity preflight — no reservation
+
+The next smallest non-duplicative seam is `DelegationTreeBudgetPreflightV1`. It
+consumes only:
+
+- an already validated `DelegationExpansionProjectionV1`, whose
+  `requested_child_nodes` remains derived from its unique immediate child frontier and
+  whose `proposal_digest` binds that normalized frontier; and
+- a centrally supplied `DelegationTreeBudgetSnapshotV1` containing only an opaque
+  `tree_budget_id`, positive `snapshot_revision`, and bounded non-negative
+  `remaining_node_capacity`.
+
+Snapshot numeric fields follow JSON Schema number semantics: finite integral
+representations are normalized to integers before hashing, while booleans, strings,
+fractional or non-finite numbers, unsafe integers, and host-only integer subclasses are
+rejected. This preserves Draft 2020-12/Zod/Python parity instead of pretending JSON
+Schema can distinguish `1` from `1.0`.
+
+The pure evaluator emits `capacity_fit_at_snapshot` and exactly one corresponding reason
+code; the published Draft 2020-12 schema encodes both that cardinality and the fit/reason
+relation. The output also carries exact snapshot/proposal bindings. It always emits
+`authority_granted=false`, `executable=false`, `reservation_committed=false`, and
+`ledger_mutated=false`. It emits no residual capacity, ledger delta, admission token,
+runtime handle, or command.
+
+Detached output validators establish structural validity and internal content binding only.
+They do not prove that a syntactically valid digest or normalized projection originated from
+the canonical Phase 2 compiler or a trusted snapshot source. Source provenance requires a
+future source-bound verification operation and must not be inferred from this contract.
+
+This object is intentionally named a preflight rather than a reservation. Two sibling
+checks can observe the same immutable snapshot and both fit. Therefore the result is
+advisory at that snapshot only; a future central ledger/CAS transaction must revalidate
+and atomically commit before any child construction. Phase 3 does not define that
+transaction and remains unreachable from live delegation, config, gateway, TUI, hooks,
+or `IterationBudget`.
+
+Ownership remains unchanged:
+
+- `WorkflowDefinitionV1` / `WorkflowExecutionPlanV1` own the only decomposition DAG;
+- the Phase 2 projection owns immediate child demand and proposal identity;
+- `IterationBudget` owns per-agent model-call iterations;
+- `tools.delegate_tool` owns current depth, per-call concurrency, spawn pause,
+  active-subagent registry, role gates, and targeted interrupt;
+- `AIAgent.interrupt()` owns recursive cancellation propagation;
+- a separately specified future central ledger owns authoritative tree capacity and
+  atomic reservation.
+
+Phase 3 non-goals:
+
+- no runtime admission, reservation, persistence, lock, CAS, telemetry, or logging;
+- no total/admitted/active-node accounting model;
+- no depth, concurrency, backpressure, cancellation, authority, capability, role, or
+  side-effect inheritance;
+- no config/environment/public tool/prompt field or gateway/TUI change;
+- no claim that tree-budget enforcement or adaptive-depth execution is enabled.
 
 ## Future phases — not authorized by this SSOT
 
