@@ -2611,6 +2611,7 @@ class TestSilentDelivery:
             "Agent completed but produced empty response (model error, timeout, or misconfiguration)",
             delivery_error=None,
             run_trigger_generation=0,
+            run_claim_id=None,
         )
 
 

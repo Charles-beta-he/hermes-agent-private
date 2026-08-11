@@ -8600,20 +8600,24 @@ def _call_cron_for_profile(target_profile: Optional[str], func_name: str, *args,
             set_hermes_home_override,
         )
 
-        old_cron_dir = cron_jobs.CRON_DIR
-        old_jobs_file = cron_jobs.JOBS_FILE
-        old_output_dir = cron_jobs.OUTPUT_DIR
-        token = set_hermes_home_override(str(home))
-        cron_jobs.CRON_DIR = home / "cron"
-        cron_jobs.JOBS_FILE = cron_jobs.CRON_DIR / "jobs.json"
-        cron_jobs.OUTPUT_DIR = cron_jobs.CRON_DIR / "output"
-        try:
-            result = getattr(cron_jobs, func_name)(*args, **kwargs)
-        finally:
-            cron_jobs.CRON_DIR = old_cron_dir
-            cron_jobs.JOBS_FILE = old_jobs_file
-            cron_jobs.OUTPUT_DIR = old_output_dir
-            reset_hermes_home_override(token)
+        # Share cron.jobs' process-wide lock while its module globals point at a
+        # non-default store. Ticker and heartbeat mutations acquire the same
+        # RLock through _jobs_lock(), so they cannot observe temporary paths.
+        with cron_jobs._jobs_file_lock:
+            old_cron_dir = cron_jobs.CRON_DIR
+            old_jobs_file = cron_jobs.JOBS_FILE
+            old_output_dir = cron_jobs.OUTPUT_DIR
+            token = set_hermes_home_override(str(home))
+            cron_jobs.CRON_DIR = home / "cron"
+            cron_jobs.JOBS_FILE = cron_jobs.CRON_DIR / "jobs.json"
+            cron_jobs.OUTPUT_DIR = cron_jobs.CRON_DIR / "output"
+            try:
+                result = getattr(cron_jobs, func_name)(*args, **kwargs)
+            finally:
+                cron_jobs.CRON_DIR = old_cron_dir
+                cron_jobs.JOBS_FILE = old_jobs_file
+                cron_jobs.OUTPUT_DIR = old_output_dir
+                reset_hermes_home_override(token)
 
     if isinstance(result, list):
         return [_annotate_cron_job(j, profile_name, home) for j in result]
@@ -8858,34 +8862,32 @@ async def delete_cron_job(job_id: str, profile: Optional[str] = None):
 
 
 def _fire_cron_job_for_profile(profile: str, job_id: str) -> bool:
-    """Run ONE due cron job end-to-end for ``profile`` via the resolved
-    scheduler provider's ``fire_due`` (store CAS claim + ``run_one_job``).
+    """Run one profile cron fire in an isolated child process.
 
-    Retargets the ``cron.jobs`` module globals to the profile's cron dir under
-    the shared lock — same mechanism as ``_call_cron_for_profile`` — so the
-    claim and the run operate on the right profile's ``jobs.json``. Runs with
-    no live adapters; delivery falls back to the per-platform send path (the
-    dashboard process has no gateway adapter handles, exactly like the desktop
-    cron path above).
+    The child binds HERMES_HOME before importing cron modules. A long agent turn
+    and its heartbeat therefore never retarget process-global paths used by the
+    dashboard or default-profile ticker. The child has no live adapters;
+    delivery uses the same per-platform fallback as the desktop cron path.
     """
-    _profile_name, home = _cron_profile_home(profile)
-    with _CRON_PROFILE_LOCK:
-        from cron import jobs as cron_jobs
-        from cron.scheduler_provider import resolve_cron_scheduler
+    import subprocess
+    import sys
 
-        old_cron_dir = cron_jobs.CRON_DIR
-        old_jobs_file = cron_jobs.JOBS_FILE
-        old_output_dir = cron_jobs.OUTPUT_DIR
-        cron_jobs.CRON_DIR = home / "cron"
-        cron_jobs.JOBS_FILE = cron_jobs.CRON_DIR / "jobs.json"
-        cron_jobs.OUTPUT_DIR = cron_jobs.CRON_DIR / "output"
-        try:
-            provider = resolve_cron_scheduler()
-            return bool(provider.fire_due(job_id, adapters=None, loop=None))
-        finally:
-            cron_jobs.CRON_DIR = old_cron_dir
-            cron_jobs.JOBS_FILE = old_jobs_file
-            cron_jobs.OUTPUT_DIR = old_output_dir
+    profile_name, home = _cron_profile_home(profile)
+    code = """import sys
+from hermes_constants import set_hermes_home_override
+set_hermes_home_override(sys.argv[1])
+try:
+    from cron.scheduler_provider import resolve_cron_scheduler
+    ok = resolve_cron_scheduler().fire_due(sys.argv[2], adapters=None, loop=None)
+except BaseException:
+    raise SystemExit(4)
+raise SystemExit(0 if ok else 3)
+"""
+    env = dict(os.environ)
+    env["HERMES_HOME"] = str(home)
+    env["HERMES_PROFILE"] = profile_name
+    result = subprocess.run([sys.executable, "-c", code, str(home), job_id], env=env)
+    return result.returncode == 0
 
 
 @app.post("/api/cron/fire")
@@ -8896,8 +8898,8 @@ async def cron_fire_webhook(request: Request):
     Chronos fire-verifier), NOT the dashboard session cookie — so this path is
     in ``PUBLIC_API_PATHS`` to bypass the dashboard auth gate, and the JWT is
     the real gate. This is the inbound half of scale-to-zero managed cron: NAS
-    POSTs here at fire time, the agent verifies, claims the job (store CAS, so
-    at-most-once across replicas / on a NAS retry), runs it, and re-arms the
+    POSTs here at fire time, the agent verifies, claims the job with a fenced
+    lease, runs it, and re-arms the
     next one-shot.
 
     Lives on the dashboard app (not the api_server adapter) because the
@@ -8936,8 +8938,9 @@ async def cron_fire_webhook(request: Request):
         # does not retry a fire that is intentionally absent.
         return JSONResponse({"status": "gone", "job_id": job_id}, status_code=200)
 
-    # Run in the background; the store CAS claim inside fire_due de-dupes a
-    # NAS/scheduler retry that arrives while this is in flight.
+    # Run in the background; the healthy fenced lease inside fire_due de-dupes a
+    # retry while ownership remains current. Agent-internal effects are not
+    # exactly-once across crash or stale-lease recovery.
     asyncio.create_task(
         asyncio.to_thread(_fire_cron_job_for_profile, profile, job_id)
     )

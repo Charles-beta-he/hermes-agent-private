@@ -9,6 +9,7 @@ import contextlib
 import copy
 import json
 import logging
+import math
 import shutil
 import tempfile
 import threading
@@ -104,6 +105,20 @@ _ONESHOT_RUN_CLAIM_TTL_HEADROOM = 3
 
 _DEFAULT_CRON_INACTIVITY_TIMEOUT = 600.0
 
+# Protocol-v2 claims use heartbeat progress observed against each contender's
+# local monotonic clock. This avoids declaring a healthy remote owner dead from
+# skewed wall clocks. The observation cache is process-local and synchronized
+# to the finite set of claim tokens currently persisted in jobs.json, so memory
+# is bounded by store cardinality without starving overflow claims.
+_RUN_CLAIM_PROTOCOL_VERSION = 2
+_RUN_CLAIM_FIELDS = frozenset(
+    {"id", "protocol", "trigger_generation", "heartbeat", "at", "by", "host", "pid"}
+)
+_RUN_CLAIM_HEARTBEAT_INTERVAL_SECONDS = 30.0
+# claim_id -> (opaque heartbeat fingerprint, first_seen, last_seen)
+_run_claim_observations: Dict[str, Tuple[str, float, float]] = {}
+_run_claim_observations_lock = threading.Lock()
+
 
 def _oneshot_run_claim_ttl_seconds() -> float:
     """Resolve the one-shot running-claim stale-recovery TTL.
@@ -125,11 +140,14 @@ def _oneshot_run_claim_ttl_seconds() -> float:
             timeout = float(raw)
         except (ValueError, TypeError):
             timeout = _DEFAULT_CRON_INACTIVITY_TIMEOUT
-    if timeout <= 0:
-        # Unlimited runs — cannot bound; use the fixed fallback floor.
+    if not math.isfinite(timeout) or timeout <= 0:
+        # Unlimited or non-finite runs — cannot derive a safe bound; use the fixed fallback floor.
+        return float(ONESHOT_RUN_CLAIM_TTL_SECONDS)
+    derived = timeout * _ONESHOT_RUN_CLAIM_TTL_HEADROOM
+    if not math.isfinite(derived):
         return float(ONESHOT_RUN_CLAIM_TTL_SECONDS)
     return max(
-        timeout * _ONESHOT_RUN_CLAIM_TTL_HEADROOM,
+        derived,
         float(ONESHOT_RUN_CLAIM_TTL_SECONDS),
     )
 
@@ -676,15 +694,16 @@ def record_ticker_heartbeat(success: bool = False) -> None:
 
     Best-effort: a write failure must never disrupt the tick loop.
     """
-    try:
-        _atomic_write_epoch(TICKER_HEARTBEAT_FILE)
-    except Exception:
-        pass
-    if success:
+    with _jobs_file_lock:
         try:
-            _atomic_write_epoch(TICKER_SUCCESS_FILE)
+            _atomic_write_epoch(TICKER_HEARTBEAT_FILE)
         except Exception:
             pass
+        if success:
+            try:
+                _atomic_write_epoch(TICKER_SUCCESS_FILE)
+            except Exception:
+                pass
 
 
 def _epoch_file_age(path: Path) -> Optional[float]:
@@ -714,7 +733,13 @@ def get_ticker_success_age() -> Optional[float]:
 # =============================================================================
 
 def load_jobs() -> List[Dict[str, Any]]:
-    """Load all jobs from storage."""
+    """Load jobs while profile-retargeting globals are stable."""
+    with _jobs_file_lock:
+        return _load_jobs_unlocked()
+
+
+def _load_jobs_unlocked() -> List[Dict[str, Any]]:
+    """Load all jobs from storage with ``_jobs_file_lock`` already held."""
     ensure_dirs()
     if not JOBS_FILE.exists():
         return []
@@ -1317,6 +1342,14 @@ def resume_job(job_id: str) -> Optional[Dict[str, Any]]:
     )
 
 
+def _coerce_trigger_generation(value: Any) -> int:
+    """Normalize persisted generation state without wedging execution cleanup."""
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def trigger_job(job_id: str) -> Optional[Dict[str, Any]]:
     """Schedule a job to run on the next scheduler tick. Accepts a job ID or name.
 
@@ -1332,7 +1365,9 @@ def trigger_job(job_id: str) -> Optional[Dict[str, Any]]:
     # Concurrent callers may observe the same generation; that is intentional
     # coalescing, not a lost wakeup.  mark_job_run compares with ``>`` rather
     # than exact equality, so either write still preserves one successor run.
-    trigger_generation = int(job.get("trigger_generation", 0)) + 1
+    trigger_generation = _coerce_trigger_generation(
+        job.get("trigger_generation", 0)
+    ) + 1
     return update_job(
         job["id"],
         {
@@ -1372,7 +1407,8 @@ def remove_job(job_id: str) -> bool:
 
 def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                  delivery_error: Optional[str] = None,
-                 run_trigger_generation: int = 0):
+                 run_trigger_generation: int = 0,
+                 run_claim_id: Optional[str] = None) -> bool:
     """
     Mark a job as having been run.
     
@@ -1382,24 +1418,49 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
     ``delivery_error`` is tracked separately from the agent error — a job
     can succeed (agent produced output) but fail delivery (platform down).
     """
+    run_trigger_generation = _coerce_trigger_generation(run_trigger_generation)
     with _jobs_lock():
         jobs = load_jobs()
         for i, job in enumerate(jobs):
             if job["id"] == job_id:
+                current_claims = _validated_current_claim_mirrors(job)
+                if current_claims is None:
+                    logger.warning(
+                        "Ignoring completion for job %s: malformed or mismatched "
+                        "claim mirrors",
+                        job_id,
+                    )
+                    return False
+                if not current_claims:
+                    logger.warning(
+                        "Ignoring unfenced completion for job %s: no active claim",
+                        job_id,
+                    )
+                    return False
+                owns_all_claims = bool(run_claim_id) and all(
+                    _claim_uses_current_protocol(claim)
+                    and claim.get("id") == run_claim_id
+                    for claim in current_claims
+                )
+                if not owns_all_claims:
+                    logger.warning(
+                        "Ignoring stale/unfenced completion for job %s "
+                        "(claim=%s)",
+                        job_id,
+                        run_claim_id,
+                    )
+                    return False
+
                 now = _hermes_now().isoformat()
                 job["last_run_at"] = now
                 job["last_status"] = "ok" if success else "error"
                 job["last_error"] = error if not success else None
                 # Track delivery failures separately — cleared on successful delivery
                 job["last_delivery_error"] = delivery_error
-                # Clear any external-fire claim so a re-armed recurring job can
-                # be claimed again on its next fire (Phase 4C CAS).
+                # Release only the fenced execution claim validated above.
+                _forget_run_claim_observation(run_claim_id)
                 job["fire_claim"] = None
-                # Clear the one-shot running-claim (#59229): the run is over, so
-                # a re-armed recurring job or a re-dispatched one-shot recovery
-                # is claimable again. No-op if the job never carried a claim.
-                if job.get("run_claim") is not None:
-                    job["run_claim"] = None
+                job["run_claim"] = None
                 
                 # Increment completed count.  Finite one-shot jobs are
                 # pre-claimed by claim_dispatch() BEFORE the side effect runs
@@ -1426,13 +1487,16 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                         # Remove the job (limit reached)
                         jobs.pop(i)
                         save_jobs(jobs)
-                        return
+                        return True
                 
                 # Preserve a trigger requested after this run began.  This is a
                 # durable rerun latch for self-continuing jobs: the current run
                 # must not erase its successor by restoring the normal cadence.
                 trigger_requested_at = job.get("trigger_requested_at")
-                trigger_generation = int(job.get("trigger_generation", 0))
+                trigger_generation = _coerce_trigger_generation(
+                    job.get("trigger_generation", 0)
+                )
+                job["trigger_generation"] = trigger_generation
                 rerun_pending = trigger_generation > run_trigger_generation
 
                 if rerun_pending:
@@ -1471,9 +1535,10 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                     job["state"] = "scheduled"
 
                 save_jobs(jobs)
-                return
+                return True
 
         logger.warning("mark_job_run: job_id %s not found, skipping save", job_id)
+        return False
 
 
 def claim_dispatch(job_id: str) -> bool:
@@ -1544,8 +1609,9 @@ def advance_next_run(job_id: str) -> bool:
 
     Call this BEFORE run_job() so that if the process crashes mid-execution,
     the job won't re-fire on the next gateway restart.  This converts the
-    scheduler from at-least-once to at-most-once for recurring jobs — missing
-    one run is far better than firing dozens of times in a crash loop.
+    scheduler away from immediate restart replay for recurring jobs — missing
+    one run is preferable to firing dozens of times in a crash loop. Lease
+    recovery means arbitrary agent effects are not transactionally at-most-once.
 
     One-shot jobs are left unchanged so they can still retry on restart.
 
@@ -1569,11 +1635,7 @@ def advance_next_run(job_id: str) -> bool:
 
 
 def _machine_id() -> str:
-    """Stable-ish identifier for claim attribution/debugging (NOT correctness).
-
-    Uses ``HERMES_MACHINE_ID`` if set, else hostname + pid. The CAS correctness
-    comes from the file lock + the fresh-claim check, not from this value.
-    """
+    """Stable-ish identifier for claim attribution/debugging."""
     explicit = os.getenv("HERMES_MACHINE_ID", "").strip()
     if explicit:
         return explicit
@@ -1585,52 +1647,420 @@ def _machine_id() -> str:
     return f"{host}:{os.getpid()}"
 
 
-def claim_job_for_fire(job_id: str, *, claim_ttl_seconds: int = 300) -> bool:
-    """Atomically claim a job for a single external 'fire' (multi-machine
-    at-most-once). Returns True iff THIS caller won the claim.
+def _claim_host() -> str:
+    """Return a diagnostic host label; never use it as a correctness identity."""
+    try:
+        import socket
+        return socket.gethostname()
+    except Exception:
+        return "unknown"
 
-    Used by the external-provider fire path (``CronScheduler.fire_due``) when an
-    external scheduler (Chronos) signals a job is due across N gateway replicas:
-    exactly one wins. Single-machine deployments always win.
 
-    Under the file lock: reject if the job is missing/disabled/paused. If a
-    fresh claim (younger than ``claim_ttl_seconds``) already exists, lose.
-    Otherwise stamp a ``fire_claim`` and, for recurring jobs, advance
-    ``next_run_at`` (mirrors ``advance_next_run``'s at-most-once bump so a stale
-    re-delivery for the old time can't re-fire). One-shots keep ``next_run_at``
-    but the fresh ``fire_claim`` blocks a duplicate retry for the same fire.
-    ``mark_job_run`` clears the claim on completion so a re-armed recurring job
-    is claimable again next fire.
+def _new_run_claim(
+    now: datetime, *, trigger_generation: int = 0
+) -> Dict[str, Any]:
+    """Create a fenced execution claim shared by every scheduler path."""
+    return {
+        "id": uuid.uuid4().hex,
+        "protocol": _RUN_CLAIM_PROTOCOL_VERSION,
+        "trigger_generation": max(0, int(trigger_generation)),
+        "heartbeat": 0,
+        "at": now.isoformat(),
+        "by": _machine_id(),
+        "host": _claim_host(),
+        "pid": os.getpid(),
+    }
 
-    The stale-claim TTL means a machine that crashed after claiming but before
-    completing doesn't wedge the job forever — after the TTL another fire can
-    reclaim it.
+
+def _recurring_claim_stale_seconds(claim_ttl_seconds: float) -> float:
+    """Failover window for an unchanged recurring heartbeat."""
+    return max(float(claim_ttl_seconds), _oneshot_run_claim_ttl_seconds())
+
+
+def _heartbeat_fingerprint(value: Any) -> str:
+    """Stable, type-sensitive fingerprint for valid or malformed JSON values."""
+    try:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        encoded = repr(value)
+    return f"{type(value).__name__}:{encoded}"
+
+
+def _prune_run_claim_observations(observed_at: float, stale_seconds: float) -> None:
+    """Drop observations that have not been consulted within the retention window."""
+    retention = max(stale_seconds * 2.0, 3600.0)
+    expired = [
+        claim_id
+        for claim_id, (_fingerprint, _first_seen, last_seen) in
+        _run_claim_observations.items()
+        if observed_at - last_seen > retention
+    ]
+    for claim_id in expired:
+        _run_claim_observations.pop(claim_id, None)
+
+
+def _sync_run_claim_observations(jobs: List[Dict[str, Any]]) -> None:
+    """Bound local observations to protocol-v2 tokens present in the job store."""
+    active_claim_ids = {
+        str(claim.get("id"))
+        for job in jobs
+        for claim in (job.get("run_claim"), job.get("fire_claim"))
+        if (
+            isinstance(claim, dict)
+            and claim.get("protocol") == _RUN_CLAIM_PROTOCOL_VERSION
+            and claim.get("id")
+        )
+    }
+    with _run_claim_observations_lock:
+        for claim_id in tuple(_run_claim_observations):
+            if claim_id not in active_claim_ids:
+                _run_claim_observations.pop(claim_id, None)
+
+
+def _recurring_claim_blocks_reclaim(
+    claim: Dict[str, Any], claim_ttl_seconds: float
+) -> bool:
+    """Fence recurring ownership using progress + local monotonic observation.
+
+    Hostnames, PIDs and wall-clock timestamps are diagnostic only. A contender
+    may reclaim only after the same claim token and opaque heartbeat fingerprint
+    (including a malformed value) stay unchanged for one complete local-
+    monotonic stale window. Renewal itself remains strict and fail-closed for a
+    malformed heartbeat, but malformed persisted state cannot wedge forever.
+    """
+    claim_id = claim.get("id")
+    if not claim_id:
+        return True
+    heartbeat_fingerprint = _heartbeat_fingerprint(claim.get("heartbeat", 0))
+    observed_at = time.monotonic()
+    stale_seconds = _recurring_claim_stale_seconds(claim_ttl_seconds)
+    claim_key = str(claim_id)
+    with _run_claim_observations_lock:
+        _prune_run_claim_observations(observed_at, stale_seconds)
+        previous = _run_claim_observations.get(claim_key)
+        if previous is None or previous[0] != heartbeat_fingerprint:
+            _run_claim_observations[claim_key] = (
+                heartbeat_fingerprint,
+                observed_at,
+                observed_at,
+            )
+            return True
+        if (observed_at - previous[1]) >= stale_seconds:
+            # Release capacity at the same atomic decision that declares this
+            # token stale. The caller will immediately fence it with a new token.
+            _run_claim_observations.pop(claim_key, None)
+            return False
+        _run_claim_observations[claim_key] = (
+            heartbeat_fingerprint,
+            previous[1],
+            observed_at,
+        )
+        return True
+
+
+def _forget_run_claim_observation(claim_id: Optional[str]) -> None:
+    if not claim_id:
+        return
+    with _run_claim_observations_lock:
+        _run_claim_observations.pop(str(claim_id), None)
+
+
+def _claim_has_current_protocol_identity(claim: Dict[str, Any]) -> bool:
+    """Return whether the claim has a protocol-v2 UUID identity."""
+    protocol = claim.get("protocol")
+    claim_id = claim.get("id")
+    if type(protocol) is not int or protocol != _RUN_CLAIM_PROTOCOL_VERSION:
+        return False
+    if not isinstance(claim_id, str):
+        return False
+    try:
+        return uuid.UUID(hex=claim_id).hex == claim_id
+    except (ValueError, AttributeError):
+        return False
+
+
+def _claim_has_current_protocol_schema(claim: Dict[str, Any]) -> bool:
+    """Validate immutable v2 ownership fields, excluding recoverable heartbeat."""
+    trigger_generation = claim.get("trigger_generation")
+    claimed_at = claim.get("at")
+    if (
+        set(claim) != _RUN_CLAIM_FIELDS
+        or not _claim_has_current_protocol_identity(claim)
+        or type(trigger_generation) is not int
+        or trigger_generation < 0
+        or not isinstance(claimed_at, str)
+        or not isinstance(claim.get("by"), str)
+        or not claim["by"]
+        or not isinstance(claim.get("host"), str)
+        or not claim["host"]
+        or type(claim.get("pid")) is not int
+        or claim["pid"] < 0
+    ):
+        return False
+    try:
+        parsed_at = datetime.fromisoformat(claimed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed_at.tzinfo is not None
+
+
+def _claim_uses_current_protocol(claim: Dict[str, Any]) -> bool:
+    """Return whether a v2 claim is well-formed enough to renew or complete."""
+    heartbeat = claim.get("heartbeat")
+    return (
+        _claim_has_current_protocol_schema(claim)
+        and type(heartbeat) is int
+        and heartbeat >= 0
+    )
+
+
+def _validated_current_claim_mirrors(
+    job: Dict[str, Any],
+) -> Optional[List[Dict[str, Any]]]:
+    """Validate persisted claim slots without filtering malformed mirrors.
+
+    Both slots must be absent, or both must be well-formed protocol-v2 claims
+    carrying the same UUID. ``None`` denotes malformed/mismatched state; an
+    empty list denotes a job with no active execution claim.
+    """
+    raw_claims = (job.get("run_claim"), job.get("fire_claim"))
+    if raw_claims == (None, None):
+        return []
+    if any(not isinstance(claim, dict) for claim in raw_claims):
+        return None
+    claims = [claim for claim in raw_claims if isinstance(claim, dict)]
+    if (
+        len(claims) != 2
+        or any(not _claim_uses_current_protocol(claim) for claim in claims)
+        or claims[0] != claims[1]
+    ):
+        return None
+    return claims
+
+
+def migrate_legacy_run_claims_after_drain() -> List[str]:
+    """Atomically clear only v1 claim residue after every v1 scheduler is stopped.
+
+    This is an explicit one-shot migration, not a sticky behavior setting. The
+    caller must first stop and drain all protocol-v1 schedulers; running it while
+    a v1 owner is alive can permit duplicate side effects. Unknown and future
+    protocols remain fenced. Returns migrated job IDs as an auditable receipt.
+    """
+    migrated: List[str] = []
+    with _jobs_lock():
+        jobs = load_jobs()
+        for job in jobs:
+            changed = False
+            for field in ("run_claim", "fire_claim"):
+                claim = job.get(field)
+                if not isinstance(claim, dict):
+                    continue
+                protocol_present = "protocol" in claim
+                protocol = claim.get("protocol")
+                # Only an absent marker (the historical v1 shape) or an explicit
+                # v1 marker is in scope. Unknown/future protocols stay fenced;
+                # this command must never become a rolling downgrade path.
+                if protocol_present and not (type(protocol) is int and protocol == 1):
+                    continue
+                _forget_run_claim_observation(claim.get("id"))
+                job[field] = None
+                changed = True
+            if changed:
+                migrated.append(str(job.get("id", "")))
+        if migrated:
+            save_jobs(jobs)
+    return migrated
+
+
+def _claim_blocks_reclaim(
+    job: Dict[str, Any],
+    claim: Dict[str, Any],
+    now: datetime,
+    claim_ttl_seconds: float,
+) -> bool:
+    """Whether an execution claim must block a new owner."""
+    if not _claim_has_current_protocol_schema(claim):
+        # Missing, legacy, unknown/future, and malformed immutable v2 ownership
+        # fields are untouchable during normal scheduling. Only the explicit
+        # post-stop/drain CLI migration may clear supported legacy claims.
+        return True
+    # A malformed v2 heartbeat cannot renew or complete, but its exact opaque
+    # fingerprint is still observed for stasis so persisted corruption cannot
+    # wedge the job forever. Unknown/future protocol identities remain fenced.
+    # Schedule kind and wall-clock skew are never ownership evidence.
+    return _recurring_claim_blocks_reclaim(claim, claim_ttl_seconds)
+
+
+def _job_has_blocking_claim(
+    job: Dict[str, Any], now: datetime, claim_ttl_seconds: float
+) -> bool:
+    """Check both mirrored protocol-v2 claim fields during stop/drain migration."""
+    raw_claims = (job.get("run_claim"), job.get("fire_claim"))
+    # The two slots are one mirrored lease record. Any representation or payload
+    # disagreement is persisted corruption, not stale-owner evidence, and must
+    # never be normalized or reclaimed by ordinary scheduling.
+    if raw_claims[0] != raw_claims[1]:
+        return True
+    if any(claim is not None and not isinstance(claim, dict) for claim in raw_claims):
+        return True
+    claims = [claim for claim in raw_claims if isinstance(claim, dict)]
+    # Validate every mirrored field before UUID de-duplication. A corrupted pair
+    # may reuse one token while disagreeing on protocol; any unknown/future
+    # identity must fence normal scheduling rather than hide behind its v2 twin.
+    if any(not _claim_has_current_protocol_identity(claim) for claim in claims):
+        return True
+    seen: Set[str] = set()
+    for claim in claims:
+        identity = str(claim.get("id"))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if _claim_blocks_reclaim(job, claim, now, claim_ttl_seconds):
+            return True
+    return False
+
+
+def cancel_job_run_claim_heartbeat(cancel_event: threading.Event) -> None:
+    """Fence heartbeat shutdown against the final persistent renewal write.
+
+    Taking the same store lock as ``renew_job_run_claim`` makes cancellation
+    linearizable with persistence: an in-flight renewal either saves before
+    cancellation or observes the event after acquiring the lock and cannot save.
+    """
+    with _jobs_lock():
+        cancel_event.set()
+
+
+def renew_job_run_claim(
+    job_id: str,
+    run_claim_id: str,
+    *,
+    cancel_event: Optional[threading.Event] = None,
+) -> bool:
+    """Advance a fenced heartbeat unless ownership or lifecycle was cancelled.
+
+    The cancellation check occurs after acquiring the jobs-store lock, so a
+    heartbeat worker that was blocked behind cleanup cannot publish one final
+    heartbeat after its owner has begun shutting down.
+    """
+    with _jobs_lock():
+        if cancel_event is not None and cancel_event.is_set():
+            return False
+        jobs = load_jobs()
+        for job in jobs:
+            if job.get("id") != job_id:
+                continue
+            claims = _validated_current_claim_mirrors(job)
+            if (
+                not claims
+                or any(claim.get("id") != run_claim_id for claim in claims)
+            ):
+                return False
+            heartbeats = [claim.get("heartbeat", 0) for claim in claims]
+            if any(type(value) is not int or value < 0 for value in heartbeats):
+                return False
+            heartbeat = max(heartbeats) + 1
+            renewed_at = _hermes_now().isoformat()
+            for field in ("run_claim", "fire_claim"):
+                claim = job.get(field)
+                if isinstance(claim, dict):
+                    claim["heartbeat"] = heartbeat
+                    claim["at"] = renewed_at
+            if cancel_event is not None and cancel_event.is_set():
+                return False
+            save_jobs(jobs)
+            return True
+        return False
+
+
+def _execution_trigger_generation(job: Dict[str, Any]) -> int:
+    """Return the original execution generation, including during recovery.
+
+    A trigger arriving while an owner is running increments the job-level value.
+    Recovery successors must inherit the generation fenced into the old claim,
+    otherwise their completion would consume that continuation request.
+    """
+    claimed_generations = []
+    for field in ("run_claim", "fire_claim"):
+        claim = job.get(field)
+        if not isinstance(claim, dict) or "trigger_generation" not in claim:
+            continue
+        claimed_generations.append(
+            _coerce_trigger_generation(claim["trigger_generation"])
+        )
+    if claimed_generations:
+        # A disagreement is corrupted state; choose the oldest generation so a
+        # continuation may run redundantly rather than be silently swallowed.
+        return min(claimed_generations)
+    return _coerce_trigger_generation(job.get("trigger_generation", 0))
+
+
+def claim_job_for_execution(
+    job_id: str, *, claim_ttl_seconds: int = 300
+) -> Optional[Dict[str, Any]]:
+    """Atomically claim one execution and return its fenced snapshot.
+
+    The returned deep copy is created under the same store lock that stamps the
+    claim token and captures ``trigger_generation``. Callers must execute this
+    snapshot directly; a post-claim ``get_job`` can observe and accidentally
+    adopt a recovery successor's token or generation.
+
+    Returns ``None`` when this caller did not win. Recurring claims are recovered
+    only after their heartbeat fingerprint remains unchanged for a complete
+    local-monotonic stale window. Protocol upgrades are stop-and-drain only;
+    protocol-v1 and protocol-v2 schedulers must never run concurrently.
     """
     with _jobs_lock():
         jobs = load_jobs()
+        _sync_run_claim_observations(jobs)
         for job in jobs:
             if job["id"] != job_id:
                 continue
             if not job.get("enabled", True) or job.get("state") == "paused":
-                return False
+                return None
             now = _hermes_now()
-            existing = job.get("fire_claim")
-            if existing:
-                try:
-                    claimed_at = _ensure_aware(datetime.fromisoformat(existing["at"]))
-                    if (now - claimed_at).total_seconds() < claim_ttl_seconds:
-                        return False  # someone holds a fresh claim
-                except Exception:
-                    pass  # malformed claim → overwrite
-            job["fire_claim"] = {"at": now.isoformat(), "by": _machine_id()}
+            if _job_has_blocking_claim(job, now, claim_ttl_seconds):
+                return None
+            prior_claims = [
+                prior
+                for prior in (job.get("run_claim"), job.get("fire_claim"))
+                if isinstance(prior, dict)
+            ]
+            recovering = bool(prior_claims)
+            execution_generation = _execution_trigger_generation(job)
+            for prior in prior_claims:
+                _forget_run_claim_observation(prior.get("id"))
+            claim = _new_run_claim(
+                now, trigger_generation=execution_generation
+            )
+            job["trigger_generation"] = _coerce_trigger_generation(
+                job.get("trigger_generation", 0)
+            )
+            job["run_claim"] = claim
+            job["fire_claim"] = claim
             kind = job.get("schedule", {}).get("kind")
-            if kind in {"cron", "interval"}:
+            if not recovering and kind in {"cron", "interval"}:
                 nxt = compute_next_run(job["schedule"], now.isoformat())
                 if nxt:
                     job["next_run_at"] = nxt
             save_jobs(jobs)
-            return True
-        return False
+            claimed_snapshot = copy.deepcopy(job)
+            claimed_snapshot["trigger_generation"] = execution_generation
+            return claimed_snapshot
+        return None
+
+
+def claim_job_for_fire(job_id: str, *, claim_ttl_seconds: int = 300) -> bool:
+    """Deprecated claim/no-claim compatibility wrapper.
+
+    This mutates the persistent lease and recurring cadence but discards the
+    only safe execution snapshot. It must never be followed by ``get_job`` and
+    used to execute work. All execution paths must consume the atomic snapshot
+    returned by :func:`claim_job_for_execution` directly.
+    """
+    return claim_job_for_execution(
+        job_id, claim_ttl_seconds=claim_ttl_seconds
+    ) is not None
 
 
 def get_due_jobs() -> List[Dict[str, Any]]:
@@ -1655,34 +2085,25 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
     """Inner implementation of get_due_jobs(); must be called with _jobs_lock held."""
     now = _hermes_now()
     raw_jobs = load_jobs()
+    _sync_run_claim_observations(raw_jobs)
     jobs = [_apply_skill_fields(j) for j in copy.deepcopy(raw_jobs)]
     due = []
     needs_save = False
-    # Resolve the one-shot running-claim stale-recovery TTL once per scan
-    # (derived from HERMES_CRON_TIMEOUT). See _oneshot_run_claim_ttl_seconds.
+    # Resolve the running-claim stale-recovery TTL once per scan.  The helper's
+    # historical name is retained for compatibility, but the same claim now
+    # serializes recurring jobs as well as one-shots.
     _run_claim_ttl = _oneshot_run_claim_ttl_seconds()
 
     for job in jobs:
         if not job.get("enabled", True):
             continue
 
-        # Cross-process running-claim guard (#59229): if another scheduler
-        # process already claimed this one-shot and its run is still in flight
-        # (claim younger than the TTL), skip it — do NOT re-dispatch. The
-        # claim is stamped just before we return the job as due (below) and
-        # cleared by mark_job_run() on completion. A claim older than the TTL
-        # is treated as stale (the claiming tick died mid-run) and allowed
-        # through so the job is recovered rather than wedged forever.
-        existing_claim = job.get("run_claim")
-        if existing_claim and job.get("schedule", {}).get("kind") == "once":
-            try:
-                claimed_at = _ensure_aware(
-                    datetime.fromisoformat(existing_claim["at"])
-                )
-                if (now - claimed_at).total_seconds() < _run_claim_ttl:
-                    continue  # a fresh claim is held by an in-flight run
-            except (KeyError, ValueError, TypeError):
-                pass  # malformed claim → fall through and (re)claim
+        # Unified cross-process execution guard: both the built-in ticker and
+        # external/manual fire path write the same fenced claim. Recurring jobs
+        # do not use wall-clock TTL as proof of owner death; see
+        # _claim_blocks_reclaim() for fail-closed cross-machine semantics.
+        if _job_has_blocking_claim(job, now, _run_claim_ttl):
+            continue
 
         next_run = job.get("next_run_at")
         schedule = job.get("schedule", {})
@@ -1854,30 +2275,29 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
                                 break
                         continue
 
-            # Durably claim a one-shot for the DURATION of its run before
-            # returning it as due, so a second scheduler process (gateway +
-            # desktop both run in-process 60s tickers on one HERMES_HOME)
-            # cannot re-dispatch it while the first run is still in flight
-            # (#59229). A plain one-shot's due-state is not resolved until
-            # mark_job_run() completes it minutes later, so advancing
-            # next_run_at by a fixed window is not enough — a job that outlives
-            # one tick (e.g. a 2.5-min research prompt) would simply re-fire on
-            # the next tick after the window. Instead we stamp a run_claim under
-            # the same lock get_due_jobs already holds; the other process reads
-            # a fresh claim on its next tick and skips (handled at the top of
-            # this loop). mark_job_run() clears the claim on completion. The TTL
-            # is only a safety valve: a claiming tick that DIES mid-run leaves a
-            # stale claim that expires after the resolved run-claim TTL
-            # (_oneshot_run_claim_ttl_seconds, derived from HERMES_CRON_TIMEOUT),
-            # so the job is re-dispatched rather than wedged forever.
-            if kind == "once":
-                claim = {"at": now.isoformat(), "by": _machine_id()}
-                job["run_claim"] = claim
-                for rj in raw_jobs:
-                    if rj["id"] == job["id"]:
-                        rj["run_claim"] = claim
-                        needs_save = True
-                        break
+            # Durably claim the job for the duration of its run. Both fields
+            # carry the same fenced token so protocol-v2 built-in and
+            # external/manual schedulers cannot bypass one another. Deployments
+            # must drain protocol-v1 binaries before loading this version.
+            execution_generation = _execution_trigger_generation(job)
+            for prior in (job.get("run_claim"), job.get("fire_claim")):
+                if isinstance(prior, dict):
+                    _forget_run_claim_observation(prior.get("id"))
+            claim = _new_run_claim(
+                now, trigger_generation=execution_generation
+            )
+            job["trigger_generation"] = execution_generation
+            job["run_claim"] = claim
+            job["fire_claim"] = claim
+            for rj in raw_jobs:
+                if rj["id"] == job["id"]:
+                    rj["trigger_generation"] = _coerce_trigger_generation(
+                        rj.get("trigger_generation", 0)
+                    )
+                    rj["run_claim"] = claim
+                    rj["fire_claim"] = claim
+                    needs_save = True
+                    break
 
             due.append(job)
 
@@ -1935,8 +2355,30 @@ def _prune_job_output(job_output_dir: Path, keep: int) -> int:
     return deleted
 
 
+def load_latest_job_output(job_id: str) -> Optional[str]:
+    """Read the newest output while profile path globals are stable."""
+    with _jobs_file_lock:
+        job_output_dir = _job_output_dir(job_id)
+        if not job_output_dir.exists():
+            return None
+        output_files = sorted(
+            job_output_dir.glob("*.md"),
+            key=lambda file: file.stat().st_mtime,
+            reverse=True,
+        )
+        if not output_files:
+            return None
+        return output_files[0].read_text(encoding="utf-8").strip()
+
+
 def save_job_output(job_id: str, output: str):
-    """Save job output to file."""
+    """Save job output while profile path globals are stable."""
+    with _jobs_file_lock:
+        return _save_job_output_unlocked(job_id, output)
+
+
+def _save_job_output_unlocked(job_id: str, output: str):
+    """Save job output to file; caller holds ``_jobs_file_lock``."""
     ensure_dirs()
     job_output_dir = _job_output_dir(job_id)
     job_output_dir.mkdir(parents=True, exist_ok=True)
