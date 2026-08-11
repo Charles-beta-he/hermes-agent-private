@@ -411,6 +411,31 @@ class TestDelegateTask(unittest.TestCase):
             self.assertEqual(kwargs["provider"], parent.provider)
             self.assertEqual(kwargs["api_mode"], parent.api_mode)
 
+    def test_explicit_empty_child_api_key_does_not_inherit_parent_secret(self):
+        parent = _make_mock_parent(depth=0)
+        parent.api_key = "parent-secret"
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+            _build_child_agent(
+                task_index=0,
+                goal="Use credentialless native runtime",
+                context=None,
+                toolsets=None,
+                model="native-model",
+                max_iterations=10,
+                parent_agent=parent,
+                task_count=1,
+                override_provider="native-provider",
+                override_base_url="native://local",
+                override_api_key="",
+                override_api_mode="bedrock_converse",
+            )
+
+        _, kwargs = MockAgent.call_args
+        self.assertEqual(kwargs["api_key"], "")
+        self.assertNotEqual(kwargs["api_key"], parent.api_key)
+
     def test_child_inherits_parent_print_fn(self):
         parent = _make_mock_parent(depth=0)
         sink = MagicMock()

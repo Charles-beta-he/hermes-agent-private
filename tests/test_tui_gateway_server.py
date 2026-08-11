@@ -7378,9 +7378,21 @@ def test_make_agent_defaults_to_90(monkeypatch):
     _setup_make_agent_mocks(monkeypatch, {})
 
     with patch("run_agent.AIAgent") as mock_agent:
-        server._make_agent("sid1", "key1")
+        agent = server._make_agent("sid1", "key1")
 
     assert mock_agent.call_args.kwargs["max_iterations"] == 90
+    assert getattr(agent, "_smart_routing_entrypoint_eligible") is True
+
+
+def test_make_agent_with_existing_messages_is_not_route_eligible(monkeypatch):
+    _setup_make_agent_mocks(monkeypatch, {})
+
+    with patch("run_agent.AIAgent"):
+        agent = server._make_agent(
+            "sid1", "key1", has_existing_messages=True
+        )
+
+    assert getattr(agent, "_smart_routing_entrypoint_eligible") is False
 
 
 def test_make_agent_uses_session_runtime_overrides(monkeypatch):
@@ -7406,7 +7418,7 @@ def test_make_agent_uses_session_runtime_overrides(monkeypatch):
     )
 
     with patch("run_agent.AIAgent") as mock_agent:
-        server._make_agent(
+        agent = server._make_agent(
             "sid1",
             "key1",
             model_override="gpt-5.4",
@@ -7420,6 +7432,16 @@ def test_make_agent_uses_session_runtime_overrides(monkeypatch):
     assert mock_agent.call_args.kwargs["provider"] == "openai-codex"
     assert mock_agent.call_args.kwargs["reasoning_config"] == {"enabled": True, "effort": "high"}
     assert mock_agent.call_args.kwargs["service_tier"] == "priority"
+    assert getattr(agent, "_smart_routing_entrypoint_eligible") is False
+
+
+def test_make_agent_provider_override_is_not_route_eligible(monkeypatch):
+    _setup_make_agent_mocks(monkeypatch, {})
+
+    with patch("run_agent.AIAgent"):
+        agent = server._make_agent("sid1", "key1", provider_override="openai-codex")
+
+    assert getattr(agent, "_smart_routing_entrypoint_eligible") is False
 
 
 def test_make_agent_handles_null_agent_config(monkeypatch):

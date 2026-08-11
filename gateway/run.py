@@ -15668,10 +15668,46 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             )
         return model, runtime_kwargs
 
-    def _is_intentional_model_switch(self, session_key: str, agent_model: str) -> bool:
-        """Return True if *agent_model* matches an active /model session override."""
+    def _is_intentional_model_switch(
+        self, session_key: str, agent_model: str, agent=None
+    ) -> bool:
+        """Return True for an active /model override or current smart route."""
         override = self._session_model_overrides.get(session_key)
-        return override is not None and override.get("model") == agent_model
+        if override is not None and override.get("model") == agent_model:
+            return True
+        smart_runtime = getattr(agent, "_smart_routing_runtime", None)
+        return (
+            isinstance(smart_runtime, dict)
+            and smart_runtime.get("model") == agent_model
+            and smart_runtime.get("session_id") == getattr(agent, "session_id", None)
+        )
+
+    def _stamp_explicit_session_model_override(
+        self, session_key: str, session_id: str, agent
+    ) -> None:
+        """Preserve a /model override applied before the session agent existed."""
+        if self._session_model_overrides.get(session_key) is not None:
+            agent._smart_routing_user_override_session_id = session_id
+
+    def _configure_smart_routing_entrypoint(
+        self,
+        session_key: str,
+        session_id: str,
+        agent,
+        *,
+        has_existing_messages: bool = False,
+    ) -> None:
+        """Opt in only fresh Gateway sessions without an explicit /model pin."""
+        self._stamp_explicit_session_model_override(session_key, session_id, agent)
+        setattr(
+            agent,
+            "_smart_routing_entrypoint_eligible",
+            not has_existing_messages
+            and str(
+                getattr(agent, "_smart_routing_user_override_session_id", "") or ""
+            )
+            != str(session_id or ""),
+        )
 
     def _release_running_agent_state(
         self,
@@ -17986,6 +18022,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     session_db=getattr(self._session_db, "_db", self._session_db),
                     fallback_model=self._fallback_model,
                 )
+                self._configure_smart_routing_entrypoint(
+                    session_key,
+                    session_id,
+                    agent,
+                    has_existing_messages=bool(_current_msg_count),
+                )
                 if _cache_lock and _cache is not None:
                     with _cache_lock:
                         # Record the session_id the snapshot was taken for
@@ -19330,7 +19372,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         _cfg_model = normalize_model_for_provider(_cfg_model, _agent_provider)
                 except Exception:
                     pass
-                if _agent.model != _cfg_model and not self._is_intentional_model_switch(session_key, _agent.model):
+                if _agent.model != _cfg_model and not self._is_intentional_model_switch(
+                    session_key, _agent.model, _agent
+                ):
                     # Fallback activated on a successful run — evict cached
                     # agent so the next message retries the primary model.
                     self._evict_cached_agent(session_key)

@@ -1300,6 +1300,10 @@ def init_agent(
     # background skill/memory review fork so its harness turn can't leak into
     # the user's real session and hijack the next live turn. Default False.
     agent._persist_disabled = False
+    # Automatic session routing is opt-in per user-facing entrypoint. Direct/API
+    # AIAgent construction is therefore fail-closed and cannot silently replace
+    # a caller-selected model, provider, endpoint, or process transport.
+    agent._smart_routing_entrypoint_eligible = False
     agent._session_init_model_config = {
         "max_iterations": agent.max_iterations,
         "reasoning_config": reasoning_config,
