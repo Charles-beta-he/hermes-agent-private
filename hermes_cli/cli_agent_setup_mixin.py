@@ -22,6 +22,14 @@ from rich.markup import escape as _escape
 class CLIAgentSetupMixin:
     """Agent construction + session-resume display methods for ``HermesCLI``."""
 
+    def _project_smart_routing_entrypoint_eligibility(self) -> None:
+        """Copy the CLI's pre-resolution intent gate onto its constructed agent."""
+        setattr(
+            self.agent,
+            "_smart_routing_entrypoint_eligible",
+            bool(getattr(self, "_smart_routing_entrypoint_eligible", False)),
+        )
+
     def _ensure_runtime_credentials(self) -> bool:
         """
         Ensure runtime credentials are resolved before agent use.
@@ -391,6 +399,7 @@ class CLIAgentSetupMixin:
                 notice_callback=self._on_notice,
                 notice_clear_callback=self._on_notice_clear,
             )
+            self._project_smart_routing_entrypoint_eligibility()
             # Store reference for atexit memory provider shutdown.
             # NOTE: this MUST write to the ``cli`` module's global, not a
             # local module global. ``_run_cleanup`` (in cli.py) reads

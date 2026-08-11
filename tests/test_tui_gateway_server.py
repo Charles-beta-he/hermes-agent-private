@@ -7378,9 +7378,40 @@ def test_make_agent_defaults_to_90(monkeypatch):
     _setup_make_agent_mocks(monkeypatch, {})
 
     with patch("run_agent.AIAgent") as mock_agent:
-        server._make_agent("sid1", "key1")
+        agent = server._make_agent("sid1", "key1")
 
     assert mock_agent.call_args.kwargs["max_iterations"] == 90
+    assert getattr(agent, "_smart_routing_entrypoint_eligible") is True
+
+
+def test_make_agent_with_existing_messages_is_not_route_eligible(monkeypatch):
+    _setup_make_agent_mocks(monkeypatch, {})
+
+    with patch("run_agent.AIAgent"):
+        agent = server._make_agent(
+            "sid1", "key1", has_existing_messages=True
+        )
+
+    assert getattr(agent, "_smart_routing_entrypoint_eligible") is False
+
+
+def test_make_agent_reads_durable_history_before_marking_resume_eligible(monkeypatch):
+    _setup_make_agent_mocks(monkeypatch, {})
+    db = types.SimpleNamespace(
+        get_messages=lambda _session_id: [
+            {"role": "user", "content": "persisted turn"}
+        ]
+    )
+
+    with patch("run_agent.AIAgent"):
+        agent = server._make_agent(
+            "sid1",
+            "key1",
+            session_id="durable-session",
+            session_db=db,
+        )
+
+    assert getattr(agent, "_smart_routing_entrypoint_eligible") is False
 
 
 def test_make_agent_uses_session_runtime_overrides(monkeypatch):
@@ -7406,7 +7437,7 @@ def test_make_agent_uses_session_runtime_overrides(monkeypatch):
     )
 
     with patch("run_agent.AIAgent") as mock_agent:
-        server._make_agent(
+        agent = server._make_agent(
             "sid1",
             "key1",
             model_override="gpt-5.4",
@@ -7420,6 +7451,16 @@ def test_make_agent_uses_session_runtime_overrides(monkeypatch):
     assert mock_agent.call_args.kwargs["provider"] == "openai-codex"
     assert mock_agent.call_args.kwargs["reasoning_config"] == {"enabled": True, "effort": "high"}
     assert mock_agent.call_args.kwargs["service_tier"] == "priority"
+    assert getattr(agent, "_smart_routing_entrypoint_eligible") is False
+
+
+def test_make_agent_provider_override_is_not_route_eligible(monkeypatch):
+    _setup_make_agent_mocks(monkeypatch, {})
+
+    with patch("run_agent.AIAgent"):
+        agent = server._make_agent("sid1", "key1", provider_override="openai-codex")
+
+    assert getattr(agent, "_smart_routing_entrypoint_eligible") is False
 
 
 def test_make_agent_handles_null_agent_config(monkeypatch):
@@ -8422,6 +8463,50 @@ def test_start_agent_build_passes_session_model_override(monkeypatch):
         assert captured.get("reasoning_config_override") == reasoning
         assert captured.get("service_tier_override") == "priority"
         assert session["agent"].model == "claude-sonnet-4.6"
+    finally:
+        server._sessions.clear()
+
+
+def test_start_agent_build_marks_lazy_resumed_session_as_existing(monkeypatch):
+    captured = {}
+
+    class FakeWorker:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def close(self):
+            pass
+
+    def fake_make_agent(_sid, _key, **kwargs):
+        captured.update(kwargs)
+        return types.SimpleNamespace(model="test")
+
+    monkeypatch.setattr(server, "_set_session_context", lambda _target: [])
+    monkeypatch.setattr(server, "_clear_session_context", lambda _tokens: None)
+    monkeypatch.setattr(server, "_make_agent", fake_make_agent)
+    monkeypatch.setattr(server, "_SlashWorker", FakeWorker)
+    monkeypatch.setattr(server, "_attach_worker", lambda *a, **k: None)
+    monkeypatch.setattr(server, "_wire_callbacks", lambda _sid: None)
+    monkeypatch.setattr(server, "_emit", lambda *a, **k: None)
+    monkeypatch.setattr(server, "_session_info", lambda *a, **k: {})
+    monkeypatch.setattr(server, "_start_notification_poller", lambda *a, **k: None)
+    monkeypatch.setattr(server, "_notify_session_boundary", lambda *a, **k: None)
+    monkeypatch.setattr(server, "_probe_config_health", lambda *_a: None)
+
+    sid = "lazy-resume-build"
+    session = {
+        "agent": None,
+        "agent_ready": threading.Event(),
+        "session_key": "runtime-key",
+        "resume_session_id": "durable-session",
+        "profile_home": None,
+    }
+    server._sessions[sid] = session
+    try:
+        server._start_agent_build(sid, session)
+        assert session["agent_ready"].wait(timeout=3)
+        assert captured["session_id"] == "durable-session"
+        assert captured["has_existing_messages"] is True
     finally:
         server._sessions.clear()
 
