@@ -5,6 +5,7 @@ Control Plane project. It is intentionally read-only / shadow-only: it exposes
 status, doctor, and intent-routing advice from project artifacts without
 invoking capabilities or changing lifecycle state.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,6 +35,12 @@ from hermes_cli.personal_cognitive_reconciler import (
     reconcile_packet,
     validation_error_payload,
 )
+from hermes_cli.semantic_control_layer import (
+    SemanticControlValidationError,
+    project_semantic_control,
+    semantic_control_schema,
+    semantic_validation_error_payload,
+)
 from hermes_cli.temporal_ledger_runtime import (
     activate_runtime as activate_temporal_ledger_runtime,
     deactivate_runtime as deactivate_temporal_ledger_runtime,
@@ -52,10 +59,21 @@ def _emit(payload: dict[str, Any], *, as_json: bool, sort_keys: bool = False) ->
 
 def _emit_temporal(payload: dict[str, Any], *, as_json: bool) -> int:
     if as_json:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        print(
+            json.dumps(
+                payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+        )
     else:
-        state = payload.get("state") or payload.get("outcome") or payload.get("error_code") or "unknown"
-        print(f"Temporal Commitment Ledger Runtime: {'OK' if payload.get('ok') else 'ATTENTION'}")
+        state = (
+            payload.get("state")
+            or payload.get("outcome")
+            or payload.get("error_code")
+            or "unknown"
+        )
+        print(
+            f"Temporal Commitment Ledger Runtime: {'OK' if payload.get('ok') else 'ATTENTION'}"
+        )
         print(f"state: {state}")
         print(f"active: {payload.get('active')} trusted: {payload.get('trusted')}")
         if payload.get("module_sha256"):
@@ -74,14 +92,25 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
     home = getattr(args, "home", None)
     if action == "cognitive-schema":
         return _emit(cognitive_schema(), as_json=True, sort_keys=True)
+    if action == "semantic-schema":
+        return _emit(semantic_control_schema(), as_json=True, sort_keys=True)
     if action == "reconcile":
         input_path = Path(getattr(args, "input", ""))
         try:
             packet = json.loads(input_path.read_text(encoding="utf-8"))
-            payload = reconcile_packet(packet, evaluation_time=datetime.now(timezone.utc))
+            payload = reconcile_packet(
+                packet, evaluation_time=datetime.now(timezone.utc)
+            )
         except ReconciliationValidationError as exc:
             payload = validation_error_payload(exc)
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError, RecursionError, OverflowError) as exc:
+        except (
+            OSError,
+            UnicodeError,
+            json.JSONDecodeError,
+            ValueError,
+            RecursionError,
+            OverflowError,
+        ) as exc:
             payload = {
                 "ok": False,
                 "schema": "PersonalSemanticReconciliationResult.v1",
@@ -105,6 +134,45 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
         if exit_code:
             raise SystemExit(exit_code)
         return 0
+    if action == "semantic-project":
+        input_path = Path(getattr(args, "input", ""))
+        try:
+            envelope = json.loads(input_path.read_text(encoding="utf-8"))
+            evaluation_time_text = getattr(args, "evaluation_time", None)
+            evaluation_time = (
+                datetime.fromisoformat(evaluation_time_text.replace("Z", "+00:00"))
+                if evaluation_time_text
+                else datetime.now(timezone.utc)
+            )
+            if evaluation_time.tzinfo is not None:
+                evaluation_time = evaluation_time.astimezone(timezone.utc)
+            payload = project_semantic_control(
+                envelope,
+                evaluation_time=evaluation_time,
+            )
+        except SemanticControlValidationError as exc:
+            payload = semantic_validation_error_payload(exc)
+        except (
+            OSError,
+            UnicodeError,
+            json.JSONDecodeError,
+            ValueError,
+            RecursionError,
+            OverflowError,
+        ) as exc:
+            payload = semantic_validation_error_payload(
+                SemanticControlValidationError([
+                    {
+                        "path": str(input_path),
+                        "code": "input_read_error",
+                        "message": str(exc),
+                    }
+                ])
+            )
+        exit_code = _emit(payload, as_json=True, sort_keys=True)
+        if exit_code:
+            raise SystemExit(exit_code)
+        return 0
     if action == "doctor":
         return _emit(doctor(home), as_json=as_json)
     if action == "schema":
@@ -114,16 +182,37 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
     if action == "evidence":
         return _emit(evidence_projection_status(home), as_json=as_json)
     if action == "bootstrap-runtime":
-        return _emit(bootstrap_erg_runtime_state(home, authority_gate=getattr(args, "authority_gate", None)), as_json=as_json)
+        return _emit(
+            bootstrap_erg_runtime_state(
+                home, authority_gate=getattr(args, "authority_gate", None)
+            ),
+            as_json=as_json,
+        )
     if action == "boundary-coverage":
-        return _emit(high_risk_boundary_coverage(home, destructive_canary=bool(getattr(args, "destructive_canary", False))), as_json=as_json)
+        return _emit(
+            high_risk_boundary_coverage(
+                home,
+                destructive_canary=bool(getattr(args, "destructive_canary", False)),
+            ),
+            as_json=as_json,
+        )
     if action == "route":
         text = getattr(args, "text", None) or ""
         return _emit(route_shadow(text, home), as_json=as_json)
     if action == "replay":
-        return _emit(replay_recent_user_intents(home, limit=getattr(args, "limit", 20)), as_json=as_json)
+        return _emit(
+            replay_recent_user_intents(home, limit=getattr(args, "limit", 20)),
+            as_json=as_json,
+        )
     if action == "report":
-        return _emit(generate_replay_quality_report(home, limit=getattr(args, "limit", 20), write=getattr(args, "write", False)), as_json=as_json)
+        return _emit(
+            generate_replay_quality_report(
+                home,
+                limit=getattr(args, "limit", 20),
+                write=getattr(args, "write", False),
+            ),
+            as_json=as_json,
+        )
     if action == "authorize-local-harness":
         return _emit(
             authorize_local_harness(
@@ -146,7 +235,9 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
                 target_status=getattr(args, "target_status", ""),
                 evidence_refs=getattr(args, "evidence_ref", []) or [],
                 adapter_state_path=getattr(args, "adapter_state_path", None),
-                expected_previous_status=getattr(args, "expected_previous_status", None),
+                expected_previous_status=getattr(
+                    args, "expected_previous_status", None
+                ),
                 home=home,
             ),
             as_json=as_json,
@@ -196,7 +287,9 @@ def build_agent_os_parser(subparsers) -> None:
         default=None,
         help="Hermes home to inspect (default: active HERMES_HOME / ~/.hermes)",
     )
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
     parser.set_defaults(func=cmd_agent_os)
     subs = parser.add_subparsers(dest="agent_os_action")
 
@@ -207,26 +300,76 @@ def build_agent_os_parser(subparsers) -> None:
         ("audit", "Run read-only ERG Runtime source/divergence audit"),
         ("evidence", "Project read-only audit findings into ERG EvidenceNode records"),
         ("bootstrap-runtime", "Execute exact P4 local ERG runtime bootstrap boundary"),
-        ("boundary-coverage", "Project/read back high-risk Agent OS boundary coverage without unscoped execution"),
-        ("cognitive-schema", "Show the stable read-only personal cognitive reconciliation contract"),
+        (
+            "boundary-coverage",
+            "Project/read back high-risk Agent OS boundary coverage without unscoped execution",
+        ),
+        (
+            "cognitive-schema",
+            "Show the stable read-only personal cognitive reconciliation contract",
+        ),
+        (
+            "semantic-schema",
+            "Show the stable three-plane semantic control projection contract",
+        ),
     ]:
         p = subs.add_parser(name, help=help_text)
         p.add_argument("--home", default=None, help="Hermes home to inspect")
         p.add_argument("--json", action="store_true", help="Emit JSON")
         if name == "bootstrap-runtime":
-            p.add_argument("--authority-gate", default=None, help="Exact P4 authority gate JSON path")
+            p.add_argument(
+                "--authority-gate",
+                default=None,
+                help="Exact P4 authority gate JSON path",
+            )
         if name == "boundary-coverage":
-            p.add_argument("--destructive-canary", action="store_true", help="Run disposable local delete/restore canary smoke")
+            p.add_argument(
+                "--destructive-canary",
+                action="store_true",
+                help="Run disposable local delete/restore canary smoke",
+            )
         p.set_defaults(func=cmd_agent_os)
 
     reconcile = subs.add_parser(
         "reconcile",
         help="Validate and reconcile one personal semantic goal packet without execution",
     )
-    reconcile.add_argument("--input", required=True, help="Explicit PersonalSemanticReconcileInput.v1 JSON path")
-    reconcile.add_argument("--home", default=None, help="Accepted for CLI consistency; reconciliation does not read it")
-    reconcile.add_argument("--json", action="store_true", help="Emit deterministic machine-readable JSON")
+    reconcile.add_argument(
+        "--input",
+        required=True,
+        help="Explicit PersonalSemanticReconcileInput.v1 JSON path",
+    )
+    reconcile.add_argument(
+        "--home",
+        default=None,
+        help="Accepted for CLI consistency; reconciliation does not read it",
+    )
+    reconcile.add_argument(
+        "--json", action="store_true", help="Emit deterministic machine-readable JSON"
+    )
     reconcile.set_defaults(func=cmd_agent_os)
+
+    semantic_project = subs.add_parser(
+        "semantic-project",
+        help="Build a deterministic three-plane semantic projection without execution or writeback",
+    )
+    semantic_project.add_argument(
+        "--input", required=True, help="Explicit SemanticControlEnvelope.v1 JSON path"
+    )
+    semantic_project.add_argument(
+        "--evaluation-time",
+        default=None,
+        help="Optional timezone-aware ISO-8601 evaluation time for exact replay",
+    )
+    semantic_project.add_argument(
+        "--home",
+        default=None,
+        help="Accepted for CLI consistency; projection does not read it",
+    )
+    semantic_project.add_argument(
+        "--json", action="store_true", help="Emit deterministic machine-readable JSON"
+    )
+    semantic_project.set_defaults(func=cmd_agent_os)
 
     route = subs.add_parser(
         "route",
@@ -242,8 +385,15 @@ def build_agent_os_parser(subparsers) -> None:
         help="Read-only shadow replay over recent redacted user intents from state.db",
     )
     replay.add_argument("--home", default=None, help="Hermes home to inspect")
-    replay.add_argument("--limit", type=int, default=20, help="Recent user messages to replay, capped at 50")
-    replay.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    replay.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Recent user messages to replay, capped at 50",
+    )
+    replay.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
     replay.set_defaults(func=cmd_agent_os)
 
     report = subs.add_parser(
@@ -251,9 +401,20 @@ def build_agent_os_parser(subparsers) -> None:
         help="Generate replay quality report and authority packet without promotion",
     )
     report.add_argument("--home", default=None, help="Hermes home to inspect")
-    report.add_argument("--limit", type=int, default=20, help="Recent user messages to replay, capped at 50")
-    report.add_argument("--write", action="store_true", help="Write local project report artifacts under the Agent OS SSOT")
-    report.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    report.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Recent user messages to replay, capped at 50",
+    )
+    report.add_argument(
+        "--write",
+        action="store_true",
+        help="Write local project report artifacts under the Agent OS SSOT",
+    )
+    report.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
     report.set_defaults(func=cmd_agent_os)
 
     auth = subs.add_parser(
@@ -262,12 +423,30 @@ def build_agent_os_parser(subparsers) -> None:
     )
     auth.add_argument("--home", default=None, help="Hermes home to inspect")
     auth.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
-    auth.add_argument("--authorization-id", required=True, help="Exact auth:<id> authorization id")
+    auth.add_argument(
+        "--authorization-id", required=True, help="Exact auth:<id> authorization id"
+    )
     auth.add_argument("--intent-id", required=True, help="Exact intent:<id> intent id")
-    auth.add_argument("--target-ref", required=True, help="Exact task:<id> harness target ref")
-    auth.add_argument("--target-status", required=True, choices=["pending", "review", "done", "blocked"], help="Harness target status")
-    auth.add_argument("--evidence-ref", action="append", default=[], help="Evidence reference proving the action; repeatable")
-    auth.add_argument("--adapter-state-path", default=None, help="Optional state JSON path under Agent OS 08-executor")
+    auth.add_argument(
+        "--target-ref", required=True, help="Exact task:<id> harness target ref"
+    )
+    auth.add_argument(
+        "--target-status",
+        required=True,
+        choices=["pending", "review", "done", "blocked"],
+        help="Harness target status",
+    )
+    auth.add_argument(
+        "--evidence-ref",
+        action="append",
+        default=[],
+        help="Evidence reference proving the action; repeatable",
+    )
+    auth.add_argument(
+        "--adapter-state-path",
+        default=None,
+        help="Optional state JSON path under Agent OS 08-executor",
+    )
     auth.set_defaults(func=cmd_agent_os)
 
     harness = subs.add_parser(
@@ -275,14 +454,40 @@ def build_agent_os_parser(subparsers) -> None:
         help="Execute a governed local JSON harness write and receipt readback only",
     )
     harness.add_argument("--home", default=None, help="Hermes home to inspect")
-    harness.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
-    harness.add_argument("--authorization-id", required=True, help="Exact auth:<id> authorization id")
-    harness.add_argument("--intent-id", required=True, help="Exact intent:<id> intent id")
-    harness.add_argument("--target-ref", required=True, help="Exact task:<id> harness target ref")
-    harness.add_argument("--target-status", required=True, choices=["pending", "review", "done", "blocked"], help="Harness target status")
-    harness.add_argument("--evidence-ref", action="append", default=[], help="Evidence reference proving the action; repeatable")
-    harness.add_argument("--expected-previous-status", default=None, help="Optional expected current status for drift guard")
-    harness.add_argument("--adapter-state-path", default=None, help="Optional state JSON path under Agent OS 08-executor")
+    harness.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
+    harness.add_argument(
+        "--authorization-id", required=True, help="Exact auth:<id> authorization id"
+    )
+    harness.add_argument(
+        "--intent-id", required=True, help="Exact intent:<id> intent id"
+    )
+    harness.add_argument(
+        "--target-ref", required=True, help="Exact task:<id> harness target ref"
+    )
+    harness.add_argument(
+        "--target-status",
+        required=True,
+        choices=["pending", "review", "done", "blocked"],
+        help="Harness target status",
+    )
+    harness.add_argument(
+        "--evidence-ref",
+        action="append",
+        default=[],
+        help="Evidence reference proving the action; repeatable",
+    )
+    harness.add_argument(
+        "--expected-previous-status",
+        default=None,
+        help="Optional expected current status for drift guard",
+    )
+    harness.add_argument(
+        "--adapter-state-path",
+        default=None,
+        help="Optional state JSON path under Agent OS 08-executor",
+    )
     harness.set_defaults(func=cmd_agent_os)
 
     temporal = subs.add_parser(
@@ -292,9 +497,13 @@ def build_agent_os_parser(subparsers) -> None:
     temporal.set_defaults(func=cmd_agent_os)
     temporal_subs = temporal.add_subparsers(dest="temporal_ledger_action")
 
-    temporal_status = temporal_subs.add_parser("status", help="Read back active runtime state and verify exact module bytes")
+    temporal_status = temporal_subs.add_parser(
+        "status", help="Read back active runtime state and verify exact module bytes"
+    )
     temporal_status.add_argument("--home", default=None, help="Hermes home to inspect")
-    temporal_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    temporal_status.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
     temporal_status.set_defaults(func=cmd_agent_os)
 
     for temporal_action in ("activate", "deactivate"):
@@ -303,12 +512,24 @@ def build_agent_os_parser(subparsers) -> None:
             help=f"{temporal_action.title()} the profile-local runtime using an exact user AuthorityGrant",
         )
         action_parser.add_argument("--home", default=None, help="Hermes home to mutate")
-        action_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
-        action_parser.add_argument("--authority-gate", required=True, help="Exact unexpired TemporalCommitmentRuntimeAuthority.v1 JSON path")
+        action_parser.add_argument(
+            "--json", action="store_true", help="Emit machine-readable JSON"
+        )
+        action_parser.add_argument(
+            "--authority-gate",
+            required=True,
+            help="Exact unexpired TemporalCommitmentRuntimeAuthority.v1 JSON path",
+        )
         action_parser.set_defaults(func=cmd_agent_os)
 
-    temporal_inspect = temporal_subs.add_parser("inspect", help="Inspect the active canonical ledger without mutation")
+    temporal_inspect = temporal_subs.add_parser(
+        "inspect", help="Inspect the active canonical ledger without mutation"
+    )
     temporal_inspect.add_argument("--home", default=None, help="Hermes home to inspect")
-    temporal_inspect.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
-    temporal_inspect.add_argument("--as-of", required=True, help="Timezone-aware ISO-8601 projection time")
+    temporal_inspect.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
+    temporal_inspect.add_argument(
+        "--as-of", required=True, help="Timezone-aware ISO-8601 projection time"
+    )
     temporal_inspect.set_defaults(func=cmd_agent_os)
