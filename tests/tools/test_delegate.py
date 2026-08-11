@@ -412,6 +412,59 @@ class TestDelegateTask(unittest.TestCase):
             self.assertEqual(kwargs["provider"], parent.provider)
             self.assertEqual(kwargs["api_mode"], parent.api_mode)
 
+    def test_explicit_empty_child_api_key_does_not_inherit_parent_secret(self):
+        parent = _make_mock_parent(depth=0)
+        parent.api_key = "parent-secret"
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+            _build_child_agent(
+                task_index=0,
+                goal="Use credentialless native runtime",
+                context=None,
+                toolsets=None,
+                model="native-model",
+                max_iterations=10,
+                parent_agent=parent,
+                task_count=1,
+                override_provider="native-provider",
+                override_base_url="native://local",
+                override_api_key="",
+                override_api_mode="bedrock_converse",
+            )
+
+        _, kwargs = MockAgent.call_args
+        self.assertEqual(kwargs["api_key"], "")
+        self.assertNotEqual(kwargs["api_key"], parent.api_key)
+
+    def test_explicit_empty_base_url_and_api_mode_do_not_inherit_parent(self):
+        parent = _make_mock_parent(depth=0)
+        parent.base_url = "https://parent.example/v1"
+        parent.api_mode = "parent_mode"
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+            _build_child_agent(
+                task_index=0,
+                goal="Use routed provider defaults",
+                context=None,
+                toolsets=None,
+                model="routed-model",
+                max_iterations=10,
+                parent_agent=parent,
+                task_count=1,
+                override_provider="routed-provider",
+                override_base_url="",
+                override_api_key="routed-key",
+                override_api_mode="",
+            )
+
+        _, kwargs = MockAgent.call_args
+        self.assertEqual(kwargs["provider"], "routed-provider")
+        self.assertEqual(kwargs["base_url"], "")
+        self.assertEqual(kwargs["api_key"], "routed-key")
+        self.assertEqual(kwargs["api_mode"], "")
+
     def test_child_inherits_parent_print_fn(self):
         parent = _make_mock_parent(depth=0)
         sink = MagicMock()
@@ -1162,6 +1215,19 @@ class TestDelegationCredentialResolution(unittest.TestCase):
         self.assertIsNone(creds["api_mode"])
         self.assertIsNone(creds["model"])
 
+    def test_explicit_empty_direct_endpoint_key_remains_credentialless(self):
+        parent = _make_mock_parent(depth=0)
+        parent.api_key = "parent-secret"
+        creds = _resolve_delegation_credentials(
+            {
+                "base_url": "http://localhost:1234/v1",
+                "api_key": "",
+            },
+            parent,
+        )
+
+        self.assertEqual(creds["api_key"], "")
+
     def test_model_only_no_provider(self):
         """When only model is set (no provider), model is returned but credentials are None."""
         parent = _make_mock_parent(depth=0)
@@ -1697,6 +1763,46 @@ class TestDelegationProviderIntegration(unittest.TestCase):
                 self.assertEqual(call.kwargs.get("override_base_url"), "https://openrouter.ai/api/v1")
                 self.assertEqual(call.kwargs.get("override_api_key"), "sk-or-batch")
                 self.assertEqual(call.kwargs.get("override_api_mode"), "chat_completions")
+
+    @patch("tools.delegate_tool._load_config")
+    @patch("tools.delegate_tool._resolve_delegation_credentials")
+    def test_smart_routing_exception_falls_back_to_configured_credentials(
+        self, mock_creds, mock_cfg
+    ):
+        mock_cfg.return_value = {"max_iterations": 45}
+        configured = {
+            "model": "configured-model",
+            "provider": "configured-provider",
+            "base_url": "https://configured.invalid/v1",
+            "api_key": "configured-key",
+            "api_mode": "chat_completions",
+        }
+        mock_creds.return_value = configured
+        parent = _make_mock_parent(depth=0)
+
+        with patch(
+            "tools.delegate_tool._route_task_creds",
+            side_effect=RuntimeError("routing unavailable"),
+        ), patch("tools.delegate_tool._build_child_agent") as mock_build, patch(
+            "tools.delegate_tool._run_single_child",
+            return_value={
+                "task_index": 0,
+                "status": "completed",
+                "summary": "done",
+                "api_calls": 0,
+                "duration_seconds": 0.0,
+            },
+        ):
+            mock_build.return_value = MagicMock()
+            delegate_task(goal="Continue despite routing failure", parent_agent=parent)
+
+        self.assertEqual(mock_build.call_count, 1)
+        kwargs = mock_build.call_args.kwargs
+        self.assertEqual(kwargs["model"], configured["model"])
+        self.assertEqual(kwargs["override_provider"], configured["provider"])
+        self.assertEqual(kwargs["override_base_url"], configured["base_url"])
+        self.assertEqual(kwargs["override_api_key"], configured["api_key"])
+        self.assertEqual(kwargs["override_api_mode"], configured["api_mode"])
 
     @patch("tools.delegate_tool._load_config")
     @patch("tools.delegate_tool._resolve_delegation_credentials")

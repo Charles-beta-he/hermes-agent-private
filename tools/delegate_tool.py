@@ -28,6 +28,7 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     TimeoutError as FuturesTimeoutError,
 )
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from toolsets import TOOLSETS
@@ -1268,10 +1269,18 @@ def _build_child_agent(
     # Resolve effective credentials: config override > parent inherit
     effective_model = model or parent_agent.model
     effective_provider = override_provider or getattr(parent_agent, "provider", None)
-    effective_base_url = override_base_url or parent_agent.base_url
-    if not override_base_url:
+    effective_base_url = (
+        parent_agent.base_url if override_base_url is None else override_base_url
+    )
+    if override_base_url is None:
         effective_base_url = _inherit_parent_base_url(parent_agent, effective_base_url)
-    effective_api_key = override_api_key or parent_api_key
+    # ``None`` means no child-specific decision was made and inheritance is
+    # intended. An explicit empty string means the selected child runtime is
+    # credentialless; never leak the parent's provider secret across that
+    # boundary (notably cold-native transports such as Bedrock).
+    effective_api_key = (
+        parent_api_key if override_api_key is None else override_api_key
+    )
     # Bug #20558 / PR #20563: api_mode must NOT be inherited when the child uses a
     # different provider than the parent — each provider has its own API surface
     # (e.g. MiniMax uses anthropic_messages, DeepSeek uses chat_completions).
@@ -2109,6 +2118,18 @@ def _run_single_child(
             else:
                 _err = str(_timeout_exc)
 
+            try:
+                _append_child_execution_route_receipt(
+                    child,
+                    parent_agent,
+                    task_index=task_index,
+                    status="timeout" if is_timeout else "error",
+                    api_calls=child_api_calls,
+                    error=_err,
+                )
+            except Exception:
+                logger.warning("Failed to append delegated execution route receipt", exc_info=True)
+
             return {
                 "task_index": task_index,
                 "status": "timeout" if is_timeout else "error",
@@ -2337,6 +2358,18 @@ def _run_single_child(
             except Exception as e:
                 logger.debug("Progress callback completion failed: %s", e)
 
+        try:
+            _append_child_execution_route_receipt(
+                child,
+                parent_agent,
+                task_index=task_index,
+                status=status,
+                api_calls=api_calls,
+                error=str(entry.get("error") or ""),
+            )
+        except Exception:
+            logger.warning("Failed to append delegated execution route receipt", exc_info=True)
+
         return entry
 
     except Exception as exc:
@@ -2353,6 +2386,17 @@ def _run_single_child(
                 )
             except Exception as e:
                 logger.debug("Progress callback failure relay failed: %s", e)
+        try:
+            _append_child_execution_route_receipt(
+                child,
+                parent_agent,
+                task_index=task_index,
+                status="error",
+                api_calls=getattr(child, "_api_call_count", 0),
+                error=str(exc),
+            )
+        except Exception:
+            logger.warning("Failed to append delegated execution route receipt", exc_info=True)
         return {
             "task_index": task_index,
             "status": "error",
@@ -2526,6 +2570,7 @@ def delegate_task(
         creds = _resolve_delegation_credentials(cfg, parent_agent)
     except ValueError as exc:
         return tool_error(str(exc))
+    routing_config = _load_full_config_readonly()
 
     # Normalize to task list
     max_children = _get_max_concurrent_children()
@@ -2599,6 +2644,20 @@ def delegate_task(
                 )
             except Exception:
                 pass
+            try:
+                task_creds = _route_task_creds(
+                    creds,
+                    t["goal"],
+                    parent_agent,
+                    config=routing_config,
+                    task_index=i,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "delegation smart routing failed open to configured credentials: %s",
+                    exc,
+                )
+                task_creds = dict(creds or {})
             child = _build_child_agent(
                 task_index=i,
                 goal=t["goal"],
@@ -2606,18 +2665,33 @@ def delegate_task(
                 # Subagents always inherit the parent's toolsets; the model
                 # cannot choose or narrow them (no model-facing toolsets arg).
                 toolsets=None,
-                model=creds["model"],
+                model=task_creds["model"],
                 max_iterations=effective_max_iter,
                 task_count=n_tasks,
                 parent_agent=parent_agent,
-                override_provider=creds["provider"],
-                override_base_url=creds["base_url"],
-                override_api_key=creds["api_key"],
-                override_api_mode=creds["api_mode"],
-                override_acp_command=creds.get("command"),
-                override_acp_args=creds.get("args"),
+                override_provider=task_creds["provider"],
+                override_base_url=task_creds["base_url"],
+                override_api_key=task_creds["api_key"],
+                override_api_mode=task_creds["api_mode"],
+                override_acp_command=task_creds.get("command"),
+                override_acp_args=task_creds.get("args"),
                 role=effective_role,
             )
+            # Preserve the immutable routing selection separately from the
+            # child's mutable runtime so the completion receipt can expose any
+            # selected/actual divergence after fallback or runtime recovery.
+            route_meta = task_creds.get("_smart_routing_decision") or {}
+            setattr(child, "_smart_routing_selected_tier", str(route_meta.get("tier") or ""))
+            setattr(child, "_smart_routing_selected_provider", str(route_meta.get("provider") or ""))
+            setattr(child, "_smart_routing_selected_model", str(route_meta.get("model") or ""))
+            setattr(child, "_smart_routing_config_source", str(route_meta.get("config_source") or "none"))
+            setattr(child, "_smart_routing_decision_reason", str(route_meta.get("decision_reason") or ""))
+            setattr(child, "_smart_routing_diagnostics", tuple(route_meta.get("diagnostics") or ()))
+            # The child model was selected at its own fresh-session boundary
+            # above.  Prevent conversation_loop from routing the same child a
+            # second time when run_conversation() begins.
+            setattr(child, "_smart_routing_session_id", str(getattr(child, "session_id", "") or ""))
+            setattr(child, "_smart_routing_applied", True)
             # Override with correct parent tool names (before child construction mutated global)
             child._delegate_saved_tool_names = _parent_tool_names
             children.append((i, t, child))
@@ -3087,14 +3161,220 @@ def _resolve_child_credential_pool(
     return None
 
 
+def _load_full_config_readonly() -> dict:
+    """Load the complete runtime config without mutating persistent state."""
+    try:
+        from cli import CLI_CONFIG
+
+        if isinstance(CLI_CONFIG, dict) and CLI_CONFIG:
+            return CLI_CONFIG
+    except Exception:
+        pass
+    try:
+        from hermes_cli.config import load_config_readonly
+
+        full = load_config_readonly()
+        return full if isinstance(full, dict) else {}
+    except Exception:
+        return {}
+
+
+def _route_task_creds(
+    base_creds: dict,
+    goal: str,
+    parent_agent,
+    *,
+    config: Optional[dict] = None,
+    classifier=None,
+    runtime_resolver=None,
+    receipt_path=None,
+    task_index: int = 0,
+) -> dict:
+    """Resolve one fresh delegated child's model credentials.
+
+    Explicit ``delegation`` credential/model configuration always wins.  When
+    no override exists, smart routing applies independently to each child goal
+    unless ``smart_model_routing.apply_to_delegation`` is false.
+    """
+    from agent.model_router import (
+        RouteTarget,
+        _resolve_target_runtime,
+        append_route_receipt,
+        resolve_routing_policy,
+        select_route_decision,
+    )
+
+    creds = dict(base_creds or {})
+    full_config = config if isinstance(config, dict) else _load_full_config_readonly()
+    smart = full_config.get("smart_model_routing")
+    smart = smart if isinstance(smart, dict) else {}
+
+    if not resolve_routing_policy(full_config).enabled:
+        return creds
+
+    def _actual() -> dict:
+        return {
+            "provider": str(creds.get("provider") or getattr(parent_agent, "provider", "") or ""),
+            "model": str(creds.get("model") or getattr(parent_agent, "model", "") or ""),
+        }
+
+    def _receipt(status: str, *, decision=None, error: str = "") -> None:
+        selected = None
+        if decision is not None and decision.status == "selected":
+            selected = {
+                "tier": decision.tier,
+                "provider": decision.provider,
+                "model": decision.model,
+            }
+        append_route_receipt(
+            {
+                "schema": "hermes_model_route_receipt_v1",
+                "event_type": "route_resolution",
+                "created_at": time.time(),
+                "scope": "delegation",
+                "session_id": str(getattr(parent_agent, "session_id", "") or ""),
+                "child_task_index": task_index,
+                "config_source": decision.config_source if decision is not None else "none",
+                "decision_reason": decision.reason if decision is not None else "",
+                "diagnostics": list(decision.diagnostics) if decision is not None else [],
+                "selected": selected,
+                "actual": _actual(),
+                "switch_status": status,
+                "status": status,
+                "error": error,
+                "external_side_effects_enabled": False,
+            },
+            receipt_path,
+        )
+
+    # Any trusted delegation endpoint/model/provider override is an explicit
+    # child-runtime choice and must not be replaced by automatic routing.
+    if any(
+        creds.get(key)
+        for key in (
+            "model",
+            "provider",
+            "base_url",
+            "api_key",
+            "api_mode",
+            "command",
+            "args",
+        )
+    ):
+        _receipt("skipped_explicit_delegation_model")
+        return creds
+
+    apply_to_delegation = smart.get("apply_to_delegation", True)
+    if not isinstance(apply_to_delegation, bool):
+        _receipt("skipped_invalid_apply_to_delegation")
+        return creds
+    if apply_to_delegation is False:
+        _receipt("skipped_apply_to_delegation_false")
+        return creds
+
+    main_runtime = {
+        "provider": str(getattr(parent_agent, "provider", "") or ""),
+        "model": str(getattr(parent_agent, "model", "") or ""),
+        "base_url": str(getattr(parent_agent, "base_url", "") or ""),
+        "api_key": getattr(parent_agent, "api_key", "") or "",
+        "api_mode": str(getattr(parent_agent, "api_mode", "") or ""),
+    }
+    decision = select_route_decision(
+        goal,
+        full_config,
+        classifier=classifier,
+        main_runtime=main_runtime,
+    )
+    if decision.status != "selected":
+        _receipt(decision.status, decision=decision)
+        return creds
+
+    resolver = runtime_resolver or _resolve_target_runtime
+    resolved = resolver(RouteTarget(decision.provider, decision.model), parent_agent, full_config)
+    if not resolved.get("success"):
+        _receipt(
+            "resolution_failed",
+            decision=decision,
+            error=str(resolved.get("error") or "runtime resolution failed"),
+        )
+        return creds
+
+    for key in ("model", "provider", "base_url", "api_key", "api_mode", "command", "args"):
+        if key in resolved:
+            creds[key] = resolved[key]
+    creds["_smart_routing_decision"] = {
+        "tier": decision.tier,
+        "provider": decision.provider,
+        "model": decision.model,
+        "config_source": decision.config_source,
+        "decision_reason": decision.reason,
+        "diagnostics": tuple(decision.diagnostics),
+    }
+    _receipt("routing_credentials_resolved", decision=decision)
+    return creds
+
+
+def _append_child_execution_route_receipt(
+    child,
+    parent_agent,
+    *,
+    task_index: int,
+    status: str,
+    api_calls: Any,
+    error: str = "",
+    receipt_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Bind a delegated child's completed run to its actual runtime identity."""
+    from agent.model_router import append_route_receipt
+
+    calls = int(api_calls) if isinstance(api_calls, (int, float)) else 0
+    selected_provider = str(getattr(child, "_smart_routing_selected_provider", "") or "")
+    selected_model = str(getattr(child, "_smart_routing_selected_model", "") or "")
+    selected = None
+    if selected_provider and selected_model:
+        selected = {
+            "tier": str(getattr(child, "_smart_routing_selected_tier", "") or ""),
+            "provider": selected_provider,
+            "model": selected_model,
+        }
+    receipt = {
+        "schema": "hermes_model_route_receipt_v1",
+        "event_type": "execution_route",
+        "created_at": time.time(),
+        "scope": "delegation_execution",
+        "session_id": str(getattr(parent_agent, "session_id", "") or ""),
+        "child_session_id": str(getattr(child, "session_id", "") or ""),
+        "child_task_index": int(task_index),
+        # Compatibility alias for existing delegation result consumers.
+        "task_index": int(task_index),
+        "config_source": str(getattr(child, "_smart_routing_config_source", "none") or "none"),
+        "decision_reason": str(getattr(child, "_smart_routing_decision_reason", "") or ""),
+        "diagnostics": list(getattr(child, "_smart_routing_diagnostics", ()) or ()),
+        "selected": selected,
+        "actual": {
+            "provider": str(getattr(child, "provider", "") or ""),
+            "model": str(getattr(child, "model", "") or ""),
+        },
+        "switch_status": "not_applicable_child_built_with_route",
+        "status": str(status),
+        "api_calls": calls,
+        "executed": calls > 0,
+        "error": str(error or ""),
+        "external_side_effects_enabled": False,
+    }
+    if selected is not None:
+        append_route_receipt(receipt, receipt_path)
+    return receipt
+
+
 def _resolve_delegation_credentials(cfg: dict, parent_agent) -> dict:
     """Resolve credentials for subagent delegation.
 
     If ``delegation.base_url`` is configured, subagents use that direct
     OpenAI-compatible endpoint. ``delegation.api_key`` overrides the key; when
     omitted, ``api_key`` is returned as ``None`` so ``_build_child_agent``
-    inherits the parent agent's key (``effective_api_key = override_api_key or
-    parent_api_key``). This lets providers that store their key outside
+    inherits the parent agent's key. An explicit empty string remains empty.
+    This lets providers that store their key outside
     ``OPENAI_API_KEY`` (e.g. ``MINIMAX_API_KEY``, ``DASHSCOPE_API_KEY``) work
     without a duplicate config entry.
 
@@ -3111,7 +3391,10 @@ def _resolve_delegation_credentials(cfg: dict, parent_agent) -> dict:
     configured_model = str(cfg.get("model") or "").strip() or None
     configured_provider = str(cfg.get("provider") or "").strip() or None
     configured_base_url = str(cfg.get("base_url") or "").strip() or None
-    configured_api_key = str(cfg.get("api_key") or "").strip() or None
+    raw_api_key = cfg.get("api_key") if "api_key" in cfg else None
+    configured_api_key = (
+        "" if raw_api_key == "" else str(raw_api_key or "").strip() or None
+    )
     configured_api_mode = str(cfg.get("api_mode") or "").strip().lower() or None
 
     # Native-SDK providers (Bedrock, Vertex, Google GenAI) speak their own

@@ -175,6 +175,18 @@ def test_new_command_creates_real_fresh_session_and_resets_agent_state(tmp_path)
     cli.agent._invalidate_system_prompt.assert_called_once()
 
 
+def test_new_session_carries_manual_model_pin_to_rotated_session(tmp_path):
+    cli = _prepare_cli_with_active_session(tmp_path)
+    old_session_id = cli.session_id
+    cli.agent._smart_routing_entrypoint_eligible = True
+    cli.agent._smart_routing_user_override_session_id = old_session_id
+
+    cli.new_session(silent=True)
+
+    assert cli.agent._smart_routing_entrypoint_eligible is False
+    assert cli.agent._smart_routing_user_override_session_id == cli.session_id
+
+
 def test_new_command_rotates_hermes_session_id_env_and_context(tmp_path):
     from gateway.session_context import _VAR_MAP, get_session_env
 

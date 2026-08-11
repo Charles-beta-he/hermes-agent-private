@@ -1273,9 +1273,10 @@ def _start_agent_build(sid: str, session: dict) -> None:
                 # Lazy-resumed (watch) sessions carry the stored conversation
                 # id — pass it through so the upgrade continues that session
                 # instead of starting a fresh one under the same key.
-                kw = {"session_db": session_db}
+                kw: dict[str, Any] = {"session_db": session_db}
                 if resume_sid := current.get("resume_session_id"):
                     kw["session_id"] = resume_sid
+                    kw["has_existing_messages"] = True
                 resume_overrides = current.get("resume_runtime_overrides")
                 if isinstance(resume_overrides, dict) and resume_overrides:
                     # Cold deferred resume: restore the full persisted runtime
@@ -1294,6 +1295,8 @@ def _start_agent_build(sid: str, session: dict) -> None:
                         kw["reasoning_config_override"] = reasoning
                     if (tier := current.get("create_service_tier_override")) is not None:
                         kw["service_tier_override"] = tier
+                if current.get("history"):
+                    kw["has_existing_messages"] = True
                 agent = _make_agent(sid, key, **kw)
             finally:
                 _clear_session_context(tokens)
@@ -4313,6 +4316,7 @@ def _make_agent(
     provider_override: str | None = None,
     reasoning_config_override: dict | None = None,
     service_tier_override: str | None = None,
+    has_existing_messages: bool = False,
 ):
     from run_agent import AIAgent
 
@@ -4419,7 +4423,8 @@ def _make_agent(
             "target_model": model or None,
         })
     _pr = _load_provider_routing()
-    return AIAgent(
+    effective_session_db = session_db if session_db is not None else _get_db()
+    agent = AIAgent(
         model=model,
         max_iterations=_cfg_max_turns(cfg, 90),
         provider=runtime.get("provider"),
@@ -4457,7 +4462,7 @@ def _make_agent(
         provider_data_collection=_pr.get("data_collection"),
         platform="tui",
         session_id=session_id or key,
-        session_db=session_db if session_db is not None else _get_db(),
+        session_db=effective_session_db,
         ephemeral_system_prompt=system_prompt or None,
         checkpoints_enabled=is_truthy_value(os.environ.get("HERMES_TUI_CHECKPOINTS")),
         pass_session_id=is_truthy_value(os.environ.get("HERMES_TUI_PASS_SESSION_ID")),
@@ -4466,6 +4471,23 @@ def _make_agent(
         fallback_model=_load_fallback_model(),
         **_agent_cbs(sid),
     )
+    durable_history_exists = bool(has_existing_messages)
+    if session_id and not durable_history_exists:
+        if effective_session_db is None:
+            durable_history_exists = True
+        else:
+            try:
+                durable_history_exists = bool(effective_session_db.get_messages(session_id))
+            except Exception:
+                # A resume-bound session whose durable state cannot be read is not a
+                # safe first-turn routing boundary.
+                durable_history_exists = True
+    setattr(
+        agent,
+        "_smart_routing_entrypoint_eligible",
+        not bool(model_override or provider_override or durable_history_exists),
+    )
+    return agent
 
 
 def _init_session(
@@ -5639,6 +5661,7 @@ def _(rid, params: dict) -> dict:
                 target,
                 session_id=target,
                 session_db=db,
+                has_existing_messages=bool(history),
                 **stored_runtime_overrides,
             )
         finally:
@@ -7900,7 +7923,12 @@ def _(rid, params: dict) -> dict:
     try:
         tokens = _set_session_context(new_key)
         try:
-            agent = _make_agent(new_sid, new_key, session_id=new_key)
+            agent = _make_agent(
+                new_sid,
+                new_key,
+                session_id=new_key,
+                has_existing_messages=bool(history),
+            )
         finally:
             _clear_session_context(tokens)
         _init_session(
