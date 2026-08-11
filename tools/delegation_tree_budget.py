@@ -1,8 +1,9 @@
-"""Pure, authority-neutral tree-node capacity preflight for delegation expansion.
+"""Pure, authority-neutral delegation tree-capacity preflight operations.
 
-This module consumes an already validated Phase 2 expansion projection and a
-centrally supplied capacity snapshot.  It does not reserve capacity, mutate a
-ledger, construct children, grant authority, or touch the live delegate path.
+This module can consume an already validated Phase 2 expansion projection or
+recompute that projection from a supplied definition and proposal. It does not
+reserve capacity, mutate a ledger, construct children, grant authority, or
+touch the live delegate path.
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ from importlib import resources
 from typing import Any, NoReturn
 
 import jsonschema
+
+from tools.delegation_expansion import validate_delegation_expansion_v1
 
 
 _SNAPSHOT_SCHEMA = "delegation-tree-budget-snapshot-v1.schema.json"
@@ -267,6 +270,17 @@ def _normalize_projection(projection: object) -> dict[str, Any]:
     return normalized
 
 
+def evaluate_delegation_tree_budget_preflight_from_sources_v1(
+    definition: object,
+    proposal: object,
+    snapshot: object,
+) -> dict[str, Any]:
+    """Recompute Phase 2 from canonical sources, then evaluate Phase 3."""
+
+    projection = validate_delegation_expansion_v1(definition, proposal)
+    return evaluate_delegation_tree_budget_preflight_v1(snapshot, projection)
+
+
 def evaluate_delegation_tree_budget_preflight_v1(
     snapshot: object,
     expansion_projection: object,
@@ -378,6 +392,7 @@ def validate_delegation_tree_budget_preflight_v1(value: object) -> dict[str, Any
 
 __all__ = [
     "DelegationTreeBudgetError",
+    "evaluate_delegation_tree_budget_preflight_from_sources_v1",
     "evaluate_delegation_tree_budget_preflight_v1",
     "validate_delegation_tree_budget_preflight_v1",
 ]

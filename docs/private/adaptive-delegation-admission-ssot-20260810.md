@@ -223,8 +223,9 @@ runtime handle, or command.
 
 Detached output validators establish structural validity and internal content binding only.
 They do not prove that a syntactically valid digest or normalized projection originated from
-the canonical Phase 2 compiler or a trusted snapshot source. Source provenance requires a
-future source-bound verification operation and must not be inferred from this contract.
+the canonical Phase 2 compiler or a trusted snapshot source. Phase 4 closes only the first
+part of that provenance gap by recomputing the projection from source objects; snapshot
+producer trust must still not be inferred from this contract.
 
 This object is intentionally named a preflight rather than a reservation. Two sibling
 checks can observe the same immutable snapshot and both fit. Therefore the result is
@@ -252,6 +253,26 @@ Phase 3 non-goals:
   side-effect inheritance;
 - no config/environment/public tool/prompt field or gateway/TUI change;
 - no claim that tree-budget enforcement or adaptive-depth execution is enabled.
+
+## Phase 4 — source-bound preflight composition
+
+Phase 4 adds one pure composition operation:
+
+`evaluate_delegation_tree_budget_preflight_from_sources_v1(definition, proposal, snapshot)`
+
+The operation accepts no detached expansion projection. It recomputes the Phase 2 projection
+from the supplied canonical definition and proposal via `validate_delegation_expansion_v1`,
+then passes that live result directly to the existing Phase 3 evaluator. Its result is exactly
+the same `DelegationTreeBudgetPreflightV1`; Phase 4 publishes no new schema or receipt.
+
+This proves that the returned preflight is bound to the definition and proposal supplied to
+that invocation. It does not prove that the supplied snapshot came from a trusted central
+producer, and it does not convert snapshot-time fit into admission or reservation.
+
+Phase 4 remains deterministic and authority-neutral: apart from the existing packaged-schema
+validation used by Phases 2 and 3, it reads no config, environment, clock, caller-selected
+file, registry, or ledger; performs no logging, child construction, dispatch, reservation,
+CAS, persistence, or runtime mutation; and remains unreachable from `delegate_task`.
 
 ## Future phases — not authorized by this SSOT
 

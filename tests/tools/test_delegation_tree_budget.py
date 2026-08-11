@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 from pathlib import Path
 from typing import Any
@@ -8,11 +9,18 @@ from typing import Any
 import jsonschema
 import pytest
 
+from tools import delegation_tree_budget
+from tools.delegation_expansion import (
+    DelegationExpansionError,
+    validate_delegation_expansion_v1,
+)
 from tools.delegation_tree_budget import (
     DelegationTreeBudgetError,
+    evaluate_delegation_tree_budget_preflight_from_sources_v1,
     evaluate_delegation_tree_budget_preflight_v1,
     validate_delegation_tree_budget_preflight_v1,
 )
+from workflow_kernel.workflow_definition import compile_workflow_definition_v1
 
 
 ROOT = Path(__file__).parents[2]
@@ -41,6 +49,90 @@ def _cases() -> list[dict[str, Any]]:
 def _valid_pair() -> tuple[dict[str, Any], dict[str, Any]]:
     case = _cases()[0]
     return copy.deepcopy(case["snapshot"]), copy.deepcopy(case["projection"])
+
+
+def _source_inputs() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    definition_cases = json.loads(
+        (ROOT / "tests/contracts/fixtures/workflow-definition-v1/cases.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    definition = copy.deepcopy(definition_cases[0]["value"])
+    plan = next(task for task in definition["tasks"] if task["id"] == "plan")
+    sibling = copy.deepcopy(plan)
+    sibling["id"] = "plan-b"
+    sibling["owner"] = "planner-b"
+    sibling["acceptance"][0]["id"] = "plan-b-bounded"
+    definition["tasks"].insert(2, sibling)
+    implement = next(task for task in definition["tasks"] if task["id"] == "implement")
+    implement["depends_on"] = ["plan", "plan-b"]
+    proposal = {
+        "schema_version": "delegation_expansion_proposal_v1",
+        "plan_digest": compile_workflow_definition_v1(definition)["plan_digest"],
+        "child_task_ids": ["plan-b", "plan"],
+        "synthesis_task_id": "implement",
+    }
+    snapshot, _ = _valid_pair()
+    return definition, proposal, snapshot
+
+
+def test_source_bound_operation_equals_canonical_phase_two_then_phase_three() -> None:
+    definition, proposal, snapshot = _source_inputs()
+
+    expected = evaluate_delegation_tree_budget_preflight_v1(
+        snapshot,
+        validate_delegation_expansion_v1(definition, proposal),
+    )
+
+    assert evaluate_delegation_tree_budget_preflight_from_sources_v1(
+        definition, proposal, snapshot
+    ) == expected
+
+
+def test_source_bound_operation_rejects_proposal_after_definition_drift() -> None:
+    definition, proposal, snapshot = _source_inputs()
+    definition["tasks"][1]["owner"] = "changed-owner"
+
+    with pytest.raises(DelegationExpansionError) as exc_info:
+        evaluate_delegation_tree_budget_preflight_from_sources_v1(
+            definition, proposal, snapshot
+        )
+
+    assert exc_info.value.code == "plan_digest_mismatch"
+
+
+def test_source_bound_operation_has_no_detached_projection_input() -> None:
+    signature = inspect.signature(
+        evaluate_delegation_tree_budget_preflight_from_sources_v1
+    )
+
+    assert tuple(signature.parameters) == ("definition", "proposal", "snapshot")
+
+
+def test_source_bound_operation_is_publicly_exported() -> None:
+    assert (
+        "evaluate_delegation_tree_budget_preflight_from_sources_v1"
+        in delegation_tree_budget.__all__
+    )
+
+
+def test_source_bound_operation_is_deterministic_and_does_not_mutate_sources() -> None:
+    definition, proposal, snapshot = _source_inputs()
+    before = copy.deepcopy((definition, proposal, snapshot))
+
+    first = evaluate_delegation_tree_budget_preflight_from_sources_v1(
+        definition, proposal, snapshot
+    )
+    second = evaluate_delegation_tree_budget_preflight_from_sources_v1(
+        definition, proposal, snapshot
+    )
+
+    assert first == second
+    assert (definition, proposal, snapshot) == before
+    assert first["authority_granted"] is False
+    assert first["executable"] is False
+    assert first["reservation_committed"] is False
+    assert first["ledger_mutated"] is False
 
 
 def _assert_error(
