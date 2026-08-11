@@ -230,6 +230,15 @@ def test_shared_proposal_fixtures_match_public_json_schema() -> None:
         assert validator.is_valid(case["value"]) is case["valid"], case["name"]
 
 
+def test_public_projection_schema_rejects_derived_child_count_drift() -> None:
+    schema = json.loads(PUBLIC_PROJECTION_SCHEMA.read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(schema)
+    projection = validate_delegation_expansion_v1(_definition(), _proposal())
+    projection["requested_child_nodes"] = 1
+
+    assert not validator.is_valid(projection)
+
+
 def test_public_and_packaged_proposal_schemas_are_byte_identical() -> None:
     assert PUBLIC_SCHEMA.read_bytes() == PACKAGED_SCHEMA.read_bytes()
     assert (
