@@ -569,6 +569,79 @@ class TestMarkJobRun:
         assert updated["repeat"]["completed"] == 1
         assert updated["last_status"] == "ok"
 
+    def test_trigger_during_active_run_survives_completion(self, tmp_cron_dir):
+        """A continuation trigger emitted by a running job must stay due.
+
+        Regression: trigger_job() moved next_run_at to now, but mark_job_run()
+        later overwrote it with the normal cadence. Mission continuation signals
+        then waited a full watchdog interval instead of starting the successor.
+        """
+        from cron.jobs import trigger_job
+
+        job = create_job(prompt="Continue", schedule="every 30m")
+        run_trigger_generation = int(job.get("trigger_generation", 0))
+
+        triggered = trigger_job(job["id"])
+        assert triggered is not None
+        trigger_requested_at = triggered["trigger_requested_at"]
+        trigger_generation = triggered["trigger_generation"]
+
+        mark_job_run(
+            job["id"], success=True, run_trigger_generation=run_trigger_generation
+        )
+
+        updated = get_job(job["id"])
+        assert updated is not None
+        assert updated["trigger_requested_at"] == trigger_requested_at
+        assert updated["trigger_generation"] == trigger_generation
+        assert updated["next_run_at"] == trigger_requested_at
+        assert updated["state"] == "scheduled"
+
+    def test_successor_run_consumes_trigger_and_restores_cadence(self, tmp_cron_dir):
+        from cron.jobs import trigger_job
+
+        job = create_job(prompt="Continue", schedule="every 30m")
+        triggered = trigger_job(job["id"])
+        assert triggered is not None
+        successor_trigger_generation = triggered["trigger_generation"]
+
+        mark_job_run(
+            job["id"],
+            success=True,
+            run_trigger_generation=successor_trigger_generation,
+        )
+
+        updated = get_job(job["id"])
+        assert updated is not None
+        assert "trigger_requested_at" not in updated
+        assert datetime.fromisoformat(updated["next_run_at"]) > datetime.now(timezone.utc)
+
+    def test_pre_dispatch_advance_does_not_clear_late_trigger(self, tmp_cron_dir):
+        """A trigger arriving after due selection survives the at-most-once bump."""
+        from cron.jobs import advance_next_run, trigger_job
+
+        job = create_job(prompt="Continue", schedule="every 30m")
+        due_snapshot_generation = int(job.get("trigger_generation", 0))
+
+        triggered = trigger_job(job["id"])
+        assert triggered is not None
+        trigger_requested_at = triggered["trigger_requested_at"]
+
+        assert advance_next_run(job["id"]) is True
+        advanced = get_job(job["id"])
+        assert advanced is not None
+        assert advanced["trigger_requested_at"] == trigger_requested_at
+        assert advanced["trigger_generation"] == triggered["trigger_generation"]
+
+        mark_job_run(
+            job["id"],
+            success=True,
+            run_trigger_generation=due_snapshot_generation,
+        )
+        completed = get_job(job["id"])
+        assert completed is not None
+        assert completed["next_run_at"] == trigger_requested_at
+
     def test_repeat_limit_removes_job(self, tmp_cron_dir):
         job = create_job(prompt="Once", schedule="30m", repeat=1)
         mark_job_run(job["id"], success=True)

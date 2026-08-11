@@ -1318,10 +1318,21 @@ def resume_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def trigger_job(job_id: str) -> Optional[Dict[str, Any]]:
-    """Schedule a job to run on the next scheduler tick. Accepts a job ID or name."""
+    """Schedule a job to run on the next scheduler tick. Accepts a job ID or name.
+
+    ``trigger_generation`` is a durable rerun latch.  A job can trigger itself
+    near the end of a long run (Mission continuation is the primary consumer).
+    Without the latch, the active run's later ``mark_job_run`` call overwrites
+    ``next_run_at=now`` with the normal cadence and silently loses the trigger.
+    """
     job = resolve_job_ref(job_id)
     if not job:
         return None
+    requested_at = _hermes_now().isoformat()
+    # Concurrent callers may observe the same generation; that is intentional
+    # coalescing, not a lost wakeup.  mark_job_run compares with ``>`` rather
+    # than exact equality, so either write still preserves one successor run.
+    trigger_generation = int(job.get("trigger_generation", 0)) + 1
     return update_job(
         job["id"],
         {
@@ -1329,7 +1340,9 @@ def trigger_job(job_id: str) -> Optional[Dict[str, Any]]:
             "state": "scheduled",
             "paused_at": None,
             "paused_reason": None,
-            "next_run_at": _hermes_now().isoformat(),
+            "next_run_at": requested_at,
+            "trigger_requested_at": requested_at,
+            "trigger_generation": trigger_generation,
         },
     )
 
@@ -1358,7 +1371,8 @@ def remove_job(job_id: str) -> bool:
 
 
 def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
-                 delivery_error: Optional[str] = None):
+                 delivery_error: Optional[str] = None,
+                 run_trigger_generation: int = 0):
     """
     Mark a job as having been run.
     
@@ -1414,8 +1428,18 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                         save_jobs(jobs)
                         return
                 
-                # Compute next run
-                job["next_run_at"] = compute_next_run(job["schedule"], now)
+                # Preserve a trigger requested after this run began.  This is a
+                # durable rerun latch for self-continuing jobs: the current run
+                # must not erase its successor by restoring the normal cadence.
+                trigger_requested_at = job.get("trigger_requested_at")
+                trigger_generation = int(job.get("trigger_generation", 0))
+                rerun_pending = trigger_generation > run_trigger_generation
+
+                if rerun_pending:
+                    job["next_run_at"] = trigger_requested_at
+                else:
+                    job.pop("trigger_requested_at", None)
+                    job["next_run_at"] = compute_next_run(job["schedule"], now)
 
                 # If no next run, decide whether this is terminal completion
                 # (one-shot) or a transient failure (recurring schedule couldn't

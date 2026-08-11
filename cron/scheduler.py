@@ -3537,7 +3537,9 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
     Returns True if the job was processed (even if the job itself failed —
     failure is recorded via ``mark_job_run``), False only if processing raised.
     """
+    run_trigger_generation = 0
     try:
+        run_trigger_generation = int(job.get("trigger_generation", 0))
         started_at = time.time()
         # Pre-run dispatch claim (issue #38758): atomically commit a finite
         # one-shot's dispatch BEFORE its side effect runs, so a tick that dies
@@ -3642,7 +3644,13 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
             duration_s=time.time() - started_at,
         )
 
-        mark_job_run(job["id"], success, error, delivery_error=delivery_error)
+        mark_job_run(
+            job["id"],
+            success,
+            error,
+            delivery_error=delivery_error,
+            run_trigger_generation=run_trigger_generation,
+        )
         try:
             from agent.selfcheck_operator import observe_cron_job_result
 
@@ -3666,7 +3674,12 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
 
     except Exception as e:
         logger.error("Error processing job %s: %s", job['id'], e)
-        mark_job_run(job["id"], False, str(e))
+        mark_job_run(
+            job["id"],
+            False,
+            str(e),
+            run_trigger_generation=run_trigger_generation,
+        )
         try:
             from agent.selfcheck_operator import observe_cron_job_result
 
