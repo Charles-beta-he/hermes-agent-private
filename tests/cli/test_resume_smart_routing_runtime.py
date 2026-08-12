@@ -201,6 +201,8 @@ def test_resume_rejects_runtime_missing_any_canonical_field(missing_field):
         "https://user:password@example.invalid/v1",
         "https://example.invalid/v1?access_token=must-not-be-restored",
         "https://example.invalid/v1?authorization=must-not-be-restored",
+        "https://example.invalid/v1?aws_access_key_id=AKIA_SENTINEL",
+        "https://example.invalid/v1?api.key=SECRET_SENTINEL",
         "not a url",
         "https://example.invalid:bad/v1",
         "https:///missing-host/v1",

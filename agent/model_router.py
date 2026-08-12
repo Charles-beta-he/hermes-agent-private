@@ -522,8 +522,17 @@ def _safe_base_url(value: str) -> bool:
         if parsed.username is not None or parsed.password is not None:
             return False
         for key, _value in parse_qsl(parsed.query, keep_blank_values=True):
-            normalized = key.lower().replace("-", "_")
-            if any(part in normalized for part in _SENSITIVE_KEY_PARTS):
+            # Query keys are attacker-controlled. Canonicalize every separator
+            # (api.key, api-key, api_key) before applying the credential denylist.
+            import re
+
+            normalized = re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_")
+            compact = normalized.replace("_", "")
+            sensitive_parts = _SENSITIVE_KEY_PARTS + ("access_key", "accesskey")
+            if any(
+                part in normalized or part.replace("_", "") in compact
+                for part in sensitive_parts
+            ):
                 return False
     except (TypeError, ValueError):
         return False
