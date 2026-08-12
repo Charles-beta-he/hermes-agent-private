@@ -447,9 +447,38 @@ def _receipt_base(agent: Any, *, scope: str, decision: Optional[RouteDecision] =
     }
 
 
+def rebind_smart_routing_runtime(agent: Any, session_id: str) -> bool:
+    """Rebind an existing durable route to a continuation session."""
+    route = getattr(agent, "_smart_routing_runtime", None)
+    if not isinstance(route, dict):
+        return False
+    provider = str(route.get("provider") or "").strip()
+    model = str(route.get("model") or "").strip()
+    if not session_id or not provider or not model:
+        return False
+    rebound = dict(route)
+    rebound["session_id"] = str(session_id)
+    agent._smart_routing_runtime = rebound
+    model_config = getattr(agent, "_session_init_model_config", None)
+    if isinstance(model_config, dict):
+        model_config["smart_routing_runtime"] = dict(rebound)
+    return True
+
+
 def _persist_runtime_identity(agent: Any, session_id: str) -> None:
     """Keep fresh and pre-created session rows aligned with the active runtime."""
     model_config = dict(getattr(agent, "_session_init_model_config", {}) or {})
+    route_runtime = dict(getattr(agent, "_smart_routing_runtime", {}) or {})
+    durable_route = {
+        "session_id": str(session_id),
+        "provider": str(getattr(agent, "provider", "") or ""),
+        "model": str(getattr(agent, "model", "") or ""),
+        "base_url": str(getattr(agent, "base_url", "") or ""),
+        "api_mode": str(getattr(agent, "api_mode", "") or ""),
+        "tier": str(route_runtime.get("tier") or ""),
+    }
+    model_config["smart_routing_runtime"] = durable_route
+    agent._smart_routing_runtime = dict(durable_route)
     session_db = getattr(agent, "_session_db", None)
     session_db_created = bool(getattr(agent, "_session_db_created", False))
     if session_db is not None and session_db_created:
@@ -465,6 +494,8 @@ def _persist_runtime_identity(agent: Any, session_id: str) -> None:
                 model_config = latest
         except Exception:
             logger.warning("failed to read durable runtime identity", exc_info=True)
+    # The active route always replaces a stale marker from a pre-created row.
+    model_config["smart_routing_runtime"] = dict(durable_route)
     # Runtime identity persistence is intentionally non-secret even if an older
     # row or initialization snapshot accidentally contains a credential field.
     model_config.pop("api_key", None)

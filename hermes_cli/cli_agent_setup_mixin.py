@@ -14,6 +14,7 @@ loaded) so this module never imports ``cli`` at import time -> no import cycle.
 
 from __future__ import annotations
 
+import json
 import sys
 
 from rich.markup import escape as _escape
@@ -29,6 +30,78 @@ class CLIAgentSetupMixin:
             "_smart_routing_entrypoint_eligible",
             bool(getattr(self, "_smart_routing_entrypoint_eligible", False)),
         )
+        resumed_runtime = getattr(self, "_resumed_smart_routing_runtime", None)
+        if isinstance(resumed_runtime, dict):
+            runtime = dict(resumed_runtime)
+            if (
+                str(runtime.get("provider") or "") != str(getattr(self, "provider", "") or "")
+                or str(runtime.get("model") or "") != str(getattr(self, "model", "") or "")
+            ):
+                return
+            setattr(self.agent, "_smart_routing_runtime", runtime)
+            init_config = getattr(self.agent, "_session_init_model_config", None)
+            if isinstance(init_config, dict):
+                init_config["smart_routing_runtime"] = runtime
+
+    def _restore_resumed_smart_routing_runtime(self) -> None:
+        """Restore a session-bound, non-secret smart route before auth resolution."""
+        self._resumed_smart_routing_runtime = None
+        if (
+            not getattr(self, "_resumed", False)
+            or getattr(self, "_resume_runtime_pin_explicit", False)
+            or not getattr(self, "_session_db", None)
+        ):
+            return
+        requested_id = str(getattr(self, "session_id", "") or "")
+        try:
+            resolved_id = self._session_db.resolve_resume_session_id(requested_id)
+        except Exception:
+            resolved_id = requested_id
+        if not isinstance(resolved_id, str) or not resolved_id.strip():
+            resolved_id = requested_id
+        if resolved_id != requested_id:
+            self.session_id = resolved_id
+            self._resume_runtime_resolved_from = requested_id
+        try:
+            meta = self._session_db.get_session(self.session_id)
+        except Exception:
+            return
+        raw_config = meta.get("model_config") if isinstance(meta, dict) else None
+        try:
+            config = json.loads(raw_config) if isinstance(raw_config, str) else raw_config
+        except (TypeError, ValueError):
+            return
+        route = config.get("smart_routing_runtime") if isinstance(config, dict) else None
+        allowed_route_fields = {
+            "session_id",
+            "provider",
+            "model",
+            "base_url",
+            "api_mode",
+            "tier",
+        }
+        if not isinstance(route, dict) or not set(route).issubset(allowed_route_fields):
+            return
+        if any(not isinstance(value, str) for value in route.values()):
+            return
+        provider = str(route.get("provider") or "").strip()
+        model = str(route.get("model") or "").strip()
+        if str(route.get("session_id") or "") != str(self.session_id) or not provider or not model:
+            return
+        runtime = {
+            "session_id": str(self.session_id),
+            "provider": provider,
+            "model": model,
+            "base_url": str(route.get("base_url") or ""),
+            "api_mode": str(route.get("api_mode") or ""),
+            "tier": str(route.get("tier") or ""),
+        }
+        self.model = model
+        self.requested_provider = provider
+        self.provider = provider
+        self.base_url = runtime["base_url"] or None
+        self.api_mode = runtime["api_mode"] or getattr(self, "api_mode", "")
+        self._resumed_smart_routing_runtime = runtime
 
     def _ensure_runtime_credentials(self) -> bool:
         """
@@ -239,20 +312,22 @@ class CLIAgentSetupMixin:
         self._install_tool_callbacks()
         self._ensure_tirith_security()
 
-        if not self._ensure_runtime_credentials():
-            return False
-
-        from hermes_cli.mcp_startup import wait_for_mcp_discovery
-
-        wait_for_mcp_discovery()
-
-        # Initialize SQLite session store for CLI sessions (if not already done in __init__)
+        # Initialize SQLite before credential resolution so a resumed session can
+        # restore its durable provider/model and resolve the matching credentials.
         if self._session_db is None:
             try:
                 from hermes_state import SessionDB
                 self._session_db = SessionDB()
             except Exception as e:
                 logger.warning("SQLite session store not available — session will NOT be indexed: %s", e)
+        self._restore_resumed_smart_routing_runtime()
+
+        if not self._ensure_runtime_credentials():
+            return False
+
+        from hermes_cli.mcp_startup import wait_for_mcp_discovery
+
+        wait_for_mcp_discovery()
         
         # If resuming, validate the session exists and load its history.
         # _preload_resumed_session() may have already loaded it (called from

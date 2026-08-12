@@ -3762,6 +3762,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             api_key=api_key,
             base_url=base_url,
         )
+        self._resume_runtime_pin_explicit = bool(model or provider or api_key or base_url)
         self.config = CLI_CONFIG
         self.compact = compact if compact is not None else CLI_CONFIG["display"].get("compact", False)
         # tool_progress: "off", "new", "all", "verbose" (from config.yaml display section)
