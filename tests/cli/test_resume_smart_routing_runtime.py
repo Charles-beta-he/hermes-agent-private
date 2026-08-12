@@ -205,6 +205,10 @@ def test_resume_rejects_runtime_missing_any_canonical_field(missing_field):
         "https://example.invalid:bad/v1",
         "https:///missing-host/v1",
         "https://example.invalid/has whitespace",
+        "http://example.invalid/v1",
+        "ftp://example.invalid/v1",
+        "file://example.invalid/path",
+        "javascript://example.invalid/payload",
     ],
 )
 def test_resume_rejects_runtime_with_sensitive_base_url(unsafe_base_url):

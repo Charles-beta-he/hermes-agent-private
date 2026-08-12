@@ -509,9 +509,12 @@ def _safe_base_url(value: str) -> bool:
         # and bedrock://), but must still be absolute authority URLs. Reject
         # relative/free-form strings, missing hosts, invalid ports, and any
         # whitespace/control characters before they can be restored.
+        # Durable routes use a closed-world scheme contract. HTTPS covers
+        # network model APIs; acp/bedrock are explicit provider transports.
+        if parsed.scheme.lower() not in {"https", "acp", "bedrock"}:
+            return False
         if (
-            not parsed.scheme
-            or not parsed.hostname
+            not parsed.hostname
             or any(character.isspace() or ord(character) < 0x20 for character in value)
         ):
             return False
