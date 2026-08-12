@@ -1481,6 +1481,70 @@ def test_successful_route_round_trips_real_session_db_without_secrets(tmp_path):
         db.close()
 
 
+@pytest.mark.parametrize(
+    "sensitive_url",
+    [
+        "https://user:password@example.invalid/v1",
+        "https://example.invalid/v1?access_token=must-not-persist",
+    ],
+)
+def test_active_runtime_sensitive_base_url_is_not_persisted(tmp_path, sensitive_url):
+    from hermes_state import SessionDB
+
+    db = SessionDB(db_path=tmp_path / "state.db")
+    try:
+        session_id = "session-sensitive-active-url"
+        db.create_session(session_id=session_id, source="cli")
+        agent = SimpleNamespace(
+            session_id=session_id,
+            model="old-model",
+            provider="old-provider",
+            base_url="https://old.invalid",
+            api_mode="chat_completions",
+            _smart_routing_entrypoint_eligible=True,
+            _session_init_model_config={"max_iterations": 90},
+            _session_db=db,
+            _session_db_created=True,
+            switch_model=MagicMock(),
+        )
+
+        def switch_model(**kwargs):
+            agent.model = kwargs["new_model"]
+            agent.provider = kwargs["new_provider"]
+            agent.base_url = kwargs["base_url"]
+            agent.api_mode = kwargs["api_mode"]
+
+        agent.switch_model.side_effect = switch_model
+        result = maybe_route_session(
+            agent,
+            user_message="medium task",
+            messages=[{"role": "user", "content": "medium task"}],
+            config=_legacy_config(),
+            classifier=lambda _text, _tiers: "MEDIUM",
+            runtime_resolver=lambda *_args: {
+                "success": True,
+                "model": "gpt-5.5",
+                "provider": "openai-codex",
+                "api_key": "runtime-secret",
+                "base_url": sensitive_url,
+                "api_mode": "codex_responses",
+            },
+            receipt_path=tmp_path / "model-routing.jsonl",
+        )
+
+        row = db.get_session(session_id)
+        assert row is not None
+        persisted = json.loads(row["model_config"])
+        assert result["status"] == "applied"
+        assert "smart_routing_runtime" not in persisted
+        assert "base_url" not in persisted
+        assert sensitive_url not in row["model_config"]
+        assert "runtime-secret" not in row["model_config"]
+        assert agent._smart_routing_runtime is None
+    finally:
+        db.close()
+
+
 def test_already_active_route_repairs_durable_runtime_identity(tmp_path):
     db = MagicMock()
     agent = SimpleNamespace(

@@ -105,14 +105,33 @@ class TestSmartRoutingRuntimeMigratesOnRotation:
             "unknown": "must-not-reach-child-either",
         }
         setattr(agent, "_smart_routing_runtime", dict(hostile))
-        getattr(agent, "_session_init_model_config")["smart_routing_runtime"] = dict(hostile)
+        init_config = getattr(agent, "_session_init_model_config")
+        init_config["smart_routing_runtime"] = dict(hostile)
+        init_config.update(
+            {
+                "api_key": "top-level-api-key-must-not-reach-child",
+                "token": "top-level-token-must-not-reach-child",
+                "password": "top-level-password-must-not-reach-child",
+                "unknown_runtime_blob": {"secret": "nested-must-not-reach-child"},
+                "base_url": "https://user:password@example.invalid/v1",
+            }
+        )
 
         agent._compress_context(_msgs(), "sys", approx_tokens=120_000)
 
         row = db.get_session(str(getattr(agent, "session_id")))
         assert row is not None
         assert "must-not-reach-child" not in row["model_config"]
-        assert "smart_routing_runtime" not in json.loads(row["model_config"])
+        persisted = json.loads(row["model_config"])
+        assert "smart_routing_runtime" not in persisted
+        assert persisted["max_iterations"] == 90
+        assert "api_key" not in persisted
+        assert "token" not in persisted
+        assert "password" not in persisted
+        assert "unknown_runtime_blob" not in persisted
+        assert "base_url" not in persisted
+        assert "top-level" not in row["model_config"]
+        assert "nested-must-not-reach-child" not in row["model_config"]
 
 
 class TestGoalMigratesOnRotation:

@@ -586,22 +586,33 @@ def _canonical_model_config(config: Any) -> Dict[str, Any]:
     }
 
 
+def canonicalize_durable_model_config(config: Any) -> Dict[str, Any]:
+    """Return the exact non-secret model-config projection allowed in state.db."""
+    return _canonical_model_config(config)
+
+
 def _persist_runtime_identity(agent: Any, session_id: str) -> None:
     """Keep fresh and pre-created session rows aligned with the active runtime."""
     model_config = _canonical_model_config(
         getattr(agent, "_session_init_model_config", {}) or {}
     )
     route_runtime = dict(getattr(agent, "_smart_routing_runtime", {}) or {})
-    durable_route = {
+    active_base_url = str(getattr(agent, "base_url", "") or "")
+    route_candidate = {
         "session_id": str(session_id),
         "provider": str(getattr(agent, "provider", "") or ""),
         "model": str(getattr(agent, "model", "") or ""),
-        "base_url": str(getattr(agent, "base_url", "") or ""),
+        "base_url": active_base_url,
         "api_mode": str(getattr(agent, "api_mode", "") or ""),
         "tier": str(route_runtime.get("tier") or ""),
     }
-    model_config["smart_routing_runtime"] = durable_route
-    agent._smart_routing_runtime = dict(durable_route)
+    durable_route = _canonical_durable_route(route_candidate, str(session_id))
+    if durable_route is None:
+        agent._smart_routing_runtime = None
+        model_config.pop("smart_routing_runtime", None)
+    else:
+        model_config["smart_routing_runtime"] = dict(durable_route)
+        agent._smart_routing_runtime = dict(durable_route)
     session_db = getattr(agent, "_session_db", None)
     session_db_created = bool(getattr(agent, "_session_db_created", False))
     if session_db is not None and session_db_created:
@@ -618,15 +629,21 @@ def _persist_runtime_identity(agent: Any, session_id: str) -> None:
         except Exception:
             logger.warning("failed to read durable runtime identity", exc_info=True)
     # The active route always replaces a stale marker from a pre-created row.
-    model_config["smart_routing_runtime"] = dict(durable_route)
+    if durable_route is None:
+        model_config.pop("smart_routing_runtime", None)
+    else:
+        model_config["smart_routing_runtime"] = dict(durable_route)
     model_config.update(
         {
             "model": str(getattr(agent, "model", "") or ""),
             "provider": str(getattr(agent, "provider", "") or ""),
-            "base_url": str(getattr(agent, "base_url", "") or ""),
             "api_mode": str(getattr(agent, "api_mode", "") or ""),
         }
     )
+    if _safe_base_url(active_base_url):
+        model_config["base_url"] = active_base_url
+    else:
+        model_config.pop("base_url", None)
     agent._session_init_model_config = model_config
     if session_db is None or not session_db_created:
         return
