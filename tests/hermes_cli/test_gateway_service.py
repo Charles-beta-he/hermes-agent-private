@@ -515,6 +515,7 @@ class TestGeneratedSystemdUnits:
         parsed = plistlib.loads(gateway_cli.generate_launchd_plist().encode())
         environment = parsed["EnvironmentVariables"]
 
+        assert parsed["ProgramArguments"][1:3] == ["-s", "-m"]
         assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
         assert environment["HERMES_DISABLE_LAZY_INSTALLS"] == "1"
         assert "HERMES_LAZY_INSTALL_TARGET" not in environment

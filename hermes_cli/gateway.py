@@ -3910,6 +3910,7 @@ def generate_launchd_plist() -> str:
     # Build ProgramArguments array, including --profile when using a named profile
     prog_args = [
         f"<string>{python_path}</string>",
+        "<string>-s</string>",
         "<string>-m</string>",
         "<string>hermes_cli.main</string>",
     ]
