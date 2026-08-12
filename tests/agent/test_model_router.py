@@ -1234,6 +1234,7 @@ def test_rebind_smart_routing_runtime_to_compression_descendant():
     from agent.model_router import rebind_smart_routing_runtime
 
     agent = SimpleNamespace(
+        session_id="parent",
         _smart_routing_runtime={
             "session_id": "parent",
             "provider": "openai-codex",
@@ -1248,6 +1249,46 @@ def test_rebind_smart_routing_runtime_to_compression_descendant():
     assert rebind_smart_routing_runtime(agent, "descendant") is True
     assert agent._smart_routing_runtime["session_id"] == "descendant"
     assert agent._session_init_model_config["smart_routing_runtime"] == agent._smart_routing_runtime
+
+
+@pytest.mark.parametrize(
+    "hostile_route",
+    [
+        {
+            "session_id": "parent",
+            "provider": "openai-codex",
+            "model": "gpt-5.5",
+            "api_key": "must-not-persist",
+        },
+        {
+            "session_id": "parent",
+            "provider": {"name": "openai-codex"},
+            "model": "gpt-5.5",
+        },
+        {
+            "session_id": "wrong-parent",
+            "provider": "openai-codex",
+            "model": "gpt-5.5",
+        },
+    ],
+)
+def test_rebind_rejects_hostile_or_session_mismatched_marker_without_child_residue(
+    hostile_route,
+):
+    from agent.model_router import rebind_smart_routing_runtime
+
+    agent = SimpleNamespace(
+        session_id="parent",
+        _smart_routing_runtime=dict(hostile_route),
+        _session_init_model_config={
+            "max_iterations": 90,
+            "smart_routing_runtime": dict(hostile_route),
+        },
+    )
+
+    assert rebind_smart_routing_runtime(agent, "descendant") is False
+    assert agent._smart_routing_runtime is None
+    assert "smart_routing_runtime" not in agent._session_init_model_config
 
 
 def test_successful_route_updates_durable_model_config_before_session_create(tmp_path):
@@ -1356,6 +1397,9 @@ def test_successful_route_round_trips_real_session_db_without_secrets(tmp_path):
                 "service_tier": "priority",
                 "reasoning_config": {"enabled": True, "effort": "high"},
                 "api_key": "old-secret-not-preserved",
+                "token": "old-token-not-preserved",
+                "password": "old-password-not-preserved",
+                "unknown_runtime_blob": {"secret": "nested-secret-not-preserved"},
                 "smart_routing_runtime": {
                     "session_id": session_id,
                     "provider": "stale-provider",
@@ -1417,8 +1461,14 @@ def test_successful_route_round_trips_real_session_db_without_secrets(tmp_path):
             "reasoning_config": {"enabled": True, "effort": "high"},
         }.items()
         assert "api_key" not in persisted
+        assert "token" not in persisted
+        assert "password" not in persisted
+        assert "unknown_runtime_blob" not in persisted
         assert "secret-not-persisted" not in row["model_config"]
         assert "old-secret-not-preserved" not in row["model_config"]
+        assert "old-token-not-preserved" not in row["model_config"]
+        assert "old-password-not-preserved" not in row["model_config"]
+        assert "nested-secret-not-preserved" not in row["model_config"]
         assert persisted["smart_routing_runtime"] == {
             "session_id": session_id,
             "provider": "openai-codex",

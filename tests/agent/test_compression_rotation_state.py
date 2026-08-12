@@ -92,6 +92,28 @@ class TestSmartRoutingRuntimeMigratesOnRotation:
         assert getattr(agent, "_smart_routing_runtime")["session_id"] == child
         assert config["smart_routing_runtime"]["session_id"] == child
 
+    def test_hostile_smart_route_is_not_written_to_compression_child(self, tmp_path: Path):
+        db = SessionDB(db_path=tmp_path / "state.db")
+        parent = "PARENT_HOSTILE_SMART_ROUTE_ROT"
+        db.create_session(parent, source="cli")
+        agent = _build_agent_with_db(db, parent)
+        hostile = {
+            "session_id": parent,
+            "provider": "openrouter",
+            "model": "test/model",
+            "api_key": "must-not-reach-child",
+            "unknown": "must-not-reach-child-either",
+        }
+        setattr(agent, "_smart_routing_runtime", dict(hostile))
+        getattr(agent, "_session_init_model_config")["smart_routing_runtime"] = dict(hostile)
+
+        agent._compress_context(_msgs(), "sys", approx_tokens=120_000)
+
+        row = db.get_session(str(getattr(agent, "session_id")))
+        assert row is not None
+        assert "must-not-reach-child" not in row["model_config"]
+        assert "smart_routing_runtime" not in json.loads(row["model_config"])
+
 
 class TestGoalMigratesOnRotation:
     def test_goal_follows_compression_rotation(self, tmp_path: Path):
@@ -132,6 +154,8 @@ class TestOrphanRollbackOnCreateFailure:
             "session_id": parent,
             "provider": "openrouter",
             "model": "test/model",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_mode": "chat_completions",
             "tier": "MEDIUM",
         }
         setattr(agent, "_smart_routing_runtime", route)

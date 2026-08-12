@@ -447,14 +447,122 @@ def _receipt_base(agent: Any, *, scope: str, decision: Optional[RouteDecision] =
     }
 
 
-def rebind_smart_routing_runtime(agent: Any, session_id: str) -> bool:
-    """Rebind an existing durable route to a continuation session."""
-    route = getattr(agent, "_smart_routing_runtime", None)
-    if not isinstance(route, dict):
+_DURABLE_ROUTE_FIELDS = frozenset(
+    {"session_id", "provider", "model", "base_url", "api_mode", "tier"}
+)
+_DURABLE_MODEL_CONFIG_FIELDS = frozenset(
+    {
+        "max_iterations",
+        "reasoning_config",
+        "max_tokens",
+        "execution_graph_id",
+        "prompt_hash",
+        "prompt_manifest",
+        "service_tier",
+        "model",
+        "provider",
+        "base_url",
+        "api_mode",
+        "smart_routing_runtime",
+        "_delegate_from",
+        "_branched_from",
+    }
+)
+_SENSITIVE_KEY_PARTS = (
+    "api_key",
+    "apikey",
+    "token",
+    "secret",
+    "password",
+    "credential",
+    "authorization",
+    "cookie",
+    "database_url",
+    "connection_string",
+    "private_key",
+)
+
+
+def _contains_sensitive_material(value: Any) -> bool:
+    """Reject credential-bearing structures before durable session persistence."""
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if any(part in normalized for part in _SENSITIVE_KEY_PARTS):
+                return True
+            if _contains_sensitive_material(nested):
+                return True
         return False
-    provider = str(route.get("provider") or "").strip()
-    model = str(route.get("model") or "").strip()
-    if not session_id or not provider or not model:
+    if isinstance(value, (list, tuple)):
+        return any(_contains_sensitive_material(item) for item in value)
+    return False
+
+
+def _safe_base_url(value: str) -> bool:
+    if not value:
+        return True
+    try:
+        from urllib.parse import parse_qsl, urlsplit
+
+        parsed = urlsplit(value)
+        if parsed.username is not None or parsed.password is not None:
+            return False
+        for key, _value in parse_qsl(parsed.query, keep_blank_values=True):
+            normalized = key.lower().replace("-", "_")
+            if any(part in normalized for part in _SENSITIVE_KEY_PARTS):
+                return False
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _canonical_durable_route(
+    route: Any, expected_session_id: str
+) -> Optional[Dict[str, str]]:
+    if not isinstance(route, dict) or set(route) != _DURABLE_ROUTE_FIELDS:
+        return None
+    if any(not isinstance(value, str) for value in route.values()):
+        return None
+    provider = route["provider"].strip()
+    model = route["model"].strip()
+    if route["session_id"] != expected_session_id or not provider or not model:
+        return None
+    if not _safe_base_url(route["base_url"]):
+        return None
+    return {
+        "session_id": route["session_id"],
+        "provider": provider,
+        "model": model,
+        "base_url": route["base_url"],
+        "api_mode": route["api_mode"],
+        "tier": route["tier"],
+    }
+
+
+def _clear_durable_route(agent: Any) -> None:
+    agent._smart_routing_runtime = None
+    model_config = getattr(agent, "_session_init_model_config", None)
+    if isinstance(model_config, dict):
+        model_config.pop("smart_routing_runtime", None)
+
+
+def rebind_smart_routing_runtime(
+    agent: Any,
+    session_id: str,
+    *,
+    expected_session_id: Optional[str] = None,
+) -> bool:
+    """Validate and rebind a non-secret durable route to a continuation session."""
+    expected = str(
+        expected_session_id
+        if expected_session_id is not None
+        else getattr(agent, "session_id", "") or ""
+    )
+    route = _canonical_durable_route(
+        getattr(agent, "_smart_routing_runtime", None), expected
+    )
+    if not session_id or route is None:
+        _clear_durable_route(agent)
         return False
     rebound = dict(route)
     rebound["session_id"] = str(session_id)
@@ -465,9 +573,24 @@ def rebind_smart_routing_runtime(agent: Any, session_id: str) -> bool:
     return True
 
 
+def _canonical_model_config(config: Any) -> Dict[str, Any]:
+    if not isinstance(config, dict):
+        return {}
+    return {
+        key: value
+        for key, value in config.items()
+        if key in _DURABLE_MODEL_CONFIG_FIELDS
+        and key != "smart_routing_runtime"
+        and not _contains_sensitive_material(value)
+        and (key != "base_url" or (isinstance(value, str) and _safe_base_url(value)))
+    }
+
+
 def _persist_runtime_identity(agent: Any, session_id: str) -> None:
     """Keep fresh and pre-created session rows aligned with the active runtime."""
-    model_config = dict(getattr(agent, "_session_init_model_config", {}) or {})
+    model_config = _canonical_model_config(
+        getattr(agent, "_session_init_model_config", {}) or {}
+    )
     route_runtime = dict(getattr(agent, "_smart_routing_runtime", {}) or {})
     durable_route = {
         "session_id": str(session_id),
@@ -488,7 +611,7 @@ def _persist_runtime_identity(agent: Any, session_id: str) -> None:
             if isinstance(stored, str):
                 stored = json.loads(stored)
             if isinstance(stored, dict):
-                latest = dict(stored)
+                latest = _canonical_model_config(stored)
                 for key, value in model_config.items():
                     latest.setdefault(key, value)
                 model_config = latest
@@ -496,9 +619,6 @@ def _persist_runtime_identity(agent: Any, session_id: str) -> None:
             logger.warning("failed to read durable runtime identity", exc_info=True)
     # The active route always replaces a stale marker from a pre-created row.
     model_config["smart_routing_runtime"] = dict(durable_route)
-    # Runtime identity persistence is intentionally non-secret even if an older
-    # row or initialization snapshot accidentally contains a credential field.
-    model_config.pop("api_key", None)
     model_config.update(
         {
             "model": str(getattr(agent, "model", "") or ""),
