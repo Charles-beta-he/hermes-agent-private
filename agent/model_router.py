@@ -505,6 +505,17 @@ def _safe_base_url(value: str) -> bool:
         from urllib.parse import parse_qsl, urlsplit
 
         parsed = urlsplit(value)
+        # Durable routes may use provider-specific schemes (for example acp://
+        # and bedrock://), but must still be absolute authority URLs. Reject
+        # relative/free-form strings, missing hosts, invalid ports, and any
+        # whitespace/control characters before they can be restored.
+        if (
+            not parsed.scheme
+            or not parsed.hostname
+            or any(character.isspace() or ord(character) < 0x20 for character in value)
+        ):
+            return False
+        parsed.port  # Access validates the optional numeric port.
         if parsed.username is not None or parsed.password is not None:
             return False
         for key, _value in parse_qsl(parsed.query, keep_blank_values=True):

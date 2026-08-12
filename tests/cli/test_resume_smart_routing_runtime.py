@@ -201,6 +201,10 @@ def test_resume_rejects_runtime_missing_any_canonical_field(missing_field):
         "https://user:password@example.invalid/v1",
         "https://example.invalid/v1?access_token=must-not-be-restored",
         "https://example.invalid/v1?authorization=must-not-be-restored",
+        "not a url",
+        "https://example.invalid:bad/v1",
+        "https:///missing-host/v1",
+        "https://example.invalid/has whitespace",
     ],
 )
 def test_resume_rejects_runtime_with_sensitive_base_url(unsafe_base_url):
