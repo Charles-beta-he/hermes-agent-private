@@ -483,12 +483,27 @@ _SENSITIVE_KEY_PARTS = (
 )
 
 
+def _sensitive_key_forms(key: Any) -> tuple[str, str]:
+    import re
+
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(key).lower()).strip("_")
+    return normalized, normalized.replace("_", "")
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    normalized, compact = _sensitive_key_forms(key)
+    sensitive_parts = _SENSITIVE_KEY_PARTS + ("access_key", "accesskey")
+    return any(
+        part in normalized or part.replace("_", "") in compact
+        for part in sensitive_parts
+    )
+
+
 def _contains_sensitive_material(value: Any) -> bool:
     """Reject credential-bearing structures before durable session persistence."""
     if isinstance(value, dict):
         for key, nested in value.items():
-            normalized = str(key).lower().replace("-", "_")
-            if any(part in normalized for part in _SENSITIVE_KEY_PARTS):
+            if _is_sensitive_key(key):
                 return True
             if _contains_sensitive_material(nested):
                 return True
@@ -522,17 +537,9 @@ def _safe_base_url(value: str) -> bool:
         if parsed.username is not None or parsed.password is not None:
             return False
         for key, _value in parse_qsl(parsed.query, keep_blank_values=True):
-            # Query keys are attacker-controlled. Canonicalize every separator
-            # (api.key, api-key, api_key) before applying the credential denylist.
-            import re
-
-            normalized = re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_")
-            compact = normalized.replace("_", "")
-            sensitive_parts = _SENSITIVE_KEY_PARTS + ("access_key", "accesskey")
-            if any(
-                part in normalized or part.replace("_", "") in compact
-                for part in sensitive_parts
-            ):
+            # Query keys and nested config keys share one canonical credential
+            # detector so separator aliases cannot diverge between boundaries.
+            if _is_sensitive_key(key):
                 return False
     except (TypeError, ValueError):
         return False

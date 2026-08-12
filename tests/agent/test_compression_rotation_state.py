@@ -112,6 +112,13 @@ class TestSmartRoutingRuntimeMigratesOnRotation:
                 "api_key": "top-level-api-key-must-not-reach-child",
                 "token": "top-level-token-must-not-reach-child",
                 "password": "top-level-password-must-not-reach-child",
+                "reasoning_config": {
+                    "api.key": "nested-dot-secret",
+                    "api key": "nested-space-secret",
+                    "aws_access_key_id": "nested-aws-secret",
+                    "aws-access-key-id": "nested-aws-dash-secret",
+                    "aws.access.key.id": "nested-aws-dot-secret",
+                },
                 "unknown_runtime_blob": {"secret": "nested-must-not-reach-child"},
                 "base_url": "https://user:password@example.invalid/v1",
             }
@@ -130,6 +137,12 @@ class TestSmartRoutingRuntimeMigratesOnRotation:
         assert "password" not in persisted
         assert "unknown_runtime_blob" not in persisted
         assert "base_url" not in persisted
+        assert "reasoning_config" not in persisted
+        for marker in (
+            "nested-dot-secret", "nested-space-secret", "nested-aws-secret",
+            "nested-aws-dash-secret", "nested-aws-dot-secret",
+        ):
+            assert marker not in row["model_config"]
         assert "top-level" not in row["model_config"]
         assert "nested-must-not-reach-child" not in row["model_config"]
 
