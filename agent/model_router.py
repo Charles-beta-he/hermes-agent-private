@@ -539,6 +539,13 @@ def _canonical_durable_route(
     }
 
 
+def canonicalize_durable_route(
+    route: Any, expected_session_id: str
+) -> Optional[Dict[str, str]]:
+    """Return the exact session-bound, non-secret route accepted by all consumers."""
+    return _canonical_durable_route(route, expected_session_id)
+
+
 def _clear_durable_route(agent: Any) -> None:
     agent._smart_routing_runtime = None
     model_config = getattr(agent, "_session_init_model_config", None)

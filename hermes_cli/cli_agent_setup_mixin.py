@@ -72,33 +72,14 @@ class CLIAgentSetupMixin:
         except (TypeError, ValueError):
             return
         route = config.get("smart_routing_runtime") if isinstance(config, dict) else None
-        allowed_route_fields = {
-            "session_id",
-            "provider",
-            "model",
-            "base_url",
-            "api_mode",
-            "tier",
-        }
-        if not isinstance(route, dict) or not set(route).issubset(allowed_route_fields):
+        from agent.model_router import canonicalize_durable_route
+
+        runtime = canonicalize_durable_route(route, str(self.session_id))
+        if runtime is None:
             return
-        if any(not isinstance(value, str) for value in route.values()):
-            return
-        provider = str(route.get("provider") or "").strip()
-        model = str(route.get("model") or "").strip()
-        if str(route.get("session_id") or "") != str(self.session_id) or not provider or not model:
-            return
-        runtime = {
-            "session_id": str(self.session_id),
-            "provider": provider,
-            "model": model,
-            "base_url": str(route.get("base_url") or ""),
-            "api_mode": str(route.get("api_mode") or ""),
-            "tier": str(route.get("tier") or ""),
-        }
-        self.model = model
-        self.requested_provider = provider
-        self.provider = provider
+        self.model = runtime["model"]
+        self.requested_provider = runtime["provider"]
+        self.provider = runtime["provider"]
         self.base_url = runtime["base_url"] or None
         self.api_mode = runtime["api_mode"] or getattr(self, "api_mode", "")
         self._resumed_smart_routing_runtime = runtime

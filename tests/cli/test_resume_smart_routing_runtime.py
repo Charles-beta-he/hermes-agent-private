@@ -174,6 +174,52 @@ def test_resume_rejects_non_string_runtime_fields(field, value):
     assert getattr(shell, "_resumed_smart_routing_runtime", None) is None
 
 
+@pytest.mark.parametrize(
+    "missing_field",
+    ["session_id", "provider", "model", "base_url", "api_mode", "tier"],
+)
+def test_resume_rejects_runtime_missing_any_canonical_field(missing_field):
+    meta = _session_meta()
+    config = json.loads(meta["model_config"])
+    config["smart_routing_runtime"].pop(missing_field)
+    meta["model_config"] = json.dumps(config)
+    db = MagicMock()
+    db.get_session.return_value = meta
+    db.resolve_resume_session_id.return_value = SESSION_ID
+    shell = _resume_cli(db)
+
+    shell._restore_resumed_smart_routing_runtime()
+
+    assert shell.model == "gpt-5.6-sol"
+    assert shell.base_url == "https://default.invalid"
+    assert getattr(shell, "_resumed_smart_routing_runtime", None) is None
+
+
+@pytest.mark.parametrize(
+    "unsafe_base_url",
+    [
+        "https://user:password@example.invalid/v1",
+        "https://example.invalid/v1?access_token=must-not-be-restored",
+        "https://example.invalid/v1?authorization=must-not-be-restored",
+    ],
+)
+def test_resume_rejects_runtime_with_sensitive_base_url(unsafe_base_url):
+    meta = _session_meta()
+    config = json.loads(meta["model_config"])
+    config["smart_routing_runtime"]["base_url"] = unsafe_base_url
+    meta["model_config"] = json.dumps(config)
+    db = MagicMock()
+    db.get_session.return_value = meta
+    db.resolve_resume_session_id.return_value = SESSION_ID
+    shell = _resume_cli(db)
+
+    shell._restore_resumed_smart_routing_runtime()
+
+    assert shell.model == "gpt-5.6-sol"
+    assert shell.base_url == "https://default.invalid"
+    assert getattr(shell, "_resumed_smart_routing_runtime", None) is None
+
+
 def test_resume_rejects_malformed_model_config():
     db = MagicMock()
     db.get_session.return_value = {"id": SESSION_ID, "model_config": "{broken"}
