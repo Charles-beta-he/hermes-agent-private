@@ -536,10 +536,23 @@ def _safe_base_url(value: str) -> bool:
         parsed.port  # Access validates the optional numeric port.
         if parsed.username is not None or parsed.password is not None:
             return False
+        # Fragments are client-side opaque material and are never needed for
+        # model API endpoints; reject them rather than persist possible tokens.
+        if parsed.fragment:
+            return False
+        # Some bot APIs embed credentials in path segments (notably
+        # Telegram's /bot<TOKEN>/ convention). Keep ordinary API paths valid.
+        import re
+
+        if re.search(r"(?:^|/)bot[^/]*:[^/]+(?:/|$)", parsed.path, re.IGNORECASE):
+            return False
+        url_sensitive_keys = {"key", "sig", "signature"}
         for key, _value in parse_qsl(parsed.query, keep_blank_values=True):
-            # Query keys and nested config keys share one canonical credential
-            # detector so separator aliases cannot diverge between boundaries.
-            if _is_sensitive_key(key):
+            # Query keys and nested config keys share the canonical detector,
+            # with URL-specific generic credential aliases added at this
+            # boundary so ordinary nested fields named `key` stay permitted.
+            normalized, _compact = _sensitive_key_forms(key)
+            if _is_sensitive_key(key) or normalized in url_sensitive_keys:
                 return False
     except (TypeError, ValueError):
         return False

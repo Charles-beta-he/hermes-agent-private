@@ -1486,6 +1486,11 @@ def test_successful_route_round_trips_real_session_db_without_secrets(tmp_path):
     [
         "https://user:password@example.invalid/v1",
         "https://example.invalid/v1?access_token=must-not-persist",
+        "https://example.invalid/v1?key=must-not-persist",
+        "https://example.invalid/v1?sig=must-not-persist",
+        "https://example.invalid/v1?signature=must-not-persist",
+        "https://example.invalid/v1#access_token=must-not-persist",
+        "https://api.telegram.org/bot123456:secret/getMe",
     ],
 )
 def test_active_runtime_sensitive_base_url_is_not_persisted(tmp_path, sensitive_url):
