@@ -3952,8 +3952,6 @@ def generate_launchd_plist() -> str:
         <string>1</string>
         <key>HERMES_DISABLE_LAZY_INSTALLS</key>
         <string>1</string>
-        <key>HERMES_LAZY_INSTALL_TARGET</key>
-        <string>{get_hermes_home() / "lazy-packages"}</string>
     </dict>
 
     <key>LimitLoadToSessionType</key>
