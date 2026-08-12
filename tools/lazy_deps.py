@@ -433,6 +433,11 @@ def _allow_lazy_installs() -> bool:
     refusing to install would lock people out of their own backends; the
     decision to block is an explicit user opt-in.
     """
+    # Gateway release runtimes use a stricter seal than hosted containers:
+    # inherited durable targets must never reopen mutation in this process.
+    if os.environ.get("HERMES_IMMUTABLE_RUNTIME") == "1":
+        return False
+
     # (1) Config kill switch wins in every mode.
     try:
         from hermes_cli.config import load_config

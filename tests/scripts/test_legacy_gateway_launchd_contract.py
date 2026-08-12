@@ -27,7 +27,8 @@ def test_legacy_macos_installer_matches_immutable_runtime_contract(monkeypatch):
         "-m",
         "hermes_cli.main",
     ]
-    env = payload["EnvironmentVariables"]
-    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
-    assert env["HERMES_DISABLE_LAZY_INSTALLS"] == "1"
-    assert "HERMES_LAZY_INSTALL_TARGET" not in env
+    environment = payload["EnvironmentVariables"]
+    assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert environment["HERMES_DISABLE_LAZY_INSTALLS"] == "1"
+    assert environment["HERMES_IMMUTABLE_RUNTIME"] == "1"
+    assert "HERMES_LAZY_INSTALL_TARGET" not in environment

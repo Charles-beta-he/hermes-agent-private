@@ -481,13 +481,15 @@ class TestGeneratedSystemdUnits:
 
         assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
         assert environment["HERMES_DISABLE_LAZY_INSTALLS"] == "1"
+        assert environment["HERMES_IMMUTABLE_RUNTIME"] == "1"
         assert "HERMES_LAZY_INSTALL_TARGET" not in environment
 
         monkeypatch.setenv(
             "HERMES_DISABLE_LAZY_INSTALLS",
             environment["HERMES_DISABLE_LAZY_INSTALLS"],
         )
-        monkeypatch.delenv("HERMES_LAZY_INSTALL_TARGET", raising=False)
+        monkeypatch.setenv("HERMES_IMMUTABLE_RUNTIME", "1")
+        monkeypatch.setenv("HERMES_LAZY_INSTALL_TARGET", "/hostile/inherited/target")
         monkeypatch.setattr("hermes_cli.config.load_config", lambda: {})
         from tools import lazy_deps
 

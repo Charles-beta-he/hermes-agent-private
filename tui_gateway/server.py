@@ -1660,6 +1660,9 @@ def _ensure_session_db_row(session: dict) -> None:
         model_config["reasoning_config"] = reasoning
     if tier := session.get("create_service_tier_override"):
         model_config["service_tier"] = tier
+    from agent.model_router import canonicalize_durable_model_config
+
+    model_config = canonicalize_durable_model_config(model_config)
     # Branch lineage: stamp the same ``_branched_from`` marker the TUI /branch
     # uses so list_sessions_rich keeps the branch listed and the desktop sidebar
     # can nest it under its parent.
@@ -2095,12 +2098,16 @@ def _stored_session_runtime_overrides(row: dict | None) -> dict:
     raw_config = row.get("model_config")
     model_config: dict = {}
     if isinstance(raw_config, dict):
-        model_config = raw_config
-    elif isinstance(raw_config, str) and raw_config.strip():
+        from agent.model_router import canonicalize_durable_model_config
+
+        model_config = canonicalize_durable_model_config(raw_config)
+    elif isinstance(raw_config, str):
         try:
             parsed = json.loads(raw_config)
             if isinstance(parsed, dict):
-                model_config = parsed
+                from agent.model_router import canonicalize_durable_model_config
+
+                model_config = canonicalize_durable_model_config(parsed)
         except Exception:
             logger.debug("failed to parse stored session model_config", exc_info=True)
 
@@ -2222,7 +2229,9 @@ def _runtime_model_config(agent, existing: dict | None = None) -> dict:
     else:
         config.pop("service_tier", None)
 
-    return config
+    from agent.model_router import canonicalize_durable_model_config
+
+    return canonicalize_durable_model_config(config)
 
 
 def _persist_live_session_runtime(session: dict | None) -> None:

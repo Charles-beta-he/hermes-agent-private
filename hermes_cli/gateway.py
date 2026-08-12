@@ -3953,6 +3953,8 @@ def generate_launchd_plist() -> str:
         <string>1</string>
         <key>HERMES_DISABLE_LAZY_INSTALLS</key>
         <string>1</string>
+        <key>HERMES_IMMUTABLE_RUNTIME</key>
+        <string>1</string>
     </dict>
 
     <key>LimitLoadToSessionType</key>
