@@ -288,8 +288,9 @@ class _SlashWorker:
             "--session-key",
             session_key,
         ]
-        if model:
-            argv += ["--model", model]
+        # ``model`` is the session's active display state, not a fresh user pin.
+        # The resumed worker must restore the complete durable runtime tuple
+        # (provider/base_url/api_mode/model) from the session row.
 
         self._closed = False
         from hermes_cli._subprocess_compat import windows_hide_flags
