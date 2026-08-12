@@ -3948,6 +3948,12 @@ def generate_launchd_plist() -> str:
         <string>{venv_dir}</string>
         <key>HERMES_HOME</key>
         <string>{hermes_home}</string>
+        <key>PYTHONDONTWRITEBYTECODE</key>
+        <string>1</string>
+        <key>HERMES_DISABLE_LAZY_INSTALLS</key>
+        <string>1</string>
+        <key>HERMES_LAZY_INSTALL_TARGET</key>
+        <string>{get_hermes_home() / "lazy-packages"}</string>
     </dict>
 
     <key>LimitLoadToSessionType</key>

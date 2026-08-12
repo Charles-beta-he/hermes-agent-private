@@ -1,6 +1,7 @@
 """Tests for gateway service management helpers."""
 
 import os
+import plistlib
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -491,6 +492,17 @@ class TestGeneratedSystemdUnits:
 
         assert str(local_bin) in plist
         assert str(profile_node_bin) not in plist
+
+    def test_launchd_plist_owns_immutable_runtime_environment(self):
+        lazy_target = gateway_cli.get_hermes_home() / "lazy-packages"
+
+        parsed = plistlib.loads(gateway_cli.generate_launchd_plist().encode())
+
+        assert parsed["EnvironmentVariables"] | {
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "HERMES_DISABLE_LAZY_INSTALLS": "1",
+            "HERMES_LAZY_INSTALL_TARGET": str(lazy_target),
+        } == parsed["EnvironmentVariables"]
 
     def test_user_unit_includes_wsl_windows_interop_paths(self, monkeypatch):
         monkeypatch.setattr(gateway_cli, "is_wsl", lambda: True)
