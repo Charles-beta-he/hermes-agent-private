@@ -475,13 +475,23 @@ class TestGeneratedSystemdUnits:
         assert str(local_bin) in unit
         assert str(profile_node_bin) not in unit
 
-    def test_launchd_plist_disables_runtime_mutation(self):
-        plist = gateway_cli.generate_launchd_plist()
+    def test_launchd_plist_disables_runtime_mutation(self, monkeypatch):
+        parsed = plistlib.loads(gateway_cli.generate_launchd_plist().encode())
+        environment = parsed["EnvironmentVariables"]
 
-        assert "<key>PYTHONDONTWRITEBYTECODE</key>" in plist
-        assert "<key>HERMES_DISABLE_LAZY_INSTALLS</key>" in plist
-        assert plist.count("<string>1</string>") >= 2
-        assert "HERMES_LAZY_INSTALL_TARGET" not in plist
+        assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
+        assert environment["HERMES_DISABLE_LAZY_INSTALLS"] == "1"
+        assert "HERMES_LAZY_INSTALL_TARGET" not in environment
+
+        monkeypatch.setenv(
+            "HERMES_DISABLE_LAZY_INSTALLS",
+            environment["HERMES_DISABLE_LAZY_INSTALLS"],
+        )
+        monkeypatch.delenv("HERMES_LAZY_INSTALL_TARGET", raising=False)
+        monkeypatch.setattr("hermes_cli.config.load_config", lambda: {})
+        from tools import lazy_deps
+
+        assert lazy_deps._allow_lazy_installs() is False
 
     def test_launchd_plist_does_not_leak_profile_node_symlink_target(self, tmp_path, monkeypatch):
         # Same #48700 regression for the macOS twin generate_launchd_plist().
