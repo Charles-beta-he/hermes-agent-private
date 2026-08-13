@@ -1645,6 +1645,74 @@ def _finalize_image_intent_shadow_result(agent: Any, result: Any) -> Any:
     return result
 
 
+def _route_smart_model_for_turn(
+    agent,
+    *,
+    user_message: str,
+    conversation_history: Optional[List[Any]] = None,
+) -> Dict[str, Any]:
+    """Route only at the cache-safe boundary before turn setup/model calls."""
+    from agent.model_router import maybe_route_session, resolve_routing_policy
+
+    session_id = str(getattr(agent, "session_id", "") or "")
+    bound_session = str(getattr(agent, "_smart_routing_session_id", "") or "")
+    if bound_session == session_id and bool(
+        getattr(agent, "_smart_routing_applied", False)
+    ):
+        return {"status": "skipped_already_applied"}
+
+    policy_session = str(
+        getattr(agent, "_smart_routing_policy_session_id", "") or ""
+    )
+    cached_enabled = (
+        getattr(agent, "_smart_routing_policy_enabled", None)
+        if policy_session == session_id
+        else None
+    )
+    config = None
+    if cached_enabled is None:
+        try:
+            from hermes_cli.config import load_config_readonly
+
+            loaded = load_config_readonly()
+            config = loaded if isinstance(loaded, dict) else {}
+        except Exception:
+            config = {}
+        cached_enabled = resolve_routing_policy(config).enabled
+        agent._smart_routing_policy_session_id = session_id
+        agent._smart_routing_policy_enabled = cached_enabled
+    if cached_enabled is not True:
+        return {"status": "disabled"}
+
+    history = conversation_history
+    if not history:
+        session_db = getattr(agent, "_session_db", None)
+        session_id = str(getattr(agent, "session_id", "") or "")
+        if session_db is not None and session_id and hasattr(session_db, "get_messages"):
+            try:
+                history = session_db.get_messages(session_id) or []
+            except Exception:  # fail closed when durable freshness is unknown
+                history = [{"role": "system", "content": "durable history unavailable"}]
+        else:
+            history = [{"role": "system", "content": "durable history unavailable"}]
+    history = history or []
+    # Unknown/non-dict history must count as existing state rather than being
+    # dropped and misclassified as a pristine first turn.
+    messages = [
+        dict(message)
+        if isinstance(message, dict)
+        else {"role": "system", "content": "existing non-dict history"}
+        for message in history
+    ]
+    messages.append({"role": "user", "content": user_message})
+    return maybe_route_session(
+        agent,
+        user_message=user_message,
+        messages=messages,
+        config=config,
+    )
+
+
 def run_conversation(
     agent,
     user_message: str,
@@ -1715,6 +1783,18 @@ def _run_conversation_impl(
                     persist_user_message = _decoded_message
         except Exception:
             pass
+
+    try:
+        _route_smart_model_for_turn(
+            agent,
+            user_message=user_message,
+            conversation_history=conversation_history,
+        )
+    except Exception as exc:
+        # Routing is an optimization/control-plane layer.  A config or provider
+        # resolution defect must not prevent the already-working parent runtime
+        # from serving the turn.
+        logger.warning("smart model routing skipped after failure: %s", exc)
 
     # ── Per-turn setup (the prologue) ──
     # All once-per-turn setup — stdio guarding, retry-counter resets, user

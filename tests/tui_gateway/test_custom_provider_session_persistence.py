@@ -78,6 +78,17 @@ class TestRuntimeModelConfigPersistsEntryIdentity:
         # never from the session DB.
         assert "api_key" not in config
 
+    def test_rejects_credential_bearing_url_and_nested_reasoning(self, monkeypatch):
+        monkeypatch.setattr(rp, "load_config", lambda: {})
+        from tui_gateway.server import _runtime_model_config
+
+        agent = _custom_agent("https://user:secret@example.invalid/v1?sig=SECRET")
+        agent.reasoning_config = {"nested": {"api.key": "SECRET"}}
+        config = _runtime_model_config(agent)
+
+        assert "base_url" not in config
+        assert "reasoning_config" not in config
+
     def test_persists_menu_key_for_providers_dict_entry(self, monkeypatch):
         monkeypatch.setattr(rp, "load_config", lambda: PROVIDERS_DICT_CONFIG)
 
@@ -280,6 +291,27 @@ class TestBareCustomNoBaseUrlHealsFromConfig:
         assert overrides["provider_override"] == "custom:mimo-v2.5-pro"
         assert overrides["model_override"]["provider"] == "custom:mimo-v2.5-pro"
 
+    def test_restore_drops_credential_bearing_durable_fields(self, monkeypatch):
+        monkeypatch.setattr(rp, "load_config", lambda: {})
+        monkeypatch.setattr(rp, "_get_model_config", lambda: {})
+        from tui_gateway.server import _stored_session_runtime_overrides
+
+        row = {
+            "model": "safe-model",
+            "model_config": json.dumps(
+                {
+                    "model": "safe-model",
+                    "provider": "custom",
+                    "base_url": "https://host.invalid/v1?key=SECRET",
+                    "reasoning_config": {"aws.access.key.id": "SECRET"},
+                }
+            ),
+        }
+        overrides = _stored_session_runtime_overrides(row)
+
+        assert overrides["model_override"]["base_url"] is None
+        assert "reasoning_config_override" not in overrides
+
     def test_restore_drops_bare_custom_when_config_cannot_heal(self, monkeypatch):
         """No recoverable identity: do NOT restore bare "custom" as a routable
         override — leave it unset so resume falls back to the configured
@@ -343,10 +375,19 @@ class TestBareCustomNoBaseUrlHealsFromConfig:
 
         session = {
             "session_key": "agent:main:desktop:dm:abc",
-            # composer override carrying the lossy resolved provider + no base_url
-            "model_override": {"model": "mimo-v2.5-pro", "provider": "custom"},
+            # composer override carrying the lossy resolved provider + hostile durable fields
+            "model_override": {
+                "model": "mimo-v2.5-pro",
+                "provider": "custom",
+                "base_url": "https://user:secret@example.invalid/v1",
+            },
+            "create_reasoning_override": {"nested": {"api.key": "SECRET"}},
         }
         srv._ensure_session_db_row(session)
+
+        assert captured["model_config"]["provider"] == "custom:mimo-v2.5-pro"
+        assert "base_url" not in captured["model_config"]
+        assert "reasoning_config" not in captured["model_config"]
 
         persisted = captured.get("model_config") or {}
         assert persisted.get("provider") == "custom:mimo-v2.5-pro"

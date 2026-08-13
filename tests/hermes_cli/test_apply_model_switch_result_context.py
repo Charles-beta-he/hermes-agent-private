@@ -54,6 +54,35 @@ def _run_display(monkeypatch, result):
     return captured
 
 
+def test_pre_agent_model_switch_disables_smart_routing(monkeypatch):
+    import cli as cli_mod
+
+    stub = _StubCLI()
+    stub._smart_routing_entrypoint_eligible = True
+    result = ModelSwitchResult(
+        success=True,
+        new_model="gpt-5.5",
+        target_provider="openai-codex",
+        provider_changed=True,
+        api_key="",
+        base_url="https://chatgpt.com/backend-api/codex",
+        api_mode="codex_responses",
+        warning_message="",
+        provider_label="ChatGPT Codex",
+        resolved_via_alias=False,
+        capabilities=None,
+        model_info=None,
+        is_global=False,
+    )
+    monkeypatch.setattr(cli_mod, "_cprint", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli_mod, "save_config_value", lambda *_a, **_k: None)
+
+    cli_mod.HermesCLI._apply_model_switch_result(stub, result, False)
+
+    assert stub.agent is None
+    assert stub._smart_routing_entrypoint_eligible is False
+
+
 def test_picker_path_uses_provider_aware_context_on_codex(monkeypatch):
     """``_apply_model_switch_result`` must prefer the provider-aware resolver
     (272K on Codex) over the raw models.dev value (1.05M for gpt-5.5).

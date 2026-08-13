@@ -294,6 +294,10 @@ def test_sess_found(server):
 
 
 def test_session_resume_returns_hydrated_messages(server, monkeypatch):
+    def make_agent(sid, key, session_id=None, session_db=None, *, has_existing_messages):
+        assert has_existing_messages is True
+        return object()
+
     class _DB:
         def get_session(self, _sid):
             return {"id": "20260409_010101_abc123"}
@@ -315,7 +319,7 @@ def test_session_resume_returns_hydrated_messages(server, monkeypatch):
             ]
 
     monkeypatch.setattr(server, "_get_db", lambda: _DB())
-    monkeypatch.setattr(server, "_make_agent", lambda sid, key, session_id=None, session_db=None: object())
+    monkeypatch.setattr(server, "_make_agent", make_agent)
     monkeypatch.setattr(server, "_init_session", lambda sid, key, agent, history, cols=80, **_kwargs: None)
     monkeypatch.setattr(server, "_session_info", lambda _agent, _session=None: {"model": "test/model"})
 
@@ -483,6 +487,10 @@ def test_session_resume_handles_multimodal_list_content(server, monkeypatch):
     """A user message persisted with list-shaped multimodal content used to
     crash session resume with ``'list' object has no attribute 'strip'``."""
 
+    def make_agent(sid, key, session_id=None, session_db=None, *, has_existing_messages):
+        assert has_existing_messages is True
+        return object()
+
     multimodal_user = {
         "role": "user",
         "content": [
@@ -509,7 +517,7 @@ def test_session_resume_handles_multimodal_list_content(server, monkeypatch):
             return [multimodal_user, text_only_assistant]
 
     monkeypatch.setattr(server, "_get_db", lambda: _DB())
-    monkeypatch.setattr(server, "_make_agent", lambda sid, key, session_id=None, session_db=None: object())
+    monkeypatch.setattr(server, "_make_agent", make_agent)
     monkeypatch.setattr(server, "_init_session", lambda sid, key, agent, history, cols=80, **_kwargs: None)
     monkeypatch.setattr(server, "_session_info", lambda _agent, _session=None: {"model": "test/model"})
 
@@ -795,7 +803,8 @@ def test_session_resume_reuses_existing_live_session(server, monkeypatch):
         def close(self):
             closed_sids.append(self.sid)
 
-    def make_agent(sid, key, session_id=None, session_db=None):
+    def make_agent(sid, key, session_id=None, session_db=None, *, has_existing_messages):
+        assert has_existing_messages is True
         created_sids.append(sid)
         first_agent_started.set()
         assert agent_can_finish.wait(timeout=1)
@@ -976,6 +985,10 @@ def test_sync_session_key_after_compress_reanchors_active_session_lease(
 def test_session_resume_live_payload_uses_current_history_with_ancestors(server, monkeypatch):
     """Live resume should not reuse a stale ancestor-inclusive snapshot."""
 
+    def make_agent(_sid, key, session_id=None, session_db=None, *, has_existing_messages):
+        assert has_existing_messages is True
+        return types.SimpleNamespace(model="test/model", session_id=session_id or key)
+
     target = "20260409_010101_child"
     ancestor_history = [{"role": "user", "content": "ancestor"}]
     current_history = [
@@ -1003,13 +1016,7 @@ def test_session_resume_live_payload_uses_current_history_with_ancestors(server,
             pass
 
     monkeypatch.setattr(server, "_get_db", lambda: _DB())
-    monkeypatch.setattr(
-        server,
-        "_make_agent",
-        lambda _sid, key, session_id=None, session_db=None: types.SimpleNamespace(
-            model="test/model", session_id=session_id or key
-        ),
-    )
+    monkeypatch.setattr(server, "_make_agent", make_agent)
     monkeypatch.setattr(server, "_SlashWorker", lambda _key, _model: _Worker())
     monkeypatch.setattr(
         server,
@@ -1119,6 +1126,11 @@ def test_session_branch_persists_branched_from_marker(server, monkeypatch):
     heuristic never surfaces it — the stable model_config marker is the only
     thing that keeps a TUI branch visible.
     """
+
+    def make_agent(_sid, key, session_id=None, session_db=None, *, has_existing_messages):
+        assert has_existing_messages is True
+        return types.SimpleNamespace(model="test/model", session_id=session_id or key)
+
     create_calls = []
 
     class _DB:
@@ -1141,13 +1153,7 @@ def test_session_branch_persists_branched_from_marker(server, monkeypatch):
     monkeypatch.setattr(server, "_get_db", lambda: _DB())
     monkeypatch.setattr(server, "_resolve_model", lambda: "test/model")
     monkeypatch.setattr(server, "_new_session_key", lambda: "20260101_000001_child0")
-    monkeypatch.setattr(
-        server,
-        "_make_agent",
-        lambda _sid, key, session_id=None, session_db=None: types.SimpleNamespace(
-            model="test/model", session_id=session_id or key
-        ),
-    )
+    monkeypatch.setattr(server, "_make_agent", make_agent)
     monkeypatch.setattr(server, "_init_session", lambda *_a, **_k: None)
     monkeypatch.setattr(server, "_set_session_context", lambda *_a, **_k: [])
     monkeypatch.setattr(server, "_clear_session_context", lambda *_a, **_k: None)

@@ -33,6 +33,7 @@ from tools.delegate_tool import (
     _resolve_child_credential_pool,
     _resolve_delegation_credentials,
     _inherit_parent_base_url,
+    _evaluate_adaptive_spawn_shadow,
 )
 
 
@@ -410,6 +411,59 @@ class TestDelegateTask(unittest.TestCase):
             self.assertEqual(kwargs["api_key"], parent.api_key)
             self.assertEqual(kwargs["provider"], parent.provider)
             self.assertEqual(kwargs["api_mode"], parent.api_mode)
+
+    def test_explicit_empty_child_api_key_does_not_inherit_parent_secret(self):
+        parent = _make_mock_parent(depth=0)
+        parent.api_key = "parent-secret"
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+            _build_child_agent(
+                task_index=0,
+                goal="Use credentialless native runtime",
+                context=None,
+                toolsets=None,
+                model="native-model",
+                max_iterations=10,
+                parent_agent=parent,
+                task_count=1,
+                override_provider="native-provider",
+                override_base_url="native://local",
+                override_api_key="",
+                override_api_mode="bedrock_converse",
+            )
+
+        _, kwargs = MockAgent.call_args
+        self.assertEqual(kwargs["api_key"], "")
+        self.assertNotEqual(kwargs["api_key"], parent.api_key)
+
+    def test_explicit_empty_base_url_and_api_mode_do_not_inherit_parent(self):
+        parent = _make_mock_parent(depth=0)
+        parent.base_url = "https://parent.example/v1"
+        parent.api_mode = "parent_mode"
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+            _build_child_agent(
+                task_index=0,
+                goal="Use routed provider defaults",
+                context=None,
+                toolsets=None,
+                model="routed-model",
+                max_iterations=10,
+                parent_agent=parent,
+                task_count=1,
+                override_provider="routed-provider",
+                override_base_url="",
+                override_api_key="routed-key",
+                override_api_mode="",
+            )
+
+        _, kwargs = MockAgent.call_args
+        self.assertEqual(kwargs["provider"], "routed-provider")
+        self.assertEqual(kwargs["base_url"], "")
+        self.assertEqual(kwargs["api_key"], "routed-key")
+        self.assertEqual(kwargs["api_mode"], "")
 
     def test_child_inherits_parent_print_fn(self):
         parent = _make_mock_parent(depth=0)
@@ -1161,6 +1215,19 @@ class TestDelegationCredentialResolution(unittest.TestCase):
         self.assertIsNone(creds["api_mode"])
         self.assertIsNone(creds["model"])
 
+    def test_explicit_empty_direct_endpoint_key_remains_credentialless(self):
+        parent = _make_mock_parent(depth=0)
+        parent.api_key = "parent-secret"
+        creds = _resolve_delegation_credentials(
+            {
+                "base_url": "http://localhost:1234/v1",
+                "api_key": "",
+            },
+            parent,
+        )
+
+        self.assertEqual(creds["api_key"], "")
+
     def test_model_only_no_provider(self):
         """When only model is set (no provider), model is returned but credentials are None."""
         parent = _make_mock_parent(depth=0)
@@ -1696,6 +1763,46 @@ class TestDelegationProviderIntegration(unittest.TestCase):
                 self.assertEqual(call.kwargs.get("override_base_url"), "https://openrouter.ai/api/v1")
                 self.assertEqual(call.kwargs.get("override_api_key"), "sk-or-batch")
                 self.assertEqual(call.kwargs.get("override_api_mode"), "chat_completions")
+
+    @patch("tools.delegate_tool._load_config")
+    @patch("tools.delegate_tool._resolve_delegation_credentials")
+    def test_smart_routing_exception_falls_back_to_configured_credentials(
+        self, mock_creds, mock_cfg
+    ):
+        mock_cfg.return_value = {"max_iterations": 45}
+        configured = {
+            "model": "configured-model",
+            "provider": "configured-provider",
+            "base_url": "https://configured.invalid/v1",
+            "api_key": "configured-key",
+            "api_mode": "chat_completions",
+        }
+        mock_creds.return_value = configured
+        parent = _make_mock_parent(depth=0)
+
+        with patch(
+            "tools.delegate_tool._route_task_creds",
+            side_effect=RuntimeError("routing unavailable"),
+        ), patch("tools.delegate_tool._build_child_agent") as mock_build, patch(
+            "tools.delegate_tool._run_single_child",
+            return_value={
+                "task_index": 0,
+                "status": "completed",
+                "summary": "done",
+                "api_calls": 0,
+                "duration_seconds": 0.0,
+            },
+        ):
+            mock_build.return_value = MagicMock()
+            delegate_task(goal="Continue despite routing failure", parent_agent=parent)
+
+        self.assertEqual(mock_build.call_count, 1)
+        kwargs = mock_build.call_args.kwargs
+        self.assertEqual(kwargs["model"], configured["model"])
+        self.assertEqual(kwargs["override_provider"], configured["provider"])
+        self.assertEqual(kwargs["override_base_url"], configured["base_url"])
+        self.assertEqual(kwargs["override_api_key"], configured["api_key"])
+        self.assertEqual(kwargs["override_api_mode"], configured["api_mode"])
 
     @patch("tools.delegate_tool._load_config")
     @patch("tools.delegate_tool._resolve_delegation_credentials")
@@ -2530,6 +2637,257 @@ class TestAsyncCapUnified(unittest.TestCase):
         from tools.delegate_tool import _get_max_async_children
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(_get_max_async_children(), _get_max_concurrent_children())
+
+
+# =========================================================================
+# adaptive delegation compute-only shadow
+# =========================================================================
+
+
+class TestAdaptiveSpawnAdmissionShadow(unittest.TestCase):
+    """The Phase 0/1 evaluator computes advice but owns no runtime branch."""
+
+    @staticmethod
+    def _decision(recommendation):
+        return {
+            "schema_version": "hermes_adaptive_delegation_admission_shadow_v1",
+            "mode": "shadow_only",
+            "recommendation": recommendation,
+            "reason_codes": ["test_override"],
+            "enforced": False,
+            "authority_effect": "none",
+        }
+
+    @staticmethod
+    def _run_valid_single(
+        *, shadow_result=None, shadow_error=None, config=None, role=None
+    ):
+        parent = _make_mock_parent(depth=0)
+        parent.enabled_toolsets = ["terminal", "file", "delegation"]
+        child = MagicMock()
+        child.run_conversation.return_value = {
+            "final_response": "legacy-result",
+            "completed": True,
+            "api_calls": 1,
+            "messages": [],
+        }
+        child._delegate_saved_tool_names = []
+        child._credential_pool = None
+        child.session_prompt_tokens = 0
+        child.session_completion_tokens = 0
+        child.model = "test"
+        shadow_kwargs = (
+            {"side_effect": shadow_error}
+            if shadow_error is not None
+            else {"return_value": shadow_result}
+        )
+        effective_config = {"max_spawn_depth": 1, **(config or {})}
+        with patch("tools.delegate_tool._load_config", return_value=effective_config), patch(
+            "tools.delegate_tool._resolve_delegation_credentials",
+            return_value={
+                "provider": None,
+                "base_url": None,
+                "api_key": None,
+                "api_mode": None,
+                "model": None,
+                "command": None,
+                "args": [],
+            },
+        ), patch("run_agent.AIAgent", return_value=child), patch(
+            "tools.delegate_tool._evaluate_adaptive_spawn_shadow", **shadow_kwargs
+        ) as evaluator:
+            payload = json.loads(
+                delegate_task(
+                    goal="test", role=role, parent_agent=parent, background=False
+                )
+            )
+        return payload, child, evaluator
+
+    def test_pure_leaf_decision_is_exact_and_deterministic(self):
+        kwargs = {
+            "requested_role": "leaf",
+            "child_depth": 1,
+            "max_spawn_depth": 1,
+            "task_count": 1,
+            "max_concurrent_children": 3,
+        }
+        expected = {
+            "schema_version": "hermes_adaptive_delegation_admission_shadow_v1",
+            "mode": "shadow_only",
+            "recommendation": "shadow_allow",
+            "reason_codes": ["leaf_requires_no_recursive_authority"],
+            "enforced": False,
+            "authority_effect": "none",
+        }
+        self.assertEqual(_evaluate_adaptive_spawn_shadow(**kwargs), expected)
+        self.assertEqual(
+            _evaluate_adaptive_spawn_shadow(**kwargs),
+            _evaluate_adaptive_spawn_shadow(**kwargs),
+        )
+
+    def test_orchestrator_without_decomposition_contract_abstains(self):
+        result = _evaluate_adaptive_spawn_shadow(
+            requested_role="orchestrator",
+            child_depth=1,
+            max_spawn_depth=3,
+            task_count=1,
+            max_concurrent_children=3,
+        )
+        self.assertEqual(result["recommendation"], "shadow_abstain")
+        self.assertEqual(result["reason_codes"], ["missing_decomposition_contract"])
+        self.assertFalse(result["enforced"])
+        self.assertEqual(result["authority_effect"], "none")
+
+    def test_orchestrator_at_depth_floor_is_shadow_denied(self):
+        result = _evaluate_adaptive_spawn_shadow(
+            requested_role="orchestrator",
+            child_depth=2,
+            max_spawn_depth=2,
+            task_count=1,
+            max_concurrent_children=3,
+        )
+        self.assertEqual(result["recommendation"], "shadow_deny")
+        self.assertEqual(result["reason_codes"], ["orchestrator_depth_limit"])
+
+    def test_depth_boundary_matrix_is_relation_safe_for_both_roles(self):
+        rows = [
+            ("leaf", 1, 2, "shadow_allow", "leaf_requires_no_recursive_authority"),
+            ("leaf", 2, 2, "shadow_allow", "leaf_requires_no_recursive_authority"),
+            ("leaf", 3, 2, "shadow_abstain", "invalid_shadow_input"),
+            ("orchestrator", 1, 2, "shadow_abstain", "missing_decomposition_contract"),
+            ("orchestrator", 2, 2, "shadow_deny", "orchestrator_depth_limit"),
+            ("orchestrator", 3, 2, "shadow_abstain", "invalid_shadow_input"),
+        ]
+        for role, depth, maximum, recommendation, reason in rows:
+            with self.subTest(role=role, depth=depth, maximum=maximum):
+                result = _evaluate_adaptive_spawn_shadow(
+                    requested_role=role,
+                    child_depth=depth,
+                    max_spawn_depth=maximum,
+                    task_count=1,
+                    max_concurrent_children=3,
+                )
+                self.assertEqual(result["recommendation"], recommendation)
+                self.assertEqual(result["reason_codes"], [reason])
+
+    def test_invalid_inputs_abstain_without_throwing(self):
+        invalid_rows = [
+            {"requested_role": "unknown", "child_depth": 1, "max_spawn_depth": 1,
+             "task_count": 1, "max_concurrent_children": 3},
+            {"requested_role": [], "child_depth": 1, "max_spawn_depth": 1,
+             "task_count": 1, "max_concurrent_children": 3},
+            {"requested_role": "leaf", "child_depth": True, "max_spawn_depth": 1,
+             "task_count": 1, "max_concurrent_children": 3},
+            {"requested_role": "leaf", "child_depth": 1, "max_spawn_depth": 0,
+             "task_count": 1, "max_concurrent_children": 3},
+            {"requested_role": "leaf", "child_depth": 1, "max_spawn_depth": 1,
+             "task_count": 4, "max_concurrent_children": 3},
+        ]
+        recommendations = [
+            _evaluate_adaptive_spawn_shadow(**row) for row in invalid_rows
+        ]
+        self.assertEqual(recommendations[0]["recommendation"], "shadow_abstain")
+        self.assertEqual(recommendations[1]["recommendation"], "shadow_abstain")
+        self.assertEqual(recommendations[2]["recommendation"], "shadow_abstain")
+        self.assertEqual(recommendations[3]["recommendation"], "shadow_abstain")
+        self.assertEqual(recommendations[4]["recommendation"], "shadow_deny")
+        self.assertEqual(
+            recommendations[4]["reason_codes"], ["task_count_exceeds_concurrency"]
+        )
+
+    def test_shadow_deny_does_not_block_legacy_allowed_delegation(self):
+        payload, child, evaluator = self._run_valid_single(
+            shadow_result=self._decision("shadow_deny")
+        )
+        self.assertEqual(payload["results"][0]["summary"], "legacy-result")
+        child.run_conversation.assert_called_once()
+        evaluator.assert_called_once_with(
+            requested_role="leaf",
+            child_depth=1,
+            max_spawn_depth=1,
+            task_count=1,
+            max_concurrent_children=3,
+        )
+        self.assertNotIn("admission", payload)
+        self.assertNotIn("shadow", payload)
+
+    def test_shadow_evaluator_exception_does_not_change_legacy_result(self):
+        payload, child, evaluator = self._run_valid_single(
+            shadow_error=RuntimeError("shadow unavailable")
+        )
+        self.assertEqual(payload["results"][0]["summary"], "legacy-result")
+        child.run_conversation.assert_called_once()
+        evaluator.assert_called_once()
+
+    def test_shadow_allow_cannot_grant_orchestrator_at_default_depth_floor(self):
+        _, child, evaluator = self._run_valid_single(
+            shadow_result=self._decision("shadow_allow"), role="orchestrator"
+        )
+        evaluator.assert_called_once()
+        self.assertEqual(child._delegate_role, "leaf")
+        self.assertNotIn("delegation", child.enabled_toolsets)
+
+    def test_shadow_allow_cannot_bypass_orchestrator_kill_switch(self):
+        _, child, evaluator = self._run_valid_single(
+            shadow_result=self._decision("shadow_allow"),
+            role="orchestrator",
+            config={"max_spawn_depth": 2, "orchestrator_enabled": False},
+        )
+        evaluator.assert_called_once()
+        self.assertEqual(child._delegate_role, "leaf")
+        self.assertNotIn("delegation", child.enabled_toolsets)
+
+    @patch("tools.delegate_tool._evaluate_adaptive_spawn_shadow")
+    @patch("tools.delegate_tool._build_child_agent")
+    def test_shadow_allow_cannot_bypass_depth_limit(self, builder, evaluator):
+        evaluator.return_value = self._decision("shadow_allow")
+        parent = _make_mock_parent(depth=1)
+        with patch(
+            "tools.delegate_tool._load_config", return_value={"max_spawn_depth": 1}
+        ):
+            payload = json.loads(delegate_task(goal="test", parent_agent=parent))
+        self.assertIn("Delegation depth limit reached", payload["error"])
+        builder.assert_not_called()
+        evaluator.assert_not_called()
+
+    @patch("tools.delegate_tool._evaluate_adaptive_spawn_shadow")
+    @patch("tools.delegate_tool._build_child_agent")
+    def test_shadow_allow_cannot_bypass_task_count_limit(self, builder, evaluator):
+        evaluator.return_value = self._decision("shadow_allow")
+        parent = _make_mock_parent(depth=0)
+        with patch(
+            "tools.delegate_tool._load_config",
+            return_value={"max_spawn_depth": 1, "max_concurrent_children": 1},
+        ):
+            payload = json.loads(
+                delegate_task(
+                    tasks=[{"goal": "A"}, {"goal": "B"}], parent_agent=parent
+                )
+            )
+        self.assertIn("Too many tasks", payload["error"])
+        builder.assert_not_called()
+        evaluator.assert_not_called()
+
+    @patch("tools.delegate_tool._evaluate_adaptive_spawn_shadow")
+    @patch("tools.delegate_tool._build_child_agent")
+    def test_shadow_allow_cannot_bypass_pause(self, builder, evaluator):
+        from tools.delegate_tool import set_spawn_paused
+
+        evaluator.return_value = self._decision("shadow_allow")
+        parent = _make_mock_parent(depth=0)
+        set_spawn_paused(True)
+        try:
+            payload = json.loads(delegate_task(goal="test", parent_agent=parent))
+        finally:
+            set_spawn_paused(False)
+        self.assertIn("spawning is paused", payload["error"])
+        builder.assert_not_called()
+        evaluator.assert_not_called()
+
+    def test_model_facing_schema_has_no_shadow_contract(self):
+        props = DELEGATE_TASK_SCHEMA["parameters"]["properties"]
+        self.assertNotIn("admission", props)
+        self.assertNotIn("shadow", props)
 
 
 # =========================================================================

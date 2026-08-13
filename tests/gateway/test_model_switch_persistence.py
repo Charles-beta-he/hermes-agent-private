@@ -242,3 +242,75 @@ class TestIsIntentionalModelSwitch:
         }
 
         assert runner._is_intentional_model_switch(sk, "gpt-5.4") is False
+
+    def test_active_smart_route_is_intentional_and_not_fallback(self):
+        runner = _make_runner()
+        sk = build_session_key(_make_source())
+        agent = SimpleNamespace(
+            session_id="agent-session",
+            _smart_routing_runtime={
+                "session_id": "agent-session",
+                "provider": "openai-codex",
+                "model": "gpt-5.4",
+                "tier": "SIMPLE",
+            }
+        )
+
+        assert runner._is_intentional_model_switch(sk, "gpt-5.4", agent) is True
+
+    def test_stale_smart_route_for_another_model_is_not_intentional(self):
+        runner = _make_runner()
+        sk = build_session_key(_make_source())
+        agent = SimpleNamespace(
+            _smart_routing_runtime={"model": "gpt-5.4", "provider": "openai-codex"}
+        )
+
+        assert runner._is_intentional_model_switch(sk, "gpt-5.6-sol", agent) is False
+
+    def test_fresh_agent_built_from_model_override_is_stamped(self):
+        runner = _make_runner()
+        sk = build_session_key(_make_source())
+        runner._session_model_overrides[sk] = {"model": "gpt-5.4"}
+        agent = SimpleNamespace(session_id="session-stamp")
+
+        runner._configure_smart_routing_entrypoint(sk, "session-stamp", agent)
+
+        assert agent._smart_routing_user_override_session_id == "session-stamp"
+        assert agent._smart_routing_entrypoint_eligible is False
+
+    def test_fresh_default_gateway_agent_is_route_eligible(self):
+        runner = _make_runner()
+        sk = build_session_key(_make_source())
+        agent = SimpleNamespace(session_id="session-default")
+
+        runner._configure_smart_routing_entrypoint(sk, "session-default", agent)
+
+        assert not hasattr(agent, "_smart_routing_user_override_session_id")
+        assert agent._smart_routing_entrypoint_eligible is True
+
+    def test_rebuilt_gateway_agent_with_existing_messages_is_not_route_eligible(self):
+        runner = _make_runner()
+        sk = build_session_key(_make_source())
+        agent = SimpleNamespace(session_id="session-resumed")
+
+        runner._configure_smart_routing_entrypoint(
+            sk,
+            "session-resumed",
+            agent,
+            has_existing_messages=True,
+        )
+
+        assert agent._smart_routing_entrypoint_eligible is False
+
+    def test_smart_route_for_old_agent_session_is_not_intentional(self):
+        runner = _make_runner()
+        sk = build_session_key(_make_source())
+        agent = SimpleNamespace(
+            session_id="session-new",
+            _smart_routing_runtime={
+                "session_id": "session-old",
+                "model": "gpt-5.4",
+            },
+        )
+
+        assert runner._is_intentional_model_switch(sk, "gpt-5.4", agent) is False

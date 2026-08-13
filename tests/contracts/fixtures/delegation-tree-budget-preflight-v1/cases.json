@@ -1,0 +1,58 @@
+[
+  {
+    "name": "fits exact remaining capacity",
+    "valid": true,
+    "snapshot": {
+      "schema_version": "hermes_delegation_tree_budget_snapshot_v1",
+      "tree_budget_id": "tree-budget-alpha",
+      "snapshot_revision": 7,
+      "remaining_node_capacity": 2
+    },
+    "projection": {
+      "schema_version": "delegation_expansion_projection_v1",
+      "definition_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "plan_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "proposal_digest": "sha256:bba7ca5ebda2102fc5b1fcb5bdec1a503eeb93d3d4ef59e1b2e460faa24968c7",
+      "authority_granted": false,
+      "executable": false,
+      "child_task_ids": ["plan", "plan-b"],
+      "synthesis_task_id": "implement",
+      "requested_child_nodes": 2
+    },
+    "expected": {
+      "schema_version": "hermes_delegation_tree_budget_preflight_v1",
+      "tree_budget_id": "tree-budget-alpha",
+      "snapshot_revision": 7,
+      "budget_snapshot_digest": "sha256:7fadaf3d009c79e8af89c01630bbb202f2506e481e5a007c387b587729f4bfd1",
+      "proposal_digest": "sha256:bba7ca5ebda2102fc5b1fcb5bdec1a503eeb93d3d4ef59e1b2e460faa24968c7",
+      "requested_child_nodes": 2,
+      "capacity_fit_at_snapshot": true,
+      "reason_codes": ["tree_capacity_available_at_snapshot"],
+      "authority_granted": false,
+      "executable": false,
+      "reservation_committed": false,
+      "ledger_mutated": false
+    }
+  },
+  {
+    "name": "zero capacity is deterministic insufficient result",
+    "valid": true,
+    "snapshot": {
+      "schema_version": "hermes_delegation_tree_budget_snapshot_v1",
+      "tree_budget_id": "tree-budget-alpha",
+      "snapshot_revision": 8,
+      "remaining_node_capacity": 0
+    },
+    "projection": {
+      "schema_version": "delegation_expansion_projection_v1",
+      "definition_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "plan_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "proposal_digest": "sha256:bba7ca5ebda2102fc5b1fcb5bdec1a503eeb93d3d4ef59e1b2e460faa24968c7",
+      "authority_granted": false,
+      "executable": false,
+      "child_task_ids": ["plan-b", "plan"],
+      "synthesis_task_id": "implement",
+      "requested_child_nodes": 2
+    }
+  }
+]

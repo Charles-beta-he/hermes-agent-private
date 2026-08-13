@@ -17,6 +17,7 @@ These tests drive the real ``compress_context`` path against a real SessionDB.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -64,6 +65,88 @@ def _msgs(n=20):
     return [{"role": "user", "content": f"m{i}"} for i in range(n)]
 
 
+class TestSmartRoutingRuntimeMigratesOnRotation:
+    def test_smart_route_binds_to_compression_child(self, tmp_path: Path):
+        db = SessionDB(db_path=tmp_path / "state.db")
+        parent = "PARENT_SMART_ROUTE_ROT"
+        db.create_session(parent, source="cli")
+        agent = _build_agent_with_db(db, parent)
+        runtime = {
+            "session_id": parent,
+            "provider": "openrouter",
+            "model": "test/model",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_mode": "chat_completions",
+            "tier": "MEDIUM",
+        }
+        setattr(agent, "_smart_routing_runtime", runtime)
+        getattr(agent, "_session_init_model_config")["smart_routing_runtime"] = dict(runtime)
+
+        agent._compress_context(_msgs(), "sys", approx_tokens=120_000)
+
+        child = getattr(agent, "session_id")
+        row = db.get_session(child)
+        assert row is not None
+        config = json.loads(row["model_config"])
+        assert child != parent
+        assert getattr(agent, "_smart_routing_runtime")["session_id"] == child
+        assert config["smart_routing_runtime"]["session_id"] == child
+
+    def test_hostile_smart_route_is_not_written_to_compression_child(self, tmp_path: Path):
+        db = SessionDB(db_path=tmp_path / "state.db")
+        parent = "PARENT_HOSTILE_SMART_ROUTE_ROT"
+        db.create_session(parent, source="cli")
+        agent = _build_agent_with_db(db, parent)
+        hostile = {
+            "session_id": parent,
+            "provider": "openrouter",
+            "model": "test/model",
+            "api_key": "must-not-reach-child",
+            "unknown": "must-not-reach-child-either",
+        }
+        setattr(agent, "_smart_routing_runtime", dict(hostile))
+        init_config = getattr(agent, "_session_init_model_config")
+        init_config["smart_routing_runtime"] = dict(hostile)
+        init_config.update(
+            {
+                "api_key": "top-level-api-key-must-not-reach-child",
+                "token": "top-level-token-must-not-reach-child",
+                "password": "top-level-password-must-not-reach-child",
+                "reasoning_config": {
+                    "api.key": "nested-dot-secret",
+                    "api key": "nested-space-secret",
+                    "aws_access_key_id": "nested-aws-secret",
+                    "aws-access-key-id": "nested-aws-dash-secret",
+                    "aws.access.key.id": "nested-aws-dot-secret",
+                },
+                "unknown_runtime_blob": {"secret": "nested-must-not-reach-child"},
+                "base_url": "https://user:password@example.invalid/v1",
+            }
+        )
+
+        agent._compress_context(_msgs(), "sys", approx_tokens=120_000)
+
+        row = db.get_session(str(getattr(agent, "session_id")))
+        assert row is not None
+        assert "must-not-reach-child" not in row["model_config"]
+        persisted = json.loads(row["model_config"])
+        assert "smart_routing_runtime" not in persisted
+        assert persisted["max_iterations"] == 90
+        assert "api_key" not in persisted
+        assert "token" not in persisted
+        assert "password" not in persisted
+        assert "unknown_runtime_blob" not in persisted
+        assert "base_url" not in persisted
+        assert "reasoning_config" not in persisted
+        for marker in (
+            "nested-dot-secret", "nested-space-secret", "nested-aws-secret",
+            "nested-aws-dash-secret", "nested-aws-dot-secret",
+        ):
+            assert marker not in row["model_config"]
+        assert "top-level" not in row["model_config"]
+        assert "nested-must-not-reach-child" not in row["model_config"]
+
+
 class TestGoalMigratesOnRotation:
     def test_goal_follows_compression_rotation(self, tmp_path: Path):
         db = SessionDB(db_path=tmp_path / "state.db")
@@ -99,6 +182,16 @@ class TestOrphanRollbackOnCreateFailure:
         parent = "PARENT_ORPHAN_ROT"
         db.create_session(parent, source="cli")
         agent = _build_agent_with_db(db, parent)
+        route = {
+            "session_id": parent,
+            "provider": "openrouter",
+            "model": "test/model",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_mode": "chat_completions",
+            "tier": "MEDIUM",
+        }
+        setattr(agent, "_smart_routing_runtime", route)
+        getattr(agent, "_session_init_model_config")["smart_routing_runtime"] = dict(route)
         original = _msgs(8)
 
         compressor = agent.context_compressor
@@ -152,6 +245,7 @@ class TestOrphanRollbackOnCreateFailure:
             "cached prompt before rotation"
         )
         assert agent.session_id == parent
+        assert getattr(agent, "_smart_routing_runtime")["session_id"] == parent
         assert db.get_session(parent) is not None
         assert db.get_session(parent)["end_reason"] is None
         assert compressor._previous_summary == "prior durable summary"

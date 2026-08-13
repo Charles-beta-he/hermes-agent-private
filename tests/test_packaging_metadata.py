@@ -85,6 +85,18 @@ def test_workflow_kernel_runtime_dependency_is_packaged():
     assert "workflow_kernel" in selected
 
 
+def test_session_sidecar_runtime_dependency_is_packaged():
+    """Conversation and cron production paths emit session sidecars.
+
+    A source checkout can import the top-level package from its working
+    directory even when setuptools silently drops it from the wheel. Assert
+    the installed-artifact discovery set directly so hostile-cwd gateway runs
+    cannot degrade with a misleading optional-emission warning.
+    """
+    selected = set(find_packages(where=str(REPO_ROOT), include=_packages_find_include()))
+    assert "session_sidecar" in selected
+
+
 def test_packaging_declared_as_core_dependency():
     """Regression for #40503.
 

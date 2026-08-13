@@ -1,6 +1,7 @@
 """Tests for gateway service management helpers."""
 
 import os
+import plistlib
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -474,6 +475,26 @@ class TestGeneratedSystemdUnits:
         assert str(local_bin) in unit
         assert str(profile_node_bin) not in unit
 
+    def test_launchd_plist_disables_runtime_mutation(self, monkeypatch):
+        parsed = plistlib.loads(gateway_cli.generate_launchd_plist().encode())
+        environment = parsed["EnvironmentVariables"]
+
+        assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
+        assert environment["HERMES_DISABLE_LAZY_INSTALLS"] == "1"
+        assert environment["HERMES_IMMUTABLE_RUNTIME"] == "1"
+        assert "HERMES_LAZY_INSTALL_TARGET" not in environment
+
+        monkeypatch.setenv(
+            "HERMES_DISABLE_LAZY_INSTALLS",
+            environment["HERMES_DISABLE_LAZY_INSTALLS"],
+        )
+        monkeypatch.setenv("HERMES_IMMUTABLE_RUNTIME", "1")
+        monkeypatch.setenv("HERMES_LAZY_INSTALL_TARGET", "/hostile/inherited/target")
+        monkeypatch.setattr("hermes_cli.config.load_config", lambda: {})
+        from tools import lazy_deps
+
+        assert lazy_deps._allow_lazy_installs() is False
+
     def test_launchd_plist_does_not_leak_profile_node_symlink_target(self, tmp_path, monkeypatch):
         # Same #48700 regression for the macOS twin generate_launchd_plist().
         local_bin = tmp_path / ".local" / "bin"
@@ -491,6 +512,15 @@ class TestGeneratedSystemdUnits:
 
         assert str(local_bin) in plist
         assert str(profile_node_bin) not in plist
+
+    def test_launchd_plist_owns_immutable_runtime_environment(self):
+        parsed = plistlib.loads(gateway_cli.generate_launchd_plist().encode())
+        environment = parsed["EnvironmentVariables"]
+
+        assert parsed["ProgramArguments"][1:3] == ["-s", "-m"]
+        assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
+        assert environment["HERMES_DISABLE_LAZY_INSTALLS"] == "1"
+        assert "HERMES_LAZY_INSTALL_TARGET" not in environment
 
     def test_user_unit_includes_wsl_windows_interop_paths(self, monkeypatch):
         monkeypatch.setattr(gateway_cli, "is_wsl", lambda: True)

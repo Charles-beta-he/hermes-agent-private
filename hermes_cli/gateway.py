@@ -3910,6 +3910,7 @@ def generate_launchd_plist() -> str:
     # Build ProgramArguments array, including --profile when using a named profile
     prog_args = [
         f"<string>{python_path}</string>",
+        "<string>-s</string>",
         "<string>-m</string>",
         "<string>hermes_cli.main</string>",
     ]
@@ -3948,6 +3949,12 @@ def generate_launchd_plist() -> str:
         <string>{venv_dir}</string>
         <key>HERMES_HOME</key>
         <string>{hermes_home}</string>
+        <key>PYTHONDONTWRITEBYTECODE</key>
+        <string>1</string>
+        <key>HERMES_DISABLE_LAZY_INSTALLS</key>
+        <string>1</string>
+        <key>HERMES_IMMUTABLE_RUNTIME</key>
+        <string>1</string>
     </dict>
 
     <key>LimitLoadToSessionType</key>

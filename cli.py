@@ -3684,6 +3684,37 @@ def save_config_value(key_path: str, value: any) -> bool:
 # HermesCLI Class
 # ============================================================================
 
+
+def _smart_routing_entrypoint_is_eligible(
+    *,
+    resume: Optional[str] = None,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> bool:
+    """Only a fresh CLI session with no explicit runtime pin may auto-route."""
+    return not bool(resume or model or provider or api_key or base_url)
+
+
+def _carry_smart_routing_override_on_session_rotation(
+    agent,
+    *,
+    old_session_id: Optional[str],
+    new_session_id: Optional[str],
+) -> None:
+    """Keep a manual model pin authoritative when ``/new`` reuses the agent."""
+    if not new_session_id:
+        return
+    explicit_session = str(
+        getattr(agent, "_smart_routing_user_override_session_id", "") or ""
+    )
+    if explicit_session != str(old_session_id or ""):
+        return
+    setattr(agent, "_smart_routing_entrypoint_eligible", False)
+    setattr(agent, "_smart_routing_user_override_session_id", str(new_session_id))
+
+
 class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
     """
     Interactive CLI for the Hermes Agent.
@@ -3724,6 +3755,14 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         """
         # Initialize Rich console
         self.console = Console()
+        self._smart_routing_entrypoint_eligible = _smart_routing_entrypoint_is_eligible(
+            resume=resume,
+            model=model,
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        self._resume_runtime_pin_explicit = bool(model or provider or api_key or base_url)
         self.config = CLI_CONFIG
         self.compact = compact if compact is not None else CLI_CONFIG["display"].get("compact", False)
         # tool_progress: "off", "new", "all", "verbose" (from config.yaml display section)
@@ -7025,6 +7064,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         if self.agent:
             self.agent.session_id = self.session_id
             self.agent.session_start = self.session_start
+            _carry_smart_routing_override_on_session_rotation(
+                self.agent,
+                old_session_id=old_session_id,
+                new_session_id=self.session_id,
+            )
             self.agent.reset_session_state()
             if hasattr(self.agent, "_last_flushed_db_idx"):
                 self.agent._last_flushed_db_idx = 0
@@ -7804,6 +7848,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             "model": self.model,
             "provider": self.provider,
             "requested_provider": self.requested_provider,
+            "_smart_routing_entrypoint_eligible": getattr(
+                self, "_smart_routing_entrypoint_eligible", False
+            ),
             "_explicit_api_key": getattr(self, "_explicit_api_key", None),
             "_explicit_base_url": getattr(self, "_explicit_base_url", None),
             "api_key": self.api_key,
@@ -7847,6 +7894,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 )
                 return
 
+        # A successful /model choice is an explicit operator pin even when it
+        # happened before lazy first-agent construction. The live-agent path
+        # also stamps the session override in AIAgent.switch_model; this flag
+        # covers the pre-agent path later projected by _init_agent.
+        self._smart_routing_entrypoint_eligible = False
         self._pending_model_switch_note = (
             f"[Note: model was just switched from {old_model} to {result.new_model} "
             f"via {result.provider_label or result.target_provider}. "
@@ -8111,6 +8163,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             "model": self.model,
             "provider": self.provider,
             "requested_provider": self.requested_provider,
+            "_smart_routing_entrypoint_eligible": getattr(
+                self, "_smart_routing_entrypoint_eligible", False
+            ),
             "_explicit_api_key": getattr(self, "_explicit_api_key", None),
             "_explicit_base_url": getattr(self, "_explicit_base_url", None),
             "api_key": self.api_key,
@@ -8153,6 +8208,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 )
                 return
 
+        # Cover the typed pre-agent /model path as well as the picker path.
+        self._smart_routing_entrypoint_eligible = False
         # Store a note to prepend to the next user message so the model
         # knows a switch occurred (avoids injecting system messages mid-history
         # which breaks providers and prompt caching).

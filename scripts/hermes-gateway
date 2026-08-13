@@ -185,8 +185,12 @@ def generate_launchd_plist() -> str:
     <key>ProgramArguments</key>
     <array>
         <string>{python_path}</string>
-        <string>{script_path}</string>
+        <string>-s</string>
+        <string>-m</string>
+        <string>hermes_cli.main</string>
+        <string>gateway</string>
         <string>run</string>
+        <string>--replace</string>
     </array>
     
     <key>WorkingDirectory</key>
@@ -211,6 +215,12 @@ def generate_launchd_plist() -> str:
     <dict>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYTHONDONTWRITEBYTECODE</key>
+        <string>1</string>
+        <key>HERMES_DISABLE_LAZY_INSTALLS</key>
+        <string>1</string>
+        <key>HERMES_IMMUTABLE_RUNTIME</key>
+        <string>1</string>
     </dict>
 </dict>
 </plist>

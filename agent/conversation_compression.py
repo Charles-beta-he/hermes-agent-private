@@ -822,6 +822,24 @@ def _compress_context_locked(
                     agent._session_db.end_session(agent.session_id, "compression")
                     old_session_id = agent.session_id
                     agent.session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+                    from agent.model_router import (
+                        canonicalize_durable_model_config,
+                        rebind_smart_routing_runtime,
+                    )
+
+                    route_rebound = rebind_smart_routing_runtime(
+                        agent,
+                        agent.session_id,
+                        expected_session_id=old_session_id,
+                    )
+                    agent._session_init_model_config = canonicalize_durable_model_config(
+                        getattr(agent, "_session_init_model_config", {})
+                    )
+                    if route_rebound:
+                        agent._session_init_model_config["smart_routing_runtime"] = dict(
+                            agent._smart_routing_runtime
+                        )
+                    rebound_session_id = agent.session_id
                     # Ordering contract: the agent thread updates the contextvar here;
                     # the gateway propagates to SessionEntry after run_in_executor returns.
                     try:
@@ -872,6 +890,12 @@ def _compress_context_locked(
                             _cs_err, old_session_id,
                         )
                         agent.session_id = old_session_id
+                        if route_rebound:
+                            rebind_smart_routing_runtime(
+                                agent,
+                                old_session_id,
+                                expected_session_id=str(rebound_session_id),
+                            )
                         try:
                             from gateway.session_context import set_current_session_id
                             set_current_session_id(agent.session_id)

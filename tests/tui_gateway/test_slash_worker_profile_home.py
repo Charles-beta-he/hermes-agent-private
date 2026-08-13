@@ -120,5 +120,8 @@ def test_slash_worker_inherits_argv_correctly():
             assert "tui_gateway.slash_worker" in call_args
             assert "--session-key" in call_args
             assert "my_session" in call_args
-            assert "--model" in call_args
-            assert "gpt-4" in call_args
+            # The active display model is inherited session state, not an
+            # explicit user pin. Passing it as --model would make HermesCLI
+            # skip durable provider/base_url/api_mode restoration on resume.
+            assert "--model" not in call_args
+            assert "gpt-4" not in call_args

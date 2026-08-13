@@ -863,7 +863,15 @@ class AIAgent:
     def switch_model(self, new_model, new_provider, api_key='', base_url='', api_mode=''):
         """Forwarder — see ``agent.agent_runtime_helpers.switch_model``."""
         from agent.agent_runtime_helpers import switch_model
-        return switch_model(self, new_model, new_provider, api_key, base_url, api_mode)
+
+        result = switch_model(self, new_model, new_provider, api_key, base_url, api_mode)
+        if not getattr(self, "_smart_routing_switch_in_progress", False):
+            setattr(
+                self,
+                "_smart_routing_user_override_session_id",
+                str(getattr(self, "session_id", "") or ""),
+            )
+        return result
 
     def _safe_print(self, *args, **kwargs):
         """Print that silently handles broken pipes / closed stdout.
@@ -6106,6 +6114,11 @@ def main(
             save_trajectories=save_trajectories,
             verbose_logging=verbose,
             log_prefix_chars=log_prefix_chars
+        )
+        setattr(
+            agent,
+            "_smart_routing_entrypoint_eligible",
+            not bool(model or api_key or base_url),
         )
     except RuntimeError as e:
         print(f"❌ Failed to initialize agent: {e}")
