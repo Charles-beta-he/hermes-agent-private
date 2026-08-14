@@ -201,7 +201,14 @@ def test_agent_os_status_reads_projection_without_runtime_mutation(tmp_path: Pat
     assert payload["procedure_validation"]["axes"]["procedure_validation"]["fully_connected"] == 6
     assert payload["procedure_validation"]["axes"]["certification"]["certified_healthy"] is False
     assert payload["config"]["agent_os_advisory_guidance"] is True
+    assert payload["config"]["agent_os_route_preflight_enabled"] is True
+    assert payload["config"]["agent_os_route_mode"] == "shadow_preflight_only"
+    assert payload["config"]["smart_model_routing_config_enabled"] is False
+    assert payload["config"]["smart_model_routing_executable"] is False
+    assert payload["config"]["smart_model_routing_policy_source"] == "none"
     assert payload["config"]["real_runtime_routing"] is True
+    assert payload["config"]["real_runtime_routing_deprecated"] is True
+    assert payload["config"]["real_runtime_routing_semantics"] == "agent_os_shadow_preflight_enabled"
     assert payload["config"]["agent_os_multimodel_review"] is True
     assert payload["config"]["agent_os_local_harness_executor"] is True
     assert payload["config"]["agent_os_scheduler_cron_write"] is True
@@ -220,6 +227,37 @@ def test_agent_os_status_reads_projection_without_runtime_mutation(tmp_path: Pat
     assert payload["config"]["agent_os_broad_fanout"] is True
     assert payload["config"]["broad_fanout"] is True
     assert payload["runtime_effect"].startswith("broad fan-out enabled")
+
+
+def test_agent_os_status_distinguishes_configured_from_executable_smart_routing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _seed_agent_os(tmp_path)
+    config = {
+        "agent": {},
+        "smart_model_routing": {"enabled": True},
+    }
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: config)
+
+    incomplete = status(tmp_path)["config"]
+
+    assert incomplete["smart_model_routing_config_enabled"] is True
+    assert incomplete["smart_model_routing_executable"] is False
+    assert incomplete["smart_model_routing_policy_source"] == "none"
+    assert "no_executable_tiers" in incomplete["smart_model_routing_diagnostics"]
+
+    config["smart_model_routing"]["tiers"] = {
+        "light": {"provider": "xiaomi", "model": "mimo-v2.5-pro"},
+        "standard": {"provider": "openai-codex", "model": "gpt-5.5"},
+        "heavy": {"provider": "deepseek", "model": "deepseek-v4-pro"},
+    }
+
+    executable = status(tmp_path)["config"]
+
+    assert executable["smart_model_routing_config_enabled"] is True
+    assert executable["smart_model_routing_executable"] is True
+    assert executable["smart_model_routing_policy_source"] == "smart_model_routing.tiers"
+    assert executable["smart_model_routing_diagnostics"] == []
 
 
 def test_agent_os_status_fails_closed_on_malformed_procedure_projection(tmp_path: Path, monkeypatch) -> None:
@@ -645,7 +683,12 @@ def test_agent_os_status_defaults_multimodel_review_and_execution_gates_closed(t
     payload = status(tmp_path)
 
     assert payload["config"]["agent_os_multimodel_review"] is False
+    assert payload["config"]["agent_os_route_preflight_enabled"] is False
+    assert payload["config"]["agent_os_route_mode"] == "shadow_preflight_only"
+    assert payload["config"]["smart_model_routing_config_enabled"] is False
     assert payload["config"]["real_runtime_routing"] is False
+    assert payload["config"]["real_runtime_routing_deprecated"] is True
+    assert payload["config"]["real_runtime_routing_semantics"] == "agent_os_shadow_preflight_enabled"
     assert payload["config"]["tool_invocation_from_agent_os"] is False
     assert payload["config"]["scheduler_cron_write"] is False
     assert payload["config"]["taskpool_mission_lifecycle_write"] is False

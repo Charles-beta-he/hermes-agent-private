@@ -3265,9 +3265,10 @@ def _route_task_creds(
         return creds
 
     parent_session_id = str(getattr(parent_agent, "session_id", "") or "")
-    if getattr(parent_agent, "_smart_routing_entrypoint_eligible", False) is not True:
-        _receipt("skipped_parent_entrypoint_not_eligible")
-        return creds
+    # Session-start routing eligibility is a property of the parent cache boundary,
+    # not an authority gate for a fresh delegated child.  A configured or resumed
+    # parent therefore does not prevent the child from selecting its own runtime.
+    # A deliberate per-session /model override remains authoritative below.
     if parent_session_id and str(
         getattr(parent_agent, "_smart_routing_user_override_session_id", "") or ""
     ) == parent_session_id:
