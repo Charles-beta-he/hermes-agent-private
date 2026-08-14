@@ -197,6 +197,42 @@ def _parse_classifier_tier(raw: str, valid_tiers: Sequence[str]) -> Optional[str
     return token if token in set(valid_tiers) else None
 
 
+def _named_project_references(text: str) -> set[str]:
+    """Extract project identities without treating every hyphenated token as one."""
+    ascii_slug = r"[a-z0-9]+(?:-[a-z0-9]+)+"
+    references = {
+        f"slug:{match.group('name')}"
+        for match in re.finditer(
+            rf"(?<![a-z0-9])(?P<name>{ascii_slug})"
+            r"(?=\s*(?:项目|仓库|应用|服务|代码库|projects?\b|repos?\b|repositories\b))",
+            text,
+        )
+    }
+    for match in re.finditer(
+        r"(?:^|[，,、和与及将把从])(?P<name>[\u4e00-\u9fff]{2,20}?)"
+        r"(?=(?:项目|仓库|应用|服务|代码库))",
+        text,
+    ):
+        references.add(f"zh:{match.group('name')}")
+
+    non_project_context = re.compile(
+        r"\s*(?:分支|文件|标签|提交|branch(?:es)?\b|files?\b|tags?\b|commits?\b)"
+    )
+    relationship_patterns = (
+        rf"(?:sync|同步|迁移).{{0,40}}?(?P<source>{ascii_slug})"
+        rf".{{0,40}}?(?:to|到|至).{{0,40}}?(?P<target>{ascii_slug})",
+        rf"(?P<source>{ascii_slug}).{{0,40}}?(?:sync|同步|迁移)"
+        rf".{{0,40}}?(?:to|到|至).{{0,40}}?(?P<target>{ascii_slug})",
+    )
+    for pattern in relationship_patterns:
+        for match in re.finditer(pattern, text):
+            for group in ("source", "target"):
+                trailing_context = text[match.end(group) : match.end(group) + 16]
+                if not non_project_context.match(trailing_context):
+                    references.add(f"slug:{match.group(group)}")
+    return references
+
+
 def _heuristic_complexity_score(message: str) -> float:
     """Cheap deterministic score on the legacy 0.00–0.30 boundary scale."""
     text = (message or "").strip().lower()
@@ -209,6 +245,27 @@ def _heuristic_complexity_score(message: str) -> float:
         score += 0.045
     if any(term in text for term in ("multi-file", "production", "architecture", "security", "迁移", "生产", "架构", "闭环")):
         score += 0.075
+
+    # Treat a named source-to-multiple-target project sync as engineering work,
+    # not as a short/simple request. Project markers and source/target syntax keep
+    # branch or file slugs from masquerading as independent repositories.
+    project_refs = _named_project_references(text)
+    sync_markers = (
+        "sync",
+        "cross-repo",
+        "cross repository",
+        "multi-repo",
+        "同步开发",
+        "同步推进",
+        "同步到",
+        "跨仓库",
+        "跨项目",
+        "多仓库",
+        "同步",
+    )
+    if len(project_refs) >= 2 and any(term in text for term in sync_markers):
+        score += 0.15
+
     if any(term in text for term in ("prove", "invariant", "adversarial", "root cause", "全盘", "证明", "不变量", "敌对", "根因")):
         score += 0.09
     if text.count("\n") >= 12:
