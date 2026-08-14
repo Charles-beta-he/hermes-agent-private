@@ -118,6 +118,47 @@ def test_select_route_decision_binds_tier_provider_and_model():
     assert decision.config_source == "router.tiers_legacy_adapter"
 
 
+def test_chinese_cross_repository_frontend_sync_routes_as_complex():
+    decision = select_route_decision(
+        "之前有过web-ui项目的RWA新币认购效果同步开发至uaec-react-h5项目与uaec-h5项目，"
+        "web-ui项目的已经改动了一些问题，现在继续同步推进uaec-react-h5项目与uaec-h5项目",
+        _legacy_config(),
+    )
+
+    assert decision.status == "selected"
+    assert decision.tier == "COMPLEX"
+    assert decision.provider == "deepseek"
+    assert decision.model == "deepseek-v4-pro"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "同步 web-ui 项目的 README",
+        "比较 web-ui 与 uaec-h5 的视觉设计",
+        "同步 web-ui 到 web-ui",
+        "同步 web-ui 项目的 feature-login 分支",
+        "同步 web-ui 项目到 feature-login 分支",
+        "从 feature-login 分支同步到 web-ui 项目",
+        "sync web-ui project to feature-login branch",
+        "sync feature-login branch to web-ui project",
+    ],
+)
+def test_cross_repository_sync_signal_requires_two_unique_projects_and_sync(message):
+    decision = select_route_decision(message, _legacy_config())
+
+    assert decision.tier == "SIMPLE"
+
+
+def test_chinese_project_names_are_counted_for_cross_repository_sync():
+    decision = select_route_decision(
+        "将商城前端项目和支付后台项目同步推进",
+        _legacy_config(),
+    )
+
+    assert decision.tier == "COMPLEX"
+
+
 def test_select_route_decision_loads_runtime_config_when_not_injected(monkeypatch):
     monkeypatch.setattr(
         "hermes_cli.config.load_config_readonly",
@@ -367,23 +408,72 @@ def test_delegation_routes_fresh_child_credentials_and_records_resolution(tmp_pa
     assert receipt["status"] == "routing_credentials_resolved"
 
 
-@pytest.mark.parametrize(
-    ("eligible", "override_session", "expected_status"),
-    [
-        (False, "", "skipped_parent_entrypoint_not_eligible"),
-        (True, "parent-pinned", "skipped_parent_explicit_override"),
-    ],
-)
-def test_parent_runtime_authority_blocks_delegation_routing(
-    tmp_path, eligible, override_session, expected_status
+@pytest.mark.parametrize("eligible", [False, True])
+def test_parent_session_eligibility_does_not_block_independent_child_routing(
+    tmp_path, eligible
 ):
+    receipt_path = tmp_path / "model-routing.jsonl"
+    parent = SimpleNamespace(
+        session_id="configured-parent",
+        model="pinned-model",
+        provider="pinned-provider",
+        _smart_routing_entrypoint_eligible=eligible,
+        _smart_routing_user_override_session_id="",
+    )
+    base = {
+        "model": None,
+        "provider": None,
+        "base_url": None,
+        "api_key": None,
+        "api_mode": None,
+    }
+    classifier = MagicMock(return_value="REASONING")
+    resolver = MagicMock(
+        return_value={
+            "success": True,
+            "model": "claude-opus-4-8",
+            "provider": "claude-code",
+            "api_key": "resolved",
+            "base_url": "https://child.invalid",
+            "api_mode": "chat_completions",
+        }
+    )
+
+    routed = _route_task_creds(
+        base,
+        "Prove the architecture invariants",
+        parent,
+        config=_legacy_config(),
+        classifier=classifier,
+        runtime_resolver=resolver,
+        receipt_path=receipt_path,
+    )
+
+    assert routed["model"] == "claude-opus-4-8"
+    assert routed["provider"] == "claude-code"
+    classifier.assert_called_once()
+    resolver.assert_called_once()
+    receipt = json.loads(receipt_path.read_text().strip())
+    assert receipt["status"] == "routing_credentials_resolved"
+    assert receipt["selected"] == {
+        "tier": "REASONING",
+        "provider": "claude-code",
+        "model": "claude-opus-4-8",
+    }
+    assert receipt["actual"] == {
+        "provider": "claude-code",
+        "model": "claude-opus-4-8",
+    }
+
+
+def test_explicit_parent_session_model_override_still_controls_unpinned_children(tmp_path):
     receipt_path = tmp_path / "model-routing.jsonl"
     parent = SimpleNamespace(
         session_id="parent-pinned",
         model="pinned-model",
         provider="pinned-provider",
-        _smart_routing_entrypoint_eligible=eligible,
-        _smart_routing_user_override_session_id=override_session,
+        _smart_routing_entrypoint_eligible=False,
+        _smart_routing_user_override_session_id="parent-pinned",
     )
     base = {
         "model": None,
@@ -409,7 +499,7 @@ def test_parent_runtime_authority_blocks_delegation_routing(
     classifier.assert_not_called()
     resolver.assert_not_called()
     receipt = json.loads(receipt_path.read_text().strip())
-    assert receipt["status"] == expected_status
+    assert receipt["status"] == "skipped_parent_explicit_override"
     assert receipt["selected"] is None
     assert receipt["actual"] == {
         "provider": "pinned-provider",
@@ -417,9 +507,16 @@ def test_parent_runtime_authority_blocks_delegation_routing(
     }
 
 
-def test_direct_parent_without_authority_marker_blocks_delegation_routing(tmp_path):
+def test_direct_parent_without_session_route_marker_still_routes_delegated_child(tmp_path):
     classifier = MagicMock(return_value="REASONING")
-    resolver = MagicMock()
+    resolver = MagicMock(
+        return_value={
+            "success": True,
+            "model": "claude-opus-4-8",
+            "provider": "claude-code",
+            "api_key": "resolved",
+        }
+    )
     base = {
         "model": None,
         "provider": None,
@@ -428,7 +525,7 @@ def test_direct_parent_without_authority_marker_blocks_delegation_routing(tmp_pa
         "api_mode": None,
     }
 
-    unchanged = _route_task_creds(
+    routed = _route_task_creds(
         base,
         "Prove the architecture invariants",
         SimpleNamespace(
@@ -442,9 +539,68 @@ def test_direct_parent_without_authority_marker_blocks_delegation_routing(tmp_pa
         receipt_path=tmp_path / "model-routing.jsonl",
     )
 
-    assert unchanged == base
-    classifier.assert_not_called()
-    resolver.assert_not_called()
+    assert routed["model"] == "claude-opus-4-8"
+    assert routed["provider"] == "claude-code"
+    classifier.assert_called_once()
+    resolver.assert_called_once()
+
+
+def test_each_unpinned_child_routes_independently_to_its_own_executable_target(tmp_path):
+    parent = SimpleNamespace(
+        session_id="configured-parent",
+        model="gpt-5.6-sol",
+        provider="openai-codex",
+        _smart_routing_entrypoint_eligible=False,
+    )
+    base = {
+        "model": None,
+        "provider": None,
+        "base_url": None,
+        "api_key": None,
+        "api_mode": None,
+    }
+    receipt_path = tmp_path / "model-routing.jsonl"
+
+    def classifier(text, _tiers):
+        return "COMPLEX" if "uaec-react-h5" in text else "REASONING"
+
+    def resolver(target, _agent, _config):
+        return {
+            "success": True,
+            "model": target.model,
+            "provider": target.provider,
+            "api_key": "resolved",
+        }
+
+    first = _route_task_creds(
+        base,
+        "同步 web-ui RWA 到 uaec-react-h5",
+        parent,
+        config=_legacy_config(),
+        classifier=classifier,
+        runtime_resolver=resolver,
+        receipt_path=receipt_path,
+        task_index=0,
+    )
+    second = _route_task_creds(
+        base,
+        "敌对复核 uaec-h5 的跨端业务不变量",
+        parent,
+        config=_legacy_config(),
+        classifier=classifier,
+        runtime_resolver=resolver,
+        receipt_path=receipt_path,
+        task_index=1,
+    )
+
+    assert (first["provider"], first["model"]) == ("deepseek", "deepseek-v4-pro")
+    assert (second["provider"], second["model"]) == ("claude-code", "claude-opus-4-8")
+    receipts = [json.loads(line) for line in receipt_path.read_text().splitlines()]
+    assert [receipt["child_task_index"] for receipt in receipts] == [0, 1]
+    assert [receipt["actual"]["model"] for receipt in receipts] == [
+        "deepseek-v4-pro",
+        "claude-opus-4-8",
+    ]
 
 
 def test_explicit_delegation_model_wins_over_smart_routing(tmp_path):

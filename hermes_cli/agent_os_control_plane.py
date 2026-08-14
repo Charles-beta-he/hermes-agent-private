@@ -408,9 +408,33 @@ def _agent_os_config_status(home: str | Path | None = None) -> dict[str, Any]:
         agent_cfg = cfg.get("agent", {}) if isinstance(cfg, dict) else {}
         if not isinstance(agent_cfg, dict):
             agent_cfg = {}
+        smart_cfg = cfg.get("smart_model_routing", {}) if isinstance(cfg, dict) else {}
+        if not isinstance(smart_cfg, dict):
+            smart_cfg = {}
+        route_preflight_enabled = agent_cfg.get("agent_os_runtime_routing") is True
+        try:
+            from importlib import import_module
+
+            resolve_routing_policy = getattr(
+                import_module("agent.model_router"), "resolve_routing_policy"
+            )
+            routing_policy = resolve_routing_policy(cfg)
+            routing_executable = routing_policy.enabled
+            routing_policy_source = routing_policy.config_source
+            routing_diagnostics = list(routing_policy.diagnostics)
+        except Exception as exc:  # noqa: BLE001
+            routing_executable = False
+            routing_policy_source = "unavailable"
+            routing_diagnostics = [f"policy_resolution_failed:{type(exc).__name__}"]
         return {
             "agent_os_advisory_guidance": bool(agent_cfg.get("agent_os_advisory_guidance", False)),
-            "agent_os_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
+            "agent_os_runtime_routing": route_preflight_enabled,
+            "agent_os_route_preflight_enabled": route_preflight_enabled,
+            "agent_os_route_mode": "shadow_preflight_only",
+            "smart_model_routing_config_enabled": smart_cfg.get("enabled") is True,
+            "smart_model_routing_executable": routing_executable,
+            "smart_model_routing_policy_source": routing_policy_source,
+            "smart_model_routing_diagnostics": routing_diagnostics,
             "agent_os_multimodel_review": bool(agent_cfg.get("agent_os_multimodel_review", False)),
             "agent_os_local_harness_executor": bool(agent_cfg.get("agent_os_local_harness_executor", False)),
             "agent_os_scheduler_cron_write": bool(agent_cfg.get("agent_os_scheduler_cron_write", False)),
@@ -420,7 +444,11 @@ def _agent_os_config_status(home: str | Path | None = None) -> dict[str, Any]:
             "agent_os_destructive_operations": bool(agent_cfg.get("agent_os_destructive_operations", False)),
             "agent_os_payment_credential_entry": bool(agent_cfg.get("agent_os_payment_credential_entry", False)),
             "agent_os_broad_fanout": bool(agent_cfg.get("agent_os_broad_fanout", False)),
-            "real_runtime_routing": bool(agent_cfg.get("agent_os_runtime_routing", False)),
+            # Compatibility field retained for downstream readers. Its legacy value
+            # means Agent OS shadow preflight is enabled, not model execution.
+            "real_runtime_routing": route_preflight_enabled,
+            "real_runtime_routing_deprecated": True,
+            "real_runtime_routing_semantics": "agent_os_shadow_preflight_enabled",
             "tool_invocation_from_agent_os": bool(agent_cfg.get("agent_os_local_harness_executor", False)),
             "scheduler_cron_write": bool(agent_cfg.get("agent_os_scheduler_cron_write", False)),
             "taskpool_mission_lifecycle_write": bool(agent_cfg.get("agent_os_taskpool_lifecycle_write", False)),
