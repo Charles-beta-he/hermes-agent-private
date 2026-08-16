@@ -20,9 +20,30 @@ from cron.jobs import (
     mark_job_run,
     advance_next_run,
     claim_dispatch,
+    claim_job_for_execution,
     get_due_jobs,
     save_job_output,
 )
+
+
+def _claim_for_completion(job_id):
+    snapshot = claim_job_for_execution(job_id)
+    assert snapshot is not None
+    claim = snapshot["run_claim"]
+    return claim["id"], claim["trigger_generation"]
+
+
+def _mark_claimed(job_id, success, *, run_trigger_generation=None, **kwargs):
+    claim_id, claimed_generation = _claim_for_completion(job_id)
+    if run_trigger_generation is None:
+        run_trigger_generation = claimed_generation
+    return mark_job_run(
+        job_id,
+        success,
+        run_trigger_generation=run_trigger_generation,
+        run_claim_id=claim_id,
+        **kwargs,
+    )
 
 
 # =========================================================================
@@ -564,14 +585,127 @@ class TestResolveJobRef:
 class TestMarkJobRun:
     def test_increments_completed(self, tmp_cron_dir):
         job = create_job(prompt="Test", schedule="every 1h")
-        mark_job_run(job["id"], success=True)
+        _mark_claimed(job["id"], success=True)
         updated = get_job(job["id"])
         assert updated["repeat"]["completed"] == 1
         assert updated["last_status"] == "ok"
 
+    def test_trigger_during_active_run_survives_completion(self, tmp_cron_dir):
+        """A continuation trigger emitted by a running job must stay due.
+
+        Regression: trigger_job() moved next_run_at to now, but mark_job_run()
+        later overwrote it with the normal cadence. Mission continuation signals
+        then waited a full watchdog interval instead of starting the successor.
+        """
+        from cron.jobs import trigger_job
+
+        job = create_job(prompt="Continue", schedule="every 30m")
+        claim_id, run_trigger_generation = _claim_for_completion(job["id"])
+
+        triggered = trigger_job(job["id"])
+        assert triggered is not None
+        trigger_requested_at = triggered["trigger_requested_at"]
+        trigger_generation = triggered["trigger_generation"]
+
+        mark_job_run(
+            job["id"], success=True,
+            run_trigger_generation=run_trigger_generation,
+            run_claim_id=claim_id,
+        )
+
+        updated = get_job(job["id"])
+        assert updated is not None
+        assert updated["trigger_requested_at"] == trigger_requested_at
+        assert updated["trigger_generation"] == trigger_generation
+        assert updated["next_run_at"] == trigger_requested_at
+        assert updated["state"] == "scheduled"
+
+    def test_successor_run_consumes_trigger_and_restores_cadence(self, tmp_cron_dir):
+        from cron.jobs import trigger_job
+
+        job = create_job(prompt="Continue", schedule="every 30m")
+        triggered = trigger_job(job["id"])
+        assert triggered is not None
+        successor_trigger_generation = triggered["trigger_generation"]
+
+        _mark_claimed(
+            job["id"],
+            success=True,
+            run_trigger_generation=successor_trigger_generation,
+        )
+
+        updated = get_job(job["id"])
+        assert updated is not None
+        assert "trigger_requested_at" not in updated
+        assert datetime.fromisoformat(updated["next_run_at"]) > datetime.now(timezone.utc)
+
+    def test_pre_dispatch_advance_does_not_clear_late_trigger(self, tmp_cron_dir):
+        """A trigger arriving after due selection survives the pre-dispatch bump."""
+        from cron.jobs import advance_next_run, trigger_job
+
+        job = create_job(prompt="Continue", schedule="every 30m")
+        claim_id, due_snapshot_generation = _claim_for_completion(job["id"])
+
+        triggered = trigger_job(job["id"])
+        assert triggered is not None
+        trigger_requested_at = triggered["trigger_requested_at"]
+
+        assert advance_next_run(job["id"]) is True
+        advanced = get_job(job["id"])
+        assert advanced is not None
+        assert advanced["trigger_requested_at"] == trigger_requested_at
+        assert advanced["trigger_generation"] == triggered["trigger_generation"]
+
+        mark_job_run(
+            job["id"],
+            success=True,
+            run_trigger_generation=due_snapshot_generation,
+            run_claim_id=claim_id,
+        )
+        completed = get_job(job["id"])
+        assert completed is not None
+        assert completed["next_run_at"] == trigger_requested_at
+
+    def test_recurring_run_claim_serializes_cross_process_successor(self, tmp_cron_dir):
+        """A continuation successor must not overlap its still-active predecessor."""
+        from cron.jobs import get_due_jobs, trigger_job
+
+        job = create_job(prompt="Continue", schedule="every 30m")
+        admitted = trigger_job(job["id"])
+        assert admitted is not None
+
+        first_due = get_due_jobs()
+        assert [candidate["id"] for candidate in first_due] == [job["id"]]
+        first_generation = first_due[0]["trigger_generation"]
+        assert get_job(job["id"])["run_claim"] is not None
+
+        # A continuation emitted while process A is still running makes the job
+        # due immediately, but process B must observe the durable in-flight claim
+        # and wait rather than starting the successor concurrently.
+        late_trigger = trigger_job(job["id"])
+        assert late_trigger is not None
+        assert late_trigger["trigger_generation"] > first_generation
+        assert get_due_jobs() == []
+
+        mark_job_run(
+            job["id"],
+            success=True,
+            run_trigger_generation=first_generation,
+            run_claim_id=first_due[0]["run_claim"]["id"],
+        )
+        completed = get_job(job["id"])
+        assert completed is not None
+        assert completed.get("run_claim") is None
+        assert completed["next_run_at"] == late_trigger["trigger_requested_at"]
+
+        successor_due = get_due_jobs()
+        assert [candidate["id"] for candidate in successor_due] == [job["id"]]
+        assert successor_due[0]["trigger_generation"] == late_trigger["trigger_generation"]
+        assert get_due_jobs() == []
+
     def test_repeat_limit_removes_job(self, tmp_cron_dir):
         job = create_job(prompt="Once", schedule="30m", repeat=1)
-        mark_job_run(job["id"], success=True)
+        _mark_claimed(job["id"], success=True)
         # Job should be removed after hitting repeat limit
         assert get_job(job["id"]) is None
 
@@ -583,19 +717,19 @@ class TestMarkJobRun:
         assert job["repeat"]["times"] is None
         # Running it multiple times should never delete it
         for _ in range(3):
-            mark_job_run(job["id"], success=True)
+            _mark_claimed(job["id"], success=True)
             assert get_job(job["id"]) is not None, "job was deleted after run despite infinite repeat"
 
     def test_repeat_zero_is_infinite(self, tmp_cron_dir):
         # repeat=0 should also be treated as None (infinite), not "run zero times".
         job = create_job(prompt="ZeroRepeat", schedule="every 1h", repeat=0)
         assert job["repeat"]["times"] is None
-        mark_job_run(job["id"], success=True)
+        _mark_claimed(job["id"], success=True)
         assert get_job(job["id"]) is not None
 
     def test_error_status(self, tmp_cron_dir):
         job = create_job(prompt="Fail", schedule="every 1h")
-        mark_job_run(job["id"], success=False, error="timeout")
+        _mark_claimed(job["id"], success=False, error="timeout")
         updated = get_job(job["id"])
         assert updated["last_status"] == "error"
         assert updated["last_error"] == "timeout"
@@ -603,7 +737,7 @@ class TestMarkJobRun:
     def test_delivery_error_tracked_separately(self, tmp_cron_dir):
         """Agent succeeds but delivery fails — both tracked independently."""
         job = create_job(prompt="Report", schedule="every 1h")
-        mark_job_run(job["id"], success=True, delivery_error="platform 'telegram' not configured")
+        _mark_claimed(job["id"], success=True, delivery_error="platform 'telegram' not configured")
         updated = get_job(job["id"])
         assert updated["last_status"] == "ok"
         assert updated["last_error"] is None
@@ -612,18 +746,18 @@ class TestMarkJobRun:
     def test_delivery_error_cleared_on_success(self, tmp_cron_dir):
         """Successful delivery clears the previous delivery error."""
         job = create_job(prompt="Report", schedule="every 1h")
-        mark_job_run(job["id"], success=True, delivery_error="network timeout")
+        _mark_claimed(job["id"], success=True, delivery_error="network timeout")
         updated = get_job(job["id"])
         assert updated["last_delivery_error"] == "network timeout"
         # Next run delivers successfully
-        mark_job_run(job["id"], success=True, delivery_error=None)
+        _mark_claimed(job["id"], success=True, delivery_error=None)
         updated = get_job(job["id"])
         assert updated["last_delivery_error"] is None
 
     def test_both_agent_and_delivery_error(self, tmp_cron_dir):
         """Agent fails AND delivery fails — both errors recorded."""
         job = create_job(prompt="Report", schedule="every 1h")
-        mark_job_run(job["id"], success=False, error="model timeout",
+        _mark_claimed(job["id"], success=False, error="model timeout",
                      delivery_error="platform 'discord' not enabled")
         updated = get_job(job["id"])
         assert updated["last_status"] == "error"
@@ -647,7 +781,7 @@ class TestMarkJobRun:
         # and this run.
         monkeypatch.setattr("cron.jobs.HAS_CRONITER", False)
 
-        mark_job_run(job["id"], success=True)
+        _mark_claimed(job["id"], success=True)
 
         updated = get_job(job["id"])
         assert updated is not None, "recurring cron job was deleted"
@@ -673,7 +807,7 @@ class TestMarkJobRun:
         # next-run computation (missing dep, corrupt schedule, etc.).
         monkeypatch.setattr("cron.jobs.compute_next_run", lambda *a, **kw: None)
 
-        mark_job_run(job["id"], success=True)
+        _mark_claimed(job["id"], success=True)
 
         updated = get_job(job["id"])
         assert updated is not None
@@ -704,7 +838,7 @@ class TestMarkJobRun:
         }]
         save_jobs(jobs)
 
-        mark_job_run("oneshot-test", success=True)
+        _mark_claimed("oneshot-test", success=True)
 
         updated = get_job("oneshot-test")
         assert updated is not None
@@ -877,7 +1011,7 @@ class TestGetDueJobs:
         due = get_due_jobs()
         assert [j["id"] for j in due] == [job["id"]]
         # Simulate the run completing: mark_job_run increments completed.
-        mark_job_run(job["id"], True)
+        mark_job_run(job["id"], True, run_claim_id=due[0]["run_claim"]["id"])
         survived = get_job(job["id"])
         assert survived is not None, "job should survive (3 > 1 completed)"
         assert survived["repeat"]["completed"] == 1
@@ -995,9 +1129,9 @@ class TestGetDueJobs:
                                 lambda t0=t0, g=gap: t0 + timedelta(seconds=g))
             assert get_due_jobs() == [], f"double-dispatched at +{gap}s"
 
-    def test_one_shot_run_claim_expires_after_ttl(self, tmp_cron_dir, monkeypatch):
-        """A claiming tick that DIED mid-run must not wedge the one-shot forever:
-        once the run_claim is older than the TTL it is re-dispatched (recovered)."""
+    def test_one_shot_run_claim_recovers_after_monotonic_stale_window(self, tmp_cron_dir, monkeypatch):
+        """A dead owner is recovered only after unchanged heartbeat progress
+        spans a complete contender-local monotonic stale window."""
         # Pin the inactivity timeout unset so the derived TTL is deterministic.
         monkeypatch.delenv("HERMES_CRON_TIMEOUT", raising=False)
         from cron.jobs import _hermes_now, _oneshot_run_claim_ttl_seconds
@@ -1011,7 +1145,12 @@ class TestGetDueJobs:
         }])
         assert [j["id"] for j in get_due_jobs()] == ["wedged"]  # A claims, then dies
 
-        # Just inside the TTL: still claimed → skipped.
+        monotonic_values = iter((100.0, 100.0 + ttl + 10.0))
+        monkeypatch.setattr(
+            "cron.jobs.time.monotonic", lambda: next(monotonic_values)
+        )
+        # First contender observation starts the local stale window. Wall-clock
+        # claim age alone is not ownership evidence.
         monkeypatch.setattr("cron.jobs._hermes_now",
                             lambda: t0 + timedelta(seconds=ttl - 10))
         assert get_due_jobs() == []
@@ -1066,7 +1205,8 @@ class TestGetDueJobs:
         }])
         assert [j["id"] for j in get_due_jobs()] == ["claimclear"]
         assert get_job("claimclear").get("run_claim") is not None
-        mark_job_run("claimclear", True)
+        claim_id = get_job("claimclear")["run_claim"]["id"]
+        mark_job_run("claimclear", True, run_claim_id=claim_id)
         assert get_job("claimclear")["run_claim"] is None
 
 
@@ -1470,12 +1610,21 @@ class TestMarkJobRunConcurrency:
         job_a = create_job(prompt="Job A", schedule="every 1h")
         job_b = create_job(prompt="Job B", schedule="every 1h")
         job_c = create_job(prompt="Job C", schedule="every 1h")
+        claim_ids = {
+            job["id"]: _claim_for_completion(job["id"])[0]
+            for job in (job_a, job_b, job_c)
+        }
 
         errors: list = []
 
         def run_mark(job_id: str, success: bool, error_msg=None):
             try:
-                mark_job_run(job_id, success=success, error=error_msg)
+                mark_job_run(
+                    job_id,
+                    success=success,
+                    error=error_msg,
+                    run_claim_id=claim_ids[job_id],
+                )
             except Exception as exc:  # pragma: no cover
                 errors.append(exc)
 
@@ -1522,11 +1671,18 @@ class TestMarkJobRunConcurrency:
         """
         n = 10
         jobs = [create_job(prompt=f"Stress job {i}", schedule="every 1h") for i in range(n)]
+        claim_ids = {
+            job["id"]: _claim_for_completion(job["id"])[0] for job in jobs
+        }
         errors: list = []
 
         def run_mark(job_id: str):
             try:
-                mark_job_run(job_id, success=True)
+                mark_job_run(
+                    job_id,
+                    success=True,
+                    run_claim_id=claim_ids[job_id],
+                )
             except Exception as exc:  # pragma: no cover
                 errors.append(exc)
 
@@ -1706,9 +1862,10 @@ class TestClaimDispatch:
         # Full lifecycle: claim bumps completed to times, then mark_job_run must
         # NOT increment again — it recognizes the pre-claim and removes the job.
         save_jobs([self._oneshot(times=1, completed=0)])
+        claim_id, _ = _claim_for_completion("os1")
         assert claim_dispatch("os1") is True
         assert load_jobs()[0]["repeat"]["completed"] == 1
-        mark_job_run("os1", success=True)
+        mark_job_run("os1", success=True, run_claim_id=claim_id)
         assert load_jobs() == []  # completed once, removed — not fired twice
 
     def test_mark_job_run_still_increments_recurring(self, tmp_cron_dir):
@@ -1720,7 +1877,7 @@ class TestClaimDispatch:
             "repeat": {"times": 3, "completed": 1},
         }
         save_jobs([job])
-        mark_job_run("rec", success=True)
+        _mark_claimed("rec", success=True)
         assert load_jobs()[0]["repeat"]["completed"] == 2
 
     def test_get_due_jobs_removes_stale_maxed_oneshot(self, tmp_cron_dir):

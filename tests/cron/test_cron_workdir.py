@@ -228,7 +228,7 @@ class TestTickWorkdirPartition:
 
         monkeypatch.setattr(sched, "run_job", fake_run_job)
         monkeypatch.setattr(sched, "save_job_output", lambda _jid, _o: None)
-        monkeypatch.setattr(sched, "mark_job_run", lambda *_a, **_kw: None)
+        monkeypatch.setattr(sched, "mark_job_run", lambda *_a, **_kw: True)
         monkeypatch.setattr(
             sched, "_deliver_result", lambda *_a, **_kw: None
         )

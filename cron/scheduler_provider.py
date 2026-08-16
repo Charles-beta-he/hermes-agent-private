@@ -86,23 +86,27 @@ class CronScheduler(ABC):
         """Run a single job NOW via the shared orchestrator. Called by the
         inbound fire webhook when an external scheduler signals a job is due.
 
-        The default claims the job with a store-level compare-and-set
-        (multi-machine at-most-once), then runs it via the shared
+        The default claims the job with a store-level fenced lease, then runs it via the shared
         ``run_one_job`` body. Built-in never calls this (it has its own tick
         loop); an external provider routes its inbound fire here.
 
-        Returns True if THIS caller claimed and ran the job, False if the claim
-        was lost (another machine/retry won it) or the job no longer exists.
+        This prevents concurrent post-run Hermes output/delivery while the lease
+        remains healthy, but cannot make arbitrary effects performed inside the
+        agent transactionally exactly-once across crash or lease-loss recovery.
+
+        Returns True when THIS caller's fenced completion is durably accepted,
+        including an ordinary execution failure that was recorded. Returns False
+        when claim/dispatch/ownership/completion is rejected or the job no longer
+        exists. This distinction lets an external provider acknowledge the fire
+        and re-arm a recurring job after a recorded failure.
         """
-        from cron.jobs import claim_job_for_fire, get_job
+        from cron.jobs import claim_job_for_execution
         from cron.scheduler import run_one_job
 
-        if not claim_job_for_fire(job_id):
+        claimed_job = claim_job_for_execution(job_id)
+        if claimed_job is None:
             return False  # another machine already claimed this fire
-        job = get_job(job_id)
-        if job is None:
-            return False  # job removed (e.g. repeat-N exhausted) between arm and fire
-        return run_one_job(job, adapters=adapters, loop=loop)
+        return run_one_job(claimed_job, adapters=adapters, loop=loop)
 
     def reconcile(self) -> None:
         """Converge the external registry toward jobs.json (the desired state):

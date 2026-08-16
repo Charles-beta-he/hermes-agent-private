@@ -3684,16 +3684,19 @@ class AIAgent:
             try:
                 data = json.loads(content)
                 if "todos" in data and isinstance(data["todos"], list):
-                    last_todo_response = data["todos"]
+                    last_todo_response = data
                     break
             except (json.JSONDecodeError, TypeError):
                 continue
 
         if last_todo_response:
-            # Replay the items into the store (replace mode)
-            self._todo_store.write(last_todo_response, merge=False)
+            # Replay planning state only. Tool output may be caller-supplied;
+            # continuation authority is runtime-owned and fails closed across
+            # agent reconstruction.
+            items = last_todo_response["todos"]
+            self._todo_store.write(items, merge=False)
             if not self.quiet_mode:
-                self._vprint(f"{self.log_prefix}📋 Restored {len(last_todo_response)} todo item(s) from history")
+                self._vprint(f"{self.log_prefix}📋 Restored {len(items)} todo item(s) from history")
         _set_interrupt(False)
 
     @classmethod

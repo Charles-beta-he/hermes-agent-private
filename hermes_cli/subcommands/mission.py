@@ -20,6 +20,10 @@ def build_mission_parser(subparsers) -> None:
             "human decisions before risky side effects."
         ),
     )
+    # Mission handlers expose stable shell-style semantic exit codes. Keep this
+    # propagation opt-in so unrelated legacy/plugin handlers retain the CLI's
+    # historical return-discard behavior.
+    parser.set_defaults(_propagate_exit_code=True)
     parser.add_argument("--db", help="Override missions SQLite DB path (test/debug)")
     sub = parser.add_subparsers(dest="mission_command")
 
@@ -158,6 +162,34 @@ def build_mission_parser(subparsers) -> None:
     stage.add_argument("--needs-user", action="store_true", help="Mark report as requiring user input")
     stage.add_argument("--json", action="store_true", help="Emit JSON")
     stage.set_defaults(func=cmd_mission)
+
+    review_complete = sub.add_parser(
+        "review-complete",
+        help="Record a durable exact-candidate review verdict and enqueue an advancement signal",
+    )
+    review_complete.add_argument("mission_id")
+    review_complete.add_argument(
+        "--verdict",
+        required=True,
+        choices=["APPROVE", "AMEND", "BLOCK", "NO_VERDICT", "STALE"],
+        help="Reviewer verdict",
+    )
+    review_complete.add_argument("--candidate-digest", required=True, help="Exact reviewed candidate identity")
+    review_complete.add_argument("--evidence", action="append", help="Durable verdict or command evidence. Repeatable")
+    review_complete.add_argument("--reviewer", required=True, help="Isolated reviewer identity")
+    review_complete.add_argument("--json", action="store_true", help="Emit JSON")
+    review_complete.set_defaults(func=cmd_mission)
+
+    continue_cmd = sub.add_parser(
+        "continue",
+        help="Request the next event-driven Mission tick from the latest executable tick",
+    )
+    continue_cmd.add_argument("mission_id")
+    continue_cmd.add_argument("--continuation-token", required=True, help="Opaque fencing token from the latest tick prompt")
+    continue_cmd.add_argument("--next-step", required=True, help="Next dependency-safe bounded step")
+    continue_cmd.add_argument("--evidence", action="append", required=True, help="Durable stage/readback evidence. Repeatable")
+    continue_cmd.add_argument("--json", action="store_true", help="Emit JSON")
+    continue_cmd.set_defaults(func=cmd_mission)
 
     decide = sub.add_parser("decide", help="Answer a decision request and resume its mission")
     decide.add_argument("decision_id")
