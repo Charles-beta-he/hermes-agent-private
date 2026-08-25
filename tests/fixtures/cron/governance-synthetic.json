@@ -1,0 +1,58 @@
+{
+  "schema": "cron-governance-synthetic-v1",
+  "jobs": [
+    {
+      "id": "fixture-a",
+      "name": "synthetic duplicate one",
+      "prompt": "fixture-task-alpha",
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "synthetic display one"
+      },
+      "deliver": "fixture-channel-a",
+      "origin": null,
+      "enabled": true,
+      "state": "scheduled",
+      "owner_evidence": [
+        {
+          "principal": "fixture-principal",
+          "ref": "fixture-evidence-a"
+        }
+      ]
+    },
+    {
+      "id": "fixture-b",
+      "name": "synthetic duplicate two",
+      "prompt": "fixture-task-alpha",
+      "schedule": {
+        "display": "synthetic display two",
+        "minutes": 30,
+        "kind": "interval"
+      },
+      "deliver": "fixture-channel-a",
+      "origin": null,
+      "enabled": false,
+      "state": "paused",
+      "owner_evidence": [
+        {
+          "principal": "fixture-principal",
+          "ref": "fixture-evidence-a"
+        }
+      ]
+    },
+    {
+      "id": "fixture-c",
+      "name": "synthetic duplicate one",
+      "prompt": "fixture-task-beta",
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30
+      },
+      "deliver": "fixture-channel-a",
+      "origin": null,
+      "enabled": true,
+      "state": "scheduled"
+    }
+  ]
+}

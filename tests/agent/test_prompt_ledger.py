@@ -25,6 +25,124 @@ from agent.prompt_ledger import (
 from scripts.replay_prompt_ledger_shadow import replay_sessions
 
 
+FIXTURE_ROOT = Path(__file__).parents[1] / "fixtures"
+
+
+def test_prompt_ledger_v1_source_manifest_and_shadow_coverage_contract():
+    from agent.prompt_manifest import (
+        build_prompt_source_manifest,
+        check_prompt_source_drift,
+    )
+    from agent.prompt_ledger import (
+        append_prompt_ledger_record,
+        build_prompt_ledger_record,
+        canonical_prompt_ledger_bytes,
+        evaluate_shadow_context_coverage,
+        export_prompt_ledger,
+    )
+
+    fixture = json.loads(
+        (FIXTURE_ROOT / "prompt" / "prompt-ledger-synthetic.json").read_text()
+    )
+    source_manifest = build_prompt_source_manifest(fixture["prompt_sources"])
+    assert source_manifest["sources"][0] == {
+        "source_id": "prompt-source-sha256:" + "a" * 64,
+        "content_hash": "a" * 64,
+        "provenance": "repository",
+        "authority": "system",
+        "certification_partition": "certified/stable:v1",
+    }
+    assert source_manifest == build_prompt_source_manifest(
+        [dict(reversed(tuple(item.items()))) for item in fixture["prompt_sources"]]
+    )
+
+    changed_sources = copy.deepcopy(fixture["prompt_sources"])
+    changed_sources[0].update(
+        content_hash="e" * 64,
+        provenance="generated",
+        authority="untrusted",
+        certification_partition="CERTIFIED/stable:v1",
+    )
+    drift = check_prompt_source_drift(
+        source_manifest,
+        build_prompt_source_manifest(changed_sources),
+    )
+    assert drift["structural_drift_reasons"] == [
+        "content_hash_changed",
+        "provenance_changed",
+        "authority_changed",
+        "certification_partition_changed",
+    ]
+
+    records = []
+    for raw in fixture["records"]:
+        records = append_prompt_ledger_record(records, build_prompt_ledger_record(raw))
+    report = export_prompt_ledger(records)
+
+    assert [record["call_class"] for record in report["records"]] == [
+        "user_response",
+        "fallback",
+    ]
+    assert report["records"][1]["usage"] == {
+        "fresh_input_tokens": None,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
+        "output_tokens": 4,
+        "reasoning_tokens": 2,
+    }
+    assert report["aggregate"]["component_counts"]["stable_prompt_tokens"] == 150
+    assert report["aggregate"]["usage"]["fresh_input_tokens"] == 40
+    assert report["aggregate"]["usage_unknown_record_counts"] == {
+        "fresh_input_tokens": 1,
+        "cache_read_tokens": 1,
+        "cache_write_tokens": 1,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+    }
+    assert report["aggregate"]["total_tokens"] is None
+    assert report["models"][0]["total_tokens"] == 125
+    assert report["models"][0]["usage"]["reasoning_tokens"] == 7
+    assert report["models"][1]["total_tokens"] is None
+    assert {row["provenance_ref"] for row in report["provenances"]} == {
+        "provenance:core",
+        "provenance:extension",
+    }
+    assert {row["source_ref"] for row in report["sources"]} == {
+        "source:cli",
+        "source:gateway",
+    }
+    assert canonical_prompt_ledger_bytes(report) == canonical_prompt_ledger_bytes(
+        export_prompt_ledger(records)
+    )
+
+    coverage_metadata = json.loads(
+        (FIXTURE_ROOT / "prompt" / "context-coverage-synthetic.json").read_text()
+    )
+    disabled = evaluate_shadow_context_coverage(coverage_metadata)
+    assert disabled == {
+        "schema_version": "ShadowContextCoverageV1",
+        "enabled": False,
+        "evaluated": False,
+        "advisory": True,
+        "fail_closed": True,
+        "dispatch_allowed": False,
+    }
+    coverage = evaluate_shadow_context_coverage(coverage_metadata, enabled=True)
+    assert coverage["coverage"]["human_gates"] is False
+    assert coverage["missing"] == ["human_gates"]
+    assert coverage["complete"] is False
+    assert coverage["advisory"] is True
+    assert coverage["fail_closed"] is True
+    assert coverage["dispatch_allowed"] is False
+    assert coverage == evaluate_shadow_context_coverage(coverage_metadata, enabled=True)
+
+    forbidden = ("sk-synthetic-secret", "chat-target-", "/users/charles", "/home/")
+    durable = canonical_prompt_ledger_bytes(
+        {"manifest": source_manifest, "ledger": report, "coverage": coverage}
+    ).decode("utf-8")
+    assert all(term not in durable.lower() for term in forbidden)
+
+
 def _ledger_for(root: Path, session_id: str) -> Path:
     return prompt_ledger._ledger_path(SimpleNamespace(session_id=session_id), root)
 

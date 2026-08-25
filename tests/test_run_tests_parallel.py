@@ -20,8 +20,12 @@ POSIX-only: Windows has its own grandchild lifecycle (no shared session,
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import importlib.util
+import shutil
+import stat
 import subprocess
 import sys
 import textwrap
@@ -142,6 +146,7 @@ def test_grandchild_leak_is_killed_by_runner(tmp_path: Path) -> None:
             # need for 10min.
             "--file-timeout",
             "30",
+            "--no-duration-cache",
         ],
         cwd=repo_root,
         stdout=subprocess.PIPE,
@@ -216,7 +221,7 @@ def _run_runner(probe_dir: Path, *extra: str) -> subprocess.CompletedProcess:
     runner = repo_root / "scripts" / "run_tests_parallel.py"
     return subprocess.run(
         [sys.executable, str(runner), "--paths", str(probe_dir),
-         "-j", "1", "--file-timeout", "30", *extra],
+         "-j", "1", "--file-timeout", "30", "--no-duration-cache", *extra],
         cwd=repo_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -269,7 +274,7 @@ def test_positional_path_not_treated_as_flag(tmp_path: Path) -> None:
     # Pass the probe dir positionally (no --paths), plus a bare -q.
     proc = subprocess.run(
         [sys.executable, str(runner), str(probe_dir), "-j", "1",
-         "--file-timeout", "30", "-q"],
+         "--file-timeout", "30", "--no-duration-cache", "-q"],
         cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, timeout=60,
     )
@@ -277,3 +282,157 @@ def test_positional_path_not_treated_as_flag(tmp_path: Path) -> None:
     # Discovery found the probe file (2 tests), proving the positional path
     # was consumed as a root, not forwarded to pytest as a bad flag.
     assert "test_flagprobe.py" in proc.stdout, proc.stdout
+
+# ── Duration-cache authority boundary ────────────────────────────────────────
+
+
+def _copy_test_chain(repo: Path) -> tuple[Path, Path]:
+    source_root = Path(__file__).resolve().parent.parent
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    wrapper = scripts / "run_tests.sh"
+    runner = scripts / "run_tests_parallel.py"
+    shutil.copy2(source_root / "scripts" / "run_tests.sh", wrapper)
+    shutil.copy2(source_root / "scripts" / "run_tests_parallel.py", runner)
+    return wrapper, runner
+
+
+def _run_copied_wrapper(
+    repo: Path,
+    probe_dir: Path,
+    *extra: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    wrapper, _ = _copy_test_chain(repo)
+    return subprocess.run(
+        [str(wrapper), "--paths", str(probe_dir), "-j", "1",
+         "--file-timeout", "30", *extra],
+        cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, timeout=60,
+    )
+
+
+def _run_copied_runner(repo: Path, probe_dir: Path, *extra: str) -> subprocess.CompletedProcess:
+    _, runner = _copy_test_chain(repo)
+    return subprocess.run(
+        [sys.executable, str(runner), "--paths", str(probe_dir),
+         "-j", "1", "--file-timeout", "30", *extra],
+        cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, timeout=60,
+    )
+
+
+def _cache_identity(path: Path) -> dict[str, object]:
+    raw = path.read_bytes()
+    st = path.lstat()
+    return {
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "size": st.st_size,
+        "file_type": stat.S_IFMT(st.st_mode),
+        "mode": stat.S_IMODE(st.st_mode),
+        "uid": st.st_uid,
+        "gid": st.st_gid,
+        "nlink": st.st_nlink,
+        "inode": st.st_ino,
+        "mtime_ns": st.st_mtime_ns,
+        "ctime_ns": st.st_ctime_ns,
+        "is_symlink": path.is_symlink(),
+    }
+
+
+def _load_runner_module():
+    source_root = Path(__file__).resolve().parent.parent
+    path = source_root / "scripts" / "run_tests_parallel.py"
+    spec = importlib.util.spec_from_file_location("_runner_no_cache_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_no_duration_cache_directly_skips_save(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner_module()
+    calls: list[object] = []
+    monkeypatch.setattr(runner, "_save_durations", lambda *args: calls.append(args))
+    saved = runner._maybe_save_durations(
+        [(tmp_path / "tests" / "test_probe.py", 1.0)],
+        tmp_path,
+        disabled=True,
+    )
+    assert saved is False
+    assert calls == []
+    assert not (tmp_path / "test_durations.json").exists()
+
+
+def test_no_duration_cache_leaves_absent_cache_absent_via_wrapper(tmp_path: Path) -> None:
+    probe_dir = _make_probe_dir(tmp_path)
+    repo = tmp_path / "isolated-repo"
+    cache = repo / "test_durations.json"
+    proc = _run_copied_wrapper(repo, probe_dir, "--no-duration-cache", "-q")
+    assert proc.returncode == 0, proc.stdout
+    assert not cache.exists()
+    assert "Durations cached" not in proc.stdout
+
+
+def test_no_duration_cache_preserves_complete_cache_identity_via_wrapper(tmp_path: Path) -> None:
+    probe_dir = _make_probe_dir(tmp_path)
+    repo = tmp_path / "isolated-repo"
+    repo.mkdir()
+    cache = repo / "test_durations.json"
+    cache.write_bytes(b'{"sentinel": 1.25}\n')
+    before = _cache_identity(cache)
+    proc = _run_copied_wrapper(repo, probe_dir, "--no-duration-cache", "-q")
+    after = _cache_identity(cache)
+    assert proc.returncode == 0, proc.stdout
+    assert after == before
+    assert "Durations cached" not in proc.stdout
+
+
+def test_wrapper_forwards_clean_environment_to_descendant(tmp_path: Path) -> None:
+    repo = tmp_path / "isolated-repo"
+    probe_dir = tmp_path / "env-probe"
+    probe_dir.mkdir()
+    handoff = tmp_path / "descendant-env.json"
+    (probe_dir / "test_env_probe.py").write_text(
+        "import json, os\nfrom pathlib import Path\n"
+        f"HANDOFF = Path({str(handoff)!r})\n"
+        "def test_capture_env():\n"
+        "    HANDOFF.write_text(json.dumps({\n"
+        "        'TZ': os.environ.get('TZ'),\n"
+        "        'LANG': os.environ.get('LANG'),\n"
+        "        'LC_ALL': os.environ.get('LC_ALL'),\n"
+        "        'PYTHONHASHSEED': os.environ.get('PYTHONHASHSEED'),\n"
+        "        'PYTHONDONTWRITEBYTECODE': os.environ.get('PYTHONDONTWRITEBYTECODE'),\n"
+        "        'secret': os.environ.get('HTDA_SECRET_MUST_NOT_LEAK'),\n"
+        "    }, sort_keys=True))\n"
+    )
+    env = os.environ.copy()
+    env["HTDA_SECRET_MUST_NOT_LEAK"] = "forbidden"
+    proc = _run_copied_wrapper(
+        repo, probe_dir, "--no-duration-cache", "-q", env=env
+    )
+    assert proc.returncode == 0, proc.stdout
+    captured = json.loads(handoff.read_text())
+    assert captured == {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONHASHSEED": "0",
+        "TZ": "UTC",
+        "secret": None,
+    }
+    assert not (repo / "test_durations.json").exists()
+
+
+def test_default_mode_still_writes_duration_cache_in_isolated_copy(tmp_path: Path) -> None:
+    probe_dir = _make_probe_dir(tmp_path)
+    repo = tmp_path / "isolated-repo"
+    cache = repo / "test_durations.json"
+    proc = _run_copied_runner(repo, probe_dir, "-q")
+    assert proc.returncode == 0, proc.stdout
+    data = json.loads(cache.read_text())
+    assert any(key.endswith("test_flagprobe.py") for key in data)
+    assert "Durations cached" in proc.stdout

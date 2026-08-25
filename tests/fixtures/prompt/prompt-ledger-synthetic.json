@@ -1,0 +1,78 @@
+{
+  "prompt_sources": [
+    {
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "provenance": "repository",
+      "authority": "system",
+      "certification_partition": "certified/stable:v1"
+    },
+    {
+      "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "provenance": "operator",
+      "authority": "advisory",
+      "certification_partition": "uncertified/context:v1"
+    }
+  ],
+  "records": [
+    {
+      "session_ref": "session:synthetic-a",
+      "turn_ref": "turn:synthetic-1",
+      "call_ref": "call:synthetic-1",
+      "prompt_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "model_provider_ref": "model:synthetic-alpha",
+      "provenance_ref": "provenance:core",
+      "source_ref": "source:cli",
+      "component_counts": {
+        "stable_prompt_tokens": 100,
+        "context_prompt_tokens": 20,
+        "volatile_prompt_tokens": 5,
+        "active_tail_tokens": 30,
+        "compacted_history_tokens": 10,
+        "tool_result_inline_tokens": 15,
+        "tool_result_reference_count": 2
+      },
+      "usage": {
+        "fresh_input_tokens": 40,
+        "cache_read_tokens": 60,
+        "cache_write_tokens": 5,
+        "output_tokens": 20,
+        "reasoning_tokens": 7
+      },
+      "call_class": "user_response",
+      "state_revision_before": 2,
+      "state_revision_after": 2,
+      "evidence_count_before": 1,
+      "evidence_count_after": 1
+    },
+    {
+      "session_ref": "session:synthetic-b",
+      "turn_ref": "turn:synthetic-2",
+      "call_ref": "call:synthetic-2",
+      "prompt_manifest_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "model_provider_ref": "model:synthetic-beta",
+      "provenance_ref": "provenance:extension",
+      "source_ref": "source:gateway",
+      "component_counts": {
+        "stable_prompt_tokens": 50,
+        "context_prompt_tokens": 0,
+        "volatile_prompt_tokens": 2,
+        "active_tail_tokens": 10,
+        "compacted_history_tokens": 0,
+        "tool_result_inline_tokens": 0,
+        "tool_result_reference_count": 1
+      },
+      "usage": {
+        "fresh_input_tokens": null,
+        "cache_read_tokens": null,
+        "cache_write_tokens": null,
+        "output_tokens": 4,
+        "reasoning_tokens": 2
+      },
+      "call_class": "fallback",
+      "state_revision_before": null,
+      "state_revision_after": null,
+      "evidence_count_before": null,
+      "evidence_count_after": null
+    }
+  ]
+}
