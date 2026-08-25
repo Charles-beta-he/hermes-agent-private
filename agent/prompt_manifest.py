@@ -22,6 +22,12 @@ DEFAULT_SOURCE_FILES = (
     "tools/kanban_tools.py",
     "cron/scheduler.py",
 )
+_SOURCE_DRIFT_FIELDS = (
+    ("content_hash", "content_hash_changed"),
+    ("provenance", "provenance_changed"),
+    ("authority", "authority_changed"),
+    ("certification_partition", "certification_partition_changed"),
+)
 
 
 def _sha256_json(value: Any) -> str:
@@ -31,6 +37,73 @@ def _sha256_json(value: Any) -> str:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+
+
+def _prompt_source(source: Mapping[str, Any]) -> dict[str, str]:
+    content_hash = source.get("content_hash")
+    if (
+        not isinstance(content_hash, str)
+        or len(content_hash) != 64
+        or any(character not in "0123456789abcdef" for character in content_hash)
+    ):
+        raise ValueError("prompt source content_hash must be 64 lowercase hexadecimal characters")
+    classified: dict[str, str] = {}
+    for field in ("provenance", "authority", "certification_partition"):
+        value = source.get(field)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"prompt source {field} must be a non-empty string")
+        classified[field] = value
+    return {
+        "source_id": f"prompt-source-sha256:{content_hash}",
+        "content_hash": content_hash,
+        **classified,
+    }
+
+
+def build_prompt_source_manifest(
+    sources: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Build a content-bound manifest from classified source metadata only."""
+
+    manifest: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "sources": [_prompt_source(source) for source in sources],
+    }
+    manifest["manifest_hash"] = _sha256_json(manifest)
+    return manifest
+
+
+def check_prompt_source_drift(
+    baseline: Mapping[str, Any],
+    current: Mapping[str, Any],
+    *,
+    include_structural_reasons: bool = True,
+) -> dict[str, Any]:
+    """Report ordered structural drift without weakening exact partitions."""
+
+    baseline_sources = baseline.get("sources")
+    current_sources = current.get("sources")
+    baseline_list = list(baseline_sources) if isinstance(baseline_sources, Sequence) else []
+    current_list = list(current_sources) if isinstance(current_sources, Sequence) else []
+    reasons: list[str] = []
+    if len(baseline_list) != len(current_list):
+        reasons.append("source_count_changed")
+    for field, reason in _SOURCE_DRIFT_FIELDS:
+        if any(
+            not isinstance(left, Mapping)
+            or not isinstance(right, Mapping)
+            or left.get(field) != right.get(field)
+            for left, right in zip(baseline_list, current_list)
+        ):
+            reasons.append(reason)
+    if not include_structural_reasons:
+        reasons = []
+    return {
+        "drifted": baseline.get("manifest_hash") != current.get("manifest_hash"),
+        "structural_drift_reasons": reasons,
+        "baseline_hash": baseline.get("manifest_hash"),
+        "current_hash": current.get("manifest_hash"),
+    }
 
 
 def _parts_for(agent: Any) -> dict[str, str]:

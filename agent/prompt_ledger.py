@@ -29,7 +29,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import unquote, urlparse
 
 from hermes_constants import get_hermes_home
@@ -51,6 +51,54 @@ _LEDGER_LOCK_RETRY_SECONDS = 0.001
 _CONFIG_CACHE: dict[str, tuple[tuple[int, int, int, int, int], dict[str, Any]]] = {}
 _ARTIFACT_HASH_CACHE: dict[tuple[str, int, int, int, int, int], str] = {}
 
+PROMPT_LEDGER_SCHEMA_VERSION = "PromptLedgerV1"
+SHADOW_COVERAGE_SCHEMA_VERSION = "ShadowContextCoverageV1"
+_COMPONENT_COUNTERS = (
+    "stable_prompt_tokens",
+    "context_prompt_tokens",
+    "volatile_prompt_tokens",
+    "active_tail_tokens",
+    "compacted_history_tokens",
+    "tool_result_inline_tokens",
+    "tool_result_reference_count",
+)
+_USAGE_COUNTERS = (
+    "fresh_input_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "output_tokens",
+    "reasoning_tokens",
+)
+_TOTAL_TOKEN_COUNTERS = _USAGE_COUNTERS[:4]
+_CALL_CLASSES = frozenset(
+    {
+        "user_response",
+        "new_state",
+        "new_evidence",
+        "verification",
+        "gate_escalation",
+        "retry",
+        "fallback",
+        "compaction",
+        "relay",
+        "no_transition",
+    }
+)
+_COVERAGE_SURFACES = (
+    "objective",
+    "non_goals",
+    "constraints",
+    "negative_requirements",
+    "decision_lineage",
+    "required_inputs",
+    "artifact_evidence_refs",
+    "authority_boundaries",
+    "human_gates",
+    "verification_commands",
+    "budget",
+    "resume_cursor",
+)
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -64,6 +112,179 @@ def _canonical_json(value: Any) -> str:
         separators=(",", ":"),
         default=str,
     )
+
+
+def _counter(value: Any, field: str, *, unknown_allowed: bool) -> int | None:
+    if value is None and unknown_allowed:
+        return None
+    if type(value) is not int or value < 0:
+        suffix = " or null" if unknown_allowed else ""
+        raise ValueError(f"{field} must be a non-negative integer{suffix}")
+    return value
+
+
+def _required_ref(record: Mapping[str, Any], field: str) -> str:
+    value = record.get(field)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field} must be a non-empty reference")
+    return value
+
+
+def build_prompt_ledger_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Return one sanitized PromptLedgerV1 numeric/reference record."""
+
+    component_input = record.get("component_counts")
+    usage_input = record.get("usage")
+    if not isinstance(component_input, Mapping) or not isinstance(usage_input, Mapping):
+        raise ValueError("component_counts and usage must be mappings")
+    call_class = record.get("call_class")
+    if call_class not in _CALL_CLASSES:
+        raise ValueError("call_class is not a PromptLedgerV1 call class")
+
+    result = {
+        "schema_version": PROMPT_LEDGER_SCHEMA_VERSION,
+        "session_ref": _required_ref(record, "session_ref"),
+        "turn_ref": _required_ref(record, "turn_ref"),
+        "call_ref": _required_ref(record, "call_ref"),
+        "prompt_manifest_hash": _required_ref(record, "prompt_manifest_hash"),
+        "model_provider_ref": _required_ref(record, "model_provider_ref"),
+        "provenance_ref": str(record.get("provenance_ref") or "unknown"),
+        "source_ref": str(record.get("source_ref") or "unknown"),
+        "component_counts": {
+            field: _counter(component_input.get(field), field, unknown_allowed=False)
+            for field in _COMPONENT_COUNTERS
+        },
+        "usage": {
+            field: _counter(usage_input.get(field), field, unknown_allowed=True)
+            for field in _USAGE_COUNTERS
+        },
+        "call_class": call_class,
+    }
+    for field in (
+        "state_revision_before",
+        "state_revision_after",
+        "evidence_count_before",
+        "evidence_count_after",
+    ):
+        result[field] = _counter(record.get(field), field, unknown_allowed=True)
+    result["model_call_count"] = 1
+    result["body_or_secret_stored"] = False
+    return result
+
+
+def append_prompt_ledger_record(
+    records: Sequence[Mapping[str, Any]],
+    record: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Pure append: return a new sequence and leave the input untouched."""
+
+    if record.get("schema_version") != PROMPT_LEDGER_SCHEMA_VERSION:
+        raise ValueError("record must be PromptLedgerV1")
+    return [copy.deepcopy(dict(item)) for item in records] + [copy.deepcopy(dict(record))]
+
+
+def _aggregate_prompt_records(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    components = {field: 0 for field in _COMPONENT_COUNTERS}
+    usage = {field: 0 for field in _USAGE_COUNTERS}
+    unknown = {field: 0 for field in _USAGE_COUNTERS}
+    for record in records:
+        for field in _COMPONENT_COUNTERS:
+            components[field] += record["component_counts"][field]
+        for field in _USAGE_COUNTERS:
+            value = record["usage"][field]
+            if value is None:
+                unknown[field] += 1
+            else:
+                usage[field] += value
+    total_tokens = None
+    if not any(unknown[field] for field in _TOTAL_TOKEN_COUNTERS):
+        total_tokens = sum(usage[field] for field in _TOTAL_TOKEN_COUNTERS)
+    return {
+        "record_count": len(records),
+        "model_call_count": sum(record["model_call_count"] for record in records),
+        "component_counts": components,
+        "usage": usage,
+        "usage_unknown_record_counts": unknown,
+        "total_tokens": total_tokens,
+    }
+
+
+def _group_prompt_records(
+    records: Sequence[Mapping[str, Any]], field: str
+) -> list[dict[str, Any]]:
+    values = sorted({str(record[field]) for record in records})
+    return [
+        {
+            field: value,
+            **_aggregate_prompt_records(
+                [record for record in records if str(record[field]) == value]
+            ),
+        }
+        for value in values
+    ]
+
+
+def export_prompt_ledger(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Export deterministic PromptLedgerV1 records and explicit aggregates."""
+
+    normalized = [build_prompt_ledger_record(record) for record in records]
+    return {
+        "schema_version": "PromptLedgerExportV1",
+        "records": normalized,
+        "aggregate": _aggregate_prompt_records(normalized),
+        "provenances": _group_prompt_records(normalized, "provenance_ref"),
+        "sources": _group_prompt_records(normalized, "source_ref"),
+        "models": _group_prompt_records(normalized, "model_provider_ref"),
+    }
+
+
+def canonical_prompt_ledger_bytes(value: Mapping[str, Any]) -> bytes:
+    """Serialize an export or shadow report as canonical UTF-8 JSON bytes."""
+
+    return _canonical_json(value).encode("utf-8")
+
+
+def _coverage_present(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (str, bytes, Sequence, Mapping)):
+        return len(value) > 0
+    return True
+
+
+def evaluate_shadow_context_coverage(
+    metadata: Mapping[str, Any],
+    *,
+    enabled: bool = False,
+) -> dict[str, Any]:
+    """Evaluate authorized metadata only; never construct or dispatch context."""
+
+    disabled = {
+        "schema_version": SHADOW_COVERAGE_SCHEMA_VERSION,
+        "enabled": False,
+        "evaluated": False,
+        "advisory": True,
+        "fail_closed": True,
+        "dispatch_allowed": False,
+    }
+    if enabled is not True:
+        return disabled
+    coverage = {
+        surface: _coverage_present(metadata.get(surface))
+        for surface in _COVERAGE_SURFACES
+    }
+    missing = [surface for surface in _COVERAGE_SURFACES if not coverage[surface]]
+    return {
+        "schema_version": SHADOW_COVERAGE_SCHEMA_VERSION,
+        "enabled": True,
+        "evaluated": True,
+        "advisory": True,
+        "fail_closed": True,
+        "dispatch_allowed": False,
+        "coverage": coverage,
+        "missing": missing,
+        "complete": not missing,
+    }
 
 
 def _decode_content(value: Any) -> Any:

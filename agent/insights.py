@@ -20,7 +20,8 @@ import json
 import time
 from collections import Counter, defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
+from zoneinfo import ZoneInfo
 
 from agent.usage_pricing import (
     CanonicalUsage,
@@ -79,6 +80,105 @@ def _bar_chart(values: List[int], max_width: int = 20) -> List[str]:
     if peak == 0:
         return ["" for _ in values]
     return ["█" * max(1, int(v / peak * max_width)) if v > 0 else "" for v in values]
+
+
+_ATTRIBUTION_COUNTERS = {
+    "api_calls": "api_call_count",
+    "tool_calls": "tool_call_count",
+    "fresh_input_tokens": "input_tokens",
+    "cache_read_tokens": "cache_read_tokens",
+    "cache_write_tokens": "cache_write_tokens",
+    "output_tokens": "output_tokens",
+    "reasoning_tokens": "reasoning_tokens",
+}
+
+
+def _new_attribution_bucket() -> Dict[str, int]:
+    return {
+        "sessions": 0,
+        "api_calls": 0,
+        "tool_calls": 0,
+        "fresh_input_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def _add_attribution_row(bucket: Dict[str, int], row: Mapping[str, Any]) -> None:
+    bucket["sessions"] += 1
+    for output_name, row_name in _ATTRIBUTION_COUNTERS.items():
+        bucket[output_name] += row.get(row_name) or 0
+    bucket["total_tokens"] = (
+        bucket["fresh_input_tokens"]
+        + bucket["cache_read_tokens"]
+        + bucket["cache_write_tokens"]
+        + bucket["output_tokens"]
+    )
+
+
+def aggregate_calendar_month_usage(
+    sessions: Iterable[Mapping[str, Any]],
+    *,
+    year: int,
+    month: int,
+    timezone_name: str,
+) -> Dict[str, Any]:
+    """Aggregate stored session counters for one local calendar month.
+
+    The input is a projection of session metadata. Message bodies and tool
+    payloads are neither required nor inspected, and no database or provider
+    calls are made.
+    """
+    zone = ZoneInfo(timezone_name)
+    start = datetime(year, month, 1, tzinfo=zone)
+    if month == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=zone)
+    else:
+        end = datetime(year, month + 1, 1, tzinfo=zone)
+    start_timestamp = start.timestamp()
+    end_timestamp = end.timestamp()
+
+    totals = _new_attribution_bucket()
+    source_buckets: Dict[str, Dict[str, int]] = defaultdict(_new_attribution_bucket)
+    model_buckets: Dict[str, Dict[str, int]] = defaultdict(_new_attribution_bucket)
+
+    for row in sessions:
+        started_at = row.get("started_at")
+        if started_at is None or not start_timestamp <= started_at < end_timestamp:
+            continue
+        _add_attribution_row(totals, row)
+        _add_attribution_row(source_buckets[row.get("source") or "unknown"], row)
+        _add_attribution_row(model_buckets[row.get("model") or "unknown"], row)
+
+    total_tokens = totals["total_tokens"]
+    token_values = {
+        "fresh_input": totals["fresh_input_tokens"],
+        "cache_read": totals["cache_read_tokens"],
+        "cache_write": totals["cache_write_tokens"],
+        "output": totals["output_tokens"],
+    }
+    percentages = {
+        name: (value / total_tokens * 100 if total_tokens else 0)
+        for name, value in token_values.items()
+    }
+
+    return {
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "timezone": timezone_name,
+        **totals,
+        "token_class_percentages": percentages,
+        "sources": [
+            {"source": source, **source_buckets[source]}
+            for source in sorted(source_buckets)
+        ],
+        "models": [
+            {"model": model, **model_buckets[model]}
+            for model in sorted(model_buckets)
+        ],
+    }
 
 
 class InsightsEngine:

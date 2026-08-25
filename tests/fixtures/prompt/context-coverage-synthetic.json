@@ -1,0 +1,16 @@
+{
+  "objective": "ref:objective",
+  "non_goals": ["ref:non-goal"],
+  "constraints": ["ref:constraint"],
+  "negative_requirements": ["ref:negative-requirement"],
+  "decision_lineage": ["ref:decision"],
+  "required_inputs": ["ref:input"],
+  "artifact_evidence_refs": ["ref:evidence"],
+  "authority_boundaries": ["ref:authority"],
+  "human_gates": [],
+  "verification_commands": ["synthetic-verifier --check"],
+  "budget": {
+    "remaining": 3
+  },
+  "resume_cursor": "ref:resume"
+}
