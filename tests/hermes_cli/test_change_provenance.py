@@ -28,21 +28,39 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 def _git(*args: str) -> str:
+    return _git_at(REPO, *args)
+
+
+def _git_at(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=REPO, check=True, capture_output=True, text=True
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
     ).stdout.strip()
 
 
-def _linear_history() -> tuple[str, list[str]]:
-    commits = _git("rev-list", "--first-parent", "HEAD").splitlines()
-    for offset in range(len(commits) - 2):
-        newest, middle = commits[offset], commits[offset + 1]
-        baseline = commits[offset + 2]
-        if len(_git("show", "-s", "--format=%P", newest).split()) == 1 and len(
-            _git("show", "-s", "--format=%P", middle).split()
-        ) == 1:
-            return baseline, [middle, newest]
-    raise AssertionError("repository lacks two consecutive non-merge commits")
+def _isolated_history(tmp_path: Path) -> tuple[Path, str, list[str], str]:
+    repo = tmp_path / "git-history"
+    repo.mkdir()
+    _git_at(repo, "init", "-b", "main")
+    _git_at(repo, "config", "user.name", "Hermes Provenance Test")
+    _git_at(repo, "config", "user.email", "provenance-test@example.invalid")
+    tracked = repo / "tracked.txt"
+    commits: list[str] = []
+    for index, value in enumerate(("baseline", "middle", "newest")):
+        tracked.write_text(value + "\n")
+        _git_at(repo, "add", "tracked.txt")
+        _git_at(repo, "commit", "-m", f"history-{index}")
+        commits.append(_git_at(repo, "rev-parse", "HEAD"))
+    baseline, middle, newest = commits
+    _git_at(repo, "switch", "-c", "merge-side", baseline)
+    (repo / "side.txt").write_text("side\n")
+    _git_at(repo, "add", "side.txt")
+    _git_at(repo, "commit", "-m", "merge-side")
+    side = _git_at(repo, "rev-parse", "HEAD")
+    _git_at(repo, "switch", "-c", "merge-result", newest)
+    _git_at(repo, "merge", "--no-ff", side, "-m", "merge-result")
+    merge = _git_at(repo, "rev-parse", "HEAD")
+    _git_at(repo, "switch", "main")
+    return repo, baseline, [middle, newest], merge
 
 
 def _external_key(tmp_path: Path) -> tuple[Path, bytes]:
@@ -89,7 +107,7 @@ def _canonical(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _diff_digest(parent: str, candidate: str) -> str:
+def _diff_digest(parent: str, candidate: str, *, repo: Path = REPO) -> str:
     raw = subprocess.run(
         [
             "git",
@@ -108,7 +126,7 @@ def _diff_digest(parent: str, candidate: str) -> str:
             candidate,
             "--",
         ],
-        cwd=REPO,
+        cwd=repo,
         check=True,
         capture_output=True,
     ).stdout
@@ -119,7 +137,9 @@ class Fixture:
     def __init__(self, tmp_path: Path) -> None:
         self.tmp_path = tmp_path
         self.private_path, public = _external_key(tmp_path)
-        self.baseline, self.commits = _linear_history()
+        self.repo, self.baseline, self.commits, self.merge_commit = _isolated_history(
+            tmp_path
+        )
         self.principal = "1" * 64
         self.session = "2" * 64
         self.authority = tmp_path / "issuer-authority"
@@ -128,7 +148,9 @@ class Fixture:
             "schema_version": "ProvenanceTrustBundleV1",
             "run_id": "HTDA-S1-20260820",
             "baseline_commit": self.baseline,
-            "baseline_tree": _git("show", "-s", "--format=%T", self.baseline),
+            "baseline_tree": _git_at(
+                self.repo, "show", "-s", "--format=%T", self.baseline
+            ),
             "expires_at": EXPIRES,
             "issuer": {
                 "algorithm": "Ed25519",
@@ -173,7 +195,9 @@ class Fixture:
         session: str | None = None,
     ) -> dict[str, object]:
         candidate = commit or self.commits[index]
-        actual_parent = parent or _git("show", "-s", "--format=%P", candidate).split()[0]
+        actual_parent = parent or _git_at(
+            self.repo, "show", "-s", "--format=%P", candidate
+        ).split()[0]
         body = {
             "schema_version": "ChangeProvenanceReceiptV1",
             "trust_bundle_digest": self.bundle_digest,
@@ -183,8 +207,11 @@ class Fixture:
             "baseline_commit": self.baseline,
             "parent_commit": actual_parent,
             "candidate_commit": candidate,
-            "candidate_tree": _git("show", "-s", "--format=%T", candidate),
-            "canonical_diff_digest": diff_digest or _diff_digest(actual_parent, candidate),
+            "candidate_tree": _git_at(
+                self.repo, "show", "-s", "--format=%T", candidate
+            ),
+            "canonical_diff_digest": diff_digest
+            or _diff_digest(actual_parent, candidate, repo=self.repo),
             "producer_principal_digest": principal or self.principal,
             "producer_session_digest": session or self.session,
             "issued_at": NOW,
@@ -212,7 +239,9 @@ class Fixture:
             "final_sequence": 2,
             "final_receipt_digest": second["receipt_digest"],
             "candidate_commit": self.commits[-1],
-            "candidate_tree": _git("show", "-s", "--format=%T", self.commits[-1]),
+            "candidate_tree": _git_at(
+                self.repo, "show", "-s", "--format=%T", self.commits[-1]
+            ),
             "complete_producer_set_digest": hashlib.sha256(
                 _canonical(
                     [
@@ -252,7 +281,7 @@ class Fixture:
     ) -> dict[str, object]:
         receipt_path, checkpoint_path = self.write_evidence(receipts, checkpoint)
         arguments = {
-            "repo": REPO,
+            "repo": self.repo,
             "bundle_path": self.bundle_path,
             "approved_bundle_digest": self.bundle_digest,
             "receipts_path": receipt_path,
@@ -287,7 +316,9 @@ def test_valid_chain_has_exact_first_parent_coverage_and_terminal_match(
         "status": "PASS",
         "trust_bundle_digest": provenance.bundle_digest,
         "candidate_commit": provenance.commits[-1],
-        "candidate_tree": _git("show", "-s", "--format=%T", provenance.commits[-1]),
+        "candidate_tree": _git_at(
+            provenance.repo, "show", "-s", "--format=%T", provenance.commits[-1]
+        ),
         "receipt_count": 2,
         "final_receipt_digest": receipts[-1]["receipt_digest"],
         "complete_producer_set_digest": checkpoint["checkpoint"][
@@ -400,12 +431,14 @@ def test_baseline_candidate_and_rewritten_history_mismatches_are_rejected(
 
 
 def test_uncovered_merge_is_rejected(provenance: Fixture) -> None:
-    merge = _git("rev-list", "--merges", "-1", "HEAD")
-    if not merge:
-        pytest.skip("repository contains no existing merge commit")
-    parent = _git("show", "-s", "--format=%P", merge).split()[0]
+    merge = provenance.merge_commit
+    parent = _git_at(
+        provenance.repo, "show", "-s", "--format=%P", merge
+    ).split()[0]
     provenance.bundle["baseline_commit"] = parent
-    provenance.bundle["baseline_tree"] = _git("show", "-s", "--format=%T", parent)
+    provenance.bundle["baseline_tree"] = _git_at(
+        provenance.repo, "show", "-s", "--format=%T", parent
+    )
     provenance.baseline = parent
     provenance.bundle_path.chmod(0o644)
     provenance.bundle_path.write_bytes(_canonical(provenance.bundle) + b"\n")
@@ -429,7 +462,9 @@ def test_uncovered_merge_is_rejected(provenance: Fixture) -> None:
         "final_sequence": 1,
         "final_receipt_digest": receipt["receipt_digest"],
         "candidate_commit": merge,
-        "candidate_tree": _git("show", "-s", "--format=%T", merge),
+        "candidate_tree": _git_at(
+            provenance.repo, "show", "-s", "--format=%T", merge
+        ),
         "complete_producer_set_digest": producer_digest,
         "issued_at": NOW,
     }
@@ -452,7 +487,7 @@ def test_writable_or_authoritative_evidence_store_is_rejected(provenance: Fixtur
     receipt_path.chmod(0o644)
     with pytest.raises(ProvenanceError, match="read-only"):
         verify_candidate_change(
-            repo=REPO,
+            repo=provenance.repo,
             bundle_path=provenance.bundle_path,
             approved_bundle_digest=provenance.bundle_digest,
             receipts_path=receipt_path,
@@ -465,7 +500,7 @@ def test_writable_or_authoritative_evidence_store_is_rejected(provenance: Fixtur
     authority_log.chmod(0o444)
     with pytest.raises(ProvenanceError, match="authoritative"):
         verify_candidate_change(
-            repo=REPO,
+            repo=provenance.repo,
             bundle_path=provenance.bundle_path,
             approved_bundle_digest=provenance.bundle_digest,
             receipts_path=authority_log,
@@ -477,7 +512,7 @@ def test_writable_or_authoritative_evidence_store_is_rejected(provenance: Fixtur
 
 def test_build_request_is_closed_and_binds_candidate(provenance: Fixture) -> None:
     request = build_candidate_change_request(
-        repo=REPO,
+        repo=provenance.repo,
         bundle_path=provenance.bundle_path,
         approved_bundle_digest=provenance.bundle_digest,
         candidate_commit=provenance.commits[0],
@@ -503,14 +538,14 @@ def test_build_request_is_closed_and_binds_candidate(provenance: Fixture) -> Non
 
 def test_script_only_reads_and_prints_canonical_request(provenance: Fixture) -> None:
     script = REPO / "scripts" / "record_engagement_candidate_change.py"
-    status_before = _git("status", "--short")
+    status_before = _git_at(provenance.repo, "status", "--short")
     result = subprocess.run(
         [
             sys.executable,
             str(script),
             "request",
             "--repo",
-            str(REPO),
+            str(provenance.repo),
             "--bundle",
             str(provenance.bundle_path),
             "--approve-bundle-sha256",
@@ -534,7 +569,7 @@ def test_script_only_reads_and_prints_canonical_request(provenance: Fixture) -> 
     value = json.loads(result.stdout)
     assert result.stdout[:-1] == _canonical(value)
     assert value["schema_version"] == "ProvenanceIssueRequestV1"
-    assert _git("status", "--short") == status_before
+    assert _git_at(provenance.repo, "status", "--short") == status_before
 
 
 def test_sut_contains_no_signer_or_authoritative_log_writer() -> None:

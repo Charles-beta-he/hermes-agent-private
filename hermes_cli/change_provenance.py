@@ -630,7 +630,7 @@ def request_signed_receipt(
     ):
         _fail("issue request trust context mismatch")
     transport = bundle.value["transport"]
-    if os.getuid() != transport["expected_client_uid"]:
+    if os.getuid() != transport["expected_client_uid"]:  # windows-footgun: ok — darwin-unix-stream-v1 transport is POSIX-only
         _fail("client uid does not match frozen transport identity")
     connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     connection.settimeout(timeout)

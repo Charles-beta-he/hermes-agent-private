@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import importlib.util
+import shlex
 import shutil
 import stat
 import subprocess
@@ -290,6 +291,14 @@ def _copy_test_chain(repo: Path) -> tuple[Path, Path]:
     source_root = Path(__file__).resolve().parent.parent
     scripts = repo / "scripts"
     scripts.mkdir(parents=True, exist_ok=True)
+    venv_bin = repo / ".venv" / "bin"
+    venv_bin.mkdir(parents=True, exist_ok=True)
+    (venv_bin / "activate").write_text("# isolated wrapper-test venv marker\n")
+    python_shim = venv_bin / "python"
+    python_shim.write_text(
+        f"#!/bin/sh\nexec {shlex.quote(sys.executable)} \"$@\"\n"
+    )
+    python_shim.chmod(0o755)
     wrapper = scripts / "run_tests.sh"
     runner = scripts / "run_tests_parallel.py"
     shutil.copy2(source_root / "scripts" / "run_tests.sh", wrapper)
