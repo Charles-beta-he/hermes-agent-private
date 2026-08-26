@@ -162,6 +162,12 @@ BR-17. An exact external entrypoint binding is immutable: exact replay is idempo
 BR-18. A write slice executes only in a clean linked Git worktree whose HEAD matches the packet's workspace_base_commit; post-run HEAD must remain unchanged and the actual Git write set must exactly equal WorkerResult.changed_artifacts.
 BR-19. Every durable state_revision has exactly one append-only TaskStateLedger event in the same transaction; events are digest-chained, readback-verified and profile-owned. Legacy databases receive one explicit current-projection anchor and never fabricated history.
 BR-20. Every ImplementationGraph slice must map only to frozen spec claims and known source references, carry a non-empty verification contract, collectively cover every closure criterion, and keep owned paths disjoint from forbidden paths.
+BR-21. The durable owner identity is explicit when supplied; otherwise it is derived from `HERMES_PROFILE` or the canonical `HERMES_HOME` identity. Two distinct homes sharing a DB must not collapse to the same implicit `default` owner.
+BR-22. Natural lease expiry is a durable fail-closed transition: the slice and active packet become quarantined and a digest-chained state event records that termination is unproven. It never makes the slice retryable.
+BR-23. WorkerResult uses a closed-world top-level schema; unknown fields are rejected before integration and cannot become an authority side channel.
+BR-24. Closure evidence and verification must already be admitted in the current candidate's EvidenceGraph, and every verification command must belong to the frozen ImplementationGraph. Caller-supplied references are not evidence by themselves.
+BR-25. A new source event appended after closure invalidates closure, candidate and evidence, fences prior packets/results, resets slices and places the task in `draft`; the stale plan is not claimable until a fresh spec/plan transition.
+BR-26. Integrator and closure-verifier identities exposed through the model tool are bound to the runtime-supplied current session; model arguments cannot override those actor identities, and the public tool schema does not advertise such overrides.
 
 ## 5. Negative cases
 
@@ -189,6 +195,11 @@ N-21. Empty/incomplete claims, invalid evidence references, missing/failing veri
 N-22. A timed-out worker without explicit termination proof must not release its slice for a concurrent retry; the slice must remain quarantined.
 N-23. An ImplementationGraph must not assign unknown claims/sources, omit a closure criterion or verification command, or overlap owned and forbidden paths.
 N-24. Closure must not accept a stale/tampered context packet, evidence or verification bound to a different candidate, or a verifier that participated as worker/integrator.
+N-25. Distinct `HERMES_HOME` identities sharing one runtime DB must not read each other's tasks when `HERMES_PROFILE` is absent.
+N-26. A WorkerResult with an unknown top-level field such as `authority_granted` must not be accepted.
+N-27. Fabricated closure references or commands that never entered the current candidate's EvidenceGraph/frozen plan must not close a task.
+N-28. Appending a new source event after closure must not leave the old closure, candidate, evidence or completed slice projection valid, and the stale pre-correction plan must not remain claimable.
+N-29. A model/tool caller must not impersonate a fresh verifier or a different integrator by supplying an actor-session argument.
 
 ## 6. Dependency-ordered implementation DAG
 
@@ -244,9 +255,13 @@ G7 — activation, separately authorized
 | Isolated write set | Clean linked-worktree and base-commit gates; thread-local cwd; exact actual-vs-declared write-set and worker-commit negative tests |
 | Bounded pool | Concurrency/refill/timeout tests with hard deadlines and no residual processes |
 | Stale result rejection | Spec/plan/state revision and fencing-token negative matrix |
-| Invalidation | Requirement correction invalidates every dependent packet/result/evidence/closure |
+| Owner/profile isolation | Explicit owner plus `HERMES_PROFILE`/`HERMES_HOME` derivation tests against one shared DB; foreign read and exact replay denial |
+| Lease-expiry safety | Natural expiry quarantines slice+packet, appends one digest-chained event and admits no retry without an explicit release path |
+| WorkerResult authority boundary | Closed-world field allowlist plus unknown-authority-field rejection |
+| Invalidation | Requirement correction invalidates every dependent packet/result/evidence/closure; post-close source append clears closure/candidate/evidence and reopens slices |
 | Bounded ingress context | Payload-size/field allowlist tests; full artifacts remain by reference |
-| Candidate-bound closure | Candidate mismatch negative test and fresh closure E2E |
+| Candidate-bound closure | Candidate mismatch negative test; references must be present in current-candidate EvidenceGraph; commands must be frozen-plan members; fresh closure E2E |
+| Runtime actor identity | Tool schema omits integrator/verifier overrides; direct override attempts fail and registry dispatch binds actor identity from runtime `session_id` |
 | No side-effect regression | Counters/readbacks remain zero for external sends, config, Mission/Taskpool/Cron and active gateway mutation |
 | Existing behavior preserved | Focused CLI, gateway, session, compression, delegation and execution-graph suites |
 | Activation complete | Exact running source/config readback, CLI live smoke, Telegram message_id receipt, rollback proof |

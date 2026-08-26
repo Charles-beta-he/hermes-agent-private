@@ -118,25 +118,25 @@ def test_full_tool_control_plane_flow(tmp_path):
         "integrate",
         task_id=task_id,
         result_id=submitted["result_id"],
-        integrator_session_id="integrator",
+        session_id="integrator",
     )["integration"]
     assert integrated["slice_status"] == "completed"
     closure_packet = _call(
         tmp_path,
         "closure_context",
         task_id=task_id,
-        verifier_session_id="closure-fresh",
+        session_id="closure-fresh",
     )["closure_packet"]
     closed = _call(
         tmp_path,
         "close",
         task_id=task_id,
         candidate_digest="sha256:final",
-        verifier_session_id="closure-fresh",
+        session_id="closure-fresh",
         claims={"R1": "pass"},
         closure_packet=closure_packet,
         closure_evidence_refs=[
-            {"ref": "closure-review", "candidate_digest": "sha256:final"}
+            {"ref": "test", "candidate_digest": "sha256:final"}
         ],
         closure_verification_results=[
             {
@@ -147,6 +147,42 @@ def test_full_tool_control_plane_flow(tmp_path):
         ],
     )["task"]
     assert closed["status"] == "closed"
+
+
+def test_tool_actor_identity_is_runtime_bound_and_not_model_overridable(tmp_path):
+    created = _call(
+        tmp_path,
+        "create",
+        title="identity bound",
+        original_sources=[{"source_id": "S1", "content": "identity"}],
+        session_id="actual-session",
+    )
+    task_id = created["task"]["task_id"]
+
+    closure = _call(
+        tmp_path,
+        "closure_context",
+        task_id=task_id,
+        session_id="actual-session",
+        verifier_session_id="forged-session",
+    )
+    assert closure["error"] == "verifier_session_override_forbidden"
+
+    integration = _call(
+        tmp_path,
+        "integrate",
+        task_id=task_id,
+        result_id="result-does-not-matter",
+        session_id="actual-session",
+        integrator_session_id="forged-session",
+    )
+    assert integration["error"] == "integrator_session_override_forbidden"
+
+    entry = registry.get_entry("task_runtime")
+    assert entry is not None
+    properties = entry.schema["parameters"]["properties"]
+    assert "verifier_session_id" not in properties
+    assert "integrator_session_id" not in properties
 
 
 def test_registry_dispatch_uses_runtime_platform_when_entrypoint_is_omitted(tmp_path, monkeypatch):

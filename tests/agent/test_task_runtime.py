@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import sqlite3
 import threading
 
@@ -159,6 +160,29 @@ def test_task_owner_profile_is_persisted_and_enforced_even_on_shared_db(tmp_path
             task["task_id"], entrypoint="cli", session_id="cli:foreign"
         )
     assert owner_store.get_task(task["task_id"])["bindings"] == []
+
+
+def test_default_hermes_home_preserves_legacy_default_owner(tmp_path, monkeypatch):
+    monkeypatch.delenv("HERMES_PROFILE", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(Path.home() / ".hermes"))
+    assert TaskRuntimeStore(tmp_path / "default.db").owner_profile == "default"
+
+
+def test_task_owner_is_derived_from_home_when_profile_env_is_absent(tmp_path, monkeypatch):
+    shared = tmp_path / "shared.db"
+    monkeypatch.delenv("HERMES_PROFILE", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "alpha-home"))
+    alpha = TaskRuntimeStore(shared)
+    task = alpha.create_task(
+        title="alpha secret",
+        original_sources=[{"source_id": "S1", "content": "secret"}],
+    )
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "beta-home"))
+    beta = TaskRuntimeStore(shared)
+    assert alpha.owner_profile != beta.owner_profile
+    with pytest.raises(PermissionError, match="task_owner_profile_mismatch"):
+        beta.get_task(task["task_id"])
 
 
 def test_cross_profile_exact_result_replay_checks_owner_before_idempotency(tmp_path):
@@ -360,6 +384,12 @@ def test_lease_owner_expiry_idempotency_and_owned_path_enforcement(tmp_path):
     )
     assert expired["disposition"] == "rejected"
     assert "lease_expired" in expired["reasons"]
+    store.release_claim(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        reason="worker_returned_after_expiry",
+    )
 
     packet = store.claim_next_slice(task_id, worker_session_id="worker-a", lease_seconds=20, now=112.0)
     outside_write_set = store.submit_result(
@@ -430,6 +460,7 @@ def test_worker_result_schema_and_success_evidence_fail_closed(tmp_path):
         ),
         ({"state_delta_proposal": {"slice_status": "running"}}, "worker_state_delta_invalid"),
         ({"candidate_digest": ""}, "candidate_digest_required"),
+        ({"authority_granted": True}, "worker_result_unknown_fields"),
     ]
     for index, (mutation, expected_reason) in enumerate(cases, start=1):
         result = _result(packet, candidate=f"sha256:case-{index}")
@@ -447,18 +478,22 @@ def test_worker_result_schema_and_success_evidence_fail_closed(tmp_path):
     assert store.get_task(task_id)["slices"][0]["status"] == "claimed"
 
 
-def test_lease_reclaim_rotates_fence_and_rejects_stale_owner(tmp_path):
+def test_lease_expiry_quarantines_without_termination_proof(tmp_path):
     store, task_id = _ready_store(tmp_path)
-    first = store.claim_next_slice(task_id, worker_session_id="worker-old", lease_seconds=10, now=100.0)
+    first = store.claim_next_slice(
+        task_id, worker_session_id="worker-old", lease_seconds=10, now=100.0
+    )
     assert first is not None
-    second = store.claim_next_slice(task_id, worker_session_id="worker-new", lease_seconds=10, now=111.0)
-    assert second is not None
-    assert second["packet_id"] != first["packet_id"]
-    assert second["lease"]["token"] != first["lease"]["token"]
-    assert second["lease"]["owner"] == "worker-new"
-    reclaim_event = store.get_task(task_id)["state_events"][-1]
-    assert reclaim_event["event_type"] == "slice_claimed"
-    assert reclaim_event["payload"]["expired_slice_ids"] == [first["slice_id"]]
+
+    second = store.claim_next_slice(
+        task_id, worker_session_id="worker-new", lease_seconds=10, now=111.0
+    )
+    assert second is None
+    task = store.get_task(task_id)
+    assert task["slices"][0]["status"] == "quarantined"
+    expiry_event = task["state_events"][-1]
+    assert expiry_event["event_type"] == "lease_expired_quarantined"
+    assert expiry_event["payload"]["expired_slice_ids"] == [first["slice_id"]]
 
     stale = store.submit_result(
         task_id,
@@ -469,22 +504,6 @@ def test_lease_reclaim_rotates_fence_and_rejects_stale_owner(tmp_path):
     )
     assert stale["disposition"] == "rejected"
     assert "lease_expired" in stale["reasons"]
-    with pytest.raises(ValueError, match="packet_not_active"):
-        store.release_claim(
-            task_id,
-            worker_session_id="worker-old",
-            packet_id=first["packet_id"],
-            reason="stale worker",
-        )
-
-    accepted = store.submit_result(
-        task_id,
-        worker_session_id="worker-new",
-        packet_id=second["packet_id"],
-        result=_result(second, candidate="sha256:fresh"),
-        now=112.0,
-    )
-    assert accepted["disposition"] == "accepted_for_integration"
 
 
 def test_stored_context_packet_tamper_is_rejected(tmp_path):
@@ -651,11 +670,11 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
             claims={"R1": "pass", "N1": "pass"},
             closure_packet=closure_packet,
             evidence_refs=[
-                {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+                {"kind": "test", "ref": "pytest:passed", "candidate_digest": "sha256:candidate-final"}
             ],
             verification_results=[
                 {
-                    "command": "pytest -q",
+                    "command": "pytest -q tests/s2.py",
                     "exit_code": 0,
                     "candidate_digest": "sha256:candidate-final",
                 }
@@ -673,11 +692,11 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
             claims={"R1": "pass"},
             closure_packet=closure_packet,
             evidence_refs=[
-                {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+                {"kind": "test", "ref": "pytest:passed", "candidate_digest": "sha256:candidate-final"}
             ],
             verification_results=[
                 {
-                    "command": "pytest -q",
+                    "command": "pytest -q tests/s2.py",
                     "exit_code": 0,
                     "candidate_digest": "sha256:candidate-final",
                 }
@@ -692,6 +711,28 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
             closure_packet=closure_packet,
             evidence_refs=[],
             verification_results=[],
+        )
+    with pytest.raises(ValueError, match="closure_evidence_not_admitted"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:candidate-final",
+            verifier_session_id="closure-fresh",
+            claims={"R1": "pass", "N1": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=[
+                {
+                    "kind": "test",
+                    "ref": "DOES-NOT-EXIST",
+                    "candidate_digest": "sha256:candidate-final",
+                }
+            ],
+            verification_results=[
+                {
+                    "command": "NEVER-RAN",
+                    "exit_code": 0,
+                    "candidate_digest": "sha256:candidate-final",
+                }
+            ],
         )
 
     store.append_source_event(
@@ -711,11 +752,11 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
             claims={"R1": "pass", "N1": "pass"},
             closure_packet=closure_packet,
             evidence_refs=[
-                {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+                {"kind": "test", "ref": "pytest:passed", "candidate_digest": "sha256:candidate-final"}
             ],
             verification_results=[
                 {
-                    "command": "pytest -q",
+                    "command": "pytest -q tests/s2.py",
                     "exit_code": 0,
                     "candidate_digest": "sha256:candidate-final",
                 }
@@ -731,11 +772,11 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
         claims={"R1": "pass", "N1": "pass"},
         closure_packet=closure_packet,
         evidence_refs=[
-            {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+            {"kind": "test", "ref": "pytest:passed", "candidate_digest": "sha256:candidate-final"}
         ],
         verification_results=[
             {
-                "command": "pytest -q",
+                "command": "pytest -q tests/s2.py",
                 "exit_code": 0,
                 "candidate_digest": "sha256:candidate-final",
             }
@@ -752,11 +793,11 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
         claims={"R1": "pass", "N1": "pass"},
         closure_packet=closure_packet,
         evidence_refs=[
-            {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+            {"kind": "test", "ref": "pytest:passed", "candidate_digest": "sha256:candidate-final"}
         ],
         verification_results=[
             {
-                "command": "pytest -q",
+                "command": "pytest -q tests/s2.py",
                 "exit_code": 0,
                 "candidate_digest": "sha256:candidate-final",
             }
@@ -774,15 +815,35 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
             claims={"R1": "pass", "N1": "fail"},
             closure_packet=closure_packet,
             evidence_refs=[
-                {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+                {"kind": "test", "ref": "pytest:passed", "candidate_digest": "sha256:candidate-final"}
             ],
             verification_results=[
                 {
-                    "command": "pytest -q",
+                    "command": "pytest -q tests/s2.py",
                     "exit_code": 0,
                     "candidate_digest": "sha256:candidate-final",
                 }
             ],
+        )
+
+    invalidated = store.append_source_event(
+        task_id,
+        {
+            "event_id": "post-close-correction",
+            "content": "new source invalidates the closed candidate",
+        },
+    )
+    assert invalidated["status"] == "draft"
+    assert invalidated["closure"] == {}
+    assert invalidated["candidate_digest"] == ""
+    assert invalidated["evidence_graph"] == []
+    assert [item["status"] for item in invalidated["slices"]] == ["pending", "pending"]
+    assert invalidated["state_events"][-1]["payload"]["closure_invalidated"] is True
+    with pytest.raises(ValueError, match="task_not_claimable"):
+        store.claim_next_slice(
+            task_id,
+            worker_session_id="stale-plan-worker",
+            lease_seconds=60,
         )
 
 

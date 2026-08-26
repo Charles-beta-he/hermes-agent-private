@@ -168,23 +168,35 @@ def task_runtime_tool(
         if operation == "integrate":
             if not result_id:
                 raise ValueError("result_id_required")
+            if not current_session:
+                raise ValueError("integrator_session_id_required")
+            if integrator_session_id and integrator_session_id != current_session:
+                raise ValueError("integrator_session_override_forbidden")
             receipt = store.integrate_result(
                 control_task_id,
                 result_id,
-                integrator_session_id=integrator_session_id or current_session,
+                integrator_session_id=current_session,
             )
             return tool_result(success=True, integration=receipt)
         if operation == "closure_context":
+            if not current_session:
+                raise ValueError("verifier_session_id_required")
+            if verifier_session_id and verifier_session_id != current_session:
+                raise ValueError("verifier_session_override_forbidden")
             packet = store.build_closure_packet(
                 control_task_id,
-                verifier_session_id=verifier_session_id or current_session,
+                verifier_session_id=current_session,
             )
             return tool_result(success=True, closure_packet=packet)
         if operation == "close":
+            if not current_session:
+                raise ValueError("verifier_session_id_required")
+            if verifier_session_id and verifier_session_id != current_session:
+                raise ValueError("verifier_session_override_forbidden")
             task = store.close_task(
                 control_task_id,
                 candidate_digest=candidate_digest,
-                verifier_session_id=verifier_session_id or current_session,
+                verifier_session_id=current_session,
                 claims=dict(claims or {}),
                 closure_packet=dict(closure_packet or {}),
                 evidence_refs=list(closure_evidence_refs or []),
@@ -233,9 +245,7 @@ TASK_RUNTIME_SCHEMA = {
             "packet_id": {"type": "string"},
             "worker_result": {"type": "object"},
             "result_id": {"type": "string"},
-            "integrator_session_id": {"type": "string"},
             "candidate_digest": {"type": "string"},
-            "verifier_session_id": {"type": "string"},
             "claims": {"type": "object", "additionalProperties": {"type": "string"}},
             "closure_packet": {"type": "object"},
             "closure_evidence_refs": {"type": "array", "items": {"type": "object"}},
@@ -267,9 +277,7 @@ registry.register(
         packet_id=args.get("packet_id", ""),
         worker_result=args.get("worker_result"),
         result_id=args.get("result_id", ""),
-        integrator_session_id=args.get("integrator_session_id", ""),
         candidate_digest=args.get("candidate_digest", ""),
-        verifier_session_id=args.get("verifier_session_id", ""),
         claims=args.get("claims"),
         closure_packet=args.get("closure_packet"),
         closure_evidence_refs=args.get("closure_evidence_refs"),

@@ -59,12 +59,28 @@ class RevisionConflict(RuntimeError):
     pass
 
 
+def _runtime_owner_profile(explicit: str | None = None) -> str:
+    owner = str(explicit or os.environ.get("HERMES_PROFILE") or "").strip()
+    if owner:
+        return owner
+    home_raw = str(os.environ.get("HERMES_HOME") or "").strip()
+    if not home_raw:
+        return "default"
+    home = Path(home_raw).expanduser().resolve()
+    if home == (Path.home() / ".hermes").resolve():
+        return "default"
+    if home.parent.name == "profiles" and home.name:
+        return home.name
+    identity = hashlib.sha256(str(home).encode("utf-8")).hexdigest()[:24]
+    return f"home:{identity}"
+
+
 class TaskRuntimeStore:
     """SQLite SSOT for tasks, bindings, slices, packets, results, and closure."""
 
     def __init__(self, path: str | Path, *, owner_profile: str | None = None):
         self.path = Path(path).expanduser()
-        self.owner_profile = str(owner_profile or os.environ.get("HERMES_PROFILE") or "default").strip()
+        self.owner_profile = _runtime_owner_profile(owner_profile)
         if not self.owner_profile:
             raise ValueError("owner_profile_required")
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -450,7 +466,7 @@ class TaskRuntimeStore:
         if not payload.get("content"):
             raise ValueError("source_event_content_required")
         with self._write() as conn:
-            self._task_row(conn, task_id)
+            task = self._task_row(conn, task_id)
             event_id = str(payload.get("event_id") or _digest(payload))
             existing_row = conn.execute(
                 "SELECT payload_json FROM source_events WHERE task_id = ? AND event_id = ?",
@@ -472,11 +488,22 @@ class TaskRuntimeStore:
                     "VALUES (?, ?, ?, ?)",
                     (task_id, event_id, _json(payload), str(payload["recorded_at"])),
                 )
+                closure_invalidated = str(task["status"]) == "closed"
+                if closure_invalidated:
+                    self._invalidate_claims(conn, task_id, "post_close_source_event")
+                    conn.execute(
+                        "UPDATE tasks SET status = 'draft', candidate_digest = '', "
+                        "evidence_graph_json = '[]', closure_json = '{}' WHERE task_id = ?",
+                        (task_id,),
+                    )
                 self._bump_state(
                     conn,
                     task_id,
                     "source_event_appended",
-                    {"event_id": event_id},
+                    {
+                        "event_id": event_id,
+                        "closure_invalidated": closure_invalidated,
+                    },
                 )
         return self.get_task(task_id)
 
@@ -620,7 +647,11 @@ class TaskRuntimeStore:
             raise ValueError("worker_session_id_required")
         with self._write() as conn:
             task = self._task_row(conn, task_id)
+            if str(task["status"]) in {"draft", "closed"}:
+                raise ValueError("task_not_claimable")
             expired_slice_ids = self._expire_leases(conn, task_id, now_value)
+            if expired_slice_ids:
+                task = self._task_row(conn, task_id)
             rows = conn.execute(
                 "SELECT * FROM task_slices WHERE task_id = ? ORDER BY ordinal, slice_id",
                 (task_id,),
@@ -896,6 +927,9 @@ class TaskRuntimeStore:
                     "claims", "changed_artifacts", "evidence_refs", "verification_results",
                     "risks", "unknowns", "state_delta_proposal", "candidate_digest",
                 }
+                allowed_fields = required_fields | {"slice_id", "input_digest"}
+                if set(payload) - allowed_fields:
+                    reasons.append("worker_result_unknown_fields")
                 if any(field not in payload for field in required_fields):
                     reasons.append("worker_result_missing_required_fields")
                 else:
@@ -1253,6 +1287,59 @@ class TaskRuntimeStore:
                 for item in closure_verification
             ):
                 raise ValueError("closure_verification_failed")
+
+            evidence_graph = _decode(task["evidence_graph_json"], [])
+            candidate_evidence = [
+                item
+                for item in evidence_graph
+                if str(item.get("candidate_digest") or "") == candidate
+            ]
+
+            def without_candidate(item: Mapping[str, Any]) -> dict[str, Any]:
+                return {
+                    str(key): value
+                    for key, value in item.items()
+                    if str(key) != "candidate_digest"
+                }
+
+            admitted_refs = {
+                _json(dict(ref))
+                for item in candidate_evidence
+                for ref in (item.get("evidence_refs") or [])
+                if isinstance(ref, Mapping)
+            }
+            if any(
+                _json(without_candidate(item)) not in admitted_refs
+                for item in closure_evidence
+            ):
+                raise ValueError("closure_evidence_not_admitted")
+
+            admitted_verification = {
+                _json(dict(result))
+                for item in candidate_evidence
+                for result in (item.get("verification_results") or [])
+                if isinstance(result, Mapping)
+            }
+            if any(
+                _json(without_candidate(item)) not in admitted_verification
+                for item in closure_verification
+            ):
+                raise ValueError("closure_verification_not_admitted")
+            allowed_commands = {
+                str(command)
+                for row in conn.execute(
+                    "SELECT definition_json FROM task_slices WHERE task_id = ?",
+                    (task_id,),
+                ).fetchall()
+                for command in (
+                    _decode(row["definition_json"], {}).get("verification_commands") or []
+                )
+            }
+            if any(
+                str(item.get("command") or "") not in allowed_commands
+                for item in closure_verification
+            ):
+                raise ValueError("closure_verification_command_not_frozen")
             closure = {
                 "schema": "hermes_closure_receipt_v1",
                 "task_id": task_id,
@@ -1461,17 +1548,29 @@ class TaskRuntimeStore:
             "SELECT slice_id FROM task_slices WHERE task_id = ? AND status = 'claimed' AND lease_expires_at < ?",
             (task_id, now),
         ).fetchall()
+        expired_slice_ids = [str(row["slice_id"]) for row in expired]
         for row in expired:
             conn.execute(
-                "UPDATE task_slices SET status = 'pending', lease_owner = '', lease_token = '', lease_expires_at = NULL "
+                "UPDATE task_slices SET status = 'quarantined', lease_expires_at = NULL "
                 "WHERE task_id = ? AND slice_id = ?",
                 (task_id, row["slice_id"]),
             )
             conn.execute(
-                "UPDATE context_packets SET status = 'expired' WHERE task_id = ? AND slice_id = ? AND status = 'active'",
+                "UPDATE context_packets SET status = 'quarantined' "
+                "WHERE task_id = ? AND slice_id = ? AND status = 'active'",
                 (task_id, row["slice_id"]),
             )
-        return [str(row["slice_id"]) for row in expired]
+        if expired_slice_ids:
+            TaskRuntimeStore._bump_state(
+                conn,
+                task_id,
+                "lease_expired_quarantined",
+                {
+                    "expired_slice_ids": expired_slice_ids,
+                    "termination_proven": False,
+                },
+            )
+        return expired_slice_ids
 
     @staticmethod
     def _validate_plan(definitions: Sequence[Mapping[str, Any]]) -> None:
