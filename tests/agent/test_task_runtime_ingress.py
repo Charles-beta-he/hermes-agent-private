@@ -25,12 +25,29 @@ def test_bound_turn_records_exact_source_and_returns_bounded_projection(tmp_path
         turn_id="turn-1",
     )
 
+    assert context is not None
     assert context.startswith("[TASK_RUNTIME_CONTEXT v1]\n")
     assert context.endswith("\n[/TASK_RUNTIME_CONTEXT]")
     payload = json.loads(context.split("\n", 1)[1].rsplit("\n", 1)[0])
     assert payload["task_id"] == task["task_id"]
     assert payload["binding"] == {"entrypoint": "cli", "session_id": "cli-session"}
+    assert set(payload) == {
+        "binding",
+        "candidate_digest",
+        "closure",
+        "evidence",
+        "instructions",
+        "revisions",
+        "schema",
+        "slices",
+        "source_index",
+        "status",
+        "task_id",
+        "title",
+    }
     assert "sources" not in payload
+    assert "original request" not in context
+    assert "continue exactly from source" not in context
     assert len(context.encode("utf-8")) <= 12_000
 
     reopened = TaskRuntimeStore(db_path).get_task(task["task_id"])
