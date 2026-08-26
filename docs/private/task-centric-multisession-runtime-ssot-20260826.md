@@ -121,6 +121,7 @@ Immutable and digest-bound. Required fields:
 - slice_id, role, objective
 - required_clauses, negative_requirements, source_refs
 - architecture_invariants, dependencies, owned_paths, forbidden_changes
+- write slices additionally require workspace_path and workspace_base_commit
 - verification_commands, evidence_sink, authority, packet_digest
 
 ### WorkerResult
@@ -157,6 +158,8 @@ BR-13. Direct one-turn chat remains available when task admission is not trigger
 BR-14. Task admission and observation are side-effect-free with respect to external adapters, active config, scheduler, Taskpool and gateway lifecycle.
 BR-15. Cross-channel steering is auditable: every accepted user correction records channel/thread/message/session source identity without storing secrets.
 BR-16. Existing prompt caching remains byte-stable for a conversation; dynamic task state enters as bounded turn input or service result, never by mutating prior/system messages.
+BR-17. An exact external entrypoint binding is immutable: exact replay is idempotent and cross-task replacement fails closed.
+BR-18. A write slice executes only in a clean linked Git worktree whose HEAD matches the packet's workspace_base_commit; post-run HEAD must remain unchanged and the actual Git write set must exactly equal WorkerResult.changed_artifacts.
 
 ## 5. Negative cases
 
@@ -175,6 +178,9 @@ N-12. Closure against candidate A must not approve candidate B.
 N-13. Task owner/profile A must not read or mutate profile B task state.
 N-14. A malformed/corrupt ledger must fail closed with stable errors; it must not reconstruct authoritative state from conversation summaries.
 N-15. A task classified as simple must remain promotable later without rewriting original source events.
+N-16. Replaying an existing entrypoint binding must not bump state_revision, and the same entrypoint/session identity must not be silently rebound to another task.
+N-17. A missing, dirty, non-linked, path-escaping or wrong-base worker workspace must not start execution.
+N-18. A worker must not hide a changed path or move the fenced workspace HEAD by committing its own changes.
 
 ## 6. Dependency-ordered implementation DAG
 
@@ -226,6 +232,7 @@ G7 — activation, separately authorized
 | Telegram normal-path integration | Real adapter/router/session code path under no-send harness; exact binding tests |
 | Cross-channel continuity | One task created through CLI fixture and steered through Telegram fixture with same task_id/revisions |
 | Fresh worker isolation | Distinct session IDs, minimal packet input and absent parent transcript proof |
+| Isolated write set | Clean linked-worktree and base-commit gates; thread-local cwd; exact actual-vs-declared write-set and worker-commit negative tests |
 | Bounded pool | Concurrency/refill/timeout tests with hard deadlines and no residual processes |
 | Stale result rejection | Spec/plan/state revision and fencing-token negative matrix |
 | Invalidation | Requirement correction invalidates every dependent packet/result/evidence/closure |
@@ -234,6 +241,19 @@ G7 — activation, separately authorized
 | No side-effect regression | Counters/readbacks remain zero for external sends, config, Mission/Taskpool/Cron and active gateway mutation |
 | Existing behavior preserved | Focused CLI, gateway, session, compression, delegation and execution-graph suites |
 | Activation complete | Exact running source/config readback, CLI live smoke, Telegram message_id receipt, rollback proof |
+
+### Current candidate evidence ledger (not final closure)
+
+| Scope | Candidate identity | Fresh evidence | Status / boundary |
+|---|---|---|---|
+| Fresh worker session | `1bb8a8349e26498129403789147d107775b3f087` / tree `1577161f6047ec8d8f8b6158d082179562c96d6f` | distinct forced child session and structured result tests | local code only |
+| Bounded pool and process recovery | `618c77fe2757ee6122373f4b4aa711cd7f026d59` / tree `2f53e3d87bfe0f54b1167d4bb8fab033afb3322e` | cap=2 never exceeded; CLI/TG durable cross-process fixture | TG fixture is no-send, not real adapter |
+| Stale evidence and ingress conflicts | `8b5939fda15a03b0f3205a07ad3b92dcfff90695` / tree `fa313e9fcefb0c383409d3343204c9777034d85f` | revision invalidation; exact replay idempotency; conflicting event rejection | local code only |
+| Lease, tamper and timeout recovery | `4a44619af37c3b29ff8a6adc6dcc62360f67e560` / tree `cf9606011e350d2ca6840c99b7d1a61ca3509355` | fencing rotation/stale-owner negatives; stored packet tamper rejection; terminal receipt mapping | timeout child-exit/reaper proof still open |
+| Profile scope and source append-only | `2181164f89b5f76a8a74312200977376f27ccda9` / tree `a22b0d2e0119e3cdcad84a1b00fa80b1734d145d` | profile-scoped default DB; normalized source events; DB UPDATE/DELETE triggers | full TaskStateLedger event journal still open |
+| Immutable binding and isolated write set | `7276693124429adf2217f56955e568f277a2db2b` / tree `2bfca27c08fbeab58c62618362ba39e92536653e` | `57 passed in 2.58s`; delegate regression `178 passed, 6 subtests`; cross-task rebind, dirty/wrong-base/path escape, hidden write and worker commit negatives | no automatic worktree allocator/reaper; no OS filesystem sandbox |
+
+Open evidence gaps remain material: full append-only TaskStateLedger transitions, real GatewayRunner Telegram no-send path, automatic workspace lease/reaper lifecycle, hard timeout child-exit readback, bounded ingress allowlist/size certification, candidate-bound fresh closure, and independent no-P0/P1 review. Therefore this ledger is an implementation checkpoint, not a candidate freeze or activation authorization.
 
 ## 8. Converge rule
 
