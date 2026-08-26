@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import os
 import sqlite3
 import time
 import uuid
@@ -61,8 +62,11 @@ class RevisionConflict(RuntimeError):
 class TaskRuntimeStore:
     """SQLite SSOT for tasks, bindings, slices, packets, results, and closure."""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, owner_profile: str | None = None):
         self.path = Path(path).expanduser()
+        self.owner_profile = str(owner_profile or os.environ.get("HERMES_PROFILE") or "default").strip()
+        if not self.owner_profile:
+            raise ValueError("owner_profile_required")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -94,6 +98,7 @@ class TaskRuntimeStore:
                 CREATE TABLE IF NOT EXISTS tasks (
                     task_id TEXT PRIMARY KEY,
                     schema_name TEXT NOT NULL,
+                    owner_profile TEXT NOT NULL DEFAULT 'default',
                     title TEXT NOT NULL,
                     status TEXT NOT NULL,
                     original_sources_json TEXT NOT NULL,
@@ -134,6 +139,29 @@ class TaskRuntimeStore:
                 BEFORE DELETE ON source_events
                 BEGIN
                     SELECT RAISE(ABORT, 'source_events_append_only');
+                END;
+                CREATE TABLE IF NOT EXISTS task_state_events (
+                    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+                    state_revision INTEGER NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    previous_event_digest TEXT NOT NULL,
+                    event_digest TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    PRIMARY KEY (task_id, state_revision),
+                    UNIQUE (task_id, event_digest)
+                );
+                CREATE INDEX IF NOT EXISTS idx_task_state_events_task
+                    ON task_state_events(task_id, state_revision);
+                CREATE TRIGGER IF NOT EXISTS task_state_events_no_update
+                BEFORE UPDATE ON task_state_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'task_state_events_append_only');
+                END;
+                CREATE TRIGGER IF NOT EXISTS task_state_events_no_delete
+                BEFORE DELETE ON task_state_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'task_state_events_append_only');
                 END;
                 CREATE TABLE IF NOT EXISTS task_slices (
                     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
@@ -182,6 +210,15 @@ class TaskRuntimeStore:
                 CREATE INDEX IF NOT EXISTS idx_results_task ON worker_results(task_id, disposition);
                 """
             )
+            task_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+            if "owner_profile" not in task_columns:
+                conn.execute(
+                    "ALTER TABLE tasks ADD COLUMN owner_profile TEXT NOT NULL DEFAULT 'default'"
+                )
+                conn.execute(
+                    "UPDATE tasks SET owner_profile = ?",
+                    (self.owner_profile,),
+                )
             # One-time compatibility backfill from the legacy mutable JSON snapshot.
             # The normalized table is authoritative after this point; INSERT OR IGNORE
             # preserves exact replay semantics if an older database is reopened.
@@ -202,6 +239,18 @@ class TaskRuntimeStore:
                         "(task_id, event_id, payload_json, recorded_at) VALUES (?, ?, ?, ?)",
                         (row["task_id"], event_id, _json(payload), recorded_at),
                     )
+            legacy_rows = conn.execute(
+                "SELECT task_id, state_revision, status FROM tasks WHERE NOT EXISTS "
+                "(SELECT 1 FROM task_state_events e WHERE e.task_id = tasks.task_id)"
+            ).fetchall()
+            for row in legacy_rows:
+                self._record_state_event(
+                    conn,
+                    row["task_id"],
+                    int(row["state_revision"]),
+                    "legacy_projection_anchored",
+                    {"status": row["status"]},
+                )
 
     @staticmethod
     def default_path() -> Path:
@@ -234,13 +283,31 @@ class TaskRuntimeStore:
             conn.execute(
                 """
                 INSERT INTO tasks (
-                    task_id, schema_name, title, status, original_sources_json,
+                    task_id, schema_name, owner_profile, title, status, original_sources_json,
                     source_events_json, spec_bundle_json, implementation_graph_json,
                     evidence_graph_json, closure_json, spec_revision, plan_revision,
                     state_revision, candidate_digest, created_at, updated_at
-                ) VALUES (?, ?, ?, 'draft', ?, '[]', '{}', '[]', '[]', '{}', 0, 0, 1, '', ?, ?)
+                ) VALUES (?, ?, ?, ?, 'draft', ?, '[]', '{}', '[]', '[]', '{}', 0, 0, 1, '', ?, ?)
                 """,
-                (identity, SCHEMA, str(title or "Untitled task"), _json(sources), now, now),
+                (
+                    identity,
+                    SCHEMA,
+                    self.owner_profile,
+                    str(title or "Untitled task"),
+                    _json(sources),
+                    now,
+                    now,
+                ),
+            )
+            self._record_state_event(
+                conn,
+                identity,
+                1,
+                "task_created",
+                {
+                    "title": str(title or "Untitled task"),
+                    "owner_profile": self.owner_profile,
+                },
             )
         return self.get_task(identity)
 
@@ -249,6 +316,7 @@ class TaskRuntimeStore:
             row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
             if row is None:
                 raise KeyError(task_id)
+            self._assert_owner(row)
             slices = conn.execute(
                 "SELECT slice_id, ordinal, definition_json, status, lease_owner, "
                 "lease_expires_at, result_id, integrated_state_revision "
@@ -265,14 +333,36 @@ class TaskRuntimeStore:
                 "ORDER BY recorded_at, event_id",
                 (task_id,),
             ).fetchall()
+            state_events = conn.execute(
+                "SELECT state_revision, event_type, payload_json, previous_event_digest, "
+                "event_digest, recorded_at FROM task_state_events WHERE task_id = ? "
+                "ORDER BY state_revision",
+                (task_id,),
+            ).fetchall()
         data = dict(row)
+        if not self._state_event_ledger_valid(
+            task_id, int(data["state_revision"]), state_events
+        ):
+            raise ValueError("task_state_event_ledger_invalid")
         return {
             "schema": data["schema_name"],
             "task_id": data["task_id"],
+            "owner_profile": data["owner_profile"],
             "title": data["title"],
             "status": data["status"],
             "original_sources": _decode(data["original_sources_json"], []),
             "source_events": [_decode(item["payload_json"], {}) for item in source_events],
+            "state_events": [
+                {
+                    "state_revision": int(item["state_revision"]),
+                    "event_type": item["event_type"],
+                    "payload": _decode(item["payload_json"], {}),
+                    "previous_event_digest": item["previous_event_digest"],
+                    "event_digest": item["event_digest"],
+                    "recorded_at": item["recorded_at"],
+                }
+                for item in state_events
+            ],
             "spec_bundle": _decode(data["spec_bundle_json"], {}),
             "implementation_graph": _decode(data["implementation_graph_json"], []),
             "evidence_graph": _decode(data["evidence_graph_json"], []),
@@ -319,7 +409,12 @@ class TaskRuntimeStore:
                     """,
                     (entrypoint, session_id, task_id, _utc_now()),
                 )
-                self._bump_state(conn, task_id)
+                self._bump_state(
+                    conn,
+                    task_id,
+                    "entrypoint_bound",
+                    {"entrypoint": entrypoint, "session_id": session_id},
+                )
         return self.get_task(task_id)
 
     def resolve_entrypoint(self, entrypoint: str, session_id: str) -> dict[str, Any] | None:
@@ -357,10 +452,11 @@ class TaskRuntimeStore:
                     "VALUES (?, ?, ?, ?)",
                     (task_id, event_id, _json(payload), str(payload["recorded_at"])),
                 )
-                conn.execute(
-                    "UPDATE tasks SET state_revision = state_revision + 1, updated_at = ? "
-                    "WHERE task_id = ?",
-                    (_utc_now(), task_id),
+                self._bump_state(
+                    conn,
+                    task_id,
+                    "source_event_appended",
+                    {"event_id": event_id},
                 )
         return self.get_task(task_id)
 
@@ -388,6 +484,13 @@ class TaskRuntimeStore:
                 (_json(spec), _utc_now(), task_id),
             )
             self._invalidate_claims(conn, task_id, "spec_changed")
+            self._record_state_event(
+                conn,
+                task_id,
+                int(row["state_revision"]) + 1,
+                "spec_frozen",
+                {"spec_revision": int(row["spec_revision"]) + 1},
+            )
         return self.get_task(task_id)
 
     def set_plan(
@@ -425,6 +528,16 @@ class TaskRuntimeStore:
                 (_json(definitions), _utc_now(), task_id),
             )
             conn.execute("UPDATE context_packets SET status = 'invalidated' WHERE task_id = ? AND status = 'active'", (task_id,))
+            self._record_state_event(
+                conn,
+                task_id,
+                int(row["state_revision"]) + 1,
+                "plan_set",
+                {
+                    "plan_revision": int(row["plan_revision"]) + 1,
+                    "slice_ids": [str(item["slice_id"]) for item in definitions],
+                },
+            )
         return self.get_task(task_id)
 
     def claim_next_slice(
@@ -443,7 +556,7 @@ class TaskRuntimeStore:
             raise ValueError("worker_session_id_required")
         with self._write() as conn:
             task = self._task_row(conn, task_id)
-            self._expire_leases(conn, task_id, now_value)
+            expired_slice_ids = self._expire_leases(conn, task_id, now_value)
             rows = conn.execute(
                 "SELECT * FROM task_slices WHERE task_id = ? ORDER BY ordinal, slice_id",
                 (task_id,),
@@ -516,6 +629,18 @@ class TaskRuntimeStore:
                 "UPDATE tasks SET state_revision = ?, status = 'running', updated_at = ? WHERE task_id = ?",
                 (state_revision, _utc_now(), task_id),
             )
+            self._record_state_event(
+                conn,
+                task_id,
+                state_revision,
+                "slice_claimed",
+                {
+                    "slice_id": selected["slice_id"],
+                    "packet_id": packet_id,
+                    "worker_session_id": worker,
+                    "expired_slice_ids": expired_slice_ids,
+                },
+            )
             return packet
 
     def verify_context_packet(self, packet: Mapping[str, Any]) -> bool:
@@ -563,7 +688,17 @@ class TaskRuntimeStore:
                 "UPDATE context_packets SET status = 'abandoned' WHERE packet_id = ?",
                 (packet_id,),
             )
-            self._bump_state(conn, task_id)
+            self._bump_state(
+                conn,
+                task_id,
+                "slice_claim_released",
+                {
+                    "slice_id": packet["slice_id"],
+                    "packet_id": packet_id,
+                    "worker_session_id": worker,
+                    "reason": str(reason or "worker_failed"),
+                },
+            )
         return {
             "task_id": task_id,
             "packet_id": packet_id,
@@ -662,7 +797,18 @@ class TaskRuntimeStore:
                     "UPDATE task_slices SET status = 'submitted', result_id = ? WHERE task_id = ? AND slice_id = ?",
                     (identity, task_id, slice_id),
                 )
-                self._bump_state(conn, task_id)
+            self._bump_state(
+                conn,
+                task_id,
+                "worker_result_submitted",
+                {
+                    "result_id": identity,
+                    "packet_id": packet_id,
+                    "slice_id": slice_id,
+                    "disposition": disposition,
+                    "reasons": reasons,
+                },
+            )
             row = conn.execute("SELECT * FROM worker_results WHERE result_id = ?", (identity,)).fetchone()
             return self._result_payload(row, idempotent_replay=False)
 
@@ -734,6 +880,18 @@ class TaskRuntimeStore:
                 "status = 'running', updated_at = ? WHERE task_id = ?",
                 (_json(evidence), candidate, new_revision, now, task_id),
             )
+            self._record_state_event(
+                conn,
+                task_id,
+                new_revision,
+                "worker_result_integrated",
+                {
+                    "result_id": result_id,
+                    "slice_id": row["slice_id"],
+                    "candidate_digest": candidate,
+                    "integrator_session_id": integrator,
+                },
+            )
             return {"task_id": task_id, "result_id": result_id, "slice_id": row["slice_id"], "slice_status": "completed", "state_revision": new_revision, "candidate_digest": candidate, "idempotent_replay": False}
 
     def close_task(
@@ -784,13 +942,94 @@ class TaskRuntimeStore:
                 "UPDATE tasks SET status = 'closed', closure_json = ?, state_revision = state_revision + 1, updated_at = ? WHERE task_id = ?",
                 (_json(closure), _utc_now(), task_id),
             )
+            self._record_state_event(
+                conn,
+                task_id,
+                int(task["state_revision"]) + 1,
+                "task_closed",
+                {"candidate_digest": candidate_digest, "verifier_session_id": verifier},
+            )
         return self.get_task(task_id)
 
     @staticmethod
-    def _task_row(conn: sqlite3.Connection, task_id: str) -> sqlite3.Row:
+    def _state_event_ledger_valid(
+        task_id: str,
+        current_revision: int,
+        rows: Sequence[sqlite3.Row],
+    ) -> bool:
+        if not rows or int(rows[-1]["state_revision"]) != int(current_revision):
+            return False
+        first_revision = int(rows[0]["state_revision"])
+        if [int(row["state_revision"]) for row in rows] != list(
+            range(first_revision, int(current_revision) + 1)
+        ):
+            return False
+        previous_digest = ""
+        for row in rows:
+            if str(row["previous_event_digest"]) != previous_digest:
+                return False
+            identity = {
+                "task_id": task_id,
+                "state_revision": int(row["state_revision"]),
+                "event_type": str(row["event_type"]),
+                "payload": _decode(row["payload_json"], {}),
+                "previous_event_digest": previous_digest,
+                "recorded_at": str(row["recorded_at"]),
+            }
+            if _digest(identity) != str(row["event_digest"]):
+                return False
+            previous_digest = str(row["event_digest"])
+        return True
+
+    @staticmethod
+    def _record_state_event(
+        conn: sqlite3.Connection,
+        task_id: str,
+        state_revision: int,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        previous = conn.execute(
+            "SELECT event_digest FROM task_state_events WHERE task_id = ? "
+            "ORDER BY state_revision DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        previous_digest = str(previous["event_digest"] if previous else "")
+        recorded_at = _utc_now()
+        event_payload = dict(payload)
+        identity = {
+            "task_id": task_id,
+            "state_revision": int(state_revision),
+            "event_type": str(event_type),
+            "payload": event_payload,
+            "previous_event_digest": previous_digest,
+            "recorded_at": recorded_at,
+        }
+        event_digest = _digest(identity)
+        conn.execute(
+            "INSERT INTO task_state_events "
+            "(task_id, state_revision, event_type, payload_json, previous_event_digest, "
+            "event_digest, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id,
+                int(state_revision),
+                str(event_type),
+                _json(event_payload),
+                previous_digest,
+                event_digest,
+                recorded_at,
+            ),
+        )
+
+    def _assert_owner(self, row: sqlite3.Row) -> None:
+        if str(row["owner_profile"]) != self.owner_profile:
+            raise PermissionError("task_owner_profile_mismatch")
+
+    def _task_row(self, conn: sqlite3.Connection, task_id: str) -> sqlite3.Row:
         row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         if row is None:
             raise KeyError(task_id)
+        self._assert_owner(row)
         return row
 
     @staticmethod
@@ -800,8 +1039,24 @@ class TaskRuntimeStore:
             raise RevisionConflict(f"state_revision_conflict expected={expected} actual={actual}")
 
     @staticmethod
-    def _bump_state(conn: sqlite3.Connection, task_id: str) -> None:
-        conn.execute("UPDATE tasks SET state_revision = state_revision + 1, updated_at = ? WHERE task_id = ?", (_utc_now(), task_id))
+    def _bump_state(
+        conn: sqlite3.Connection,
+        task_id: str,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> int:
+        row = conn.execute(
+            "SELECT state_revision FROM tasks WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        revision = int(row["state_revision"]) + 1
+        conn.execute(
+            "UPDATE tasks SET state_revision = ?, updated_at = ? WHERE task_id = ?",
+            (revision, _utc_now(), task_id),
+        )
+        TaskRuntimeStore._record_state_event(
+            conn, task_id, revision, event_type, payload
+        )
+        return revision
 
     @staticmethod
     def _invalidate_claims(conn: sqlite3.Connection, task_id: str, reason: str) -> None:
@@ -824,7 +1079,7 @@ class TaskRuntimeStore:
         )
 
     @staticmethod
-    def _expire_leases(conn: sqlite3.Connection, task_id: str, now: float) -> None:
+    def _expire_leases(conn: sqlite3.Connection, task_id: str, now: float) -> list[str]:
         expired = conn.execute(
             "SELECT slice_id FROM task_slices WHERE task_id = ? AND status = 'claimed' AND lease_expires_at < ?",
             (task_id, now),
@@ -839,6 +1094,7 @@ class TaskRuntimeStore:
                 "UPDATE context_packets SET status = 'expired' WHERE task_id = ? AND slice_id = ? AND status = 'active'",
                 (task_id, row["slice_id"]),
             )
+        return [str(row["slice_id"]) for row in expired]
 
     @staticmethod
     def _validate_plan(definitions: Sequence[Mapping[str, Any]]) -> None:

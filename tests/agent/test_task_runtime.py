@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 
 import pytest
@@ -102,6 +103,64 @@ def test_explicit_runtime_db_overrides_profile_home(monkeypatch, tmp_path):
     assert TaskRuntimeStore.default_path() == explicit
 
 
+def test_legacy_task_owner_is_migrated_to_opening_profile(tmp_path):
+    path = tmp_path / "legacy-owner.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE tasks (
+                task_id TEXT PRIMARY KEY,
+                schema_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                original_sources_json TEXT NOT NULL,
+                source_events_json TEXT NOT NULL,
+                spec_bundle_json TEXT NOT NULL,
+                implementation_graph_json TEXT NOT NULL,
+                evidence_graph_json TEXT NOT NULL,
+                closure_json TEXT NOT NULL,
+                spec_revision INTEGER NOT NULL,
+                plan_revision INTEGER NOT NULL,
+                state_revision INTEGER NOT NULL,
+                candidate_digest TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            INSERT INTO tasks VALUES (
+                'legacy-task', 'hermes.task-record.v1', 'legacy', 'draft',
+                '[]', '[]', '{}', '[]', '[]', '{}', 0, 0, 1, '', 1.0, 1.0
+            );
+            """
+        )
+
+    migrated = TaskRuntimeStore(path, owner_profile="profile-a")
+    task = migrated.get_task("legacy-task")
+    assert task["owner_profile"] == "profile-a"
+    assert task["state_events"][0]["event_type"] == "legacy_projection_anchored"
+
+    with pytest.raises(PermissionError, match="task_owner_profile_mismatch"):
+        TaskRuntimeStore(path, owner_profile="profile-b").get_task("legacy-task")
+
+
+def test_task_owner_profile_is_persisted_and_enforced_even_on_shared_db(tmp_path):
+    path = tmp_path / "shared.db"
+    owner_store = TaskRuntimeStore(path, owner_profile="profile-a")
+    task = owner_store.create_task(
+        title="owned",
+        original_sources=[{"source_id": "S1", "content": "source"}],
+    )
+    assert task["owner_profile"] == "profile-a"
+
+    other_store = TaskRuntimeStore(path, owner_profile="profile-b")
+    with pytest.raises(PermissionError, match="task_owner_profile_mismatch"):
+        other_store.get_task(task["task_id"])
+    with pytest.raises(PermissionError, match="task_owner_profile_mismatch"):
+        other_store.bind_entrypoint(
+            task["task_id"], entrypoint="cli", session_id="cli:foreign"
+        )
+    assert owner_store.get_task(task["task_id"])["bindings"] == []
+
+
 def test_create_persists_original_source_and_cross_entrypoint_binding(tmp_path):
     store = TaskRuntimeStore(tmp_path / "task-runtime.db")
     task = store.create_task(
@@ -150,6 +209,7 @@ def test_stale_revision_result_is_rejected_after_spec_change(tmp_path):
     revised["required_clauses"] = SPEC["required_clauses"] + [{"id": "R2", "text": "new requirement"}]
     store.freeze_spec(task_id, revised, expected_state_revision=current["state_revision"])
 
+    before_rejection = store.get_task(task_id)
     disposition = store.submit_result(
         task_id,
         worker_session_id="worker-a",
@@ -159,6 +219,10 @@ def test_stale_revision_result_is_rejected_after_spec_change(tmp_path):
     )
     assert disposition["disposition"] == "rejected"
     assert "stale_spec_revision" in disposition["reasons"]
+    after_rejection = store.get_task(task_id)
+    assert after_rejection["state_revision"] == before_rejection["state_revision"] + 1
+    assert after_rejection["state_events"][-1]["event_type"] == "worker_result_submitted"
+    assert after_rejection["state_events"][-1]["payload"]["disposition"] == "rejected"
 
 
 def test_accepted_result_cannot_integrate_after_spec_or_plan_change(tmp_path):
@@ -237,6 +301,7 @@ def test_lease_owner_expiry_idempotency_and_owned_path_enforcement(tmp_path):
         result=_result(packet, candidate="sha256:c2"),
         now=114.0,
     )
+    before_duplicate = store.get_task(task_id)
     duplicate = store.submit_result(
         task_id,
         worker_session_id="worker-a",
@@ -247,6 +312,9 @@ def test_lease_owner_expiry_idempotency_and_owned_path_enforcement(tmp_path):
     assert accepted["disposition"] == "accepted_for_integration"
     assert duplicate["result_id"] == accepted["result_id"]
     assert duplicate["idempotent_replay"] is True
+    after_duplicate = store.get_task(task_id)
+    assert after_duplicate["state_revision"] == before_duplicate["state_revision"]
+    assert after_duplicate["state_events"] == before_duplicate["state_events"]
 
     conflicting = store.submit_result(
         task_id,
@@ -269,6 +337,9 @@ def test_lease_reclaim_rotates_fence_and_rejects_stale_owner(tmp_path):
     assert second["packet_id"] != first["packet_id"]
     assert second["lease"]["token"] != first["lease"]["token"]
     assert second["lease"]["owner"] == "worker-new"
+    reclaim_event = store.get_task(task_id)["state_events"][-1]
+    assert reclaim_event["event_type"] == "slice_claimed"
+    assert reclaim_event["payload"]["expired_slice_ids"] == [first["slice_id"]]
 
     stale = store.submit_result(
         task_id,
@@ -457,3 +528,67 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
     assert closed["status"] == "closed"
     assert closed["closure"]["candidate_digest"] == "sha256:candidate-final"
     assert closed["closure"]["verifier_session_id"] == "closure-fresh"
+
+
+def test_legacy_projection_is_anchored_once_without_fabricating_history(tmp_path):
+    path = tmp_path / "legacy.db"
+    store = TaskRuntimeStore(path)
+    task = store.create_task(
+        title="legacy",
+        original_sources=[{"source_id": "S1", "content": "source"}],
+    )
+    task_id = task["task_id"]
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TRIGGER task_state_events_no_delete")
+        conn.execute("DELETE FROM task_state_events WHERE task_id = ?", (task_id,))
+        conn.execute(
+            "UPDATE tasks SET state_revision = 7, status = 'running' WHERE task_id = ?",
+            (task_id,),
+        )
+
+    migrated = TaskRuntimeStore(path).get_task(task_id)
+    assert [(item["state_revision"], item["event_type"]) for item in migrated["state_events"]] == [
+        (7, "legacy_projection_anchored")
+    ]
+    reopened = TaskRuntimeStore(path).get_task(task_id)
+    assert reopened["state_events"] == migrated["state_events"]
+
+
+def test_state_event_ledger_is_revision_aligned_hash_chained_and_append_only(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "ledger.db")
+    task = store.create_task(
+        title="ledger",
+        original_sources=[{"source_id": "S1", "content": "source"}],
+    )
+    task_id = task["task_id"]
+    store.bind_entrypoint(task_id, entrypoint="cli", session_id="cli:ledger")
+    task = store.append_source_event(
+        task_id,
+        {"event_id": "event-1", "content": "correction"},
+    )
+
+    events = task["state_events"]
+    assert [item["state_revision"] for item in events] == list(
+        range(1, task["state_revision"] + 1)
+    )
+    assert events[0]["event_type"] == "task_created"
+    assert events[0]["previous_event_digest"] == ""
+    for previous, current in zip(events, events[1:]):
+        assert current["previous_event_digest"] == previous["event_digest"]
+
+    with sqlite3.connect(store.path) as conn:
+        with pytest.raises(sqlite3.IntegrityError, match="task_state_events_append_only"):
+            conn.execute(
+                "UPDATE task_state_events SET event_type = 'tampered' WHERE task_id = ?",
+                (task_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="task_state_events_append_only"):
+            conn.execute("DELETE FROM task_state_events WHERE task_id = ?", (task_id,))
+        conn.execute("DROP TRIGGER task_state_events_no_update")
+        conn.execute(
+            "UPDATE task_state_events SET payload_json = '{\"tampered\":true}' "
+            "WHERE task_id = ? AND state_revision = ?",
+            (task_id, task["state_revision"]),
+        )
+    with pytest.raises(ValueError, match="task_state_event_ledger_invalid"):
+        store.get_task(task_id)
