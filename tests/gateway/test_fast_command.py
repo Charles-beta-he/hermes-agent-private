@@ -10,6 +10,8 @@ import pytest
 import yaml
 
 import gateway.run as gateway_run
+from agent.task_runtime import TaskRuntimeStore
+from agent.task_runtime_ingress import MAX_CONTEXT_BYTES, hydrate_bound_task_context
 from gateway.config import Platform
 from gateway.platforms.base import MessageEvent
 from gateway.session import SessionSource
@@ -206,6 +208,101 @@ async def test_run_agent_passes_priority_processing_to_gateway_agent(monkeypatch
     assert result["final_response"] == "ok"
     assert _CapturingAgent.last_init["service_tier"] == "priority"
     assert _CapturingAgent.last_init["request_overrides"] == {"service_tier": "priority"}
+
+
+@pytest.mark.asyncio
+async def test_telegram_gateway_agent_path_hydrates_bound_task_without_adapter_send(
+    monkeypatch, tmp_path
+):
+    class _TaskIngressAgent(_CapturingAgent):
+        task_context = None
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.platform = kwargs.get("platform")
+            self.session_id = kwargs.get("session_id")
+
+        def run_conversation(
+            self,
+            user_message,
+            conversation_history=None,
+            task_id=None,
+            persist_user_message=None,
+            persist_user_timestamp=None,
+        ):
+            type(self).task_context = hydrate_bound_task_context(
+                self,
+                user_message=user_message,
+                turn_id="gateway-turn-1",
+            )
+            return super().run_conversation(
+                user_message,
+                conversation_history=conversation_history,
+                task_id=task_id,
+                persist_user_message=persist_user_message,
+                persist_user_timestamp=persist_user_timestamp,
+            )
+
+    fake_run_agent = types.ModuleType("run_agent")
+    setattr(fake_run_agent, "AIAgent", _TaskIngressAgent)
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    store = TaskRuntimeStore(TaskRuntimeStore.default_path())
+    task = store.create_task(
+        title="gateway task",
+        original_sources=[{"source_id": "S1", "content": "source"}],
+    )
+    store.bind_entrypoint(
+        task["task_id"],
+        entrypoint="telegram",
+        session_id="gateway-session-1",
+    )
+
+    runner = _make_runner()
+    no_send_adapter = MagicMock()
+    no_send_adapter.SUPPORTS_MESSAGE_EDITING = False
+    no_send_adapter.send = AsyncMock()
+    no_send_adapter.get_pending_message.return_value = None
+    runner.adapters = {Platform.TELEGRAM: no_send_adapter}
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+    monkeypatch.setattr(gateway_run, "_env_path", tmp_path / ".env")
+    monkeypatch.setattr(gateway_run, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {})
+    monkeypatch.setattr(gateway_run, "_load_gateway_runtime_config", lambda: {})
+    monkeypatch.setattr(gateway_run, "_resolve_gateway_model", lambda config=None: "test-model")
+    monkeypatch.setattr(
+        gateway_run,
+        "_resolve_runtime_agent_kwargs",
+        lambda: {"provider": "test", "api_key": "not-a-real-key"},
+    )
+    import hermes_cli.tools_config as tools_config
+
+    monkeypatch.setattr(
+        tools_config, "_get_platform_tools", lambda user_config, platform_key: {"core"}
+    )
+
+    result = await runner._run_agent(
+        message="exact telegram ingress",
+        context_prompt="",
+        history=[],
+        source=_make_source(),
+        session_id="gateway-session-1",
+        session_key="agent:main:telegram:dm:12345",
+    )
+
+    assert result["final_response"] == "ok"
+    assert _TaskIngressAgent.last_init is not None
+    agent_init = _TaskIngressAgent.last_init
+    assert agent_init["platform"] == "telegram"
+    assert agent_init["session_id"] == "gateway-session-1"
+    assert _TaskIngressAgent.task_context is not None
+    assert task["task_id"] in _TaskIngressAgent.task_context
+    assert len(_TaskIngressAgent.task_context.encode("utf-8")) <= MAX_CONTEXT_BYTES
+    persisted = store.get_task(task["task_id"])
+    assert persisted["source_events"][-1]["content"] == "exact telegram ingress"
+    assert persisted["source_events"][-1]["entrypoint"] == "telegram"
+    no_send_adapter.send.assert_not_awaited()
 
 
 @pytest.mark.asyncio
