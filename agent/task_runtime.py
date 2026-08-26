@@ -707,6 +707,64 @@ class TaskRuntimeStore:
             "reason": str(reason or "worker_failed"),
         }
 
+    def quarantine_claim(
+        self,
+        task_id: str,
+        *,
+        worker_session_id: str,
+        packet_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Fence an uncertain timed-out worker without making its workspace retryable."""
+        worker = str(worker_session_id or "").strip()
+        if not worker:
+            raise ValueError("worker_session_id_required")
+        with self._write() as conn:
+            self._task_row(conn, task_id)
+            packet = conn.execute(
+                "SELECT * FROM context_packets WHERE packet_id = ? AND task_id = ?",
+                (packet_id, task_id),
+            ).fetchone()
+            if packet is None:
+                raise ValueError("packet_not_found")
+            if packet["status"] != "active":
+                raise ValueError("packet_not_active")
+            if packet["lease_owner"] != worker:
+                raise ValueError("lease_owner_mismatch")
+            updated = conn.execute(
+                """
+                UPDATE task_slices
+                SET status = 'quarantined'
+                WHERE task_id = ? AND slice_id = ? AND status = 'claimed'
+                    AND lease_owner = ? AND lease_token = ?
+                """,
+                (task_id, packet["slice_id"], worker, packet["lease_token"]),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("lease_fence_mismatch")
+            conn.execute(
+                "UPDATE context_packets SET status = 'quarantined' WHERE packet_id = ?",
+                (packet_id,),
+            )
+            self._bump_state(
+                conn,
+                task_id,
+                "slice_claim_quarantined",
+                {
+                    "slice_id": packet["slice_id"],
+                    "packet_id": packet_id,
+                    "worker_session_id": worker,
+                    "reason": str(reason or "worker_termination_unproven"),
+                },
+            )
+        return {
+            "task_id": task_id,
+            "packet_id": packet_id,
+            "worker_session_id": worker,
+            "status": "quarantined",
+            "reason": str(reason or "worker_termination_unproven"),
+        }
+
     def submit_result(
         self,
         task_id: str,
@@ -776,6 +834,58 @@ class TaskRuntimeStore:
                 }
                 if any(field not in payload for field in required_fields):
                     reasons.append("worker_result_missing_required_fields")
+                else:
+                    list_fields = (
+                        "claims",
+                        "changed_artifacts",
+                        "evidence_refs",
+                        "verification_results",
+                        "risks",
+                        "unknowns",
+                    )
+                    if any(not isinstance(payload.get(field), list) for field in list_fields):
+                        reasons.append("worker_result_invalid_field_types")
+                    else:
+                        claims = {str(item) for item in payload["claims"] if str(item)}
+                        assigned_claims = {
+                            str(item)
+                            for field in ("required_clauses", "negative_requirements")
+                            for item in (packet_payload.get(field) or [])
+                        }
+                        if not assigned_claims.issubset(claims):
+                            reasons.append("worker_claims_incomplete")
+                        evidence_refs = payload["evidence_refs"]
+                        if not evidence_refs or any(
+                            not isinstance(item, Mapping)
+                            or not str(item.get("ref") or "").strip()
+                            for item in evidence_refs
+                        ):
+                            reasons.append("worker_evidence_refs_invalid")
+                        verification_results = payload["verification_results"]
+                        expected_commands = {
+                            str(item) for item in packet_payload.get("verification_commands") or []
+                        }
+                        observed_commands = {
+                            str(item.get("command") or "")
+                            for item in verification_results
+                            if isinstance(item, Mapping)
+                        }
+                        if (
+                            not verification_results
+                            or any(not isinstance(item, Mapping) for item in verification_results)
+                            or not expected_commands.issubset(observed_commands)
+                        ):
+                            reasons.append("worker_verification_incomplete")
+                        elif any(
+                            type(item.get("exit_code")) is not int
+                            or int(item["exit_code"]) != 0
+                            for item in verification_results
+                        ):
+                            reasons.append("worker_verification_failed")
+                        if payload.get("state_delta_proposal") != {"slice_status": "completed"}:
+                            reasons.append("worker_state_delta_invalid")
+                        if not str(payload.get("candidate_digest") or "").strip():
+                            reasons.append("candidate_digest_required")
             disposition = "rejected" if reasons else "accepted_for_integration"
             now_iso = _utc_now()
             conn.execute(

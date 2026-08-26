@@ -370,6 +370,47 @@ def test_lease_owner_expiry_idempotency_and_owned_path_enforcement(tmp_path):
     assert store.get_task(task_id)["slices"][0]["result_id"] == accepted["result_id"]
 
 
+def test_worker_result_schema_and_success_evidence_fail_closed(tmp_path):
+    store, task_id = _ready_store(tmp_path)
+    packet = store.claim_next_slice(
+        task_id, worker_session_id="worker-a", lease_seconds=60, now=100.0
+    )
+    assert packet is not None
+    cases = [
+        ({"claims": "R1"}, "worker_result_invalid_field_types"),
+        ({"claims": ["R1"]}, "worker_claims_incomplete"),
+        ({"evidence_refs": []}, "worker_evidence_refs_invalid"),
+        (
+            {"verification_results": [{"command": "pytest -q wrong.py", "exit_code": 0}]},
+            "worker_verification_incomplete",
+        ),
+        (
+            {
+                "verification_results": [
+                    {"command": packet["verification_commands"][0], "exit_code": 1}
+                ]
+            },
+            "worker_verification_failed",
+        ),
+        ({"state_delta_proposal": {"slice_status": "running"}}, "worker_state_delta_invalid"),
+        ({"candidate_digest": ""}, "candidate_digest_required"),
+    ]
+    for index, (mutation, expected_reason) in enumerate(cases, start=1):
+        result = _result(packet, candidate=f"sha256:case-{index}")
+        result.update(mutation)
+        receipt = store.submit_result(
+            task_id,
+            worker_session_id="worker-a",
+            packet_id=packet["packet_id"],
+            result=result,
+            now=100.0 + index,
+        )
+        assert receipt["disposition"] == "rejected"
+        assert expected_reason in receipt["reasons"]
+
+    assert store.get_task(task_id)["slices"][0]["status"] == "claimed"
+
+
 def test_lease_reclaim_rotates_fence_and_rejects_stale_owner(tmp_path):
     store, task_id = _ready_store(tmp_path)
     first = store.claim_next_slice(task_id, worker_session_id="worker-old", lease_seconds=10, now=100.0)

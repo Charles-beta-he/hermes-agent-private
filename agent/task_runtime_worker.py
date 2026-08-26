@@ -224,19 +224,32 @@ def dispatch_next_slice(
             if actual_paths != declared_paths:
                 raise WorkerOutputError("worker_write_set_mismatch")
     except WorkerOutputError as exc:
-        runtime_store.release_claim(
-            task_id,
-            worker_session_id=worker_session_id,
-            packet_id=packet["packet_id"],
-            reason=str(exc),
+        error = str(exc)
+        termination_proven = bool(
+            execution and execution.get("worker_terminated") is True
         )
+        if error == "worker_timeout" and not termination_proven:
+            claim_receipt = runtime_store.quarantine_claim(
+                task_id,
+                worker_session_id=worker_session_id,
+                packet_id=packet["packet_id"],
+                reason="worker_timeout_termination_unproven",
+            )
+        else:
+            claim_receipt = runtime_store.release_claim(
+                task_id,
+                worker_session_id=worker_session_id,
+                packet_id=packet["packet_id"],
+                reason=error,
+            )
         return {
             "success": False,
-            "error": str(exc),
+            "error": error,
             "task_id": task_id,
             "worker_session_id": worker_session_id,
             "context_packet": packet,
             "worker_execution": execution,
+            "claim_receipt": claim_receipt,
         }
     except KeyboardInterrupt:
         runtime_store.release_claim(

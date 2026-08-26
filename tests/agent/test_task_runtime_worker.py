@@ -209,11 +209,20 @@ def test_worker_exception_releases_claim_for_retry(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("execution_status", "expected_error"),
-    [("timeout", "worker_timeout"), ("cancelled", "worker_cancelled"), ("error", "worker_execution_failed")],
+    ("execution_status", "expected_error", "worker_terminated", "expected_slice_status"),
+    [
+        ("timeout", "worker_timeout", False, "quarantined"),
+        ("timeout", "worker_timeout", True, "pending"),
+        ("cancelled", "worker_cancelled", None, "pending"),
+        ("error", "worker_execution_failed", None, "pending"),
+    ],
 )
-def test_worker_terminal_execution_status_releases_claim_for_retry(
-    tmp_path, execution_status, expected_error
+def test_worker_terminal_execution_status_fences_claim_safely(
+    tmp_path,
+    execution_status,
+    expected_error,
+    worker_terminated,
+    expected_slice_status,
 ):
     store, task_id = _ready(tmp_path)
 
@@ -221,12 +230,15 @@ def test_worker_terminal_execution_status_releases_claim_for_retry(
         return SimpleNamespace(session_id=worker_session_id)
 
     def runner(*, child, goal, parent_agent):
-        return {
+        execution = {
             "status": execution_status,
             "summary": None,
             "error": f"simulated {execution_status}",
             "exit_reason": execution_status,
         }
+        if worker_terminated is not None:
+            execution["worker_terminated"] = worker_terminated
+        return execution
 
     receipt = dispatch_next_slice(
         SimpleNamespace(session_id="parent-session"),
@@ -239,7 +251,16 @@ def test_worker_terminal_execution_status_releases_claim_for_retry(
     assert receipt["success"] is False
     assert receipt["error"] == expected_error
     assert receipt["worker_execution"]["status"] == execution_status
-    assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+    assert receipt["claim_receipt"]["status"] == (
+        "quarantined" if expected_slice_status == "quarantined" else "abandoned"
+    )
+    task = store.get_task(task_id)
+    assert task["slices"][0]["status"] == expected_slice_status
+    if expected_slice_status == "quarantined":
+        assert task["state_events"][-1]["event_type"] == "slice_claim_quarantined"
+        assert store.claim_next_slice(
+            task_id, worker_session_id="worker-retry", lease_seconds=60
+        ) is None
 
 
 def test_worker_pool_never_exceeds_configured_concurrency(tmp_path, monkeypatch):
