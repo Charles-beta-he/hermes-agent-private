@@ -223,6 +223,42 @@ def test_create_persists_original_source_and_cross_entrypoint_binding(tmp_path):
     assert restored["plan_revision"] == 0
 
 
+def test_plan_must_cover_frozen_claims_sources_and_verification_contract(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "task-runtime.db")
+    task = store.create_task(
+        title="plan contract",
+        original_sources=[{"source_id": "S-U1", "content": "source"}],
+    )
+    task = store.freeze_spec(
+        task["task_id"], SPEC, expected_state_revision=task["state_revision"]
+    )
+    valid = _slice("s1")
+    invalid_cases = [
+        (dict(valid, required_clauses=["R-UNKNOWN"]), "slice_claim_not_in_frozen_spec"),
+        (
+            dict(valid, negative_requirements=[]),
+            "plan_closure_criteria_unassigned",
+        ),
+        (dict(valid, source_refs=["S-UNKNOWN"]), "slice_source_ref_unknown"),
+        (dict(valid, verification_commands=[]), "slice_verification_commands_required"),
+        (
+            dict(valid, forbidden_changes=["src/s1.py"]),
+            "slice_owned_and_forbidden_paths_overlap",
+        ),
+    ]
+    for definition, expected_error in invalid_cases:
+        with pytest.raises(ValueError, match=expected_error):
+            store.set_plan(
+                task["task_id"],
+                [definition],
+                expected_state_revision=task["state_revision"],
+            )
+    unchanged = store.get_task(task["task_id"])
+    assert unchanged["state_revision"] == task["state_revision"]
+    assert unchanged["plan_revision"] == 0
+    assert unchanged["slices"] == []
+
+
 def test_context_packet_is_canonical_immutable_and_dependency_gated(tmp_path):
     store, task_id = _ready_store(tmp_path)
 

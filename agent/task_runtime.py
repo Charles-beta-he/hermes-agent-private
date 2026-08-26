@@ -507,6 +507,50 @@ class TaskRuntimeStore:
             self._expect_revision(row, expected_state_revision)
             if int(row["spec_revision"]) < 1:
                 raise ValueError("spec_not_frozen")
+            spec = _decode(row["spec_bundle_json"], {})
+            spec_claims = {
+                str(item.get("id") or "")
+                for field in ("required_clauses", "negative_requirements")
+                for item in (spec.get(field) or [])
+                if isinstance(item, Mapping) and str(item.get("id") or "")
+            }
+            closure_criteria = {
+                str(item) for item in spec.get("closure_criteria") or []
+            }
+            assigned_claims = {
+                str(claim)
+                for definition in definitions
+                for field in ("required_clauses", "negative_requirements")
+                for claim in (definition.get(field) or [])
+            }
+            if not assigned_claims.issubset(spec_claims):
+                raise ValueError("slice_claim_not_in_frozen_spec")
+            if not closure_criteria.issubset(assigned_claims):
+                raise ValueError("plan_closure_criteria_unassigned")
+            source_ids = {
+                str(item.get("source_id") or "")
+                for item in _decode(row["original_sources_json"], [])
+                if isinstance(item, Mapping) and str(item.get("source_id") or "")
+            }
+            source_ids.update(
+                str(event["event_id"])
+                for event in conn.execute(
+                    "SELECT event_id FROM source_events WHERE task_id = ?", (task_id,)
+                ).fetchall()
+            )
+            for definition in definitions:
+                refs = {str(item) for item in definition.get("source_refs") or []}
+                if not refs or not refs.issubset(source_ids):
+                    raise ValueError("slice_source_ref_unknown")
+                commands = definition.get("verification_commands")
+                if not isinstance(commands, list) or not commands or any(
+                    not str(command or "").strip() for command in commands
+                ):
+                    raise ValueError("slice_verification_commands_required")
+                owned = {str(item) for item in definition.get("owned_paths") or []}
+                forbidden = {str(item) for item in definition.get("forbidden_changes") or []}
+                if owned & forbidden:
+                    raise ValueError("slice_owned_and_forbidden_paths_overlap")
             self._invalidate_claims(conn, task_id, "plan_changed")
             conn.execute("DELETE FROM task_slices WHERE task_id = ?", (task_id,))
             for ordinal, definition in enumerate(definitions):
