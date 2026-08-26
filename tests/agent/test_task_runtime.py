@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
@@ -173,6 +174,99 @@ def test_lease_owner_expiry_idempotency_and_owned_path_enforcement(tmp_path):
     assert accepted["disposition"] == "accepted_for_integration"
     assert duplicate["result_id"] == accepted["result_id"]
     assert duplicate["idempotent_replay"] is True
+
+    conflicting = store.submit_result(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        result=_result(packet, candidate="sha256:different"),
+        now=116.0,
+    )
+    assert conflicting["disposition"] == "rejected"
+    assert "conflicting_result_for_packet" in conflicting["reasons"]
+    assert store.get_task(task_id)["slices"][0]["result_id"] == accepted["result_id"]
+
+
+def test_concurrent_claims_have_one_lease_owner(tmp_path):
+    store, task_id = _ready_store(tmp_path)
+    barrier = threading.Barrier(3)
+    packets = []
+    errors = []
+
+    def claim(worker):
+        try:
+            barrier.wait(timeout=5)
+            packets.append(store.claim_next_slice(task_id, worker_session_id=worker, lease_seconds=60))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=claim, args=(f"worker-{i}",)) for i in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait(timeout=5)
+    for thread in threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert errors == []
+    claimed = [packet for packet in packets if packet is not None]
+    assert len(claimed) == 1
+    assert claimed[0]["lease"]["owner"] in {"worker-0", "worker-1"}
+
+
+def test_release_claim_is_owner_and_fence_guarded(tmp_path):
+    store, task_id = _ready_store(tmp_path)
+    packet = store.claim_next_slice(task_id, worker_session_id="worker-a", lease_seconds=60)
+    with pytest.raises(ValueError, match="lease_owner_mismatch"):
+        store.release_claim(
+            task_id,
+            worker_session_id="worker-b",
+            packet_id=packet["packet_id"],
+            reason="wrong owner",
+        )
+    assert store.get_task(task_id)["slices"][0]["status"] == "claimed"
+    receipt = store.release_claim(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        reason="worker failed",
+    )
+    assert receipt["status"] == "abandoned"
+    assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+    with pytest.raises(ValueError, match="packet_not_active"):
+        store.release_claim(
+            task_id,
+            worker_session_id="worker-a",
+            packet_id=packet["packet_id"],
+            reason="stale replay",
+        )
+
+
+def test_spec_change_invalidates_integrated_outputs_and_downstream_state(tmp_path):
+    store, task_id = _ready_store(tmp_path)
+    packet = store.claim_next_slice(task_id, worker_session_id="worker-a", lease_seconds=60, now=100.0)
+    accepted = store.submit_result(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        result=_result(packet, candidate="sha256:old"),
+        now=101.0,
+    )
+    store.integrate_result(task_id, accepted["result_id"], integrator_session_id="integrator")
+    before = store.get_task(task_id)
+    assert before["slices"][0]["status"] == "completed"
+    assert before["candidate_digest"] == "sha256:old"
+
+    changed = store.freeze_spec(
+        task_id,
+        SPEC,
+        expected_state_revision=before["state_revision"],
+    )
+    assert [item["status"] for item in changed["slices"]] == ["pending", "pending"]
+    assert changed["candidate_digest"] == ""
+    assert changed["evidence_graph"] == []
+    assert changed["closure"] == {}
+    assert store.claim_next_slice(task_id, worker_session_id="worker-b", lease_seconds=60)["slice_id"] == "s1"
 
 
 def test_deterministic_integration_unlocks_dependency_and_independent_closure(tmp_path):

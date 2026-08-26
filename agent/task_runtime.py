@@ -313,7 +313,9 @@ class TaskRuntimeStore:
             conn.execute(
                 """
                 UPDATE tasks SET spec_bundle_json = ?, spec_revision = spec_revision + 1,
-                    state_revision = state_revision + 1, status = 'specified', updated_at = ?
+                    state_revision = state_revision + 1, status = 'specified',
+                    candidate_digest = '', evidence_graph_json = '[]', closure_json = '{}',
+                    updated_at = ?
                 WHERE task_id = ?
                 """,
                 (_json(spec), _utc_now(), task_id),
@@ -451,6 +453,55 @@ class TaskRuntimeStore:
         expected = str(payload.pop("packet_digest", ""))
         return bool(expected) and expected == _digest(payload)
 
+    def release_claim(
+        self,
+        task_id: str,
+        *,
+        worker_session_id: str,
+        packet_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Abandon one active lease after local worker failure and make it retryable."""
+        worker = str(worker_session_id or "").strip()
+        if not worker:
+            raise ValueError("worker_session_id_required")
+        with self._write() as conn:
+            self._task_row(conn, task_id)
+            packet = conn.execute(
+                "SELECT * FROM context_packets WHERE packet_id = ? AND task_id = ?",
+                (packet_id, task_id),
+            ).fetchone()
+            if packet is None:
+                raise ValueError("packet_not_found")
+            if packet["status"] != "active":
+                raise ValueError("packet_not_active")
+            if packet["lease_owner"] != worker:
+                raise ValueError("lease_owner_mismatch")
+            updated = conn.execute(
+                """
+                UPDATE task_slices
+                SET status = 'pending', lease_owner = '', lease_token = '',
+                    lease_expires_at = NULL, result_id = ''
+                WHERE task_id = ? AND slice_id = ? AND status = 'claimed'
+                    AND lease_owner = ? AND lease_token = ?
+                """,
+                (task_id, packet["slice_id"], worker, packet["lease_token"]),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("lease_fence_mismatch")
+            conn.execute(
+                "UPDATE context_packets SET status = 'abandoned' WHERE packet_id = ?",
+                (packet_id,),
+            )
+            self._bump_state(conn, task_id)
+        return {
+            "task_id": task_id,
+            "packet_id": packet_id,
+            "worker_session_id": worker,
+            "status": "abandoned",
+            "reason": str(reason or "worker_failed"),
+        }
+
     def submit_result(
         self,
         task_id: str,
@@ -478,6 +529,17 @@ class TaskRuntimeStore:
             else:
                 slice_id = packet["slice_id"]
                 packet_payload = _decode(packet["payload_json"], {})
+                prior_for_packet = conn.execute(
+                    """
+                    SELECT result_id FROM worker_results
+                    WHERE task_id = ? AND packet_id = ?
+                        AND disposition IN ('accepted_for_integration', 'integrated')
+                    LIMIT 1
+                    """,
+                    (task_id, packet_id),
+                ).fetchone()
+                if prior_for_packet is not None and prior_for_packet["result_id"] != identity:
+                    reasons.append("conflicting_result_for_packet")
                 if packet["task_id"] != task_id:
                     reasons.append("packet_task_mismatch")
                 if int(packet["spec_revision"]) != int(task["spec_revision"]):
@@ -677,7 +739,8 @@ class TaskRuntimeStore:
         conn.execute("UPDATE context_packets SET status = 'invalidated' WHERE task_id = ? AND status IN ('active', 'submitted')", (task_id,))
         conn.execute(
             "UPDATE task_slices SET status = 'pending', lease_owner = '', lease_token = '', "
-            "lease_expires_at = NULL, result_id = '' WHERE task_id = ? AND status IN ('claimed', 'submitted')",
+            "lease_expires_at = NULL, result_id = '', integrated_state_revision = NULL "
+            "WHERE task_id = ? AND status IN ('claimed', 'submitted', 'completed')",
             (task_id,),
         )
 

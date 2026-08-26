@@ -57,7 +57,7 @@ def _ra():
 
 
 AGENT_RUNTIME_POST_HOOK_TOOL_NAMES = frozenset(
-    {"todo", "session_search", "memory", "clarify", "read_terminal", "delegate_task"}
+    {"todo", "session_search", "memory", "clarify", "read_terminal", "delegate_task", "task_runtime_worker"}
 )
 
 
@@ -2322,6 +2322,15 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
                 ),
                 next_args,
             )
+    elif function_name == "task_runtime_worker":
+        def _execute(next_args: dict) -> Any:
+            from agent.task_runtime_worker import dispatch_next_slice
+            receipt = dispatch_next_slice(
+                agent,
+                task_id=str(next_args.get("task_id") or ""),
+                lease_seconds=int(next_args.get("lease_seconds") or 900),
+            )
+            return _finish_agent_tool(json.dumps(receipt, ensure_ascii=False), next_args)
     elif function_name == "delegate_task":
         def _execute(next_args: dict) -> Any:
             return _finish_agent_tool(agent._dispatch_delegate_task(next_args), next_args)

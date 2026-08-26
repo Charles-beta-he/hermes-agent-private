@@ -1135,6 +1135,8 @@ def _build_child_agent(
     # 'leaf' (default) cannot; 'orchestrator' retains the delegation
     # toolset subject to depth/kill-switch bounds applied below.
     role: str = "leaf",
+    # Trusted task-runtime executor may pre-allocate lease/session identity.
+    forced_session_id: Optional[str] = None,
 ):
     """
     Build a child AIAgent on the main thread (thread-safe construction).
@@ -1424,6 +1426,7 @@ def _build_child_agent(
         providers_order=child_providers_order,
         provider_sort=child_provider_sort,
         openrouter_min_coding_score=child_openrouter_min_coding_score,
+        session_id=forced_session_id,  # type: ignore[arg-type]
         tool_progress_callback=child_progress_cb,
         iteration_budget=None,  # fresh per-turn budget per subagent
         graph_budget=child_graph_budget,
