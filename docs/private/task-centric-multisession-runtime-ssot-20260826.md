@@ -147,9 +147,9 @@ BR-02. Every accepted state transition uses optimistic revision/CAS semantics.
 BR-03. Channel binding uses exact platform/chat/thread/session identifiers plus task_id; fuzzy recency may suggest but never commit a binding.
 BR-04. A task correction creates a new spec revision and deterministically invalidates dependent packets, results, evidence and candidates.
 BR-05. A ContextPacket is accepted only when all referenced revisions are current and its canonical digest matches.
-BR-06. A WorkerResult is accepted only for a valid lease/fencing token and matching input digest; stale or duplicate results are rejected or idempotently read back.
+BR-06. A WorkerResult is accepted only for a valid owner, lease/fencing token and matching input digest. A successful proposal must cover the slice's assigned positive/negative claims, reference valid evidence, report every required verification command with exit code zero, propose only its own slice completion and carry a non-empty candidate digest. Exact same-owner duplicate results are idempotently read back only after owner validation.
 BR-07. WorkerResult cannot grant authority, mark the task complete, mutate external adapters or rewrite canonical source requirements.
-BR-08. Bounded pool capacity is fixed by config; completion/refusal/timeout frees capacity and ready work may refill it.
+BR-08. Bounded pool capacity is fixed by config. Completion/refusal/cancelled/error paths may free capacity after worker exit; a timeout may release its claim only with explicit child-termination proof, otherwise the claim and packet are quarantined and cannot be retried.
 BR-09. Full Worker output is stored as an artifact/evidence reference; ingress contexts receive only bounded projections.
 BR-10. Candidate verification, review and closure bind the same candidate digest.
 BR-11. Fresh closure reads original source refs, current frozen spec, candidate identity, evidence matrix and unresolved findings; it does not inherit implementation conversation history.
@@ -161,6 +161,7 @@ BR-16. Existing prompt caching remains byte-stable for a conversation; dynamic t
 BR-17. An exact external entrypoint binding is immutable: exact replay is idempotent and cross-task replacement fails closed.
 BR-18. A write slice executes only in a clean linked Git worktree whose HEAD matches the packet's workspace_base_commit; post-run HEAD must remain unchanged and the actual Git write set must exactly equal WorkerResult.changed_artifacts.
 BR-19. Every durable state_revision has exactly one append-only TaskStateLedger event in the same transaction; events are digest-chained, readback-verified and profile-owned. Legacy databases receive one explicit current-projection anchor and never fabricated history.
+BR-20. Every ImplementationGraph slice must map only to frozen spec claims and known source references, carry a non-empty verification contract, collectively cover every closure criterion, and keep owned paths disjoint from forbidden paths.
 
 ## 5. Negative cases
 
@@ -183,6 +184,10 @@ N-16. Replaying an existing entrypoint binding must not bump state_revision, and
 N-17. A missing, dirty, non-linked, path-escaping or wrong-base worker workspace must not start execution.
 N-18. A worker must not hide a changed path or move the fenced workspace HEAD by committing its own changes.
 N-19. Ledger UPDATE/DELETE, digest/payload tamper, revision gaps, cross-profile reads or mutations, and idempotent replay that appends a second event must fail closed.
+N-20. Cross-profile exact WorkerResult replay must not reveal an existing receipt before owner validation.
+N-21. Empty/incomplete claims, invalid evidence references, missing/failing verification results, an invalid state delta or an empty candidate digest must not be accepted for integration.
+N-22. A timed-out worker without explicit termination proof must not release its slice for a concurrent retry; the slice must remain quarantined.
+N-23. An ImplementationGraph must not assign unknown claims/sources, omit a closure criterion or verification command, or overlap owned and forbidden paths.
 
 ## 6. Dependency-ordered implementation DAG
 
@@ -258,8 +263,12 @@ G7 — activation, separately authorized
 | TaskStateLedger and explicit owner | `ac7dcee2cb600fecd3a486262854afafea3a5028` / tree `450c8db810042d9ec4029657981fb9fb4e138035` | post-commit runtime focus `61 passed in 2.63s`; delegate `178 passed, 6 subtests`; revision-aligned digest chain, DB append-only, corruption readback, one-time legacy anchor, rejected-result and replay semantics, owner migration/isolation | independent adversarial verdict pending; local code only |
 | Telegram GatewayRunner task ingress | `8c4b3a7c1be4d34368475865a2da16d61fbf4aa7` / tree `3d9ed3ddf76321443eeff54bff934a4cde16c63d` | GatewayRunner `_run_agent` passes exact `platform=telegram` and durable session ID into task ingress; bound task projection is byte-bounded; source event persists; adapter `send` remained zero; `7 passed` gateway file and `10 passed` ingress/process/session focus | no provider call or external send; full platform receive→response-delivery adapter harness remains open |
 | Bounded ingress field allowlist | `7735231569e59b7bf84ed2046799967d3fe91f63` / tree `f53eb180bf2ab756057efed50938d308c3be6648` | exact top-level projection key set pinned; original source and current user-message bodies absent; latest combined runtime/gateway focus `68 passed in 2.49s` | full Worker artifacts remain store-only; independent review pending |
+| Owner-before-result-replay | `2dabe8ba7abc30c6eb8254edc4d7183995a15395` / tree `cd5ac1777c709d021479ccce7a70267a271f7391` | exact cross-profile replay fails with `task_owner_profile_mismatch`; same-owner replay remains revision/event-neutral; combined focus `69 passed in 2.64s` | local code only |
+| Strict WorkerResult and timeout quarantine | `662cc5c85b5aba7ae34151c1928720c2b75d4210` / tree `e91b266b3ac811015b9d89cc79c03770e55d6429` | success claims/evidence/verification/state-delta/candidate fail-closed matrix; unproven timeout becomes non-retryable `quarantined`; explicit `worker_terminated=true` permits release; combined focus `71 passed in 2.52s` | hard process termination and residual-writer readback remain open |
+| Frozen-plan semantic binding | `d50e53c26579b463de7f02b133772670f383ea39` / tree `b9a9d47a076315154611594ad7945040733d7775` | unknown claim/source, omitted closure/verification and owned-forbidden overlap negatives; failed plan leaves revisions/projection unchanged; selected focus `40 passed in 2.16s` | automatic workspace allocation/reaper remains open |
+| Telegram offline delivery rail | `94f002c5c98c67991927e00c7c51daa9f64d8e72` / tree `4aa367abaa1eae1765af5bae89917c50f242769e` | `BasePlatformAdapter._process_message_background` → registered handler → `GatewayRunner._run_agent` → bounded task hydration → one in-memory response delivery; focused `2 passed`, full file `8 passed` | fake adapter and fake Agent; no provider, network or external message; not a live Telegram E2E |
 
-Open evidence gaps remain material: full platform receive→GatewayRunner→response-delivery Telegram no-send harness, automatic workspace lease/reaper lifecycle, hard timeout child-exit readback, candidate-bound fresh closure, and independent no-P0/P1 review. The broad `tests/agent` run on this worktree is not green (`120 failed, 5755 passed, 37 skipped`); failures were highly cross-cutting and accompanied by shared logging/temp-home errors, while the task-runtime focus and the one observed runtime-cwd failure both passed in isolated reruns. These failures are not silently waived and require candidate-bound triage before closure. Therefore this ledger is an implementation checkpoint, not a candidate freeze or activation authorization.
+Open evidence gaps remain material: automatic workspace lease/reaper lifecycle, hard timeout process termination and residual-writer readback, candidate-bound fresh closure, and independent no-P0/P1 review. The offline Telegram delivery rail now covers the platform base processing and response-dispatch path but deliberately substitutes an in-memory adapter and fake Agent; it is not provider/network/live-delivery evidence. The broad `tests/agent` run on this worktree is not green (`120 failed, 5755 passed, 37 skipped`); failures were highly cross-cutting and accompanied by shared logging/temp-home errors, while the task-runtime focus and the one observed runtime-cwd failure both passed in isolated reruns. These failures are not silently waived and require candidate-bound triage before closure. Therefore this ledger is an implementation checkpoint, not a candidate freeze or activation authorization.
 
 ## 8. Converge rule
 
