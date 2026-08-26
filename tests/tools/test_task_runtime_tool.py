@@ -121,6 +121,12 @@ def test_full_tool_control_plane_flow(tmp_path):
         integrator_session_id="integrator",
     )["integration"]
     assert integrated["slice_status"] == "completed"
+    closure_packet = _call(
+        tmp_path,
+        "closure_context",
+        task_id=task_id,
+        verifier_session_id="closure-fresh",
+    )["closure_packet"]
     closed = _call(
         tmp_path,
         "close",
@@ -128,6 +134,17 @@ def test_full_tool_control_plane_flow(tmp_path):
         candidate_digest="sha256:final",
         verifier_session_id="closure-fresh",
         claims={"R1": "pass"},
+        closure_packet=closure_packet,
+        closure_evidence_refs=[
+            {"ref": "closure-review", "candidate_digest": "sha256:final"}
+        ],
+        closure_verification_results=[
+            {
+                "command": "pytest -q",
+                "exit_code": 0,
+                "candidate_digest": "sha256:final",
+            }
+        ],
     )["task"]
     assert closed["status"] == "closed"
 

@@ -1048,19 +1048,16 @@ class TaskRuntimeStore:
             )
             return {"task_id": task_id, "result_id": result_id, "slice_id": row["slice_id"], "slice_status": "completed", "state_revision": new_revision, "candidate_digest": candidate, "idempotent_replay": False}
 
-    def close_task(
+    def build_closure_packet(
         self,
         task_id: str,
         *,
-        candidate_digest: str,
         verifier_session_id: str,
-        claims: Mapping[str, str],
     ) -> dict[str, Any]:
+        """Build a digest-bound fresh closure context without mutating task state."""
         verifier = str(verifier_session_id or "").strip()
         with self._write() as conn:
             task = self._task_row(conn, task_id)
-            if str(candidate_digest) != str(task["candidate_digest"]):
-                raise ValueError("candidate_digest_mismatch")
             incomplete = conn.execute(
                 "SELECT slice_id FROM task_slices WHERE task_id = ? AND status != 'completed'",
                 (task_id,),
@@ -1068,7 +1065,124 @@ class TaskRuntimeStore:
             if incomplete:
                 raise ValueError("task_slices_incomplete")
             participants = conn.execute(
-                "SELECT worker_session_id, integrator_session_id FROM worker_results WHERE task_id = ? AND disposition = 'integrated'",
+                "SELECT worker_session_id, integrator_session_id FROM worker_results "
+                "WHERE task_id = ?",
+                (task_id,),
+            ).fetchall()
+            participant_ids = {
+                value
+                for row in participants
+                for value in (row["worker_session_id"], row["integrator_session_id"])
+                if value
+            }
+            if not verifier or verifier in participant_ids:
+                raise ValueError("closure_verifier_not_independent")
+            candidate = str(task["candidate_digest"] or "").strip()
+            if not candidate:
+                raise ValueError("candidate_digest_required")
+            source_events = [
+                _decode(row["payload_json"], {})
+                for row in conn.execute(
+                    "SELECT payload_json FROM source_events WHERE task_id = ? ORDER BY recorded_at, event_id",
+                    (task_id,),
+                ).fetchall()
+            ]
+            spec = _decode(task["spec_bundle_json"], {})
+            packet = {
+                "schema": "hermes_closure_context_v1",
+                "packet_id": uuid.uuid4().hex,
+                "task_id": task_id,
+                "owner_profile": str(task["owner_profile"]),
+                "spec_revision": int(task["spec_revision"]),
+                "plan_revision": int(task["plan_revision"]),
+                "state_revision": int(task["state_revision"]),
+                "candidate_digest": candidate,
+                "verifier_session_id": verifier,
+                "source_digest": _digest(
+                    {
+                        "original_sources": _decode(task["original_sources_json"], []),
+                        "source_events": source_events,
+                    }
+                ),
+                "spec_digest": _digest(spec),
+                "implementation_graph_digest": _digest(
+                    _decode(task["implementation_graph_json"], [])
+                ),
+                "evidence_graph_digest": _digest(
+                    _decode(task["evidence_graph_json"], [])
+                ),
+                "closure_criteria": list(spec.get("closure_criteria") or []),
+                "created_at": _utc_now(),
+            }
+            packet["packet_digest"] = _digest(packet)
+            return packet
+
+    def close_task(
+        self,
+        task_id: str,
+        *,
+        candidate_digest: str,
+        verifier_session_id: str,
+        claims: Mapping[str, str],
+        closure_packet: Mapping[str, Any],
+        evidence_refs: Sequence[Mapping[str, Any]],
+        verification_results: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        verifier = str(verifier_session_id or "").strip()
+        with self._write() as conn:
+            task = self._task_row(conn, task_id)
+            if str(candidate_digest) != str(task["candidate_digest"]):
+                raise ValueError("candidate_digest_mismatch")
+            packet = dict(closure_packet or {})
+            packet_digest = str(packet.pop("packet_digest", "") or "")
+            if not packet_digest or packet_digest != _digest(packet):
+                raise ValueError("closure_packet_digest_invalid")
+            source_events = [
+                _decode(row["payload_json"], {})
+                for row in conn.execute(
+                    "SELECT payload_json FROM source_events WHERE task_id = ? ORDER BY recorded_at, event_id",
+                    (task_id,),
+                ).fetchall()
+            ]
+            spec = _decode(task["spec_bundle_json"], {})
+            expected_packet_fields = {
+                "schema": "hermes_closure_context_v1",
+                "task_id": task_id,
+                "owner_profile": str(task["owner_profile"]),
+                "spec_revision": int(task["spec_revision"]),
+                "plan_revision": int(task["plan_revision"]),
+                "state_revision": int(task["state_revision"]),
+                "candidate_digest": str(task["candidate_digest"]),
+                "verifier_session_id": verifier,
+                "source_digest": _digest(
+                    {
+                        "original_sources": _decode(task["original_sources_json"], []),
+                        "source_events": source_events,
+                    }
+                ),
+                "spec_digest": _digest(spec),
+                "implementation_graph_digest": _digest(
+                    _decode(task["implementation_graph_json"], [])
+                ),
+                "evidence_graph_digest": _digest(
+                    _decode(task["evidence_graph_json"], [])
+                ),
+                "closure_criteria": list(spec.get("closure_criteria") or []),
+            }
+            if any(packet.get(key) != value for key, value in expected_packet_fields.items()):
+                raise ValueError("closure_packet_stale")
+            if not str(packet.get("packet_id") or "").strip() or not str(
+                packet.get("created_at") or ""
+            ).strip():
+                raise ValueError("closure_packet_invalid")
+            incomplete = conn.execute(
+                "SELECT slice_id FROM task_slices WHERE task_id = ? AND status != 'completed'",
+                (task_id,),
+            ).fetchall()
+            if incomplete:
+                raise ValueError("task_slices_incomplete")
+            participants = conn.execute(
+                "SELECT worker_session_id, integrator_session_id FROM worker_results WHERE task_id = ?",
                 (task_id,),
             ).fetchall()
             participant_ids = {
@@ -1084,12 +1198,34 @@ class TaskRuntimeStore:
             passed = {str(key) for key, value in claims.items() if str(value).lower() == "pass"}
             if not required.issubset(passed):
                 raise ValueError("closure_claims_incomplete")
+            closure_evidence = [dict(item) for item in evidence_refs]
+            closure_verification = [dict(item) for item in verification_results]
+            candidate = str(candidate_digest)
+            if not closure_evidence or any(
+                not str(item.get("ref") or "").strip()
+                or str(item.get("candidate_digest") or "") != candidate
+                for item in closure_evidence
+            ):
+                raise ValueError("closure_evidence_required")
+            if not closure_verification or any(
+                not str(item.get("command") or "").strip()
+                or not isinstance(item.get("exit_code"), int)
+                or isinstance(item.get("exit_code"), bool)
+                or int(item["exit_code"]) != 0
+                or str(item.get("candidate_digest") or "") != candidate
+                for item in closure_verification
+            ):
+                raise ValueError("closure_verification_failed")
             closure = {
                 "schema": "hermes_closure_receipt_v1",
                 "task_id": task_id,
                 "candidate_digest": candidate_digest,
                 "verifier_session_id": verifier,
+                "closure_packet_id": str(packet["packet_id"]),
+                "closure_packet_digest": packet_digest,
                 "claims": dict(claims),
+                "evidence_refs": closure_evidence,
+                "verification_results": closure_verification,
                 "closed_at": _utc_now(),
             }
             conn.execute(

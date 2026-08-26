@@ -151,8 +151,8 @@ BR-06. A WorkerResult is accepted only for a valid owner, lease/fencing token an
 BR-07. WorkerResult cannot grant authority, mark the task complete, mutate external adapters or rewrite canonical source requirements.
 BR-08. Bounded pool capacity is fixed by config. Completion/refusal/cancelled/error paths may free capacity after worker exit; a timeout may release its claim only with explicit child-termination proof, otherwise the claim and packet are quarantined and cannot be retried.
 BR-09. Full Worker output is stored as an artifact/evidence reference; ingress contexts receive only bounded projections.
-BR-10. Candidate verification, review and closure bind the same candidate digest.
-BR-11. Fresh closure reads original source refs, current frozen spec, candidate identity, evidence matrix and unresolved findings; it does not inherit implementation conversation history.
+BR-10. Candidate verification, review and closure bind the same candidate digest; close requires final-candidate-bound evidence and zero-exit verification results.
+BR-11. Fresh closure uses a digest-bound closure context packet over original sources/events, current frozen spec, implementation graph, evidence graph, candidate identity and all current revisions; it rejects stale/tampered packets and does not inherit implementation conversation history.
 BR-12. `verified` is distinct from worker success, tests-passed, queue-empty and conversation-final.
 BR-13. Direct one-turn chat remains available when task admission is not triggered or is explicitly declined.
 BR-14. Task admission and observation are side-effect-free with respect to external adapters, active config, scheduler, Taskpool and gateway lifecycle.
@@ -188,6 +188,7 @@ N-20. Cross-profile exact WorkerResult replay must not reveal an existing receip
 N-21. Empty/incomplete claims, invalid evidence references, missing/failing verification results, an invalid state delta or an empty candidate digest must not be accepted for integration.
 N-22. A timed-out worker without explicit termination proof must not release its slice for a concurrent retry; the slice must remain quarantined.
 N-23. An ImplementationGraph must not assign unknown claims/sources, omit a closure criterion or verification command, or overlap owned and forbidden paths.
+N-24. Closure must not accept a stale/tampered context packet, evidence or verification bound to a different candidate, or a verifier that participated as worker/integrator.
 
 ## 6. Dependency-ordered implementation DAG
 

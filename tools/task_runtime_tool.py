@@ -33,7 +33,7 @@ def _projection(task: Mapping[str, Any]) -> dict[str, Any]:
         "bindings": list(task.get("bindings") or []),
         "slice_counts": {
             status: sum(1 for item in slices if item.get("status") == status)
-            for status in ("pending", "claimed", "submitted", "completed", "cancelled")
+            for status in ("pending", "claimed", "submitted", "completed", "quarantined", "cancelled")
         },
         "slices": [
             {
@@ -85,6 +85,9 @@ def task_runtime_tool(
     candidate_digest: str = "",
     verifier_session_id: str = "",
     claims: Mapping[str, str] | None = None,
+    closure_packet: Mapping[str, Any] | None = None,
+    closure_evidence_refs: Sequence[Mapping[str, Any]] | None = None,
+    closure_verification_results: Sequence[Mapping[str, Any]] | None = None,
     source_event: Mapping[str, Any] | None = None,
     db_path: str | Path | None = None,
 ) -> str:
@@ -171,12 +174,21 @@ def task_runtime_tool(
                 integrator_session_id=integrator_session_id or current_session,
             )
             return tool_result(success=True, integration=receipt)
+        if operation == "closure_context":
+            packet = store.build_closure_packet(
+                control_task_id,
+                verifier_session_id=verifier_session_id or current_session,
+            )
+            return tool_result(success=True, closure_packet=packet)
         if operation == "close":
             task = store.close_task(
                 control_task_id,
                 candidate_digest=candidate_digest,
                 verifier_session_id=verifier_session_id or current_session,
                 claims=dict(claims or {}),
+                closure_packet=dict(closure_packet or {}),
+                evidence_refs=list(closure_evidence_refs or []),
+                verification_results=list(closure_verification_results or []),
             )
             return tool_result(success=True, task=_projection(task))
         raise ValueError(f"unsupported_action:{operation}")
@@ -206,7 +218,7 @@ TASK_RUNTIME_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["create", "bind", "status", "record_source", "freeze_spec", "set_plan", "claim", "submit", "integrate", "close"],
+                "enum": ["create", "bind", "status", "record_source", "freeze_spec", "set_plan", "claim", "submit", "integrate", "closure_context", "close"],
             },
             "task_id": {"type": "string", "description": "Persistent control-plane task ID. Omit for status on the currently bound entrypoint."},
             "entrypoint": {"type": "string", "description": "Entrypoint identity such as cli or telegram.", "default": "cli"},
@@ -225,6 +237,9 @@ TASK_RUNTIME_SCHEMA = {
             "candidate_digest": {"type": "string"},
             "verifier_session_id": {"type": "string"},
             "claims": {"type": "object", "additionalProperties": {"type": "string"}},
+            "closure_packet": {"type": "object"},
+            "closure_evidence_refs": {"type": "array", "items": {"type": "object"}},
+            "closure_verification_results": {"type": "array", "items": {"type": "object"}},
             "source_event": {"type": "object"},
         },
         "required": ["action"],
@@ -256,6 +271,9 @@ registry.register(
         candidate_digest=args.get("candidate_digest", ""),
         verifier_session_id=args.get("verifier_session_id", ""),
         claims=args.get("claims"),
+        closure_packet=args.get("closure_packet"),
+        closure_evidence_refs=args.get("closure_evidence_refs"),
+        closure_verification_results=args.get("closure_verification_results"),
         source_event=args.get("source_event"),
     ),
     emoji="🧭",

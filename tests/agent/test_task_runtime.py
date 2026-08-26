@@ -594,6 +594,27 @@ def test_spec_change_invalidates_integrated_outputs_and_downstream_state(tmp_pat
 
 def test_deterministic_integration_unlocks_dependency_and_independent_closure(tmp_path):
     store, task_id = _ready_store(tmp_path)
+    rejected_packet = store.claim_next_slice(
+        task_id, worker_session_id="worker-rejected", lease_seconds=60, now=90.0
+    )
+    assert rejected_packet is not None
+    rejected_payload = _result(rejected_packet, candidate="sha256:rejected")
+    rejected_payload["input_digest"] = "sha256:wrong"
+    rejected = store.submit_result(
+        task_id,
+        worker_session_id="worker-rejected",
+        packet_id=rejected_packet["packet_id"],
+        result=rejected_payload,
+        now=91.0,
+    )
+    assert rejected["disposition"] == "rejected"
+    store.release_claim(
+        task_id,
+        worker_session_id="worker-rejected",
+        packet_id=rejected_packet["packet_id"],
+        reason="rejected_attempt_ended",
+    )
+
     p1 = store.claim_next_slice(task_id, worker_session_id="worker-a", lease_seconds=60, now=100.0)
     r1 = store.submit_result(
         task_id,
@@ -616,33 +637,109 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
     )
     store.integrate_result(task_id, r2["result_id"], integrator_session_id="integrator")
 
+    closure_packet = store.build_closure_packet(
+        task_id, verifier_session_id="closure-fresh"
+    )
+    assert closure_packet["candidate_digest"] == "sha256:candidate-final"
+    assert closure_packet["packet_digest"].startswith("sha256:")
+
     with pytest.raises(ValueError, match="candidate_digest_mismatch"):
         store.close_task(
             task_id,
             candidate_digest="sha256:wrong",
             verifier_session_id="closure-fresh",
             claims={"R1": "pass", "N1": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=[
+                {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+            ],
+            verification_results=[
+                {
+                    "command": "pytest -q",
+                    "exit_code": 0,
+                    "candidate_digest": "sha256:candidate-final",
+                }
+            ],
         )
     with pytest.raises(ValueError, match="closure_verifier_not_independent"):
-        store.close_task(
-            task_id,
-            candidate_digest="sha256:candidate-final",
-            verifier_session_id="worker-a",
-            claims={"R1": "pass", "N1": "pass"},
-        )
+        store.build_closure_packet(task_id, verifier_session_id="worker-a")
+    with pytest.raises(ValueError, match="closure_verifier_not_independent"):
+        store.build_closure_packet(task_id, verifier_session_id="worker-rejected")
     with pytest.raises(ValueError, match="closure_claims_incomplete"):
         store.close_task(
             task_id,
             candidate_digest="sha256:candidate-final",
             verifier_session_id="closure-fresh",
             claims={"R1": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=[
+                {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+            ],
+            verification_results=[
+                {
+                    "command": "pytest -q",
+                    "exit_code": 0,
+                    "candidate_digest": "sha256:candidate-final",
+                }
+            ],
+        )
+    with pytest.raises(ValueError, match="closure_evidence_required"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:candidate-final",
+            verifier_session_id="closure-fresh",
+            claims={"R1": "pass", "N1": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=[],
+            verification_results=[],
         )
 
+    store.append_source_event(
+        task_id,
+        {
+            "event_id": "closure-correction",
+            "entrypoint": "cli",
+            "session_id": "closure-fresh",
+            "content": "fresh source event invalidates prior closure context",
+        },
+    )
+    with pytest.raises(ValueError, match="closure_packet_stale"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:candidate-final",
+            verifier_session_id="closure-fresh",
+            claims={"R1": "pass", "N1": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=[
+                {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+            ],
+            verification_results=[
+                {
+                    "command": "pytest -q",
+                    "exit_code": 0,
+                    "candidate_digest": "sha256:candidate-final",
+                }
+            ],
+        )
+    closure_packet = store.build_closure_packet(
+        task_id, verifier_session_id="closure-fresh"
+    )
     closed = store.close_task(
         task_id,
         candidate_digest="sha256:candidate-final",
         verifier_session_id="closure-fresh",
         claims={"R1": "pass", "N1": "pass"},
+        closure_packet=closure_packet,
+        evidence_refs=[
+            {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+        ],
+        verification_results=[
+            {
+                "command": "pytest -q",
+                "exit_code": 0,
+                "candidate_digest": "sha256:candidate-final",
+            }
+        ],
     )
     assert closed["status"] == "closed"
     assert closed["closure"]["candidate_digest"] == "sha256:candidate-final"
