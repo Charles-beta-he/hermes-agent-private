@@ -160,6 +160,7 @@ BR-15. Cross-channel steering is auditable: every accepted user correction recor
 BR-16. Existing prompt caching remains byte-stable for a conversation; dynamic task state enters as bounded turn input or service result, never by mutating prior/system messages.
 BR-17. An exact external entrypoint binding is immutable: exact replay is idempotent and cross-task replacement fails closed.
 BR-18. A write slice executes only in a clean linked Git worktree whose HEAD matches the packet's workspace_base_commit; post-run HEAD must remain unchanged and the actual Git write set must exactly equal WorkerResult.changed_artifacts.
+BR-19. Every durable state_revision has exactly one append-only TaskStateLedger event in the same transaction; events are digest-chained, readback-verified and profile-owned. Legacy databases receive one explicit current-projection anchor and never fabricated history.
 
 ## 5. Negative cases
 
@@ -181,6 +182,7 @@ N-15. A task classified as simple must remain promotable later without rewriting
 N-16. Replaying an existing entrypoint binding must not bump state_revision, and the same entrypoint/session identity must not be silently rebound to another task.
 N-17. A missing, dirty, non-linked, path-escaping or wrong-base worker workspace must not start execution.
 N-18. A worker must not hide a changed path or move the fenced workspace HEAD by committing its own changes.
+N-19. Ledger UPDATE/DELETE, digest/payload tamper, revision gaps, cross-profile reads or mutations, and idempotent replay that appends a second event must fail closed.
 
 ## 6. Dependency-ordered implementation DAG
 
@@ -228,6 +230,7 @@ G7 — activation, separately authorized
 | Claim | Required evidence |
 |---|---|
 | Durable task truth | Store/replay/CAS tests plus process-restart readback |
+| Append-only state history | Revision/event alignment, digest-chain readback, legacy-anchor migration, DB UPDATE/DELETE triggers, tamper and cross-profile negative tests |
 | CLI normal-path integration | Parser/unit tests and temporary-HERMES_HOME process E2E |
 | Telegram normal-path integration | Real adapter/router/session code path under no-send harness; exact binding tests |
 | Cross-channel continuity | One task created through CLI fixture and steered through Telegram fixture with same task_id/revisions |
@@ -250,10 +253,11 @@ G7 — activation, separately authorized
 | Bounded pool and process recovery | `618c77fe2757ee6122373f4b4aa711cd7f026d59` / tree `2f53e3d87bfe0f54b1167d4bb8fab033afb3322e` | cap=2 never exceeded; CLI/TG durable cross-process fixture | TG fixture is no-send, not real adapter |
 | Stale evidence and ingress conflicts | `8b5939fda15a03b0f3205a07ad3b92dcfff90695` / tree `fa313e9fcefb0c383409d3343204c9777034d85f` | revision invalidation; exact replay idempotency; conflicting event rejection | local code only |
 | Lease, tamper and timeout recovery | `4a44619af37c3b29ff8a6adc6dcc62360f67e560` / tree `cf9606011e350d2ca6840c99b7d1a61ca3509355` | fencing rotation/stale-owner negatives; stored packet tamper rejection; terminal receipt mapping | timeout child-exit/reaper proof still open |
-| Profile scope and source append-only | `2181164f89b5f76a8a74312200977376f27ccda9` / tree `a22b0d2e0119e3cdcad84a1b00fa80b1734d145d` | profile-scoped default DB; normalized source events; DB UPDATE/DELETE triggers | full TaskStateLedger event journal still open |
+| Profile scope and source append-only | `2181164f89b5f76a8a74312200977376f27ccda9` / tree `a22b0d2e0119e3cdcad84a1b00fa80b1734d145d` | profile-scoped default DB; normalized source events; DB UPDATE/DELETE triggers | state-ledger follow-up recorded below |
 | Immutable binding and isolated write set | `7276693124429adf2217f56955e568f277a2db2b` / tree `2bfca27c08fbeab58c62618362ba39e92536653e` | `57 passed in 2.58s`; delegate regression `178 passed, 6 subtests`; cross-task rebind, dirty/wrong-base/path escape, hidden write and worker commit negatives | no automatic worktree allocator/reaper; no OS filesystem sandbox |
+| TaskStateLedger and explicit owner | `ac7dcee2cb600fecd3a486262854afafea3a5028` / tree `450c8db810042d9ec4029657981fb9fb4e138035` | post-commit runtime focus `61 passed in 2.63s`; delegate `178 passed, 6 subtests`; revision-aligned digest chain, DB append-only, corruption readback, one-time legacy anchor, rejected-result and replay semantics, owner migration/isolation | independent adversarial verdict pending; local code only |
 
-Open evidence gaps remain material: full append-only TaskStateLedger transitions, real GatewayRunner Telegram no-send path, automatic workspace lease/reaper lifecycle, hard timeout child-exit readback, bounded ingress allowlist/size certification, candidate-bound fresh closure, and independent no-P0/P1 review. Therefore this ledger is an implementation checkpoint, not a candidate freeze or activation authorization.
+Open evidence gaps remain material: real GatewayRunner Telegram no-send path, automatic workspace lease/reaper lifecycle, hard timeout child-exit readback, bounded ingress allowlist/size certification, candidate-bound fresh closure, and independent no-P0/P1 review. The broad `tests/agent` run on this worktree is not green (`120 failed, 5755 passed, 37 skipped`); failures were highly cross-cutting and accompanied by shared logging/temp-home errors, while the task-runtime focus and the one observed runtime-cwd failure both passed in isolated reruns. These failures are not silently waived and require candidate-bound triage before closure. Therefore this ledger is an implementation checkpoint, not a candidate freeze or activation authorization.
 
 ## 8. Converge rule
 
