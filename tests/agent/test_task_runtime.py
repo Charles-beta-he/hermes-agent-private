@@ -49,8 +49,8 @@ def _result(packet: dict, *, candidate: str, changed: list[str] | None = None):
     }
 
 
-def _ready_store(tmp_path) -> tuple[TaskRuntimeStore, str]:
-    store = TaskRuntimeStore(tmp_path / "task-runtime.db")
+def _ready_store(tmp_path, *, owner_profile: str | None = None) -> tuple[TaskRuntimeStore, str]:
+    store = TaskRuntimeStore(tmp_path / "task-runtime.db", owner_profile=owner_profile)
     task = store.create_task(
         title="task-centric runtime",
         original_sources=[
@@ -159,6 +159,48 @@ def test_task_owner_profile_is_persisted_and_enforced_even_on_shared_db(tmp_path
             task["task_id"], entrypoint="cli", session_id="cli:foreign"
         )
     assert owner_store.get_task(task["task_id"])["bindings"] == []
+
+
+def test_cross_profile_exact_result_replay_checks_owner_before_idempotency(tmp_path):
+    owner_store, task_id = _ready_store(tmp_path, owner_profile="profile-a")
+    packet = owner_store.claim_next_slice(
+        task_id, worker_session_id="worker-a", lease_seconds=60, now=100.0
+    )
+    assert packet is not None
+    result = _result(packet, candidate="sha256:owned")
+    accepted = owner_store.submit_result(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        result=result,
+        now=101.0,
+    )
+    assert accepted["disposition"] == "accepted_for_integration"
+
+    before_replay = owner_store.get_task(task_id)
+    replay = owner_store.submit_result(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        result=result,
+        now=102.0,
+    )
+    assert replay["idempotent_replay"] is True
+    after_replay = owner_store.get_task(task_id)
+    assert after_replay["state_revision"] == before_replay["state_revision"]
+    assert after_replay["state_events"] == before_replay["state_events"]
+
+    foreign_store = TaskRuntimeStore(
+        tmp_path / "task-runtime.db", owner_profile="profile-b"
+    )
+    with pytest.raises(PermissionError, match="task_owner_profile_mismatch"):
+        foreign_store.submit_result(
+            task_id,
+            worker_session_id="worker-a",
+            packet_id=packet["packet_id"],
+            result=result,
+            now=103.0,
+        )
 
 
 def test_create_persists_original_source_and_cross_entrypoint_binding(tmp_path):

@@ -721,10 +721,10 @@ class TaskRuntimeStore:
         now_value = float(time.time() if now is None else now)
         identity = _result_id(packet_id, worker, payload)
         with self._write() as conn:
+            task = self._task_row(conn, task_id)
             existing = conn.execute("SELECT * FROM worker_results WHERE result_id = ?", (identity,)).fetchone()
             if existing:
                 return self._result_payload(existing, idempotent_replay=True)
-            task = self._task_row(conn, task_id)
             packet = conn.execute("SELECT * FROM context_packets WHERE packet_id = ?", (packet_id,)).fetchone()
             reasons: list[str] = []
             if packet is None:
