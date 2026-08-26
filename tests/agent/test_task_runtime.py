@@ -63,6 +63,24 @@ def _ready_store(tmp_path) -> tuple[TaskRuntimeStore, str]:
     return store, task_id
 
 
+def test_default_path_is_profile_scoped(monkeypatch, tmp_path):
+    profile_home = tmp_path / "profile-a"
+    monkeypatch.delenv("HERMES_TASK_RUNTIME_DB", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(profile_home))
+
+    assert TaskRuntimeStore.default_path() == (
+        profile_home / "state" / "task-runtime" / "task-runtime.db"
+    )
+
+
+def test_explicit_runtime_db_overrides_profile_home(monkeypatch, tmp_path):
+    explicit = tmp_path / "shared-for-test.db"
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "profile-a"))
+    monkeypatch.setenv("HERMES_TASK_RUNTIME_DB", str(explicit))
+
+    assert TaskRuntimeStore.default_path() == explicit
+
+
 def test_create_persists_original_source_and_cross_entrypoint_binding(tmp_path):
     store = TaskRuntimeStore(tmp_path / "task-runtime.db")
     task = store.create_task(

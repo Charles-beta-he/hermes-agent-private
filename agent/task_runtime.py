@@ -117,6 +117,24 @@ class TaskRuntimeStore:
                     PRIMARY KEY (entrypoint, session_id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_bindings_task ON entrypoint_bindings(task_id);
+                CREATE TABLE IF NOT EXISTS source_events (
+                    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+                    event_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    PRIMARY KEY (task_id, event_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_source_events_task ON source_events(task_id, recorded_at, event_id);
+                CREATE TRIGGER IF NOT EXISTS source_events_no_update
+                BEFORE UPDATE ON source_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'source_events_append_only');
+                END;
+                CREATE TRIGGER IF NOT EXISTS source_events_no_delete
+                BEFORE DELETE ON source_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'source_events_append_only');
+                END;
                 CREATE TABLE IF NOT EXISTS task_slices (
                     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
                     slice_id TEXT NOT NULL,
@@ -164,17 +182,38 @@ class TaskRuntimeStore:
                 CREATE INDEX IF NOT EXISTS idx_results_task ON worker_results(task_id, disposition);
                 """
             )
+            # One-time compatibility backfill from the legacy mutable JSON snapshot.
+            # The normalized table is authoritative after this point; INSERT OR IGNORE
+            # preserves exact replay semantics if an older database is reopened.
+            rows = conn.execute(
+                "SELECT task_id, source_events_json FROM tasks WHERE source_events_json != '[]'"
+            ).fetchall()
+            for row in rows:
+                for event in _decode(row["source_events_json"], []):
+                    if not isinstance(event, dict):
+                        continue
+                    event_id = str(event.get("event_id") or _digest(event))
+                    payload = dict(event)
+                    payload["event_id"] = event_id
+                    recorded_at = str(payload.get("recorded_at") or _utc_now())
+                    payload["recorded_at"] = recorded_at
+                    conn.execute(
+                        "INSERT OR IGNORE INTO source_events "
+                        "(task_id, event_id, payload_json, recorded_at) VALUES (?, ?, ?, ?)",
+                        (row["task_id"], event_id, _json(payload), recorded_at),
+                    )
 
     @staticmethod
     def default_path() -> Path:
         import os
 
-        return Path(
-            os.environ.get(
-                "HERMES_TASK_RUNTIME_DB",
-                str(Path.home() / ".hermes" / "state" / "task-runtime" / "task-runtime.db"),
-            )
-        ).expanduser()
+        explicit = os.environ.get("HERMES_TASK_RUNTIME_DB")
+        if explicit:
+            return Path(explicit).expanduser()
+
+        from hermes_constants import get_hermes_home
+
+        return get_hermes_home() / "state" / "task-runtime" / "task-runtime.db"
 
     def create_task(
         self,
@@ -221,6 +260,11 @@ class TaskRuntimeStore:
                 "WHERE task_id = ? ORDER BY entrypoint, session_id",
                 (task_id,),
             ).fetchall()
+            source_events = conn.execute(
+                "SELECT payload_json FROM source_events WHERE task_id = ? "
+                "ORDER BY recorded_at, event_id",
+                (task_id,),
+            ).fetchall()
         data = dict(row)
         return {
             "schema": data["schema_name"],
@@ -228,7 +272,7 @@ class TaskRuntimeStore:
             "title": data["title"],
             "status": data["status"],
             "original_sources": _decode(data["original_sources_json"], []),
-            "source_events": _decode(data["source_events_json"], []),
+            "source_events": [_decode(item["payload_json"], {}) for item in source_events],
             "spec_bundle": _decode(data["spec_bundle_json"], {}),
             "implementation_graph": _decode(data["implementation_graph_json"], []),
             "evidence_graph": _decode(data["evidence_graph_json"], []),
@@ -284,19 +328,14 @@ class TaskRuntimeStore:
         if not payload.get("content"):
             raise ValueError("source_event_content_required")
         with self._write() as conn:
-            row = self._task_row(conn, task_id)
-            events = _decode(row["source_events_json"], [])
-            event_id = payload.get("event_id") or _digest(payload)
-            existing = next(
-                (
-                    item
-                    for item in events
-                    if isinstance(item, dict) and item.get("event_id") == event_id
-                ),
-                None,
-            )
-            if existing is not None:
-                existing_identity = dict(existing)
+            self._task_row(conn, task_id)
+            event_id = str(payload.get("event_id") or _digest(payload))
+            existing_row = conn.execute(
+                "SELECT payload_json FROM source_events WHERE task_id = ? AND event_id = ?",
+                (task_id, event_id),
+            ).fetchone()
+            if existing_row is not None:
+                existing_identity = _decode(existing_row["payload_json"], {})
                 existing_identity.pop("recorded_at", None)
                 replay_identity = dict(payload)
                 replay_identity["event_id"] = event_id
@@ -306,10 +345,15 @@ class TaskRuntimeStore:
             else:
                 payload["event_id"] = event_id
                 payload.setdefault("recorded_at", _utc_now())
-                events.append(payload)
                 conn.execute(
-                    "UPDATE tasks SET source_events_json = ?, state_revision = state_revision + 1, updated_at = ? WHERE task_id = ?",
-                    (_json(events), _utc_now(), task_id),
+                    "INSERT INTO source_events (task_id, event_id, payload_json, recorded_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (task_id, event_id, _json(payload), str(payload["recorded_at"])),
+                )
+                conn.execute(
+                    "UPDATE tasks SET state_revision = state_revision + 1, updated_at = ? "
+                    "WHERE task_id = ?",
+                    (_utc_now(), task_id),
                 )
         return self.get_task(task_id)
 

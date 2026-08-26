@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -132,6 +133,28 @@ def test_bound_turn_replay_is_exactly_once_and_conflicts_are_rejected(tmp_path, 
             },
         )
     assert store.get_task(task["task_id"])["source_events"][0]["content"] == "same turn"
+    with store._connect() as conn:
+        normalized = conn.execute(
+            "SELECT event_id, payload_json FROM source_events WHERE task_id = ?",
+            (task["task_id"],),
+        ).fetchall()
+        legacy_snapshot = conn.execute(
+            "SELECT source_events_json FROM tasks WHERE task_id = ?",
+            (task["task_id"],),
+        ).fetchone()["source_events_json"]
+    assert len(normalized) == 1
+    assert json.loads(normalized[0]["payload_json"])["content"] == "same turn"
+    assert legacy_snapshot == "[]"
+
+    with pytest.raises(sqlite3.IntegrityError, match="source_events_append_only"):
+        with store._write() as conn:
+            conn.execute(
+                "UPDATE source_events SET payload_json = '{}' WHERE task_id = ?",
+                (task["task_id"],),
+            )
+    with pytest.raises(sqlite3.IntegrityError, match="source_events_append_only"):
+        with store._write() as conn:
+            conn.execute("DELETE FROM source_events WHERE task_id = ?", (task["task_id"],))
 
 
 def test_unbound_turn_has_no_projection_or_source_write(tmp_path, monkeypatch):
