@@ -745,6 +745,46 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
     assert closed["closure"]["candidate_digest"] == "sha256:candidate-final"
     assert closed["closure"]["verifier_session_id"] == "closure-fresh"
 
+    replayed = store.close_task(
+        task_id,
+        candidate_digest="sha256:candidate-final",
+        verifier_session_id="closure-fresh",
+        claims={"R1": "pass", "N1": "pass"},
+        closure_packet=closure_packet,
+        evidence_refs=[
+            {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+        ],
+        verification_results=[
+            {
+                "command": "pytest -q",
+                "exit_code": 0,
+                "candidate_digest": "sha256:candidate-final",
+            }
+        ],
+    )
+    assert replayed["state_revision"] == closed["state_revision"]
+    assert replayed["state_events"] == closed["state_events"]
+    assert replayed["closure"]["closed_at"] == closed["closure"]["closed_at"]
+
+    with pytest.raises(ValueError, match="task_already_closed_conflict"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:candidate-final",
+            verifier_session_id="closure-fresh",
+            claims={"R1": "pass", "N1": "fail"},
+            closure_packet=closure_packet,
+            evidence_refs=[
+                {"ref": "review", "candidate_digest": "sha256:candidate-final"}
+            ],
+            verification_results=[
+                {
+                    "command": "pytest -q",
+                    "exit_code": 0,
+                    "candidate_digest": "sha256:candidate-final",
+                }
+            ],
+        )
+
 
 def test_legacy_projection_is_anchored_once_without_fabricating_history(tmp_path):
     path = tmp_path / "legacy.db"
@@ -807,4 +847,23 @@ def test_state_event_ledger_is_revision_aligned_hash_chained_and_append_only(tmp
             (task_id, task["state_revision"]),
         )
     with pytest.raises(ValueError, match="task_state_event_ledger_invalid"):
+        store.get_task(task_id)
+
+
+def test_state_event_ledger_binds_authoritative_task_projection(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "projection-ledger.db")
+    task = store.create_task(
+        title="projection",
+        original_sources=[{"source_id": "S1", "content": "source"}],
+    )
+    task_id = task["task_id"]
+
+    with sqlite3.connect(store.path) as conn:
+        conn.execute(
+            "UPDATE tasks SET status = 'closed', candidate_digest = 'sha256:forged' "
+            "WHERE task_id = ?",
+            (task_id,),
+        )
+
+    with pytest.raises(ValueError, match="task_projection_digest_invalid"):
         store.get_task(task_id)

@@ -251,6 +251,22 @@ class TaskRuntimeStore:
                     "legacy_projection_anchored",
                     {"status": row["status"]},
                 )
+            # Existing state-event ledgers predate projection binding. Append one auditable
+            # anchor rather than rewriting historical event bytes.
+            unbound_rows = conn.execute(
+                "SELECT t.task_id, e.payload_json FROM tasks t "
+                "JOIN task_state_events e ON e.task_id = t.task_id "
+                "WHERE e.state_revision = t.state_revision"
+            ).fetchall()
+            for row in unbound_rows:
+                payload = _decode(row["payload_json"], {})
+                if not str(payload.get("_projection_digest") or ""):
+                    self._bump_state(
+                        conn,
+                        row["task_id"],
+                        "projection_integrity_anchored",
+                        {"previous_tip_unbound": True},
+                    )
 
     @staticmethod
     def default_path() -> Path:
@@ -339,11 +355,15 @@ class TaskRuntimeStore:
                 "ORDER BY state_revision",
                 (task_id,),
             ).fetchall()
+            projection_digest = self._projection_digest(conn, task_id)
         data = dict(row)
         if not self._state_event_ledger_valid(
             task_id, int(data["state_revision"]), state_events
         ):
             raise ValueError("task_state_event_ledger_invalid")
+        tip_payload = _decode(state_events[-1]["payload_json"], {})
+        if str(tip_payload.get("_projection_digest") or "") != projection_digest:
+            raise ValueError("task_projection_digest_invalid")
         return {
             "schema": data["schema_name"],
             "task_id": data["task_id"],
@@ -1137,6 +1157,23 @@ class TaskRuntimeStore:
             packet_digest = str(packet.pop("packet_digest", "") or "")
             if not packet_digest or packet_digest != _digest(packet):
                 raise ValueError("closure_packet_digest_invalid")
+            if str(task["status"]) == "closed":
+                existing = _decode(task["closure_json"], {})
+                replay_matches = (
+                    str(existing.get("candidate_digest") or "") == str(candidate_digest)
+                    and str(existing.get("verifier_session_id") or "") == verifier
+                    and str(existing.get("closure_packet_id") or "")
+                    == str(packet.get("packet_id") or "")
+                    and str(existing.get("closure_packet_digest") or "") == packet_digest
+                    and existing.get("claims") == dict(claims)
+                    and existing.get("evidence_refs")
+                    == [dict(item) for item in evidence_refs]
+                    and existing.get("verification_results")
+                    == [dict(item) for item in verification_results]
+                )
+                if not replay_matches:
+                    raise ValueError("task_already_closed_conflict")
+                return self.get_task(task_id)
             source_events = [
                 _decode(row["payload_json"], {})
                 for row in conn.execute(
@@ -1242,6 +1279,53 @@ class TaskRuntimeStore:
         return self.get_task(task_id)
 
     @staticmethod
+    def _projection_digest(conn: sqlite3.Connection, task_id: str) -> str:
+        """Digest the authoritative materialized task projection at an event boundary."""
+        task = conn.execute(
+            "SELECT schema_name, owner_profile, title, status, original_sources_json, "
+            "source_events_json, spec_bundle_json, implementation_graph_json, "
+            "evidence_graph_json, closure_json, spec_revision, plan_revision, "
+            "state_revision, candidate_digest, created_at, updated_at "
+            "FROM tasks WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        if task is None:
+            raise KeyError(task_id)
+
+        def rows(query: str) -> list[dict[str, Any]]:
+            return [dict(row) for row in conn.execute(query, (task_id,)).fetchall()]
+
+        projection = {
+            "task": dict(task),
+            "source_events": rows(
+                "SELECT event_id, payload_json, recorded_at FROM source_events "
+                "WHERE task_id = ? ORDER BY recorded_at, event_id"
+            ),
+            "bindings": rows(
+                "SELECT entrypoint, session_id, created_at FROM entrypoint_bindings "
+                "WHERE task_id = ? ORDER BY entrypoint, session_id"
+            ),
+            "slices": rows(
+                "SELECT slice_id, ordinal, definition_json, status, lease_owner, "
+                "lease_token, lease_expires_at, result_id, integrated_state_revision "
+                "FROM task_slices WHERE task_id = ? ORDER BY ordinal, slice_id"
+            ),
+            "packets": rows(
+                "SELECT packet_id, slice_id, spec_revision, plan_revision, state_revision, "
+                "lease_owner, lease_token, lease_expires_at, packet_digest, "
+                "payload_json, status, created_at FROM context_packets "
+                "WHERE task_id = ? ORDER BY packet_id"
+            ),
+            "results": rows(
+                "SELECT result_id, slice_id, packet_id, worker_session_id, "
+                "payload_digest, payload_json, disposition, reasons_json, "
+                "integrator_session_id, integrated_state_revision, created_at, updated_at "
+                "FROM worker_results WHERE task_id = ? ORDER BY result_id"
+            ),
+        }
+        return _digest(projection)
+
+    @staticmethod
     def _state_event_ledger_valid(
         task_id: str,
         current_revision: int,
@@ -1287,6 +1371,9 @@ class TaskRuntimeStore:
         previous_digest = str(previous["event_digest"] if previous else "")
         recorded_at = _utc_now()
         event_payload = dict(payload)
+        event_payload["_projection_digest"] = TaskRuntimeStore._projection_digest(
+            conn, task_id
+        )
         identity = {
             "task_id": task_id,
             "state_revision": int(state_revision),
