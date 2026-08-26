@@ -221,6 +221,66 @@ def test_lease_owner_expiry_idempotency_and_owned_path_enforcement(tmp_path):
     assert store.get_task(task_id)["slices"][0]["result_id"] == accepted["result_id"]
 
 
+def test_lease_reclaim_rotates_fence_and_rejects_stale_owner(tmp_path):
+    store, task_id = _ready_store(tmp_path)
+    first = store.claim_next_slice(task_id, worker_session_id="worker-old", lease_seconds=10, now=100.0)
+    assert first is not None
+    second = store.claim_next_slice(task_id, worker_session_id="worker-new", lease_seconds=10, now=111.0)
+    assert second is not None
+    assert second["packet_id"] != first["packet_id"]
+    assert second["lease"]["token"] != first["lease"]["token"]
+    assert second["lease"]["owner"] == "worker-new"
+
+    stale = store.submit_result(
+        task_id,
+        worker_session_id="worker-old",
+        packet_id=first["packet_id"],
+        result=_result(first, candidate="sha256:stale"),
+        now=112.0,
+    )
+    assert stale["disposition"] == "rejected"
+    assert "lease_expired" in stale["reasons"]
+    with pytest.raises(ValueError, match="packet_not_active"):
+        store.release_claim(
+            task_id,
+            worker_session_id="worker-old",
+            packet_id=first["packet_id"],
+            reason="stale worker",
+        )
+
+    accepted = store.submit_result(
+        task_id,
+        worker_session_id="worker-new",
+        packet_id=second["packet_id"],
+        result=_result(second, candidate="sha256:fresh"),
+        now=112.0,
+    )
+    assert accepted["disposition"] == "accepted_for_integration"
+
+
+def test_stored_context_packet_tamper_is_rejected(tmp_path):
+    store, task_id = _ready_store(tmp_path)
+    packet = store.claim_next_slice(task_id, worker_session_id="worker-a", lease_seconds=60, now=100.0)
+    assert packet is not None
+    tampered = dict(packet)
+    tampered["objective"] = "maliciously changed after packet freeze"
+    with store._write() as conn:
+        conn.execute(
+            "UPDATE context_packets SET payload_json = ? WHERE packet_id = ?",
+            (json.dumps(tampered, sort_keys=True, separators=(",", ":")), packet["packet_id"]),
+        )
+
+    receipt = store.submit_result(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        result=_result(packet, candidate="sha256:tamper"),
+        now=101.0,
+    )
+    assert receipt["disposition"] == "rejected"
+    assert "stored_packet_digest_invalid" in receipt["reasons"]
+
+
 def test_concurrent_claims_have_one_lease_owner(tmp_path):
     store, task_id = _ready_store(tmp_path)
     barrier = threading.Barrier(3)

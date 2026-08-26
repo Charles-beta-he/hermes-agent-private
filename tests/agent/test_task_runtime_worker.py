@@ -5,6 +5,8 @@ import threading
 import time
 from types import SimpleNamespace
 
+import pytest
+
 import agent.task_runtime_worker as worker_module
 from agent.task_runtime import TaskRuntimeStore
 from agent.task_runtime_worker import dispatch_next_slice
@@ -129,6 +131,40 @@ def test_worker_exception_releases_claim_for_retry(tmp_path):
     assert receipt["success"] is False
     assert receipt["error"] == "worker_execution_failed"
     assert receipt["error_type"] == "RuntimeError"
+    assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+
+
+@pytest.mark.parametrize(
+    ("execution_status", "expected_error"),
+    [("timeout", "worker_timeout"), ("cancelled", "worker_cancelled"), ("error", "worker_execution_failed")],
+)
+def test_worker_terminal_execution_status_releases_claim_for_retry(
+    tmp_path, execution_status, expected_error
+):
+    store, task_id = _ready(tmp_path)
+
+    def builder(*, worker_session_id, packet, parent_agent):
+        return SimpleNamespace(session_id=worker_session_id)
+
+    def runner(*, child, goal, parent_agent):
+        return {
+            "status": execution_status,
+            "summary": None,
+            "error": f"simulated {execution_status}",
+            "exit_reason": execution_status,
+        }
+
+    receipt = dispatch_next_slice(
+        SimpleNamespace(session_id="parent-session"),
+        task_id=task_id,
+        store=store,
+        child_builder=builder,
+        child_runner=runner,
+    )
+
+    assert receipt["success"] is False
+    assert receipt["error"] == expected_error
+    assert receipt["worker_execution"]["status"] == execution_status
     assert store.get_task(task_id)["slices"][0]["status"] == "pending"
 
 

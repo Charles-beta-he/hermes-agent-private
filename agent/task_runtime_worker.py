@@ -118,6 +118,13 @@ def dispatch_next_slice(
         goal = _worker_prompt(packet)
         with _WORKER_SLOTS:
             execution = runner(child=child, goal=goal, parent_agent=parent_agent)
+        execution_status = str(execution.get("status") or "").strip().lower()
+        if execution_status == "timeout":
+            raise WorkerOutputError("worker_timeout")
+        if execution_status in {"cancelled", "canceled"}:
+            raise WorkerOutputError("worker_cancelled")
+        if execution_status in {"error", "failed", "failure"}:
+            raise WorkerOutputError("worker_execution_failed")
         worker_result = _parse_worker_result(execution.get("summary"))
     except WorkerOutputError as exc:
         runtime_store.release_claim(
