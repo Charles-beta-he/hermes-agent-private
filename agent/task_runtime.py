@@ -287,7 +287,23 @@ class TaskRuntimeStore:
             row = self._task_row(conn, task_id)
             events = _decode(row["source_events_json"], [])
             event_id = payload.get("event_id") or _digest(payload)
-            if not any(item.get("event_id") == event_id for item in events if isinstance(item, dict)):
+            existing = next(
+                (
+                    item
+                    for item in events
+                    if isinstance(item, dict) and item.get("event_id") == event_id
+                ),
+                None,
+            )
+            if existing is not None:
+                existing_identity = dict(existing)
+                existing_identity.pop("recorded_at", None)
+                replay_identity = dict(payload)
+                replay_identity["event_id"] = event_id
+                replay_identity.pop("recorded_at", None)
+                if existing_identity != replay_identity:
+                    raise ValueError("source_event_id_conflict")
+            else:
                 payload["event_id"] = event_id
                 payload.setdefault("recorded_at", _utc_now())
                 events.append(payload)
@@ -337,6 +353,7 @@ class TaskRuntimeStore:
             self._expect_revision(row, expected_state_revision)
             if int(row["spec_revision"]) < 1:
                 raise ValueError("spec_not_frozen")
+            self._invalidate_claims(conn, task_id, "plan_changed")
             conn.execute("DELETE FROM task_slices WHERE task_id = ?", (task_id,))
             for ordinal, definition in enumerate(definitions):
                 conn.execute(
@@ -735,8 +752,17 @@ class TaskRuntimeStore:
 
     @staticmethod
     def _invalidate_claims(conn: sqlite3.Connection, task_id: str, reason: str) -> None:
-        del reason
-        conn.execute("UPDATE context_packets SET status = 'invalidated' WHERE task_id = ? AND status IN ('active', 'submitted')", (task_id,))
+        invalidation_reason = f"invalidated_by_{str(reason or 'revision_change')}"
+        conn.execute(
+            "UPDATE context_packets SET status = 'invalidated' "
+            "WHERE task_id = ? AND status IN ('active', 'submitted')",
+            (task_id,),
+        )
+        conn.execute(
+            "UPDATE worker_results SET disposition = 'invalidated', reasons_json = ?, updated_at = ? "
+            "WHERE task_id = ? AND disposition IN ('accepted_for_integration', 'integrated')",
+            (_json([invalidation_reason]), _utc_now(), task_id),
+        )
         conn.execute(
             "UPDATE task_slices SET status = 'pending', lease_owner = '', lease_token = '', "
             "lease_expires_at = NULL, result_id = '', integrated_state_revision = NULL "

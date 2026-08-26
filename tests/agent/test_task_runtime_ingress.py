@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from agent.task_runtime import TaskRuntimeStore
 from agent.task_runtime_ingress import hydrate_bound_task_context
 
@@ -94,6 +96,42 @@ def test_cli_and_telegram_share_task_after_store_reconstruction(tmp_path, monkey
         ("cli", "cli continuation"),
         ("telegram", "telegram continuation"),
     }
+
+
+def test_bound_turn_replay_is_exactly_once_and_conflicts_are_rejected(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    monkeypatch.setenv("HERMES_TASK_RUNTIME_DB", str(db_path))
+    store = TaskRuntimeStore(db_path)
+    task = store.create_task(
+        title="Exactly once ingress",
+        original_sources=[{"source_id": "request-1", "kind": "user_message", "content": "original"}],
+    )
+    store.bind_entrypoint(task["task_id"], entrypoint="telegram", session_id="tg:42:7")
+    agent = SimpleNamespace(platform="telegram", session_id="tg:42:7")
+
+    first = hydrate_bound_task_context(agent, user_message="same turn", turn_id="update-99")
+    first_state = store.get_task(task["task_id"])
+    replay = hydrate_bound_task_context(agent, user_message="same turn", turn_id="update-99")
+    replay_state = store.get_task(task["task_id"])
+
+    assert first is not None and replay is not None
+    assert len(replay_state["source_events"]) == 1
+    assert replay_state["state_revision"] == first_state["state_revision"]
+
+    with pytest.raises(ValueError, match="source_event_id_conflict"):
+        store.append_source_event(
+            task["task_id"],
+            {
+                "event_id": "telegram:tg:42:7:update-99",
+                "source_id": "telegram:tg:42:7:update-99",
+                "kind": "user_message",
+                "content": "different content under same turn identity",
+                "entrypoint": "telegram",
+                "session_id": "tg:42:7",
+                "turn_id": "update-99",
+            },
+        )
+    assert store.get_task(task["task_id"])["source_events"][0]["content"] == "same turn"
 
 
 def test_unbound_turn_has_no_projection_or_source_write(tmp_path, monkeypatch):

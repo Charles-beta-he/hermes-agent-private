@@ -122,9 +122,43 @@ def test_stale_revision_result_is_rejected_after_spec_change(tmp_path):
     assert "stale_spec_revision" in disposition["reasons"]
 
 
+def test_accepted_result_cannot_integrate_after_spec_or_plan_change(tmp_path):
+    for invalidation in ("spec", "plan"):
+        case_dir = tmp_path / invalidation
+        case_dir.mkdir()
+        store, task_id = _ready_store(case_dir)
+        packet = store.claim_next_slice(task_id, worker_session_id="worker-a", lease_seconds=60, now=100.0)
+        assert packet is not None
+        accepted = store.submit_result(
+            task_id,
+            worker_session_id="worker-a",
+            packet_id=packet["packet_id"],
+            result=_result(packet, candidate="sha256:old"),
+            now=101.0,
+        )
+        assert accepted["disposition"] == "accepted_for_integration"
+
+        current = store.get_task(task_id)
+        if invalidation == "spec":
+            revised = dict(SPEC)
+            revised["required_clauses"] = SPEC["required_clauses"] + [{"id": "R2", "text": "new"}]
+            store.freeze_spec(task_id, revised, expected_state_revision=current["state_revision"])
+        else:
+            store.set_plan(
+                task_id,
+                [_slice("s1"), _slice("s2", dependencies=["s1"])],
+                expected_state_revision=current["state_revision"],
+            )
+
+        with pytest.raises(ValueError, match="result_not_accepted_for_integration"):
+            store.integrate_result(task_id, accepted["result_id"], integrator_session_id="integrator")
+
+
+
 def test_lease_owner_expiry_idempotency_and_owned_path_enforcement(tmp_path):
     store, task_id = _ready_store(tmp_path)
     packet = store.claim_next_slice(task_id, worker_session_id="worker-a", lease_seconds=10, now=100.0)
+    assert packet is not None
 
     wrong_owner = store.submit_result(
         task_id,
