@@ -4460,6 +4460,26 @@ class TestRunConversation:
         assert result["api_calls"] == 2
         assert mock_handle_function_call.call_args.kwargs["tool_call_id"] == "c1"
         assert mock_handle_function_call.call_args.kwargs["session_id"] == agent.session_id
+        assert mock_handle_function_call.call_args.kwargs["platform"] == (agent.platform or "cli")
+
+    def test_bound_task_context_is_ephemeral_api_input(self, agent):
+        self._setup_agent(agent)
+        agent.client.chat.completions.create.return_value = _mock_response(
+            content="continued", finish_reason="stop"
+        )
+        marker = "[TASK_RUNTIME_CONTEXT v1]\n{\"task_id\":\"task-1\"}\n[/TASK_RUNTIME_CONTEXT]"
+        with (
+            patch("agent.task_runtime_ingress.hydrate_bound_task_context", return_value=marker),
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("continue the task")
+
+        sent_messages = agent.client.chat.completions.create.call_args.kwargs["messages"]
+        sent_user = next(message for message in reversed(sent_messages) if message.get("role") == "user")
+        assert marker in sent_user["content"]
+        assert result["messages"][-2]["content"] == "continue the task"
 
     def test_request_scoped_api_hooks_fire_for_each_api_call(self, agent):
         self._setup_agent(agent)

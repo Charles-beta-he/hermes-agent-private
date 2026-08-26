@@ -1128,6 +1128,7 @@ def handle_function_call(
     task_id: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    platform: Optional[str] = None,
     turn_id: Optional[str] = None,
     api_request_id: Optional[str] = None,
     user_task: Optional[str] = None,
@@ -1145,6 +1146,7 @@ def handle_function_call(
         function_name: Name of the function to call.
         function_args: Arguments for the function.
         task_id: Unique identifier for terminal/browser session isolation.
+        platform: Current ingress platform (for exact cross-entrypoint binding).
         user_task: The user's original task (for browser_snapshot context).
         enabled_tools: Tool names enabled for this session.  When provided,
                        execute_code uses this list to determine which sandbox
@@ -1391,6 +1393,7 @@ def handle_function_call(
                         function_name, next_args,
                         task_id=task_id,
                         session_id=session_id,
+                        platform=platform,
                         enabled_tools=sandbox_enabled,
                     )
             else:
@@ -1399,6 +1402,7 @@ def handle_function_call(
                         function_name, next_args,
                         task_id=task_id,
                         session_id=session_id,
+                        platform=platform,
                         user_task=user_task,
                     )
             from hermes_cli.middleware import run_tool_execution_middleware

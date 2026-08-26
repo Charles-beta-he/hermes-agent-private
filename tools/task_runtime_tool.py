@@ -70,6 +70,7 @@ def task_runtime_tool(
     task_id: str | None = None,
     entrypoint: str = "cli",
     session_id: str = "",
+    target_session_id: str = "",
     title: str = "",
     original_sources: Sequence[Mapping[str, Any]] | None = None,
     spec_bundle: Mapping[str, Any] | None = None,
@@ -107,9 +108,10 @@ def task_runtime_tool(
         if operation == "bind":
             if not task_id:
                 raise ValueError("task_id_required")
-            if not current_session:
+            bind_session = str(target_session_id or current_session).strip()
+            if not bind_session:
                 raise ValueError("session_id_required")
-            task = store.bind_entrypoint(task_id, entrypoint=surface, session_id=current_session)
+            task = store.bind_entrypoint(task_id, entrypoint=surface, session_id=bind_session)
             return tool_result(success=True, task=_projection(task))
 
         task = _resolve_task(
@@ -208,6 +210,7 @@ TASK_RUNTIME_SCHEMA = {
             },
             "task_id": {"type": "string", "description": "Persistent control-plane task ID. Omit for status on the currently bound entrypoint."},
             "entrypoint": {"type": "string", "description": "Entrypoint identity such as cli or telegram.", "default": "cli"},
+            "target_session_id": {"type": "string", "description": "Explicit session to bind. Bind only; otherwise the current runtime session is used."},
             "title": {"type": "string"},
             "original_sources": {"type": "array", "items": {"type": "object"}},
             "spec_bundle": {"type": "object"},
@@ -236,8 +239,9 @@ registry.register(
     handler=lambda args, **kw: task_runtime_tool(
         action=args.get("action", ""),
         task_id=args.get("task_id"),
-        entrypoint=args.get("entrypoint", "cli"),
+        entrypoint=args.get("entrypoint") or kw.get("platform") or "cli",
         session_id=kw.get("session_id") or "",
+        target_session_id=args.get("target_session_id") or "",
         title=args.get("title", ""),
         original_sources=args.get("original_sources"),
         spec_bundle=args.get("spec_bundle"),

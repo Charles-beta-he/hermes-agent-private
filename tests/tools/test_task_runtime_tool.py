@@ -132,6 +132,23 @@ def test_full_tool_control_plane_flow(tmp_path):
     assert closed["status"] == "closed"
 
 
+def test_registry_dispatch_uses_runtime_platform_when_entrypoint_is_omitted(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_TASK_RUNTIME_DB", str(tmp_path / "runtime.db"))
+    created = json.loads(
+        registry.dispatch(
+            "task_runtime",
+            {
+                "action": "create",
+                "title": "telegram task",
+                "original_sources": [{"source_id": "S1", "kind": "user_message", "content": "from telegram"}],
+            },
+            session_id="gateway-session",
+            platform="telegram",
+        )
+    )
+    assert created["task"]["bindings"][0]["entrypoint"] == "telegram"
+
+
 def test_tool_is_registered_and_in_default_core_toolset():
     assert registry.get_entry("task_runtime") is not None
     assert "task_runtime" in resolve_toolset("hermes-cli")
