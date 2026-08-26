@@ -63,6 +63,27 @@ def _ready_store(tmp_path) -> tuple[TaskRuntimeStore, str]:
     return store, task_id
 
 
+def test_binding_replay_is_idempotent_and_cross_task_rebind_is_rejected(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "task-runtime.db")
+    first = store.create_task(
+        title="first",
+        original_sources=[{"source_id": "S1", "kind": "user_message", "content": "first"}],
+    )
+    second = store.create_task(
+        title="second",
+        original_sources=[{"source_id": "S2", "kind": "user_message", "content": "second"}],
+    )
+
+    bound = store.bind_entrypoint(first["task_id"], entrypoint="telegram", session_id="tg:42:7")
+    replay = store.bind_entrypoint(first["task_id"], entrypoint="telegram", session_id="tg:42:7")
+
+    assert replay["state_revision"] == bound["state_revision"]
+    with pytest.raises(ValueError, match="entrypoint_already_bound"):
+        store.bind_entrypoint(second["task_id"], entrypoint="telegram", session_id="tg:42:7")
+    resolved = store.resolve_entrypoint("telegram", "tg:42:7")
+    assert resolved is not None and resolved["task_id"] == first["task_id"]
+
+
 def test_default_path_is_profile_scoped(monkeypatch, tmp_path):
     profile_home = tmp_path / "profile-a"
     monkeypatch.delenv("HERMES_TASK_RUNTIME_DB", raising=False)

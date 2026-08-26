@@ -304,15 +304,22 @@ class TaskRuntimeStore:
             raise ValueError("entrypoint_and_session_id_required")
         with self._write() as conn:
             self._task_row(conn, task_id)
-            conn.execute(
-                """
-                INSERT INTO entrypoint_bindings (entrypoint, session_id, task_id, created_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(entrypoint, session_id) DO UPDATE SET task_id = excluded.task_id, created_at = excluded.created_at
-                """,
-                (entrypoint, session_id, task_id, _utc_now()),
-            )
-            self._bump_state(conn, task_id)
+            existing = conn.execute(
+                "SELECT task_id FROM entrypoint_bindings WHERE entrypoint = ? AND session_id = ?",
+                (entrypoint, session_id),
+            ).fetchone()
+            if existing is not None:
+                if existing["task_id"] != task_id:
+                    raise ValueError("entrypoint_already_bound")
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO entrypoint_bindings (entrypoint, session_id, task_id, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (entrypoint, session_id, task_id, _utc_now()),
+                )
+                self._bump_state(conn, task_id)
         return self.get_task(task_id)
 
     def resolve_entrypoint(self, entrypoint: str, session_id: str) -> dict[str, Any] | None:
@@ -474,6 +481,8 @@ class TaskRuntimeStore:
                 "source_refs": list(definition.get("source_refs") or []),
                 "architecture_invariants": list(definition.get("architecture_invariants") or []),
                 "owned_paths": list(definition.get("owned_paths") or []),
+                "workspace_path": str(definition.get("workspace_path") or ""),
+                "workspace_base_commit": str(definition.get("workspace_base_commit") or ""),
                 "forbidden_changes": list(definition.get("forbidden_changes") or []),
                 "dependencies": list(definition.get("dependencies") or []),
                 "verification_commands": list(definition.get("verification_commands") or []),

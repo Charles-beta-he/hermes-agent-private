@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 from types import SimpleNamespace
@@ -22,7 +23,78 @@ SPEC = {
 }
 
 
-def _ready(tmp_path):
+def _make_linked_worktree(tmp_path):
+    main = tmp_path / "main"
+    linked = tmp_path / "linked"
+    main.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=main, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=main, check=True)
+    subprocess.run(["git", "config", "user.name", "Runtime Test"], cwd=main, check=True)
+    (main / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "seed.txt"], cwd=main, check=True)
+    subprocess.run(["git", "commit", "-qm", "seed"], cwd=main, check=True)
+    subprocess.run(["git", "worktree", "add", "-q", str(linked), "-b", "worker-test"], cwd=main, check=True)
+    return main, linked
+
+
+def _git_head(path):
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_workspace_validation_requires_real_linked_worktree_and_confines_owned_paths(tmp_path):
+    with pytest.raises(ValueError, match="isolated_workspace_required"):
+        worker_module._validated_workspace({"owned_paths": ["agent/runtime.py"]})
+
+    main, linked = _make_linked_worktree(tmp_path)
+    valid_packet = {
+        "workspace_path": str(linked),
+        "workspace_base_commit": _git_head(linked),
+        "owned_paths": ["agent/runtime.py"],
+    }
+
+    assert worker_module._validated_workspace(valid_packet) == str(linked.resolve())
+    missing_base = dict(valid_packet, workspace_base_commit="")
+    with pytest.raises(ValueError, match="workspace_base_commit_required"):
+        worker_module._validated_workspace(missing_base)
+    wrong_base = dict(valid_packet, workspace_base_commit="0" * 40)
+    with pytest.raises(ValueError, match="workspace_base_commit_mismatch"):
+        worker_module._validated_workspace(wrong_base)
+    dirty = linked / "dirty.txt"
+    dirty.write_text("dirty\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="isolated_workspace_not_clean"):
+        worker_module._validated_workspace(valid_packet)
+    dirty.unlink()
+    with pytest.raises(ValueError, match="owned_path_outside_workspace"):
+        worker_module._validated_workspace(dict(valid_packet, owned_paths=["../escape.txt"]))
+    with pytest.raises(ValueError, match="linked_git_worktree_required"):
+        worker_module._validated_workspace(
+            {
+                "workspace_path": str(main),
+                "workspace_base_commit": _git_head(main),
+                "owned_paths": ["seed.txt"],
+            }
+        )
+
+
+def _worker_result(packet, *, changed_artifacts):
+    return {
+        "slice_id": packet["slice_id"],
+        "input_digest": packet["packet_digest"],
+        "claims": ["R1", "N1"],
+        "changed_artifacts": changed_artifacts,
+        "evidence_refs": [{"kind": "test", "ref": "pytest:passed"}],
+        "verification_results": [{"command": "pytest -q", "exit_code": 0}],
+        "risks": [],
+        "unknowns": [],
+        "state_delta_proposal": {"slice_status": "completed"},
+        "candidate_digest": "sha256:candidate",
+    }
+
+
+def _ready(tmp_path, *, workspace_path=""):
+    workspace_base_commit = _git_head(workspace_path) if workspace_path else ""
     store = TaskRuntimeStore(tmp_path / "runtime.db")
     task = store.create_task(
         title="worker dispatch",
@@ -41,6 +113,8 @@ def _ready(tmp_path):
             "source_refs": ["s1"],
             "architecture_invariants": ["fresh session"],
             "owned_paths": ["src/x.py"],
+            "workspace_path": str(workspace_path),
+            "workspace_base_commit": workspace_base_commit,
             "forbidden_changes": ["config.yaml"],
             "verification_commands": ["pytest -q"],
             "authority": {"side_effect_ceiling": "local_reversible"},
@@ -240,8 +314,19 @@ def test_worker_tool_is_exposed_but_registry_cannot_bypass_live_agent():
     assert payload == {"success": False, "error": "task_runtime_worker_requires_live_agent"}
 
 
-def test_default_executor_forces_child_session_to_lease_owner(tmp_path, monkeypatch):
+def test_default_executor_fails_closed_without_isolated_workspace(tmp_path):
     store, task_id = _ready(tmp_path)
+
+    receipt = dispatch_next_slice(SimpleNamespace(enabled_toolsets=None), task_id=task_id, store=store)
+
+    assert receipt["success"] is False
+    assert receipt["error"] == "isolated_workspace_required"
+    assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+
+
+def test_default_executor_forces_child_session_to_lease_owner(tmp_path, monkeypatch):
+    _, linked = _make_linked_worktree(tmp_path)
+    store, task_id = _ready(tmp_path, workspace_path=linked)
     captured = {}
 
     def fake_build_child_agent(**kwargs):
@@ -249,6 +334,9 @@ def test_default_executor_forces_child_session_to_lease_owner(tmp_path, monkeypa
         return SimpleNamespace(session_id=kwargs["forced_session_id"])
 
     def fake_run_single_child(index, goal, child, parent):
+        target = linked / "src" / "x.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("changed = True\n", encoding="utf-8")
         packet = captured["context"].split("CONTEXT_PACKET_JSON=", 1)[1]
         packet = json.loads(packet)
         result = {
@@ -269,3 +357,80 @@ def test_default_executor_forces_child_session_to_lease_owner(tmp_path, monkeypa
     receipt = dispatch_next_slice(SimpleNamespace(enabled_toolsets=None), task_id=task_id, store=store)
     assert receipt["success"] is True
     assert captured["forced_session_id"] == receipt["worker_session_id"]
+    assert captured["forced_workspace_path"] == str(linked.resolve())
+    assert receipt["worker_execution"]["workspace_readback"] == {
+        "workspace_path": str(linked),
+        "expected_base_commit": _git_head(linked),
+        "actual_base_commit": _git_head(linked),
+        "actual_changed_paths": ["src/x.py"],
+        "declared_changed_paths": ["src/x.py"],
+    }
+
+
+def test_default_executor_rejects_worker_commit_that_moves_fenced_base(tmp_path, monkeypatch):
+    _, linked = _make_linked_worktree(tmp_path)
+    store, task_id = _ready(tmp_path, workspace_path=linked)
+    captured = {}
+
+    def fake_build_child_agent(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(session_id=kwargs["forced_session_id"])
+
+    def fake_run_single_child(index, goal, child, parent):
+        target = linked / "src" / "x.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("changed = True\n", encoding="utf-8")
+        subprocess.run(["git", "add", "src/x.py"], cwd=linked, check=True)
+        subprocess.run(["git", "commit", "-qm", "worker commit"], cwd=linked, check=True)
+        packet = json.loads(captured["context"].split("CONTEXT_PACKET_JSON=", 1)[1])
+        return {
+            "status": "completed",
+            "summary": json.dumps(_worker_result(packet, changed_artifacts=[])),
+        }
+
+    monkeypatch.setattr("tools.delegate_tool._build_child_agent", fake_build_child_agent)
+    monkeypatch.setattr("tools.delegate_tool._run_single_child", fake_run_single_child)
+    receipt = dispatch_next_slice(SimpleNamespace(enabled_toolsets=None), task_id=task_id, store=store)
+
+    assert receipt["success"] is False
+    assert receipt["error"] == "worker_workspace_base_changed"
+    readback = receipt["worker_execution"]["workspace_readback"]
+    assert readback["actual_base_commit"] != readback["expected_base_commit"]
+    assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+
+
+def test_default_executor_rejects_declared_write_set_mismatch(tmp_path, monkeypatch):
+    _, linked = _make_linked_worktree(tmp_path)
+    store, task_id = _ready(tmp_path, workspace_path=linked)
+    captured = {}
+
+    def fake_build_child_agent(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(session_id=kwargs["forced_session_id"])
+
+    def fake_run_single_child(index, goal, child, parent):
+        target = linked / "src" / "x.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("changed = True\n", encoding="utf-8")
+        packet = json.loads(captured["context"].split("CONTEXT_PACKET_JSON=", 1)[1])
+        result = {
+            "slice_id": packet["slice_id"],
+            "input_digest": packet["packet_digest"],
+            "claims": ["R1", "N1"],
+            "changed_artifacts": [],
+            "evidence_refs": [{"kind": "test", "ref": "pytest:passed"}],
+            "verification_results": [{"command": "pytest -q", "exit_code": 0}],
+            "risks": [], "unknowns": [],
+            "state_delta_proposal": {"slice_status": "completed"},
+            "candidate_digest": "sha256:candidate",
+        }
+        return {"status": "completed", "summary": json.dumps(result)}
+
+    monkeypatch.setattr("tools.delegate_tool._build_child_agent", fake_build_child_agent)
+    monkeypatch.setattr("tools.delegate_tool._run_single_child", fake_run_single_child)
+    receipt = dispatch_next_slice(SimpleNamespace(enabled_toolsets=None), task_id=task_id, store=store)
+
+    assert receipt["success"] is False
+    assert receipt["error"] == "worker_write_set_mismatch"
+    assert receipt["worker_execution"]["workspace_readback"]["actual_changed_paths"] == ["src/x.py"]
+    assert store.get_task(task_id)["slices"][0]["status"] == "pending"

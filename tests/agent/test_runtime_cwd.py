@@ -99,6 +99,31 @@ class TestSessionCwdOverride:
         finally:
             rt._SESSION_CWD.reset(token)
 
+    def test_delegate_workspace_context_is_scoped_and_restored(self, monkeypatch, tmp_path):
+        from tools.delegate_tool import _run_child_conversation_in_workspace
+
+        workspace = tmp_path / "worker"
+        workspace.mkdir()
+        monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
+        observed = []
+
+        class Child:
+            def run_conversation(self, **kwargs):
+                observed.append(resolve_agent_cwd())
+                raise RuntimeError("worker failed")
+
+        with pytest.raises(RuntimeError, match="worker failed"):
+            _run_child_conversation_in_workspace(
+                Child(),
+                workspace_path=str(workspace),
+                user_message="work",
+                task_id="task-worker-test",
+                stream_callback=None,
+            )
+
+        assert observed == [workspace]
+        assert resolve_agent_cwd() == tmp_path
+
     def test_empty_session_cwd_falls_back_to_terminal_cwd(self, monkeypatch, tmp_path):
         monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
         token = set_session_cwd("")

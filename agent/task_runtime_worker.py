@@ -9,7 +9,9 @@ separate parent/integrator action.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
+import subprocess
 import threading
 import uuid
 from typing import Any, Callable
@@ -59,9 +61,87 @@ def _parse_worker_result(summary: Any) -> dict[str, Any]:
     return payload
 
 
+def _git_paths(workspace: str, *args: str) -> set[str]:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", workspace, *args],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise WorkerOutputError("workspace_git_readback_failed") from exc
+    return {
+        item.decode("utf-8", errors="surrogateescape")
+        for item in completed.stdout.split(b"\0")
+        if item
+    }
+
+
+def _workspace_changed_paths(workspace: str) -> set[str]:
+    tracked = _git_paths(workspace, "diff", "--name-only", "-z", "HEAD", "--")
+    untracked = _git_paths(workspace, "ls-files", "--others", "--exclude-standard", "-z", "--")
+    return tracked | untracked
+
+
+def _workspace_head(workspace: str) -> str:
+    try:
+        return subprocess.run(
+            ["git", "-C", workspace, "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise WorkerOutputError("workspace_base_commit_readback_failed") from exc
+
+
+def _validated_workspace(packet: dict[str, Any]) -> str:
+    """Return an isolated linked-worktree path or fail closed for write slices."""
+    owned_paths = list(packet.get("owned_paths") or [])
+    workspace_raw = str(packet.get("workspace_path") or "").strip()
+    if not owned_paths and not workspace_raw:
+        return ""
+    if not workspace_raw:
+        raise WorkerOutputError("isolated_workspace_required")
+    workspace = Path(workspace_raw).expanduser()
+    if not workspace.is_absolute() or not workspace.is_dir():
+        raise WorkerOutputError("isolated_workspace_invalid")
+    workspace = workspace.resolve()
+    if not (workspace / ".git").is_file():
+        raise WorkerOutputError("linked_git_worktree_required")
+    try:
+        top_level = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise WorkerOutputError("linked_git_worktree_invalid") from exc
+    if Path(top_level).resolve() != workspace:
+        raise WorkerOutputError("linked_git_worktree_invalid")
+    expected_base = str(packet.get("workspace_base_commit") or "").strip()
+    if not expected_base:
+        raise WorkerOutputError("workspace_base_commit_required")
+    actual_base = _workspace_head(str(workspace))
+    if actual_base != expected_base:
+        raise WorkerOutputError("workspace_base_commit_mismatch")
+    for owned_path in owned_paths:
+        candidate = (workspace / str(owned_path)).resolve()
+        if candidate != workspace and workspace not in candidate.parents:
+            raise WorkerOutputError("owned_path_outside_workspace")
+    if _workspace_changed_paths(str(workspace)):
+        raise WorkerOutputError("isolated_workspace_not_clean")
+    return str(workspace)
+
+
 def _default_child_builder(*, worker_session_id: str, packet: dict[str, Any], parent_agent: Any):
     from tools.delegate_tool import _build_child_agent
 
+    workspace_path = _validated_workspace(packet)
     return _build_child_agent(
         task_index=0,
         goal=str(packet.get("objective") or "execute task slice"),
@@ -73,6 +153,7 @@ def _default_child_builder(*, worker_session_id: str, packet: dict[str, Any], pa
         parent_agent=parent_agent,
         role="leaf",
         forced_session_id=worker_session_id,
+        forced_workspace_path=workspace_path or None,
     )
 
 
@@ -126,6 +207,22 @@ def dispatch_next_slice(
         if execution_status in {"error", "failed", "failure"}:
             raise WorkerOutputError("worker_execution_failed")
         worker_result = _parse_worker_result(execution.get("summary"))
+        if child_builder is None and packet.get("workspace_path"):
+            actual_base = _workspace_head(str(packet["workspace_path"]))
+            expected_base = str(packet.get("workspace_base_commit") or "")
+            actual_paths = _workspace_changed_paths(str(packet["workspace_path"]))
+            declared_paths = {str(item) for item in worker_result.get("changed_artifacts") or []}
+            execution["workspace_readback"] = {
+                "workspace_path": str(packet["workspace_path"]),
+                "expected_base_commit": expected_base,
+                "actual_base_commit": actual_base,
+                "actual_changed_paths": sorted(actual_paths),
+                "declared_changed_paths": sorted(declared_paths),
+            }
+            if actual_base != expected_base:
+                raise WorkerOutputError("worker_workspace_base_changed")
+            if actual_paths != declared_paths:
+                raise WorkerOutputError("worker_write_set_mismatch")
     except WorkerOutputError as exc:
         runtime_store.release_claim(
             task_id,
