@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from types import SimpleNamespace
 
+import agent.task_runtime_worker as worker_module
 from agent.task_runtime import TaskRuntimeStore
 from agent.task_runtime_worker import dispatch_next_slice
 from tools.registry import registry
@@ -127,6 +130,72 @@ def test_worker_exception_releases_claim_for_retry(tmp_path):
     assert receipt["error"] == "worker_execution_failed"
     assert receipt["error_type"] == "RuntimeError"
     assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+
+
+def test_worker_pool_never_exceeds_configured_concurrency(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_module, "_WORKER_SLOTS", threading.BoundedSemaphore(2))
+    lock = threading.Lock()
+    two_active = threading.Event()
+    active = 0
+    maximum = 0
+    receipts = []
+    errors = []
+    jobs = [_ready(tmp_path / f"job-{index}") for index in range(4)]
+
+    def builder(*, worker_session_id, packet, parent_agent):
+        return SimpleNamespace(session_id=worker_session_id)
+
+    def runner(*, child, goal, parent_agent):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+            if active == 2:
+                two_active.set()
+        assert two_active.wait(timeout=5)
+        time.sleep(0.05)
+        packet_json = goal.split("CONTEXT_PACKET_JSON=", 1)[1]
+        packet = json.loads(packet_json)
+        result = {
+            "slice_id": packet["slice_id"],
+            "input_digest": packet["packet_digest"],
+            "claims": ["R1", "N1"],
+            "changed_artifacts": ["src/x.py"],
+            "evidence_refs": [{"kind": "test", "ref": "pool-cap"}],
+            "verification_results": [{"command": "pytest -q", "exit_code": 0}],
+            "risks": [],
+            "unknowns": [],
+            "state_delta_proposal": {"slice_status": "completed"},
+            "candidate_digest": "sha256:pool-cap",
+        }
+        with lock:
+            active -= 1
+        return {"status": "completed", "summary": json.dumps(result)}
+
+    def dispatch(job):
+        store, task_id = job
+        try:
+            receipts.append(dispatch_next_slice(
+                SimpleNamespace(session_id="parent-session"),
+                task_id=task_id,
+                store=store,
+                child_builder=builder,
+                child_runner=runner,
+            ))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=dispatch, args=(job,)) for job in jobs]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+    assert errors == []
+    assert maximum == 2
+    assert len(receipts) == 4
+    assert all(receipt["success"] for receipt in receipts)
 
 
 def test_worker_tool_is_exposed_but_registry_cannot_bypass_live_agent():
