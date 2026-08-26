@@ -1,0 +1,258 @@
+"""Task-centric multi-session runtime tool.
+
+This is the narrow control-plane surface shared by CLI and messaging agents.
+It persists facts in :mod:`agent.task_runtime`; it does not execute workers,
+change canonical task lifecycle outside that store, or send external messages.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+from agent.task_runtime import RevisionConflict, TaskRuntimeStore
+from tools.registry import registry, tool_error, tool_result
+
+
+def _store(db_path: str | Path | None) -> TaskRuntimeStore:
+    return TaskRuntimeStore(db_path or TaskRuntimeStore.default_path())
+
+
+def _projection(task: Mapping[str, Any]) -> dict[str, Any]:
+    """Bounded task projection suitable for an entry conversation."""
+    slices = list(task.get("slices") or [])
+    return {
+        "schema": task.get("schema"),
+        "task_id": task.get("task_id"),
+        "title": task.get("title"),
+        "status": task.get("status"),
+        "spec_revision": task.get("spec_revision"),
+        "plan_revision": task.get("plan_revision"),
+        "state_revision": task.get("state_revision"),
+        "candidate_digest": task.get("candidate_digest"),
+        "bindings": list(task.get("bindings") or []),
+        "slice_counts": {
+            status: sum(1 for item in slices if item.get("status") == status)
+            for status in ("pending", "claimed", "submitted", "completed", "cancelled")
+        },
+        "slices": [
+            {
+                "slice_id": item.get("slice_id"),
+                "objective": item.get("objective"),
+                "status": item.get("status"),
+                "dependencies": list(item.get("dependencies") or []),
+                "result_id": item.get("result_id"),
+            }
+            for item in slices[:64]
+        ],
+        "closure": dict(task.get("closure") or {}),
+    }
+
+
+def _resolve_task(
+    store: TaskRuntimeStore,
+    *,
+    control_task_id: str | None,
+    entrypoint: str,
+    session_id: str,
+) -> dict[str, Any]:
+    if control_task_id:
+        return store.get_task(control_task_id)
+    task = store.resolve_entrypoint(entrypoint, session_id)
+    if task is None:
+        raise KeyError("no_task_bound_to_entrypoint")
+    return task
+
+
+def task_runtime_tool(
+    *,
+    action: str,
+    task_id: str | None = None,
+    entrypoint: str = "cli",
+    session_id: str = "",
+    title: str = "",
+    original_sources: Sequence[Mapping[str, Any]] | None = None,
+    spec_bundle: Mapping[str, Any] | None = None,
+    slices: Sequence[Mapping[str, Any]] | None = None,
+    expected_state_revision: int | None = None,
+    worker_session_id: str = "",
+    lease_seconds: int = 300,
+    packet_id: str = "",
+    worker_result: Mapping[str, Any] | None = None,
+    result_id: str = "",
+    integrator_session_id: str = "",
+    candidate_digest: str = "",
+    verifier_session_id: str = "",
+    claims: Mapping[str, str] | None = None,
+    source_event: Mapping[str, Any] | None = None,
+    db_path: str | Path | None = None,
+) -> str:
+    """Execute one deterministic task-runtime control-plane transition."""
+    try:
+        store = _store(db_path)
+        operation = str(action or "").strip().lower()
+        surface = str(entrypoint or "cli").strip().lower()
+        current_session = str(session_id or "").strip()
+
+        if operation == "create":
+            task = store.create_task(
+                title=title,
+                original_sources=list(original_sources or []),
+                task_id=task_id,
+            )
+            if current_session:
+                task = store.bind_entrypoint(task["task_id"], entrypoint=surface, session_id=current_session)
+            return tool_result(success=True, task=_projection(task))
+
+        if operation == "bind":
+            if not task_id:
+                raise ValueError("task_id_required")
+            if not current_session:
+                raise ValueError("session_id_required")
+            task = store.bind_entrypoint(task_id, entrypoint=surface, session_id=current_session)
+            return tool_result(success=True, task=_projection(task))
+
+        task = _resolve_task(
+            store,
+            control_task_id=task_id,
+            entrypoint=surface,
+            session_id=current_session,
+        )
+        control_task_id = str(task["task_id"])
+
+        if operation == "status":
+            return tool_result(success=True, task=_projection(task))
+        if operation == "record_source":
+            task = store.append_source_event(control_task_id, dict(source_event or {}))
+            return tool_result(success=True, task=_projection(task))
+        if operation == "freeze_spec":
+            if expected_state_revision is None:
+                raise ValueError("expected_state_revision_required")
+            task = store.freeze_spec(
+                control_task_id,
+                dict(spec_bundle or {}),
+                expected_state_revision=int(expected_state_revision),
+            )
+            return tool_result(success=True, task=_projection(task))
+        if operation == "set_plan":
+            if expected_state_revision is None:
+                raise ValueError("expected_state_revision_required")
+            task = store.set_plan(
+                control_task_id,
+                list(slices or []),
+                expected_state_revision=int(expected_state_revision),
+            )
+            return tool_result(success=True, task=_projection(task))
+        if operation == "claim":
+            packet = store.claim_next_slice(
+                control_task_id,
+                worker_session_id=worker_session_id or current_session,
+                lease_seconds=int(lease_seconds),
+            )
+            return tool_result(success=True, context_packet=packet)
+        if operation == "submit":
+            if not packet_id:
+                raise ValueError("packet_id_required")
+            receipt = store.submit_result(
+                control_task_id,
+                worker_session_id=worker_session_id or current_session,
+                packet_id=packet_id,
+                result=dict(worker_result or {}),
+            )
+            return tool_result(success=True, worker_result=receipt)
+        if operation == "integrate":
+            if not result_id:
+                raise ValueError("result_id_required")
+            receipt = store.integrate_result(
+                control_task_id,
+                result_id,
+                integrator_session_id=integrator_session_id or current_session,
+            )
+            return tool_result(success=True, integration=receipt)
+        if operation == "close":
+            task = store.close_task(
+                control_task_id,
+                candidate_digest=candidate_digest,
+                verifier_session_id=verifier_session_id or current_session,
+                claims=dict(claims or {}),
+            )
+            return tool_result(success=True, task=_projection(task))
+        raise ValueError(f"unsupported_action:{operation}")
+    except RevisionConflict as exc:
+        return tool_error(str(exc), code="revision_conflict")
+    except KeyError as exc:
+        return tool_error(str(exc).strip("'"), code="not_found")
+    except (TypeError, ValueError) as exc:
+        return tool_error(str(exc), code="invalid_request")
+    except Exception as exc:
+        return tool_error(f"task_runtime_failed:{type(exc).__name__}", code="internal_error")
+
+
+TASK_RUNTIME_SCHEMA = {
+    "name": "task_runtime",
+    "description": (
+        "Persistent task-centric multi-session control plane for complex work. "
+        "Use it when a task must survive context compression/session replacement, "
+        "continue across CLI and Telegram, dispatch immutable ContextPackets to fresh "
+        "workers, reject stale/expired results, integrate evidence deterministically, "
+        "or close against an independent verifier. Conversation summaries are not task "
+        "authority. Typical flow: create → freeze_spec → set_plan → claim → delegate a "
+        "fresh worker with the returned packet → submit → integrate → independent close."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["create", "bind", "status", "record_source", "freeze_spec", "set_plan", "claim", "submit", "integrate", "close"],
+            },
+            "task_id": {"type": "string", "description": "Persistent control-plane task ID. Omit for status on the currently bound entrypoint."},
+            "entrypoint": {"type": "string", "description": "Entrypoint identity such as cli or telegram.", "default": "cli"},
+            "title": {"type": "string"},
+            "original_sources": {"type": "array", "items": {"type": "object"}},
+            "spec_bundle": {"type": "object"},
+            "slices": {"type": "array", "items": {"type": "object"}},
+            "expected_state_revision": {"type": "integer"},
+            "worker_session_id": {"type": "string"},
+            "lease_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 300},
+            "packet_id": {"type": "string"},
+            "worker_result": {"type": "object"},
+            "result_id": {"type": "string"},
+            "integrator_session_id": {"type": "string"},
+            "candidate_digest": {"type": "string"},
+            "verifier_session_id": {"type": "string"},
+            "claims": {"type": "object", "additionalProperties": {"type": "string"}},
+            "source_event": {"type": "object"},
+        },
+        "required": ["action"],
+    },
+}
+
+
+registry.register(
+    name="task_runtime",
+    toolset="task_runtime",
+    schema=TASK_RUNTIME_SCHEMA,
+    handler=lambda args, **kw: task_runtime_tool(
+        action=args.get("action", ""),
+        task_id=args.get("task_id"),
+        entrypoint=args.get("entrypoint", "cli"),
+        session_id=kw.get("session_id") or "",
+        title=args.get("title", ""),
+        original_sources=args.get("original_sources"),
+        spec_bundle=args.get("spec_bundle"),
+        slices=args.get("slices"),
+        expected_state_revision=args.get("expected_state_revision"),
+        worker_session_id=args.get("worker_session_id", ""),
+        lease_seconds=args.get("lease_seconds", 300),
+        packet_id=args.get("packet_id", ""),
+        worker_result=args.get("worker_result"),
+        result_id=args.get("result_id", ""),
+        integrator_session_id=args.get("integrator_session_id", ""),
+        candidate_digest=args.get("candidate_digest", ""),
+        verifier_session_id=args.get("verifier_session_id", ""),
+        claims=args.get("claims"),
+        source_event=args.get("source_event"),
+    ),
+    emoji="🧭",
+)
