@@ -183,6 +183,24 @@ def cron_list(show_all: bool = False):
     _warn_if_gateway_not_running()
 
 
+def cron_audit(include_disabled: bool = False) -> int:
+    """Print a deterministic, read-only governance audit as canonical JSON."""
+    from cron.governance import audit_jobs
+    from cron.jobs import list_jobs
+
+    result = audit_jobs(list_jobs(include_disabled=include_disabled))
+    print(
+        json.dumps(
+            result,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return 0
+
+
 def cron_tick():
     """Run due jobs once and exit."""
     from cron.scheduler import tick
@@ -456,6 +474,9 @@ def cron_command(args):
         cron_list(show_all)
         return 0
 
+    if subcmd == "audit":
+        return cron_audit(getattr(args, "include_disabled", False))
+
     if subcmd == "status":
         cron_status()
         return 0
@@ -486,5 +507,5 @@ def cron_command(args):
         return _job_action("remove", args.job_id, "Removed")
 
     print(f"Unknown cron command: {subcmd}")
-    print("Usage: hermes cron [list|create|edit|pause|resume|run|remove|status|tick]")
+    print("Usage: hermes cron [list|audit|create|edit|pause|resume|run|remove|status|tick]")
     sys.exit(1)

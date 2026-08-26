@@ -1,13 +1,17 @@
 """Tests for hermes_cli.cron command handling."""
 
+import argparse
+import json
 from argparse import Namespace
 from types import SimpleNamespace
 
 import pytest
 
 from cron.jobs import create_job, get_job, list_jobs
+from cron.governance import audit_jobs
 from hermes_cli import cron as cron_cli
 from hermes_cli.cron import cron_command
+from hermes_cli.subcommands.cron import build_cron_parser
 
 
 @pytest.fixture()
@@ -16,6 +20,102 @@ def tmp_cron_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("cron.jobs.JOBS_FILE", tmp_path / "cron" / "jobs.json")
     monkeypatch.setattr("cron.jobs.OUTPUT_DIR", tmp_path / "cron" / "output")
     return tmp_path
+
+
+def test_cron_audit_parser_and_read_only_json_command(monkeypatch, capsys):
+    parser = argparse.ArgumentParser(prog="hermes")
+    subparsers = parser.add_subparsers(dest="command")
+    build_cron_parser(subparsers, cmd_cron=cron_command)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["cron", "audit"])
+    for forbidden_flag in ("--apply", "--pause", "--delete"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["cron", "audit", "--json", forbidden_flag])
+
+    jobs = [
+        {
+            "id": "job-b",
+            "enabled": False,
+            "state": "paused",
+            "prompt": "private prompt",
+            "schedule": {"kind": "interval", "value": "1h"},
+            "deliver": ["telegram"],
+            "origin": {"platform": "telegram", "chat_id": "private-chat"},
+            "owner_evidence": [
+                {"principal": "private-owner", "ref": "private-reference"}
+            ],
+        },
+        {
+            "id": "job-a",
+            "enabled": True,
+            "state": "scheduled",
+            "prompt": "another private prompt",
+            "schedule": {"kind": "cron", "value": "0 9 * * *"},
+            "deliver": ["local"],
+        },
+    ]
+    include_disabled_calls = []
+    monkeypatch.setattr(
+        "cron.jobs.list_jobs",
+        lambda include_disabled=False: (
+            include_disabled_calls.append(include_disabled) or jobs
+        ),
+    )
+
+    def forbidden_action(*_args, **_kwargs):
+        raise AssertionError("audit invoked a mutation or lifecycle action")
+
+    monkeypatch.setattr("cron.jobs.save_jobs", forbidden_action)
+    monkeypatch.setattr(cron_cli, "_cron_api", forbidden_action)
+    monkeypatch.setattr(cron_cli, "cron_status", forbidden_action)
+    monkeypatch.setattr(cron_cli, "cron_tick", forbidden_action)
+
+    args = parser.parse_args(
+        ["cron", "audit", "--json", "--include-disabled"]
+    )
+    assert args.func(args) == 0
+
+    expected = audit_jobs(jobs)
+    output = capsys.readouterr().out
+    assert include_disabled_calls == [True]
+    assert output == json.dumps(
+        expected,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ) + "\n"
+    assert set(expected) == {"records", "duplicate_groups"}
+    assert all(
+        set(record)
+        == {
+            "job_id",
+            "enabled",
+            "state",
+            "cron_identity",
+            "owner_status",
+            "owner_evidence_refs",
+            "mode",
+            "schedule_class",
+            "target_resource",
+            "side_effect_class",
+            "duplicate_group",
+            "findings",
+            "recommended_action",
+        }
+        for record in expected["records"]
+    )
+    assert all(
+        secret not in output
+        for secret in (
+            "private prompt",
+            "another private prompt",
+            "private-chat",
+            "private-owner",
+            "private-reference",
+        )
+    )
 
 
 class TestCronCommandLifecycle:

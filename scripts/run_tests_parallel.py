@@ -504,6 +504,19 @@ def _save_durations(
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
+def _maybe_save_durations(
+    file_times: List[Tuple[Path, float]],
+    repo_root: Path,
+    *,
+    disabled: bool,
+) -> bool:
+    """Persist duration data unless the caller selected write-free mode."""
+    if not file_times or disabled:
+        return False
+    _save_durations(file_times, repo_root)
+    return True
+
+
 def _compute_lpt_slices(
     files: List[Path],
     slice_count: int,
@@ -658,6 +671,11 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--no-duration-cache",
+        action="store_true",
+        help="Do not read or write test_durations.json for this run.",
+    )
+    parser.add_argument(
         "paths_positional",
         nargs="*",
         metavar="PATH",
@@ -686,6 +704,7 @@ def main() -> int:
     OUR_FLAGS = {
         "-j", "--jobs", "--paths", "--include-integration",
         "--file-timeout", "--slice", "--generate-slices", "--files",
+        "--no-duration-cache",
     }
     # pytest short flags that consume the NEXT token as their value.
     PYTEST_VALUE_FLAGS = {"-k", "-m", "-p", "-o", "-c", "-r", "-W"}
@@ -772,7 +791,7 @@ def main() -> int:
 
     # --generate-slices: compute LPT distribution and emit JSON, then exit.
     if args.generate_slices is not None:
-        durations = _load_durations(repo_root)
+        durations = {} if args.no_duration_cache else _load_durations(repo_root)
         slices = _compute_lpt_slices(
             files, args.generate_slices, durations, repo_root
         )
@@ -796,7 +815,7 @@ def main() -> int:
     # Apply slicing if requested — distribute files across CI jobs by
     # estimated duration so no one job gets all the slow files.
     if slice_index is not None:
-        durations = _load_durations(repo_root)
+        durations = {} if args.no_duration_cache else _load_durations(repo_root)
         files = _slice_files(files, slice_index, slice_count, durations, repo_root)
         # Recount after slicing.
         test_counts = {f: test_counts[f] for f in files if f in test_counts}
@@ -895,8 +914,9 @@ def main() -> int:
     # partial test_durations.json; a CI merge step joins them later.
     # Locally, _save_durations merges with any existing cache so entries
     # from previous runs aren't lost.
-    if file_times:
-        _save_durations(file_times, repo_root)
+    if _maybe_save_durations(
+        file_times, repo_root, disabled=args.no_duration_cache
+    ):
         print(f"  Durations cached to {_DURATIONS_FILE} ({len(file_times)} files)")
 
     # Per-file time distribution (throwaway diagnostic — shows how
