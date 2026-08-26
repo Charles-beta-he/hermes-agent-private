@@ -186,7 +186,7 @@ def test_dispatch_rejects_non_json_worker_output_without_integrating(tmp_path):
     assert store.get_task(task_id)["slices"][0]["status"] == "pending"
 
 
-def test_worker_exception_releases_claim_for_retry(tmp_path):
+def test_worker_runner_exception_quarantines_claim_without_termination_proof(tmp_path):
     store, task_id = _ready(tmp_path)
 
     def builder(*, worker_session_id, packet, parent_agent):
@@ -205,7 +205,8 @@ def test_worker_exception_releases_claim_for_retry(tmp_path):
     assert receipt["success"] is False
     assert receipt["error"] == "worker_execution_failed"
     assert receipt["error_type"] == "RuntimeError"
-    assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+    assert receipt["claim_receipt"]["status"] == "quarantined"
+    assert store.get_task(task_id)["slices"][0]["status"] == "quarantined"
 
 
 @pytest.mark.parametrize(

@@ -186,6 +186,7 @@ def dispatch_next_slice(
     builder = child_builder or _default_child_builder
     runner = child_runner or _default_child_runner
     execution: dict[str, Any] | None = None
+    runner_started = False
     try:
         child = builder(
             worker_session_id=worker_session_id,
@@ -198,6 +199,7 @@ def dispatch_next_slice(
 
         goal = _worker_prompt(packet)
         with _WORKER_SLOTS:
+            runner_started = True
             execution = runner(child=child, goal=goal, parent_agent=parent_agent)
         execution_status = str(execution.get("status") or "").strip().lower()
         if execution_status == "timeout":
@@ -252,20 +254,36 @@ def dispatch_next_slice(
             "claim_receipt": claim_receipt,
         }
     except KeyboardInterrupt:
-        runtime_store.release_claim(
-            task_id,
-            worker_session_id=worker_session_id,
-            packet_id=packet["packet_id"],
-            reason="worker_interrupted",
-        )
+        if runner_started:
+            runtime_store.quarantine_claim(
+                task_id,
+                worker_session_id=worker_session_id,
+                packet_id=packet["packet_id"],
+                reason="worker_interrupted_termination_unproven",
+            )
+        else:
+            runtime_store.release_claim(
+                task_id,
+                worker_session_id=worker_session_id,
+                packet_id=packet["packet_id"],
+                reason="worker_interrupted_before_start",
+            )
         raise
     except Exception as exc:
-        runtime_store.release_claim(
-            task_id,
-            worker_session_id=worker_session_id,
-            packet_id=packet["packet_id"],
-            reason=f"worker_execution_failed:{type(exc).__name__}",
-        )
+        if runner_started:
+            claim_receipt = runtime_store.quarantine_claim(
+                task_id,
+                worker_session_id=worker_session_id,
+                packet_id=packet["packet_id"],
+                reason=f"worker_execution_termination_unproven:{type(exc).__name__}",
+            )
+        else:
+            claim_receipt = runtime_store.release_claim(
+                task_id,
+                worker_session_id=worker_session_id,
+                packet_id=packet["packet_id"],
+                reason=f"worker_build_failed:{type(exc).__name__}",
+            )
         return {
             "success": False,
             "error": "worker_execution_failed",
@@ -274,6 +292,7 @@ def dispatch_next_slice(
             "worker_session_id": worker_session_id,
             "context_packet": packet,
             "worker_execution": execution,
+            "claim_receipt": claim_receipt,
         }
 
     receipt = runtime_store.submit_result(
