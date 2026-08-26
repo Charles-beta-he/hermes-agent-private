@@ -168,6 +168,7 @@ BR-23. WorkerResult uses a closed-world top-level schema; unknown fields are rej
 BR-24. Closure evidence and verification must already be admitted in the current candidate's EvidenceGraph, and every verification command must belong to the frozen ImplementationGraph. Caller-supplied references are not evidence by themselves.
 BR-25. A new source event appended after closure invalidates closure, candidate and evidence, fences prior packets/results, resets slices and places the task in `draft`; the stale plan is not claimable until a fresh spec/plan transition.
 BR-26. Integrator and closure-verifier identities exposed through the model tool are bound to the runtime-supplied current session; model arguments cannot override those actor identities, and the public tool schema does not advertise such overrides.
+BR-27. Once the worker runner has started, every abnormal terminal status, malformed result or workspace readback violation without an explicit termination proof quarantines the claim; only pre-run failures or proven termination may make it retryable.
 
 ## 5. Negative cases
 
@@ -200,6 +201,7 @@ N-26. A WorkerResult with an unknown top-level field such as `authority_granted`
 N-27. Fabricated closure references or commands that never entered the current candidate's EvidenceGraph/frozen plan must not close a task.
 N-28. Appending a new source event after closure must not leave the old closure, candidate, evidence or completed slice projection valid, and the stale pre-correction plan must not remain claimable.
 N-29. A model/tool caller must not impersonate a fresh verifier or a different integrator by supplying an actor-session argument.
+N-30. A started worker that returns cancellation/error, malformed JSON, a moved workspace base or a mismatched write set without termination proof must not release its claim for retry.
 
 ## 6. Dependency-ordered implementation DAG
 

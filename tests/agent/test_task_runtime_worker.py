@@ -183,7 +183,7 @@ def test_dispatch_rejects_non_json_worker_output_without_integrating(tmp_path):
     )
     assert receipt["success"] is False
     assert receipt["error"] == "worker_result_not_json"
-    assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+    assert store.get_task(task_id)["slices"][0]["status"] == "quarantined"
 
 
 def test_worker_runner_exception_quarantines_claim_without_termination_proof(tmp_path):
@@ -214,8 +214,9 @@ def test_worker_runner_exception_quarantines_claim_without_termination_proof(tmp
     [
         ("timeout", "worker_timeout", False, "quarantined"),
         ("timeout", "worker_timeout", True, "pending"),
-        ("cancelled", "worker_cancelled", None, "pending"),
-        ("error", "worker_execution_failed", None, "pending"),
+        ("cancelled", "worker_cancelled", None, "quarantined"),
+        ("cancelled", "worker_cancelled", True, "pending"),
+        ("error", "worker_execution_failed", None, "quarantined"),
     ],
 )
 def test_worker_terminal_execution_status_fences_claim_safely(
@@ -418,7 +419,7 @@ def test_default_executor_rejects_worker_commit_that_moves_fenced_base(tmp_path,
     assert receipt["error"] == "worker_workspace_base_changed"
     readback = receipt["worker_execution"]["workspace_readback"]
     assert readback["actual_base_commit"] != readback["expected_base_commit"]
-    assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+    assert store.get_task(task_id)["slices"][0]["status"] == "quarantined"
 
 
 def test_default_executor_rejects_declared_write_set_mismatch(tmp_path, monkeypatch):
@@ -455,4 +456,4 @@ def test_default_executor_rejects_declared_write_set_mismatch(tmp_path, monkeypa
     assert receipt["success"] is False
     assert receipt["error"] == "worker_write_set_mismatch"
     assert receipt["worker_execution"]["workspace_readback"]["actual_changed_paths"] == ["src/x.py"]
-    assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+    assert store.get_task(task_id)["slices"][0]["status"] == "quarantined"

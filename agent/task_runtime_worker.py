@@ -230,12 +230,12 @@ def dispatch_next_slice(
         termination_proven = bool(
             execution and execution.get("worker_terminated") is True
         )
-        if error == "worker_timeout" and not termination_proven:
+        if runner_started and not termination_proven:
             claim_receipt = runtime_store.quarantine_claim(
                 task_id,
                 worker_session_id=worker_session_id,
                 packet_id=packet["packet_id"],
-                reason="worker_timeout_termination_unproven",
+                reason=f"{error}_termination_unproven",
             )
         else:
             claim_receipt = runtime_store.release_claim(
