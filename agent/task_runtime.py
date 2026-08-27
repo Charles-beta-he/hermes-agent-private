@@ -39,6 +39,17 @@ TASK_CLASSES = {
 }
 DISCOVERY_LANES = {"project_evidence", "prototype", "competitor", "open_source"}
 PREFLIGHT_STATUSES = {"completed", "not_applicable"}
+OPEN_SOURCE_EVALUATION_DIMENSIONS = {
+    "real_closure",
+    "license",
+    "maintenance",
+    "security",
+    "technical_fit",
+    "data_ownership",
+    "version_pin",
+    "rollback",
+    "lifecycle_cost",
+}
 
 
 _MAX_CANDIDATE_ARCHIVE_BYTES = 256 * 1024 * 1024
@@ -976,6 +987,17 @@ class TaskRuntimeStore:
         }.get(task_class)
         if required_lane and str(discovery[required_lane].get("status")) != "completed":
             raise ValueError(f"{required_lane}_preflight_required_for_task_class")
+        if str(discovery["open_source"].get("status")) == "completed":
+            evaluation = discovery["open_source"].get("evaluation")
+            if (
+                not isinstance(evaluation, Mapping)
+                or not OPEN_SOURCE_EVALUATION_DIMENSIONS.issubset(evaluation)
+                or any(
+                    not str(evaluation[dimension]).strip()
+                    for dimension in OPEN_SOURCE_EVALUATION_DIMENSIONS
+                )
+            ):
+                raise ValueError("open_source_evaluation_incomplete")
         if governance.get("blocking_unknowns") != []:
             raise ValueError("spec_blocking_unknowns_unresolved")
 

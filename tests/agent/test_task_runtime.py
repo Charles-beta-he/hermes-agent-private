@@ -621,6 +621,48 @@ def test_governed_spec_negative_contract_matrix(tmp_path):
     assert unchanged["spec_reviews"] == []
 
 
+def test_mature_capability_requires_complete_open_source_due_diligence(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "open-source-evaluation.db")
+    task = store.create_task(
+        title="mature capability",
+        original_sources=[{"source_id": "S-U1", "kind": "user_message", "content": "editor"}],
+    )
+    spec = json.loads(json.dumps(SPEC))
+    spec["governance"]["task_class"] = "mature_capability"
+    spec["governance"]["discovery"]["open_source"].update(status="completed")
+
+    with pytest.raises(ValueError, match="open_source_evaluation_incomplete"):
+        store.record_spec_review(
+            task["task_id"],
+            spec,
+            reviewer_session_id="oss-reviewer-incomplete",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=task["state_revision"],
+        )
+
+    spec["governance"]["discovery"]["open_source"]["evaluation"] = {
+        "real_closure": "validated against the required end-to-end journey",
+        "license": "compatible license recorded",
+        "maintenance": "release and maintainer health recorded",
+        "security": "threat and dependency posture recorded",
+        "technical_fit": "adapter and runtime fit recorded",
+        "data_ownership": "storage and export ownership recorded",
+        "version_pin": "exact version and integrity pin recorded",
+        "rollback": "removal and fallback path recorded",
+        "lifecycle_cost": "adoption, upgrade and replacement cost recorded",
+    }
+    approved = store.record_spec_review(
+        task["task_id"],
+        spec,
+        reviewer_session_id="oss-reviewer-complete",
+        verdict="approved",
+        findings=[],
+        expected_state_revision=task["state_revision"],
+    )
+    assert approved["verdict"] == "approved"
+
+
 def test_spec_review_is_exact_bound_append_only_and_conflict_safe(tmp_path):
     store = TaskRuntimeStore(tmp_path / "spec-review-ledger.db")
     task = store.create_task(
