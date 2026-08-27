@@ -4,8 +4,8 @@ Status semantics: `covered` means the listed contract is exercised by the fresh 
 
 ## Fresh local evidence checkpoints
 
-| E1 | `pytest -q tests/agent/test_task_runtime.py tests/agent/test_task_runtime_worker.py tests/agent/test_task_runtime_process_supervisor.py tests/agent/test_task_runtime_workspace.py` | `76 passed in 6.77s` |
-| E2 | `pytest -q tests/agent/test_task_runtime_ingress.py tests/agent/test_task_runtime_process_e2e.py tests/tools/test_task_runtime_tool.py tests/gateway/test_fast_command.py tests/test_dispatch_session_id.py` | `23 passed in 1.04s` |
+| E1 | `pytest -q tests/agent/test_task_runtime.py tests/agent/test_task_runtime_worker.py tests/agent/test_task_runtime_process_supervisor.py tests/agent/test_task_runtime_workspace.py` | `76 passed in 7.57s` |
+| E2 | `pytest -q tests/agent/test_task_runtime_ingress.py tests/agent/test_task_runtime_process_e2e.py tests/tools/test_task_runtime_tool.py tests/gateway/test_fast_command.py tests/test_dispatch_session_id.py` | `23 passed in 1.13s` |
 
 - E3: temporary-home real CLI startup: `HOME=<tmp>/home HERMES_HOME=<tmp>/hermes uv run --frozen hermes --version` → exit 0, Hermes Agent v0.19.0; `cron/jobs.json` and `gateway.json` remained absent.
 
