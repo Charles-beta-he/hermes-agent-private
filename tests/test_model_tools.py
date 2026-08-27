@@ -418,7 +418,12 @@ class TestPreToolCallBlocking:
             (
                 "mcp_filesystem_write_file",
                 {"path": "/tmp/ordinary.md", "content": "hello"},
-                {"task_id": None, "session_id": None, "user_task": None},
+                {
+                    "task_id": None,
+                    "session_id": None,
+                    "platform": None,
+                    "user_task": None,
+                },
             )
         ]
 

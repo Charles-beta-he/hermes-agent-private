@@ -204,7 +204,7 @@ def run_owned_process(
         finally:
             if process.poll() is None or timed_out:
                 try:
-                    os.killpg(pgid, signal.SIGTERM)
+                    os.killpg(pgid, signal.SIGTERM)  # windows-footgun: ok — POSIX-only supervisor
                     term_sent = True
                 except ProcessLookupError:
                     pass
@@ -213,7 +213,7 @@ def run_owned_process(
                     time.sleep(0.01)
                 if process.poll() is None:
                     try:
-                        os.killpg(pgid, signal.SIGKILL)
+                        os.killpg(pgid, signal.SIGKILL)  # windows-footgun: ok — POSIX-only supervisor
                         kill_sent = True
                     except ProcessLookupError:
                         pass
@@ -224,7 +224,7 @@ def run_owned_process(
             for identity in identities:
                 if _same_process(identity):
                     try:
-                        os.kill(identity.pid, signal.SIGKILL)
+                        os.kill(identity.pid, signal.SIGKILL)  # windows-footgun: ok — POSIX-only supervisor
                         kill_sent = True
                     except (ProcessLookupError, PermissionError):
                         if _same_process(identity):
