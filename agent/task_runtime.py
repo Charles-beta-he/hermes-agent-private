@@ -908,14 +908,24 @@ class TaskRuntimeStore:
             raise ValueError("spec_task_class_invalid")
 
         known_sources = set(source_ids)
-        source_authority = [str(item) for item in governance.get("source_authority") or []]
+        source_authority_raw = governance.get("source_authority")
+        if not isinstance(source_authority_raw, list) or any(
+            not isinstance(item, str) or not item.strip() for item in source_authority_raw
+        ):
+            raise ValueError("spec_source_authority_invalid")
+        source_authority = list(source_authority_raw)
         if (
             not source_authority
             or len(source_authority) != len(set(source_authority))
             or set(source_authority) != known_sources
         ):
             raise ValueError("spec_source_authority_incomplete")
-        oracle_refs = {str(item) for item in governance.get("oracle_refs") or []}
+        oracle_refs_raw = governance.get("oracle_refs")
+        if not isinstance(oracle_refs_raw, list) or any(
+            not isinstance(item, str) or not item.strip() for item in oracle_refs_raw
+        ):
+            raise ValueError("spec_oracle_refs_invalid")
+        oracle_refs = set(oracle_refs_raw)
         if not oracle_refs or not oracle_refs.issubset(known_sources):
             raise ValueError("spec_oracle_refs_invalid")
         source_coverage = governance.get("source_coverage")
@@ -939,7 +949,12 @@ class TaskRuntimeStore:
                 if not isinstance(claim, Mapping):
                     raise ValueError("spec_claim_invalid")
                 claim_id = str(claim.get("id") or "")
-                refs = {str(item) for item in claim.get("source_refs") or []}
+                claim_refs_raw = claim.get("source_refs")
+                if not isinstance(claim_refs_raw, list) or any(
+                    not isinstance(item, str) or not item.strip() for item in claim_refs_raw
+                ):
+                    raise ValueError("spec_claim_source_refs_invalid")
+                refs = set(claim_refs_raw)
                 if not claim_id or claim_id in claim_ids:
                     raise ValueError("spec_claim_identity_invalid")
                 if not refs or not refs.issubset(known_sources):
@@ -960,7 +975,12 @@ class TaskRuntimeStore:
         }
         if coverage_edges != claim_source_edges:
             raise ValueError("spec_source_coverage_edge_mismatch")
-        if set(str(item) for item in spec.get("closure_criteria") or []) != claim_ids:
+        closure_criteria = spec.get("closure_criteria")
+        if (
+            not isinstance(closure_criteria, list)
+            or any(not isinstance(item, str) or not item.strip() for item in closure_criteria)
+            or set(closure_criteria) != claim_ids
+        ):
             raise ValueError("spec_closure_coverage_incomplete")
 
         discovery = governance.get("discovery")
@@ -971,7 +991,12 @@ class TaskRuntimeStore:
             if not isinstance(lane, Mapping):
                 raise ValueError("spec_discovery_preflight_invalid")
             status = str(lane.get("status") or "")
-            refs = {str(item) for item in lane.get("source_refs") or []}
+            lane_refs_raw = lane.get("source_refs")
+            if not isinstance(lane_refs_raw, list) or any(
+                not isinstance(item, str) or not item.strip() for item in lane_refs_raw
+            ):
+                raise ValueError("spec_discovery_preflight_invalid")
+            refs = set(lane_refs_raw)
             if status not in PREFLIGHT_STATUSES:
                 raise ValueError("spec_discovery_preflight_invalid")
             if not refs or not refs.issubset(known_sources):

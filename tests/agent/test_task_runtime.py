@@ -683,6 +683,51 @@ def test_governed_spec_negative_contract_matrix(tmp_path):
     assert unchanged["spec_reviews"] == []
 
 
+@pytest.mark.parametrize(
+    ("malformed_field", "expected_error"),
+    [
+        ("source_authority", "spec_source_authority_invalid"),
+        ("oracle_refs", "spec_oracle_refs_invalid"),
+        ("claim_source_refs", "spec_claim_source_refs_invalid"),
+        ("discovery_source_refs", "spec_discovery_preflight_invalid"),
+        ("closure_criteria", "spec_closure_coverage_incomplete"),
+    ],
+)
+def test_governed_spec_rejects_string_shaped_collection_fields(
+    tmp_path, malformed_field, expected_error
+):
+    store = TaskRuntimeStore(tmp_path / f"malformed-{malformed_field}.db")
+    task = store.create_task(
+        title="malformed governed collection",
+        original_sources=[{"source_id": "A", "kind": "user_message", "content": "source"}],
+    )
+    spec = _spec_for_sources("A")
+    spec["required_clauses"][0]["id"] = "P"
+    spec["negative_requirements"][0]["id"] = "N"
+    spec["governance"]["source_coverage"] = {"A": ["P", "N"]}
+    spec["closure_criteria"] = ["P", "N"]
+    if malformed_field == "source_authority":
+        spec["governance"]["source_authority"] = "A"
+    elif malformed_field == "oracle_refs":
+        spec["governance"]["oracle_refs"] = "A"
+    elif malformed_field == "claim_source_refs":
+        spec["required_clauses"][0]["source_refs"] = "A"
+    elif malformed_field == "discovery_source_refs":
+        spec["governance"]["discovery"]["project_evidence"]["source_refs"] = "A"
+    else:
+        spec["closure_criteria"] = "PN"
+
+    with pytest.raises(ValueError, match=expected_error):
+        store.record_spec_review(
+            task["task_id"],
+            spec,
+            reviewer_session_id=f"malformed-{malformed_field}-reviewer",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=task["state_revision"],
+        )
+
+
 def test_reference_reimplementation_binds_prototype_evidence_as_oracle(tmp_path):
     store = TaskRuntimeStore(tmp_path / "prototype-oracle.db")
     task = store.create_task(
