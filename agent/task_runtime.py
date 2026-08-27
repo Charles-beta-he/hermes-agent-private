@@ -27,6 +27,18 @@ SCHEMA = "hermes_task_runtime_v1"
 CONTEXT_PACKET_SCHEMA = "hermes_context_packet_v1"
 WORKER_RESULT_SCHEMA = "hermes_worker_result_v1"
 TERMINAL_SLICE_STATES = {"completed", "cancelled"}
+TASK_CLASSES = {
+    "bugfix",
+    "complex",
+    "cross_surface_journey",
+    "frozen_design",
+    "high_risk_architecture",
+    "mature_capability",
+    "product_design",
+    "reference_reimplementation",
+}
+DISCOVERY_LANES = {"project_evidence", "prototype", "competitor", "open_source"}
+PREFLIGHT_STATUSES = {"completed", "not_applicable"}
 
 
 _MAX_CANDIDATE_ARCHIVE_BYTES = 256 * 1024 * 1024
@@ -496,6 +508,29 @@ class TaskRuntimeStore:
                 BEGIN
                     SELECT RAISE(ABORT, 'source_events_append_only');
                 END;
+                CREATE TABLE IF NOT EXISTS spec_reviews (
+                    review_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+                    spec_digest TEXT NOT NULL,
+                    source_digest TEXT NOT NULL,
+                    reviewer_session_id TEXT NOT NULL,
+                    verdict TEXT NOT NULL,
+                    findings_json TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    UNIQUE (task_id, spec_digest, source_digest, reviewer_session_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_spec_reviews_task
+                    ON spec_reviews(task_id, recorded_at, review_id);
+                CREATE TRIGGER IF NOT EXISTS spec_reviews_no_update
+                BEFORE UPDATE ON spec_reviews
+                BEGIN
+                    SELECT RAISE(ABORT, 'spec_reviews_append_only');
+                END;
+                CREATE TRIGGER IF NOT EXISTS spec_reviews_no_delete
+                BEFORE DELETE ON spec_reviews
+                BEGIN
+                    SELECT RAISE(ABORT, 'spec_reviews_append_only');
+                END;
                 CREATE TABLE IF NOT EXISTS task_state_events (
                     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
                     state_revision INTEGER NOT NULL,
@@ -711,6 +746,12 @@ class TaskRuntimeStore:
                 "ORDER BY state_revision",
                 (task_id,),
             ).fetchall()
+            spec_reviews = conn.execute(
+                "SELECT review_id, spec_digest, source_digest, reviewer_session_id, "
+                "verdict, findings_json, recorded_at FROM spec_reviews WHERE task_id = ? "
+                "ORDER BY recorded_at, review_id",
+                (task_id,),
+            ).fetchall()
             projection_digest = self._projection_digest(conn, task_id)
         data = dict(row)
         if not self._state_event_ledger_valid(
@@ -728,6 +769,18 @@ class TaskRuntimeStore:
             "status": data["status"],
             "original_sources": _decode(data["original_sources_json"], []),
             "source_events": [_decode(item["payload_json"], {}) for item in source_events],
+            "spec_reviews": [
+                {
+                    "review_id": item["review_id"],
+                    "spec_digest": item["spec_digest"],
+                    "source_digest": item["source_digest"],
+                    "reviewer_session_id": item["reviewer_session_id"],
+                    "verdict": item["verdict"],
+                    "findings": _decode(item["findings_json"], []),
+                    "recorded_at": item["recorded_at"],
+                }
+                for item in spec_reviews
+            ],
             "state_events": [
                 {
                     "state_revision": int(item["state_revision"]),
@@ -801,6 +854,211 @@ class TaskRuntimeStore:
             ).fetchone()
         return self.get_task(row["task_id"]) if row else None
 
+    @staticmethod
+    def _source_snapshot(conn: sqlite3.Connection, task: sqlite3.Row) -> dict[str, Any]:
+        events = [
+            _decode(row["payload_json"], {})
+            for row in conn.execute(
+                "SELECT payload_json FROM source_events WHERE task_id = ? "
+                "ORDER BY recorded_at, event_id",
+                (task["task_id"],),
+            ).fetchall()
+        ]
+        return {
+            "original_sources": _decode(task["original_sources_json"], []),
+            "source_events": events,
+        }
+
+    @staticmethod
+    def _source_ids(source_snapshot: Mapping[str, Any]) -> list[str]:
+        identifiers = [
+            str(item.get("source_id") or "")
+            for item in source_snapshot.get("original_sources") or []
+            if isinstance(item, Mapping)
+        ]
+        identifiers.extend(
+            str(item.get("event_id") or "")
+            for item in source_snapshot.get("source_events") or []
+            if isinstance(item, Mapping)
+        )
+        if any(not item for item in identifiers) or len(identifiers) != len(set(identifiers)):
+            raise ValueError("task_source_identity_invalid")
+        return identifiers
+
+    @staticmethod
+    def _validate_governed_spec(
+        spec: Mapping[str, Any], *, source_ids: Sequence[str]
+    ) -> None:
+        governance = spec.get("governance")
+        if not isinstance(governance, Mapping):
+            raise ValueError("spec_governance_required")
+        task_class = str(governance.get("task_class") or "")
+        if task_class not in TASK_CLASSES:
+            raise ValueError("spec_task_class_invalid")
+
+        known_sources = set(source_ids)
+        source_authority = [str(item) for item in governance.get("source_authority") or []]
+        if (
+            not source_authority
+            or len(source_authority) != len(set(source_authority))
+            or set(source_authority) != known_sources
+        ):
+            raise ValueError("spec_source_authority_incomplete")
+        oracle_refs = {str(item) for item in governance.get("oracle_refs") or []}
+        if not oracle_refs or not oracle_refs.issubset(known_sources):
+            raise ValueError("spec_oracle_refs_invalid")
+        source_coverage = governance.get("source_coverage")
+        if not isinstance(source_coverage, Mapping) or set(source_coverage) != known_sources:
+            raise ValueError("spec_source_coverage_incomplete")
+        if any(
+            not isinstance(source_coverage[source_id], list)
+            or not source_coverage[source_id]
+            or any(not str(item or "").strip() for item in source_coverage[source_id])
+            for source_id in known_sources
+        ):
+            raise ValueError("spec_source_coverage_incomplete")
+
+        claim_ids: set[str] = set()
+        for field in ("required_clauses", "negative_requirements"):
+            claims = spec.get(field)
+            if not isinstance(claims, list) or not claims:
+                raise ValueError(f"spec_{field}_required")
+            for claim in claims:
+                if not isinstance(claim, Mapping):
+                    raise ValueError("spec_claim_invalid")
+                claim_id = str(claim.get("id") or "")
+                refs = {str(item) for item in claim.get("source_refs") or []}
+                if not claim_id or claim_id in claim_ids:
+                    raise ValueError("spec_claim_identity_invalid")
+                if not refs or not refs.issubset(known_sources):
+                    raise ValueError("spec_claim_source_refs_invalid")
+                claim_ids.add(claim_id)
+        covered_claim_ids = {
+            str(claim_id)
+            for source_id in known_sources
+            for claim_id in source_coverage[source_id]
+        }
+        if covered_claim_ids != claim_ids:
+            raise ValueError("spec_source_coverage_incomplete")
+        if set(str(item) for item in spec.get("closure_criteria") or []) != claim_ids:
+            raise ValueError("spec_closure_coverage_incomplete")
+
+        discovery = governance.get("discovery")
+        if not isinstance(discovery, Mapping) or not DISCOVERY_LANES.issubset(discovery):
+            raise ValueError("spec_discovery_preflight_incomplete")
+        for lane_name in DISCOVERY_LANES:
+            lane = discovery[lane_name]
+            if not isinstance(lane, Mapping):
+                raise ValueError("spec_discovery_preflight_invalid")
+            status = str(lane.get("status") or "")
+            refs = {str(item) for item in lane.get("source_refs") or []}
+            if status not in PREFLIGHT_STATUSES:
+                raise ValueError("spec_discovery_preflight_invalid")
+            if not refs or not refs.issubset(known_sources):
+                raise ValueError("spec_discovery_source_refs_invalid")
+            if not str(lane.get("decision") or "").strip():
+                raise ValueError("spec_discovery_decision_required")
+        if str(discovery["project_evidence"].get("status")) != "completed":
+            raise ValueError("project_evidence_preflight_required")
+        required_lane = {
+            "mature_capability": "open_source",
+            "product_design": "competitor",
+            "reference_reimplementation": "prototype",
+        }.get(task_class)
+        if required_lane and str(discovery[required_lane].get("status")) != "completed":
+            raise ValueError(f"{required_lane}_preflight_required_for_task_class")
+        if governance.get("blocking_unknowns") != []:
+            raise ValueError("spec_blocking_unknowns_unresolved")
+
+    def record_spec_review(
+        self,
+        task_id: str,
+        spec_bundle: Mapping[str, Any],
+        *,
+        reviewer_session_id: str,
+        verdict: str,
+        findings: Sequence[Mapping[str, Any] | str],
+        expected_state_revision: int,
+    ) -> dict[str, Any]:
+        reviewer = str(reviewer_session_id or "").strip()
+        normalized_verdict = str(verdict or "").strip().lower()
+        normalized_findings = list(findings)
+        if not reviewer:
+            raise ValueError("spec_reviewer_session_id_required")
+        if normalized_verdict not in {"approved", "rejected"}:
+            raise ValueError("spec_review_verdict_invalid")
+        if normalized_verdict == "rejected" and not normalized_findings:
+            raise ValueError("rejected_spec_review_findings_required")
+        spec = dict(spec_bundle)
+        with self._write() as conn:
+            task = self._task_row(conn, task_id)
+            source_snapshot = self._source_snapshot(conn, task)
+            source_ids = self._source_ids(source_snapshot)
+            if normalized_verdict == "approved":
+                self._validate_governed_spec(spec, source_ids=source_ids)
+            spec_digest = _digest(spec)
+            source_digest = _digest(source_snapshot)
+            review_id = _digest(
+                {
+                    "task_id": task_id,
+                    "spec_digest": spec_digest,
+                    "source_digest": source_digest,
+                    "reviewer_session_id": reviewer,
+                }
+            )
+            existing = conn.execute(
+                "SELECT verdict, findings_json FROM spec_reviews WHERE review_id = ?",
+                (review_id,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["verdict"]) != normalized_verdict
+                    or _decode(existing["findings_json"], []) != normalized_findings
+                ):
+                    raise ValueError("spec_review_identity_conflict")
+                current = self._task_row(conn, task_id)
+                state_revision = int(current["state_revision"])
+            else:
+                self._expect_revision(task, expected_state_revision)
+                conn.execute(
+                    "INSERT INTO spec_reviews (review_id, task_id, spec_digest, source_digest, "
+                    "reviewer_session_id, verdict, findings_json, recorded_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        review_id,
+                        task_id,
+                        spec_digest,
+                        source_digest,
+                        reviewer,
+                        normalized_verdict,
+                        _json(normalized_findings),
+                        _utc_now(),
+                    ),
+                )
+                self._bump_state(
+                    conn,
+                    task_id,
+                    "spec_review_recorded",
+                    {
+                        "review_id": review_id,
+                        "spec_digest": spec_digest,
+                        "source_digest": source_digest,
+                        "reviewer_session_id": reviewer,
+                        "verdict": normalized_verdict,
+                    },
+                )
+                state_revision = int(task["state_revision"]) + 1
+        return {
+            "review_id": review_id,
+            "task_id": task_id,
+            "spec_digest": spec_digest,
+            "source_digest": source_digest,
+            "reviewer_session_id": reviewer,
+            "verdict": normalized_verdict,
+            "findings": normalized_findings,
+            "state_revision": state_revision,
+        }
+
     def append_source_event(self, task_id: str, event: Mapping[str, Any]) -> dict[str, Any]:
         payload = dict(event)
         if not payload.get("content"):
@@ -828,13 +1086,16 @@ class TaskRuntimeStore:
                     "VALUES (?, ?, ?, ?)",
                     (task_id, event_id, _json(payload), str(payload["recorded_at"])),
                 )
+                spec_invalidated = str(task["status"]) != "draft"
                 closure_invalidated = str(task["status"]) == "closed"
-                if closure_invalidated:
-                    self._invalidate_claims(conn, task_id, "post_close_source_event")
+                if spec_invalidated:
+                    self._invalidate_claims(conn, task_id, "source_event_changed")
                     conn.execute(
                         "UPDATE tasks SET status = 'draft', candidate_digest = '', "
-                        "plan_revision = plan_revision + 1, implementation_graph_json = '[]', "
-                        "evidence_graph_json = '[]', closure_json = '{}' WHERE task_id = ?",
+                        "plan_revision = plan_revision + CASE "
+                        "WHEN implementation_graph_json != '[]' THEN 1 ELSE 0 END, "
+                        "implementation_graph_json = '[]', evidence_graph_json = '[]', "
+                        "closure_json = '{}' WHERE task_id = ?",
                         (task_id,),
                     )
                     conn.execute("DELETE FROM task_slices WHERE task_id = ?", (task_id,))
@@ -844,6 +1105,7 @@ class TaskRuntimeStore:
                     "source_event_appended",
                     {
                         "event_id": event_id,
+                        "spec_invalidated": spec_invalidated,
                         "closure_invalidated": closure_invalidated,
                     },
                 )
@@ -854,14 +1116,40 @@ class TaskRuntimeStore:
         task_id: str,
         spec_bundle: Mapping[str, Any],
         *,
+        compiler_session_id: str | None = None,
         expected_state_revision: int,
     ) -> dict[str, Any]:
         spec = dict(spec_bundle)
+        compiler = str(compiler_session_id or "").strip()
+        if not compiler:
+            raise ValueError("spec_compiler_session_id_required")
         if not spec.get("required_clauses") or not spec.get("closure_criteria"):
             raise ValueError("spec_missing_required_clauses_or_closure_criteria")
         with self._write() as conn:
             row = self._task_row(conn, task_id)
             self._expect_revision(row, expected_state_revision)
+            spec_digest = _digest(spec)
+            source_snapshot = self._source_snapshot(conn, row)
+            source_digest = _digest(source_snapshot)
+            accepted_review: sqlite3.Row | None = None
+            source_ids = self._source_ids(source_snapshot)
+            self._validate_governed_spec(spec, source_ids=source_ids)
+            approved_reviews = conn.execute(
+                "SELECT reviewer_session_id, review_id FROM spec_reviews "
+                "WHERE task_id = ? AND spec_digest = ? AND source_digest = ? "
+                "AND verdict = 'approved' ORDER BY recorded_at, review_id",
+                (task_id, spec_digest, source_digest),
+            ).fetchall()
+            if not approved_reviews:
+                raise ValueError("independent_spec_review_required")
+            independent_reviews = [
+                review
+                for review in approved_reviews
+                if str(review["reviewer_session_id"]) != compiler
+            ]
+            if not independent_reviews:
+                raise ValueError("spec_compiler_and_reviewer_must_be_independent")
+            accepted_review = independent_reviews[-1]
             conn.execute(
                 """
                 UPDATE tasks SET spec_bundle_json = ?, spec_revision = spec_revision + 1,
@@ -877,12 +1165,25 @@ class TaskRuntimeStore:
             )
             self._invalidate_claims(conn, task_id, "spec_changed")
             conn.execute("DELETE FROM task_slices WHERE task_id = ?", (task_id,))
+            event_payload: dict[str, Any] = {
+                "spec_revision": int(row["spec_revision"]) + 1,
+                "spec_digest": spec_digest,
+                "source_digest": source_digest,
+            }
+            if accepted_review is not None:
+                event_payload.update(
+                    {
+                        "compiler_session_id": compiler,
+                        "review_id": str(accepted_review["review_id"]),
+                        "reviewer_session_id": str(accepted_review["reviewer_session_id"]),
+                    }
+                )
             self._record_state_event(
                 conn,
                 task_id,
                 int(row["state_revision"]) + 1,
                 "spec_frozen",
-                {"spec_revision": int(row["spec_revision"]) + 1},
+                event_payload,
             )
         return self.get_task(task_id)
 
@@ -901,6 +1202,18 @@ class TaskRuntimeStore:
             if int(row["spec_revision"]) < 1:
                 raise ValueError("spec_not_frozen")
             spec = _decode(row["spec_bundle_json"], {})
+            if str(row["status"]) not in {"specified", "planned", "running"}:
+                raise ValueError("task_not_specified_for_plan")
+            source_snapshot = self._source_snapshot(conn, row)
+            source_ids = self._source_ids(source_snapshot)
+            self._validate_governed_spec(spec, source_ids=source_ids)
+            approved_review = conn.execute(
+                "SELECT 1 FROM spec_reviews WHERE task_id = ? AND spec_digest = ? "
+                "AND source_digest = ? AND verdict = 'approved' LIMIT 1",
+                (task_id, _digest(spec), _digest(source_snapshot)),
+            ).fetchone()
+            if approved_review is None:
+                raise ValueError("independent_spec_review_required")
             spec_claims = {
                 str(item.get("id") or "")
                 for field in ("required_clauses", "negative_requirements")
@@ -1909,7 +2222,10 @@ class TaskRuntimeStore:
         verifier = str(verifier_session_id or "").strip()
         with self._write() as conn:
             task = self._task_row(conn, task_id)
-            if str(candidate_digest) != str(task["candidate_digest"]):
+            if (
+                str(task["status"]) == "closed"
+                and str(candidate_digest) != str(task["candidate_digest"])
+            ):
                 raise ValueError("candidate_digest_mismatch")
             packet = dict(closure_packet or {})
             packet_digest = str(packet.pop("packet_digest", "") or "")
@@ -1966,6 +2282,8 @@ class TaskRuntimeStore:
             }
             if any(packet.get(key) != value for key, value in expected_packet_fields.items()):
                 raise ValueError("closure_packet_stale")
+            if str(candidate_digest) != str(task["candidate_digest"]):
+                raise ValueError("candidate_digest_mismatch")
             if not str(packet.get("packet_id") or "").strip() or not str(
                 packet.get("created_at") or ""
             ).strip():
@@ -2116,6 +2434,11 @@ class TaskRuntimeStore:
         def rows(query: str) -> list[dict[str, Any]]:
             return [dict(row) for row in conn.execute(query, (task_id,)).fetchall()]
 
+        spec_reviews = rows(
+            "SELECT review_id, spec_digest, source_digest, reviewer_session_id, "
+            "verdict, findings_json, recorded_at FROM spec_reviews "
+            "WHERE task_id = ? ORDER BY recorded_at, review_id"
+        )
         projection = {
             "task": dict(task),
             "source_events": rows(
@@ -2144,6 +2467,11 @@ class TaskRuntimeStore:
                 "FROM worker_results WHERE task_id = ? ORDER BY result_id"
             ),
         }
+        # Preserve projection-digest compatibility for pre-review databases: the
+        # historical projection had no spec_reviews key. The key becomes authoritative
+        # only once the first immutable review exists.
+        if spec_reviews:
+            projection["spec_reviews"] = spec_reviews
         return _digest(projection)
 
     @staticmethod

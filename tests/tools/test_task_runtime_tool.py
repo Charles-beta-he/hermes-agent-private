@@ -19,6 +19,48 @@ def _call(tmp_path, action: str, **kwargs):
     )
 
 
+def _governed_spec() -> dict:
+    return {
+        "spec_id": "tool-spec-1",
+        "governance": {
+            "task_class": "complex",
+            "source_authority": ["S1"],
+            "oracle_refs": ["S1"],
+            "source_coverage": {"S1": ["R1", "N1"]},
+            "discovery": {
+                "project_evidence": {
+                    "status": "completed",
+                    "source_refs": ["S1"],
+                    "decision": "project evidence inspected",
+                },
+                "prototype": {
+                    "status": "not_applicable",
+                    "source_refs": ["S1"],
+                    "decision": "no prototype supplied",
+                },
+                "competitor": {
+                    "status": "not_applicable",
+                    "source_refs": ["S1"],
+                    "decision": "product direction is frozen",
+                },
+                "open_source": {
+                    "status": "not_applicable",
+                    "source_refs": ["S1"],
+                    "decision": "no mature component slot",
+                },
+            },
+            "blocking_unknowns": [],
+        },
+        "required_clauses": [
+            {"id": "R1", "text": "works", "source_refs": ["S1"]}
+        ],
+        "negative_requirements": [
+            {"id": "N1", "text": "does not bypass the gate", "source_refs": ["S1"]}
+        ],
+        "closure_criteria": ["R1", "N1"],
+    }
+
+
 def test_create_status_and_cross_entrypoint_bind_use_current_session(tmp_path):
     created = _call(
         tmp_path,
@@ -58,16 +100,33 @@ def test_full_tool_control_plane_flow(tmp_path):
     )
     task = created["task"]
     task_id = task["task_id"]
-    specified = _call(
+    spec = _governed_spec()
+    without_review = _call(
         tmp_path,
         "freeze_spec",
         task_id=task_id,
         expected_state_revision=task["state_revision"],
-        spec_bundle={
-            "required_clauses": [{"id": "R1", "text": "works"}],
-            "negative_requirements": [],
-            "closure_criteria": ["R1"],
-        },
+        session_id="spec-compiler",
+        spec_bundle=spec,
+    )
+    assert without_review["error"] == "independent_spec_review_required"
+    reviewed = _call(
+        tmp_path,
+        "review_spec",
+        task_id=task_id,
+        expected_state_revision=task["state_revision"],
+        session_id="spec-reviewer",
+        spec_bundle=spec,
+        review_verdict="approved",
+        review_findings=[],
+    )["spec_review"]
+    specified = _call(
+        tmp_path,
+        "freeze_spec",
+        task_id=task_id,
+        expected_state_revision=reviewed["state_revision"],
+        session_id="spec-compiler",
+        spec_bundle=spec,
     )["task"]
     planned = _call(
         tmp_path,
@@ -80,7 +139,7 @@ def test_full_tool_control_plane_flow(tmp_path):
             "objective": "implement",
             "dependencies": [],
             "required_clauses": ["R1"],
-            "negative_requirements": [],
+            "negative_requirements": ["N1"],
             "source_refs": ["S1"],
             "architecture_invariants": [],
             "owned_paths": ["src/a.py"],
@@ -95,7 +154,7 @@ def test_full_tool_control_plane_flow(tmp_path):
     result = {
         "slice_id": "s1",
         "input_digest": packet["packet_digest"],
-        "claims": ["R1"],
+        "claims": ["R1", "N1"],
         "changed_artifacts": ["src/a.py"],
         "evidence_refs": [{"ref": "test"}],
         "verification_results": [{"command": "pytest -q", "exit_code": 0}],
@@ -133,7 +192,7 @@ def test_full_tool_control_plane_flow(tmp_path):
         task_id=task_id,
         candidate_digest="sha256:final",
         session_id="closure-fresh",
-        claims={"R1": "pass"},
+        claims={"R1": "pass", "N1": "pass"},
         closure_packet=closure_packet,
         closure_evidence_refs=[
             {"ref": "test", "candidate_digest": "sha256:final"}
@@ -183,6 +242,8 @@ def test_tool_actor_identity_is_runtime_bound_and_not_model_overridable(tmp_path
     properties = entry.schema["parameters"]["properties"]
     assert "verifier_session_id" not in properties
     assert "integrator_session_id" not in properties
+    assert "reviewer_session_id" not in properties
+    assert "compiler_session_id" not in properties
 
 
 def test_registry_dispatch_uses_runtime_platform_when_entrypoint_is_omitted(tmp_path, monkeypatch):

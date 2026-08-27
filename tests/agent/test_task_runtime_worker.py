@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -19,8 +20,41 @@ from toolsets import resolve_toolset
 
 
 SPEC = {
-    "required_clauses": [{"id": "R1", "text": "implement"}],
-    "negative_requirements": [{"id": "N1", "text": "no forbidden writes"}],
+    "governance": {
+        "task_class": "complex",
+        "source_authority": ["s1"],
+        "oracle_refs": ["s1"],
+        "source_coverage": {"s1": ["R1", "N1"]},
+        "discovery": {
+            "project_evidence": {
+                "status": "completed",
+                "source_refs": ["s1"],
+                "decision": "worker runtime fixture inspected",
+            },
+            "prototype": {
+                "status": "not_applicable",
+                "source_refs": ["s1"],
+                "decision": "no prototype supplied",
+            },
+            "competitor": {
+                "status": "not_applicable",
+                "source_refs": ["s1"],
+                "decision": "not a product-design task",
+            },
+            "open_source": {
+                "status": "not_applicable",
+                "source_refs": ["s1"],
+                "decision": "not a mature-capability selection task",
+            },
+        },
+        "blocking_unknowns": [],
+    },
+    "required_clauses": [
+        {"id": "R1", "text": "implement", "source_refs": ["s1"]}
+    ],
+    "negative_requirements": [
+        {"id": "N1", "text": "no forbidden writes", "source_refs": ["s1"]}
+    ],
     "closure_criteria": ["R1", "N1"],
 }
 
@@ -113,7 +147,20 @@ def _ready(
         title="worker dispatch",
         original_sources=[{"source_id": "s1", "kind": "user_message", "content": "do work"}],
     )
-    task = store.freeze_spec(task["task_id"], SPEC, expected_state_revision=task["state_revision"])
+    review = store.record_spec_review(
+        task["task_id"],
+        SPEC,
+        reviewer_session_id="worker-fixture-reviewer",
+        verdict="approved",
+        findings=[],
+        expected_state_revision=task["state_revision"],
+    )
+    task = store.freeze_spec(
+        task["task_id"],
+        SPEC,
+        compiler_session_id="worker-fixture-compiler",
+        expected_state_revision=review["state_revision"],
+    )
     store.set_plan(
         task["task_id"],
         [{
@@ -560,6 +607,30 @@ print(json.dumps({
             integrator_session_id="integrator-symlink",
         )
 
+    original_record_state_event = store._record_state_event
+
+    def fail_database_event(*_args, **_kwargs):
+        raise sqlite3.OperationalError("simulated state-event failure")
+
+    monkeypatch.setattr(store, "_record_state_event", fail_database_event)
+    with pytest.raises(sqlite3.OperationalError, match="simulated state-event failure"):
+        store.integrate_result(
+            task_id,
+            result_id,
+            integrator_session_id="crash-before-db-commit",
+            workspace_candidate_receipt=candidate_receipt,
+        )
+    after_failed_integration = store.get_task(task_id)
+    assert after_failed_integration["slices"][0]["status"] == "submitted"
+    orphan_ref = subprocess.run(
+        ["git", "-C", str(source), "for-each-ref", "--format=%(refname)", "refs/hermes/candidates"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert orphan_ref.startswith("refs/hermes/candidates/")
+    monkeypatch.setattr(store, "_record_state_event", original_record_state_event)
+
     integrated = store.integrate_result(
         task_id,
         result_id,
@@ -568,6 +639,7 @@ print(json.dumps({
     )
     assert integrated["slice_status"] == "completed"
     integration_receipt = integrated["workspace_integration_receipt"]
+    assert integration_receipt["idempotent_replay"] is True
     assert integration_receipt["schema"] == "hermes_workspace_candidate_integration_v1"
     assert integration_receipt["candidate_digest"] == readback["candidate_digest"]
     assert subprocess.run(

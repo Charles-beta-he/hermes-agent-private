@@ -74,6 +74,8 @@ def task_runtime_tool(
     title: str = "",
     original_sources: Sequence[Mapping[str, Any]] | None = None,
     spec_bundle: Mapping[str, Any] | None = None,
+    review_verdict: str = "",
+    review_findings: Sequence[Mapping[str, Any] | str] | None = None,
     slices: Sequence[Mapping[str, Any]] | None = None,
     expected_state_revision: int | None = None,
     worker_session_id: str = "",
@@ -130,12 +132,29 @@ def task_runtime_tool(
         if operation == "record_source":
             task = store.append_source_event(control_task_id, dict(source_event or {}))
             return tool_result(success=True, task=_projection(task))
+        if operation == "review_spec":
+            if expected_state_revision is None:
+                raise ValueError("expected_state_revision_required")
+            if not current_session:
+                raise ValueError("spec_reviewer_session_id_required")
+            review = store.record_spec_review(
+                control_task_id,
+                dict(spec_bundle or {}),
+                reviewer_session_id=current_session,
+                verdict=review_verdict,
+                findings=list(review_findings or []),
+                expected_state_revision=int(expected_state_revision),
+            )
+            return tool_result(success=True, spec_review=review)
         if operation == "freeze_spec":
             if expected_state_revision is None:
                 raise ValueError("expected_state_revision_required")
+            if not current_session:
+                raise ValueError("spec_compiler_session_id_required")
             task = store.freeze_spec(
                 control_task_id,
                 dict(spec_bundle or {}),
+                compiler_session_id=current_session,
                 expected_state_revision=int(expected_state_revision),
             )
             return tool_result(success=True, task=_projection(task))
@@ -222,7 +241,8 @@ TASK_RUNTIME_SCHEMA = {
         "continue across CLI and Telegram, dispatch immutable ContextPackets to fresh "
         "workers, reject stale/expired results, integrate evidence deterministically, "
         "or close against an independent verifier. Conversation summaries are not task "
-        "authority. Typical flow: create → freeze_spec → set_plan → claim → delegate a "
+        "authority. Typical flow: create → independent review_spec → freeze_spec → "
+        "set_plan → claim → delegate a "
         "fresh worker with the returned packet → submit → integrate → independent close."
     ),
     "parameters": {
@@ -230,7 +250,7 @@ TASK_RUNTIME_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["create", "bind", "status", "record_source", "freeze_spec", "set_plan", "claim", "submit", "integrate", "closure_context", "close"],
+                "enum": ["create", "bind", "status", "record_source", "review_spec", "freeze_spec", "set_plan", "claim", "submit", "integrate", "closure_context", "close"],
             },
             "task_id": {"type": "string", "description": "Persistent control-plane task ID. Omit for status on the currently bound entrypoint."},
             "entrypoint": {"type": "string", "description": "Entrypoint identity such as cli or telegram.", "default": "cli"},
@@ -238,6 +258,8 @@ TASK_RUNTIME_SCHEMA = {
             "title": {"type": "string"},
             "original_sources": {"type": "array", "items": {"type": "object"}},
             "spec_bundle": {"type": "object"},
+            "review_verdict": {"type": "string", "enum": ["approved", "rejected"]},
+            "review_findings": {"type": "array", "items": {}},
             "slices": {"type": "array", "items": {"type": "object"}},
             "expected_state_revision": {"type": "integer"},
             "worker_session_id": {"type": "string"},
@@ -270,6 +292,8 @@ registry.register(
         title=args.get("title", ""),
         original_sources=args.get("original_sources"),
         spec_bundle=args.get("spec_bundle"),
+        review_verdict=args.get("review_verdict", ""),
+        review_findings=args.get("review_findings"),
         slices=args.get("slices"),
         expected_state_revision=args.get("expected_state_revision"),
         worker_session_id=args.get("worker_session_id", ""),

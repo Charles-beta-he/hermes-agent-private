@@ -101,6 +101,21 @@ Owns task_id, owner/profile, created source, lifecycle status, current revisions
 
 Owns immutable source references, requirements, negative requirements, constraints, decisions, unknowns and spec_revision. Agent summaries are indexes, never source authority.
 
+Every frozen SpecBundle also owns a `governance` contract:
+
+- `task_class`: one of `bugfix`, `frozen_design`, `reference_reimplementation`, `product_design`, `mature_capability`, `cross_surface_journey`, `high_risk_architecture`, or `complex`.
+- `source_authority`: an ordered, complete list of immutable original source/event identities. Conflict precedence is latest explicit user requirement → current project PRD/SSOT → frozen prototype/screenshot/video/reference source → current implementation and runtime contracts → competitor evidence → general practice/model inference.
+- `oracle_refs`: direct references to authoritative originals. A summary may index an Oracle but cannot replace it.
+- `source_coverage`: every current source identity maps to one or more positive or negative requirement IDs; every requirement maps back to direct `source_refs`.
+- `discovery`: evidence-bound `project_evidence`, `prototype`, `competitor`, and `open_source` lanes. Each lane records `completed` or `not_applicable`, source refs, and a decision. Project evidence is always completed. `reference_reimplementation` requires completed prototype evaluation, `product_design` completed competitor evaluation, and `mature_capability` completed open-source evaluation.
+- `blocking_unknowns`: must be empty before approval/freeze. Unknowns that can alter scope, safety, architecture, journey, or acceptance remain a human/spec gate rather than an implementation guess.
+
+Positive requirements, negative requirements and closure criteria form the same exact claim set. Strict restoration keeps the frozen reference as Oracle; competitors may fill only uncovered questions and cannot amend frozen behavior. Open-source evaluation checks fit, license, maintenance/security, data ownership, version pinning, rollback and lifecycle cost; an adopted component remains behind the project domain contract and cannot become business SSOT.
+
+### SpecReview
+
+Append-only independent review bound to exact `task_id`, canonical `spec_digest`, immutable `source_digest`, reviewer session, verdict and findings. An approved current review is required before `freeze_spec`; the compiler session must differ from at least one approving reviewer. Exact replay is idempotent, while changed findings/verdict under the same identity fail closed. Reviewer/compiler identities are supplied by the runtime session and are not model-overridable tool arguments.
+
 ### ImplementationGraph
 
 Owns slices, dependencies, write sets, integration order, verification commands and plan_revision. Unknown dependencies default to serial.
@@ -171,8 +186,15 @@ BR-26. Integrator and closure-verifier identities exposed through the model tool
 BR-27. Once the worker runner has started, every abnormal terminal status, malformed result or workspace readback violation quarantines the claim; injected `worker_terminated`, function return, timeout, cancellation, lease expiry, and ordinary exception status are not trusted termination proof.
 BR-28. A claim may be reopened after runner start only with a controller-issued process cleanup attestation bound to exact task, packet, fence and workspace, proving observed process-group termination and residual readback; runner-supplied `worker_terminated`, `runner_returned`, and generic process-exit assertions remain insufficient.
 BR-29. A successful managed-workspace result is frozen only after result acceptance into a controller-owned deterministic archive bound to exact owner/packet/fence/source/base/write-set/content digest; workspace reaping requires controller-issued process cleanup and persisted candidate evidence.
-BR-30. Managed candidate integration reconstructs an exact Git tree from the verified archive and base commit using an isolated index, creates a deterministic candidate commit and CAS-protected `refs/hermes/candidates/*` ref, verifies the resulting diff write set, requires canonical source HEAD to remain at the bound base commit, and never moves the canonical checkout HEAD.
+BR-30. Managed candidate integration reconstructs an exact Git tree from the verified archive and base commit using an isolated index, creates a deterministic candidate commit and CAS-protected `refs/hermes/candidates/*` ref, verifies the resulting diff write set, requires canonical source HEAD to remain at the bound base commit, never moves the canonical checkout HEAD, and converges by exact ref replay if the Git ref lands before a database transaction failure.
 BR-31. If controller-owned candidate finalization fails after result acceptance, the exact result becomes non-integrable, its packet and slice become quarantined through one append-only audit event, and the managed workspace plus process-cleanup readback are retained for controller repair rather than being released for duplicate execution.
+BR-32. Discovery/Spec Compilation is a fail-closed admission gate before ImplementationGraph acceptance: task class, complete source authority, direct Oracle refs, exact bidirectional source/claim coverage, positive and negative requirements, exact closure coverage, all discovery lanes and zero blocking unknowns are mandatory.
+BR-33. Project evidence is mandatory for every governed task. Product-design tasks additionally require completed competitor evaluation; mature-capability tasks require completed open-source evaluation; reference-reimplementation tasks require completed prototype evaluation. A reasoned `not_applicable` is accepted only for lanes not triggered by task class.
+BR-34. An approved append-only SpecReview binds the exact canonical spec digest and current immutable source snapshot digest. Spec freeze requires an approving reviewer session independent from the compiler session; tool callers cannot override either runtime-supplied identity.
+BR-35. Plan admission revalidates the current frozen governed SpecBundle and exact approved source/spec review instead of trusting status or stored metadata alone.
+BR-36. Appending any new source to a non-draft task invalidates frozen-spec admission and all dependent plan slices, packets/results, candidate, evidence and closure, returns the task to draft, and requires a fresh source-complete spec, exact review and plan.
+BR-37. Original source bytes/events remain immutable Oracle inputs. Summaries, task decomposition, competitor findings, open-source demos, tests, model agreement and README prose are non-authoritative indexes or evidence and cannot silently amend original sources or business SSOT.
+BR-38. Existing databases whose projection ledger predates SpecReview preserve their exact digest when no review rows exist; the first immutable review enters the projection in the same digest-chained state transition rather than rewriting history.
 
 ## 5. Negative cases
 
@@ -208,8 +230,14 @@ N-29. A model/tool caller must not impersonate a fresh verifier or a different i
 N-30. A started worker that returns cancellation/error, malformed JSON, a moved workspace base or a mismatched write set without termination proof must not release its claim for retry.
 N-31. `release_claim` must reject a missing, unknown-field, unsupported-kind, wrong-worker, wrong-packet, wrong-fence, malformed-time or stale `runner_not_started` receipt and must leave the claim fenced; runner-supplied `worker_terminated`, `runner_returned`, and generic process-exit assertions must not make a started claim retryable.
 N-32. Missing, duplicate, unexpected, path-escaping, hardlink, special-file, wrong-mode, hash-mismatched or content-digest-mismatched candidate archive members must not integrate.
-N-33. A candidate with wrong source/base/ref binding, advanced canonical source HEAD, conflicting candidate ref or post-integration write-set mismatch must not mutate the canonical checkout or be recorded as integrated.
+N-33. A candidate with wrong source/base/ref binding, advanced canonical source HEAD, conflicting candidate ref or post-integration write-set mismatch must not mutate the canonical checkout or be recorded as integrated; a failure after candidate-ref creation but before database commit must leave database state unadvanced and exact retry must converge through the same ref/commit.
 N-34. Candidate archive/finalization failure after accepted result persistence must not leave that result integrable, release the slice for duplicate execution, reap the only recoverable workspace, or omit an append-only quarantine event.
+N-35. A legacy/minimal SpecBundle without governance, an unknown task class, incomplete/fabricated source authority, a summary-only Oracle, unreferenced source or claim, missing positive/negative requirement, incomplete closure set, unresolved blocker, or malformed discovery lane must not freeze or admit a plan.
+N-36. Product-design competitor, mature-capability open-source, reference-reimplementation prototype, or universal project-evidence preflight must not be omitted or marked not-applicable when its task-class trigger requires completion.
+N-37. A compiler must not approve its own spec. A rejected review, review for a different spec digest, review for a prior source digest, or changed verdict/findings replay must not satisfy admission.
+N-38. Appending a new source while a task is specified, planned, running or closed must not leave the prior review, spec admission, plan, packet/result, candidate, evidence, closure or claimability current.
+N-39. A model/tool caller must not impersonate a different spec reviewer or compiler by supplying actor identity; the runtime session is authoritative and the public schema must not expose actor overrides.
+N-40. Adding the SpecReview table to an existing database with no review rows must not invalidate its previously projection-bound state ledger or fabricate historical review/state events.
 
 ## 6. Dependency-ordered implementation DAG
 

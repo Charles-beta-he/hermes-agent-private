@@ -343,6 +343,7 @@ async def test_telegram_base_delivery_rail_runs_bound_task_without_network(
                 Platform.TELEGRAM,
             )
             self.deliveries = []
+            self.network_send_count = 0
 
         async def connect(self, *, is_reconnect: bool = False) -> bool:
             return True
@@ -432,6 +433,10 @@ async def test_telegram_base_delivery_rail_runs_bound_task_without_network(
     assert task["task_id"] in _DeliveryAgent.task_context
     persisted = store.get_task(task["task_id"])
     assert persisted["source_events"][-1]["content"] == "delivery rail ingress"
+    assert adapter.network_send_count == 0
+    assert not (tmp_path / "config.yaml").exists()
+    assert not (tmp_path / "cron" / "jobs.json").exists()
+    assert not (tmp_path / "gateway.json").exists()
 
 
 @pytest.mark.asyncio
