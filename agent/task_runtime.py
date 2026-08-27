@@ -919,6 +919,7 @@ class TaskRuntimeStore:
             raise ValueError("spec_source_coverage_incomplete")
 
         claim_ids: set[str] = set()
+        claim_source_edges: set[tuple[str, str]] = set()
         for field in ("required_clauses", "negative_requirements"):
             claims = spec.get(field)
             if not isinstance(claims, list) or not claims:
@@ -933,6 +934,7 @@ class TaskRuntimeStore:
                 if not refs or not refs.issubset(known_sources):
                     raise ValueError("spec_claim_source_refs_invalid")
                 claim_ids.add(claim_id)
+                claim_source_edges.update((source_id, claim_id) for source_id in refs)
         covered_claim_ids = {
             str(claim_id)
             for source_id in known_sources
@@ -940,6 +942,13 @@ class TaskRuntimeStore:
         }
         if covered_claim_ids != claim_ids:
             raise ValueError("spec_source_coverage_incomplete")
+        coverage_edges = {
+            (source_id, str(claim_id))
+            for source_id in known_sources
+            for claim_id in source_coverage[source_id]
+        }
+        if coverage_edges != claim_source_edges:
+            raise ValueError("spec_source_coverage_edge_mismatch")
         if set(str(item) for item in spec.get("closure_criteria") or []) != claim_ids:
             raise ValueError("spec_closure_coverage_incomplete")
 

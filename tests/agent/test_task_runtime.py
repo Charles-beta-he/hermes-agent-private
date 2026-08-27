@@ -115,6 +115,7 @@ def _spec_for_sources(*source_ids: str) -> dict:
         source_ids
     )
     spec["required_clauses"][0]["source_refs"] = list(source_ids)
+    spec["negative_requirements"][0]["source_refs"] = list(source_ids)
     return spec
 
 
@@ -675,6 +676,29 @@ def test_spec_review_is_exact_bound_append_only_and_conflict_safe(tmp_path):
                 "DELETE FROM spec_reviews WHERE review_id = ?",
                 (review["review_id"],),
             )
+
+
+def test_source_coverage_edges_must_match_claim_source_refs_bidirectionally(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "edge-coverage.db")
+    task = store.create_task(
+        title="edge coverage",
+        original_sources=[
+            {"source_id": "S1", "kind": "user_message", "content": "one"},
+            {"source_id": "S2", "kind": "project_ssot", "content": "two"},
+        ],
+    )
+    spec = _spec_for_sources("S1", "S2")
+    spec["required_clauses"][0]["source_refs"] = ["S1"]
+
+    with pytest.raises(ValueError, match="spec_source_coverage_edge_mismatch"):
+        store.record_spec_review(
+            task["task_id"],
+            spec,
+            reviewer_session_id="edge-reviewer",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=task["state_revision"],
+        )
 
 
 def test_new_source_invalidates_spec_plan_candidate_and_requires_fresh_review(tmp_path):

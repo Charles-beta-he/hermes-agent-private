@@ -4,7 +4,7 @@ Status semantics: `covered` means the listed contract is exercised by the fresh 
 
 ## Fresh local evidence checkpoints
 
-| E1 | `pytest -q tests/agent/test_task_runtime.py tests/agent/test_task_runtime_worker.py tests/agent/test_task_runtime_process_supervisor.py tests/agent/test_task_runtime_workspace.py` | `75 passed in 6.74s` |
+| E1 | `pytest -q tests/agent/test_task_runtime.py tests/agent/test_task_runtime_worker.py tests/agent/test_task_runtime_process_supervisor.py tests/agent/test_task_runtime_workspace.py` | `76 passed in 6.77s` |
 | E2 | `pytest -q tests/agent/test_task_runtime_ingress.py tests/agent/test_task_runtime_process_e2e.py tests/tools/test_task_runtime_tool.py tests/gateway/test_fast_command.py tests/test_dispatch_session_id.py` | `23 passed in 1.04s` |
 
 - E3: temporary-home real CLI startup: `HOME=<tmp>/home HERMES_HOME=<tmp>/hermes uv run --frozen hermes --version` → exit 0, Hermes Agent v0.19.0; `cron/jobs.json` and `gateway.json` remained absent.
@@ -31,7 +31,7 @@ Status semantics: `covered` means the listed contract is exercised by the fresh 
 | BR-29 | covered | post-accept freeze, deterministic archive, persisted exact replay, controller cleanup and workspace reap tests; E1 |
 | BR-30 | covered | isolated-index tree construction, deterministic commit/ref replay, diff-tree readback, exact source-HEAD/base gate and canonical HEAD non-mutation assertions; E1 |
 | BR-31 | covered | accepted-result candidate-finalize fault injection makes result non-integrable, quarantines packet/slice through an append-only event and preserves workspace/process readback; E1 |
-| BR-32, BR-33 | covered | governed SpecBundle negative matrix covers task class, project/prototype/competitor/open-source preflight, direct source/claim/Oracle/closure coverage and blocking unknowns; E1 |
+| BR-32, BR-33 | covered | governed SpecBundle negative matrix covers task class, project/prototype/competitor/open-source preflight, bidirectional source/claim edges, Oracle/closure coverage and blocking unknowns; E1 |
 | BR-34, BR-35 | covered | append-only digest-bound independent review, state-neutral exact replay/conflict rejection, compiler separation, plan readmission and runtime-bound tool flow; E1/E2/E8 |
 | BR-36, BR-37 | covered | non-draft source correction invalidates dependent projections and old review; summary/Oracle/source contracts are structurally required by the governed spec gate; E1 |
 | BR-38 | covered | pre-SpecReview schema reconstruction preserves the existing projection-bound event ledger without fabricating a migration event; E1 |
