@@ -59,4 +59,4 @@ Status semantics: `covered` means the listed contract is exercised by the fresh 
 
 ## Converge result
 
-The current uncommitted tree is focused-green, but E5 remains non-green and E6 intentionally does not infer baseline equivalence. Candidate certification remains blocked until the final documentation/test delta is rerun, frozen to an exact local commit/tree and independently reviewed with no unresolved P0/P1. Separately, g7 runtime activation/readback remains closed pending exact human authority.
+The current committed candidate is focused-green, but E5 remains non-green and E6 intentionally does not infer baseline equivalence. Local candidate certification requires an independent review of the exact HEAD/tree with no unresolved P0/P1; this matrix does not self-certify its own commit. Separately, g7 runtime activation/readback remains closed pending exact human authority.
