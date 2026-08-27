@@ -987,6 +987,12 @@ class TaskRuntimeStore:
         }.get(task_class)
         if required_lane and str(discovery[required_lane].get("status")) != "completed":
             raise ValueError(f"{required_lane}_preflight_required_for_task_class")
+        if task_class == "reference_reimplementation":
+            prototype_refs = {
+                str(item) for item in discovery["prototype"].get("source_refs") or []
+            }
+            if not prototype_refs or not prototype_refs.issubset(oracle_refs):
+                raise ValueError("prototype_oracle_binding_required")
         if str(discovery["open_source"].get("status")) == "completed":
             evaluation = discovery["open_source"].get("evaluation")
             if (

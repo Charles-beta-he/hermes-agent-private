@@ -621,6 +621,44 @@ def test_governed_spec_negative_contract_matrix(tmp_path):
     assert unchanged["spec_reviews"] == []
 
 
+def test_reference_reimplementation_binds_prototype_evidence_as_oracle(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "prototype-oracle.db")
+    task = store.create_task(
+        title="reference reimplementation",
+        original_sources=[
+            {"source_id": "S-U1", "kind": "user_message", "content": "reproduce exactly"},
+            {"source_id": "S-P1", "kind": "prototype", "content": "frozen prototype"},
+        ],
+    )
+    spec = _spec_for_sources("S-U1", "S-P1")
+    spec["governance"]["task_class"] = "reference_reimplementation"
+    spec["governance"]["oracle_refs"] = ["S-U1"]
+    spec["governance"]["discovery"]["prototype"].update(
+        status="completed", source_refs=["S-P1"]
+    )
+
+    with pytest.raises(ValueError, match="prototype_oracle_binding_required"):
+        store.record_spec_review(
+            task["task_id"],
+            spec,
+            reviewer_session_id="prototype-reviewer-incomplete",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=task["state_revision"],
+        )
+
+    spec["governance"]["oracle_refs"] = ["S-U1", "S-P1"]
+    approved = store.record_spec_review(
+        task["task_id"],
+        spec,
+        reviewer_session_id="prototype-reviewer-complete",
+        verdict="approved",
+        findings=[],
+        expected_state_revision=task["state_revision"],
+    )
+    assert approved["verdict"] == "approved"
+
+
 def test_mature_capability_requires_complete_open_source_due_diligence(tmp_path):
     store = TaskRuntimeStore(tmp_path / "open-source-evaluation.db")
     task = store.create_task(
