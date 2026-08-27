@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+import sys
 import threading
 
 import pytest
 
 from agent.task_runtime import TaskRuntimeStore
+from agent.task_runtime_process import (
+    TaskCleanupBinding,
+    VerifiedTaskCleanup,
+    run_owned_task_process,
+)
 
 
 SPEC = {
@@ -16,6 +23,16 @@ SPEC = {
     "negative_requirements": [{"id": "N1", "text": "reject stale results"}],
     "closure_criteria": ["R1", "N1"],
 }
+
+
+def _termination_proof(worker: str, packet: dict) -> dict:
+    return {
+        "kind": "runner_not_started",
+        "worker_session_id": worker,
+        "packet_id": packet["packet_id"],
+        "lease_token": packet["lease"]["token"],
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _slice(slice_id: str, *, dependencies: list[str] | None = None, owned_paths: list[str] | None = None):
@@ -185,6 +202,23 @@ def test_task_owner_is_derived_from_home_when_profile_env_is_absent(tmp_path, mo
         beta.get_task(task["task_id"])
 
 
+def test_same_named_profiles_under_distinct_roots_do_not_share_owner(tmp_path, monkeypatch):
+    shared = tmp_path / "shared-profiles.db"
+    monkeypatch.delenv("HERMES_PROFILE", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "root-a" / "profiles" / "shared"))
+    first = TaskRuntimeStore(shared)
+    task = first.create_task(
+        title="root-a secret",
+        original_sources=[{"source_id": "S1", "content": "secret"}],
+    )
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "root-b" / "profiles" / "shared"))
+    second = TaskRuntimeStore(shared)
+    assert first.owner_profile != second.owner_profile
+    with pytest.raises(PermissionError, match="task_owner_profile_mismatch"):
+        second.get_task(task["task_id"])
+
+
 def test_cross_profile_exact_result_replay_checks_owner_before_idempotency(tmp_path):
     owner_store, task_id = _ready_store(tmp_path, owner_profile="profile-a")
     packet = owner_store.claim_next_slice(
@@ -281,6 +315,97 @@ def test_plan_must_cover_frozen_claims_sources_and_verification_contract(tmp_pat
     assert unchanged["state_revision"] == task["state_revision"]
     assert unchanged["plan_revision"] == 0
     assert unchanged["slices"] == []
+
+
+def test_claim_heartbeat_is_packet_owner_and_fence_bound(tmp_path):
+    store, task_id = _ready_store(tmp_path)
+    packet = store.claim_next_slice(
+        task_id, worker_session_id="worker-a", lease_seconds=5, now=100.0
+    )
+    assert packet is not None
+
+    heartbeat = store.heartbeat_claim(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        lease_seconds=7,
+        now=105.0,
+    )
+    assert heartbeat["lease_token"] == packet["lease"]["token"]
+    assert heartbeat["lease_expires_at"] == 112.0
+    task = store.get_task(task_id)
+    assert task["slices"][0]["lease_expires_at"] == 112.0
+
+    with pytest.raises(ValueError, match="lease_owner_mismatch"):
+        store.heartbeat_claim(
+            task_id,
+            worker_session_id="worker-b",
+            packet_id=packet["packet_id"],
+            lease_seconds=7,
+        )
+    with pytest.raises(ValueError, match="packet_not_found"):
+        store.heartbeat_claim(
+            task_id,
+            worker_session_id="worker-a",
+            packet_id="missing-packet",
+            lease_seconds=7,
+        )
+
+    store.release_claim(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        reason="runner_not_started",
+        termination_proof=_termination_proof("worker-a", packet),
+    )
+    with pytest.raises(ValueError, match="packet_not_active"):
+        store.heartbeat_claim(
+            task_id,
+            worker_session_id="worker-a",
+            packet_id=packet["packet_id"],
+            lease_seconds=7,
+        )
+
+
+def test_quarantine_recovery_requires_controller_issued_packet_fenced_cleanup(tmp_path):
+    store, task_id = _ready_store(tmp_path)
+    packet = store.claim_next_slice(
+        task_id, worker_session_id="worker-a", lease_seconds=60
+    )
+    assert packet is not None
+    store.quarantine_claim(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        reason="runner_exit_termination_unproven",
+    )
+    binding = TaskCleanupBinding(
+        task_id=task_id,
+        slice_id=packet["slice_id"],
+        worker_session_id="worker-a",
+        packet_id=packet["packet_id"],
+        lease_token=packet["lease"]["token"],
+    )
+    controlled = run_owned_task_process(
+        [sys.executable, "-c", "pass"],
+        binding=binding,
+        cwd=tmp_path,
+        timeout_seconds=2,
+    )
+    assert controlled.cleanup is not None
+
+    with pytest.raises(TypeError, match="controller_issued"):
+        VerifiedTaskCleanup(binding, controlled.receipt, _issuer=object())
+    with pytest.raises(ValueError, match="verified_process_cleanup_required"):
+        store.recover_quarantined_claim(task_id, cleanup=controlled.receipt.to_dict())
+
+    recovered = store.recover_quarantined_claim(
+        task_id, cleanup=controlled.cleanup
+    )
+    assert recovered["status"] == "recovered"
+    assert store.get_task(task_id)["slices"][0]["status"] == "pending"
+    with pytest.raises(ValueError, match="packet_not_quarantined"):
+        store.recover_quarantined_claim(task_id, cleanup=controlled.cleanup)
 
 
 def test_context_packet_is_canonical_immutable_and_dependency_gated(tmp_path):
@@ -389,6 +514,7 @@ def test_lease_owner_expiry_idempotency_and_owned_path_enforcement(tmp_path):
         worker_session_id="worker-a",
         packet_id=packet["packet_id"],
         reason="worker_returned_after_expiry",
+        termination_proof=_termination_proof("worker-a", packet),
     )
 
     packet = store.claim_next_slice(task_id, worker_session_id="worker-a", lease_seconds=20, now=112.0)
@@ -447,6 +573,22 @@ def test_worker_result_schema_and_success_evidence_fail_closed(tmp_path):
         ({"claims": ["R1"]}, "worker_claims_incomplete"),
         ({"evidence_refs": []}, "worker_evidence_refs_invalid"),
         (
+            {"evidence_refs": [{"kind": "test", "ref": "pytest:passed", "authority": "self"}]},
+            "worker_evidence_refs_unknown_fields",
+        ),
+        (
+            {
+                "verification_results": [
+                    {
+                        "command": packet["verification_commands"][0],
+                        "exit_code": 0,
+                        "authority_granted": True,
+                    }
+                ]
+            },
+            "worker_verification_unknown_fields",
+        ),
+        (
             {"verification_results": [{"command": "pytest -q wrong.py", "exit_code": 0}]},
             "worker_verification_incomplete",
         ),
@@ -504,6 +646,40 @@ def test_lease_expiry_quarantines_without_termination_proof(tmp_path):
     )
     assert stale["disposition"] == "rejected"
     assert "lease_expired" in stale["reasons"]
+    assert any(reason.startswith("packet_not_active") for reason in stale["reasons"])
+
+
+def test_abandoned_packet_cannot_submit_after_same_worker_reclaims(tmp_path):
+    store, task_id = _ready_store(tmp_path)
+    first = store.claim_next_slice(
+        task_id, worker_session_id="worker-a", lease_seconds=60, now=100.0
+    )
+    assert first is not None
+    store.release_claim(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=first["packet_id"],
+        reason="runner returned",
+        termination_proof=_termination_proof("worker-a", first),
+    )
+    second = store.claim_next_slice(
+        task_id, worker_session_id="worker-a", lease_seconds=60, now=101.0
+    )
+    assert second is not None and second["packet_id"] != first["packet_id"]
+
+    stale = store.submit_result(
+        task_id,
+        worker_session_id="worker-a",
+        packet_id=first["packet_id"],
+        result=_result(first, candidate="sha256:stale"),
+        now=102.0,
+    )
+    assert stale["disposition"] == "rejected"
+    assert "packet_not_active:abandoned" in stale["reasons"]
+    assert "current_lease_fence_mismatch" in stale["reasons"]
+    current = store.get_task(task_id)["slices"][0]
+    assert current["status"] == "claimed"
+    assert current["lease_owner"] == "worker-a"
 
 
 def test_stored_context_packet_tamper_is_rejected(tmp_path):
@@ -518,15 +694,18 @@ def test_stored_context_packet_tamper_is_rejected(tmp_path):
             (json.dumps(tampered, sort_keys=True, separators=(",", ":")), packet["packet_id"]),
         )
 
-    receipt = store.submit_result(
-        task_id,
-        worker_session_id="worker-a",
-        packet_id=packet["packet_id"],
-        result=_result(packet, candidate="sha256:tamper"),
-        now=101.0,
-    )
-    assert receipt["disposition"] == "rejected"
-    assert "stored_packet_digest_invalid" in receipt["reasons"]
+    with pytest.raises(ValueError, match="task_projection_digest_invalid"):
+        store.submit_result(
+            task_id,
+            worker_session_id="worker-a",
+            packet_id=packet["packet_id"],
+            result=_result(packet, candidate="sha256:tamper"),
+            now=101.0,
+        )
+    with sqlite3.connect(store.path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM worker_results WHERE task_id = ?", (task_id,)
+        ).fetchone()[0] == 0
 
 
 def test_concurrent_claims_have_one_lease_owner(tmp_path):
@@ -559,12 +738,40 @@ def test_concurrent_claims_have_one_lease_owner(tmp_path):
 def test_release_claim_is_owner_and_fence_guarded(tmp_path):
     store, task_id = _ready_store(tmp_path)
     packet = store.claim_next_slice(task_id, worker_session_id="worker-a", lease_seconds=60)
+    assert packet is not None
+    with pytest.raises(ValueError, match="termination_proof_required"):
+        store.release_claim(
+            task_id,
+            worker_session_id="worker-a",
+            packet_id=packet["packet_id"],
+            reason="unproven return",
+        )
+    assert store.get_task(task_id)["slices"][0]["status"] == "claimed"
+    bad_proofs = [
+        ({**_termination_proof("worker-a", packet), "authority": "self_asserted"}, "termination_proof_unknown_fields"),
+        ({**_termination_proof("worker-a", packet), "kind": "lease_expired"}, "termination_proof_kind_invalid"),
+        (_termination_proof("worker-b", packet), "termination_proof_worker_mismatch"),
+        ({**_termination_proof("worker-a", packet), "packet_id": "wrong"}, "termination_proof_packet_mismatch"),
+        ({**_termination_proof("worker-a", packet), "observed_at": "not-a-date"}, "termination_proof_observed_at_invalid"),
+        ({**_termination_proof("worker-a", packet), "lease_token": "wrong"}, "termination_proof_lease_fence_mismatch"),
+    ]
+    for proof, expected_error in bad_proofs:
+        with pytest.raises(ValueError, match=expected_error):
+            store.release_claim(
+                task_id,
+                worker_session_id="worker-a",
+                packet_id=packet["packet_id"],
+                reason="invalid proof",
+                termination_proof=proof,
+            )
+    assert store.get_task(task_id)["slices"][0]["status"] == "claimed"
     with pytest.raises(ValueError, match="lease_owner_mismatch"):
         store.release_claim(
             task_id,
             worker_session_id="worker-b",
             packet_id=packet["packet_id"],
             reason="wrong owner",
+            termination_proof=_termination_proof("worker-b", packet),
         )
     assert store.get_task(task_id)["slices"][0]["status"] == "claimed"
     receipt = store.release_claim(
@@ -572,6 +779,7 @@ def test_release_claim_is_owner_and_fence_guarded(tmp_path):
         worker_session_id="worker-a",
         packet_id=packet["packet_id"],
         reason="worker failed",
+        termination_proof=_termination_proof("worker-a", packet),
     )
     assert receipt["status"] == "abandoned"
     assert store.get_task(task_id)["slices"][0]["status"] == "pending"
@@ -581,6 +789,7 @@ def test_release_claim_is_owner_and_fence_guarded(tmp_path):
             worker_session_id="worker-a",
             packet_id=packet["packet_id"],
             reason="stale replay",
+            termination_proof=_termination_proof("worker-a", packet),
         )
 
 
@@ -604,11 +813,23 @@ def test_spec_change_invalidates_integrated_outputs_and_downstream_state(tmp_pat
         SPEC,
         expected_state_revision=before["state_revision"],
     )
-    assert [item["status"] for item in changed["slices"]] == ["pending", "pending"]
+    assert changed["slices"] == []
+    assert changed["implementation_graph"] == []
     assert changed["candidate_digest"] == ""
     assert changed["evidence_graph"] == []
     assert changed["closure"] == {}
-    assert store.claim_next_slice(task_id, worker_session_id="worker-b", lease_seconds=60)["slice_id"] == "s1"
+    assert store.claim_next_slice(
+        task_id, worker_session_id="worker-b", lease_seconds=60
+    ) is None
+    replanned = store.set_plan(
+        task_id,
+        [_slice("s1"), _slice("s2", dependencies=["s1"])],
+        expected_state_revision=changed["state_revision"],
+    )
+    assert replanned["plan_revision"] > before["plan_revision"]
+    assert store.claim_next_slice(
+        task_id, worker_session_id="worker-b", lease_seconds=60
+    )["slice_id"] == "s1"
 
 
 def test_deterministic_integration_unlocks_dependency_and_independent_closure(tmp_path):
@@ -632,6 +853,7 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
         worker_session_id="worker-rejected",
         packet_id=rejected_packet["packet_id"],
         reason="rejected_attempt_ended",
+        termination_proof=_termination_proof("worker-rejected", rejected_packet),
     )
 
     p1 = store.claim_next_slice(task_id, worker_session_id="worker-a", lease_seconds=60, now=100.0)
@@ -837,13 +1059,104 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
     assert invalidated["closure"] == {}
     assert invalidated["candidate_digest"] == ""
     assert invalidated["evidence_graph"] == []
-    assert [item["status"] for item in invalidated["slices"]] == ["pending", "pending"]
+    assert invalidated["implementation_graph"] == []
+    assert invalidated["slices"] == []
     assert invalidated["state_events"][-1]["payload"]["closure_invalidated"] is True
     with pytest.raises(ValueError, match="task_not_claimable"):
         store.claim_next_slice(
             task_id,
             worker_session_id="stale-plan-worker",
             lease_seconds=60,
+        )
+    respecified = store.freeze_spec(
+        task_id, SPEC, expected_state_revision=invalidated["state_revision"]
+    )
+    assert respecified["implementation_graph"] == []
+    assert respecified["slices"] == []
+    assert store.claim_next_slice(
+        task_id,
+        worker_session_id="still-stale-plan-worker",
+        lease_seconds=60,
+    ) is None
+
+
+def test_closure_rejects_candidate_evidence_without_all_required_claims(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "candidate-claims.db")
+    task = store.create_task(
+        title="candidate claims",
+        original_sources=[{"source_id": "S-U1", "content": "source"}],
+    )
+    task = store.freeze_spec(
+        task["task_id"], SPEC, expected_state_revision=task["state_revision"]
+    )
+    first_definition = _slice("s1")
+    first_definition["negative_requirements"] = []
+    second_definition = _slice("s2", dependencies=["s1"])
+    second_definition["required_clauses"] = []
+    task = store.set_plan(
+        task["task_id"],
+        [first_definition, second_definition],
+        expected_state_revision=task["state_revision"],
+    )
+    task_id = task["task_id"]
+
+    first = store.claim_next_slice(
+        task_id, worker_session_id="worker-first", lease_seconds=60, now=100.0
+    )
+    assert first is not None
+    first_result = _result(first, candidate="sha256:old-candidate")
+    first_result["claims"] = ["R1"]
+    first_receipt = store.submit_result(
+        task_id,
+        worker_session_id="worker-first",
+        packet_id=first["packet_id"],
+        result=first_result,
+        now=101.0,
+    )
+    store.integrate_result(
+        task_id, first_receipt["result_id"], integrator_session_id="integrator"
+    )
+
+    second = store.claim_next_slice(
+        task_id, worker_session_id="worker-second", lease_seconds=60, now=102.0
+    )
+    assert second is not None
+    second_result = _result(second, candidate="sha256:final-candidate")
+    second_result["claims"] = ["N1"]
+    second_receipt = store.submit_result(
+        task_id,
+        worker_session_id="worker-second",
+        packet_id=second["packet_id"],
+        result=second_result,
+        now=103.0,
+    )
+    store.integrate_result(
+        task_id, second_receipt["result_id"], integrator_session_id="integrator"
+    )
+    closure_packet = store.build_closure_packet(
+        task_id, verifier_session_id="independent-verifier"
+    )
+    with pytest.raises(ValueError, match="candidate_evidence_claims_incomplete"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:final-candidate",
+            verifier_session_id="independent-verifier",
+            claims={"R1": "pass", "N1": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=[
+                {
+                    "kind": "test",
+                    "ref": "pytest:passed",
+                    "candidate_digest": "sha256:final-candidate",
+                }
+            ],
+            verification_results=[
+                {
+                    "command": "pytest -q tests/s2.py",
+                    "exit_code": 0,
+                    "candidate_digest": "sha256:final-candidate",
+                }
+            ],
         )
 
 
@@ -926,5 +1239,13 @@ def test_state_event_ledger_binds_authoritative_task_projection(tmp_path):
             (task_id,),
         )
 
+    with pytest.raises(ValueError, match="task_projection_digest_invalid"):
+        store.get_task(task_id)
+    with pytest.raises(ValueError, match="task_projection_digest_invalid"):
+        store.bind_entrypoint(task_id, entrypoint="cli", session_id="cli:must-not-reanchor")
+    with sqlite3.connect(store.path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM entrypoint_bindings WHERE task_id = ?", (task_id,)
+        ).fetchone()[0] == 0
     with pytest.raises(ValueError, match="task_projection_digest_invalid"):
         store.get_task(task_id)

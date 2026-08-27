@@ -149,7 +149,7 @@ BR-04. A task correction creates a new spec revision and deterministically inval
 BR-05. A ContextPacket is accepted only when all referenced revisions are current and its canonical digest matches.
 BR-06. A WorkerResult is accepted only for a valid owner, lease/fencing token and matching input digest. A successful proposal must cover the slice's assigned positive/negative claims, reference valid evidence, report every required verification command with exit code zero, propose only its own slice completion and carry a non-empty candidate digest. Exact same-owner duplicate results are idempotently read back only after owner validation.
 BR-07. WorkerResult cannot grant authority, mark the task complete, mutate external adapters or rewrite canonical source requirements.
-BR-08. Bounded pool capacity is fixed by config. Completion/refusal/cancelled/error paths may free capacity after worker exit; a timeout may release its claim only with explicit child-termination proof, otherwise the claim and packet are quarantined and cannot be retried.
+BR-08. Bounded pool capacity is fixed by config. A claim may be released before the child runner starts when the dispatch path records a fresh packet/fence-bound `runner_not_started` receipt; after runner start, every failure remains quarantined until a trusted OS-process supervisor can prove process-group reap and no residual writer.
 BR-09. Full Worker output is stored as an artifact/evidence reference; ingress contexts receive only bounded projections.
 BR-10. Candidate verification, review and closure bind the same candidate digest; close requires final-candidate-bound evidence and zero-exit verification results.
 BR-11. Fresh closure uses a digest-bound closure context packet over original sources/events, current frozen spec, implementation graph, evidence graph, candidate identity and all current revisions; it rejects stale/tampered packets and does not inherit implementation conversation history.
@@ -168,7 +168,11 @@ BR-23. WorkerResult uses a closed-world top-level schema; unknown fields are rej
 BR-24. Closure evidence and verification must already be admitted in the current candidate's EvidenceGraph, and every verification command must belong to the frozen ImplementationGraph. Caller-supplied references are not evidence by themselves.
 BR-25. A new source event appended after closure invalidates closure, candidate and evidence, fences prior packets/results, resets slices and places the task in `draft`; the stale plan is not claimable until a fresh spec/plan transition.
 BR-26. Integrator and closure-verifier identities exposed through the model tool are bound to the runtime-supplied current session; model arguments cannot override those actor identities, and the public tool schema does not advertise such overrides.
-BR-27. Once the worker runner has started, every abnormal terminal status, malformed result or workspace readback violation without an explicit termination proof quarantines the claim; only pre-run failures or proven termination may make it retryable.
+BR-27. Once the worker runner has started, every abnormal terminal status, malformed result or workspace readback violation quarantines the claim; injected `worker_terminated`, function return, timeout, cancellation, lease expiry, and ordinary exception status are not trusted termination proof.
+BR-28. A claim may be reopened after runner start only with a controller-issued process cleanup attestation bound to exact task, packet, fence and workspace, proving observed process-group termination and residual readback; runner-supplied `worker_terminated`, `runner_returned`, and generic process-exit assertions remain insufficient.
+BR-29. A successful managed-workspace result is frozen only after result acceptance into a controller-owned deterministic archive bound to exact owner/packet/fence/source/base/write-set/content digest; workspace reaping requires controller-issued process cleanup and persisted candidate evidence.
+BR-30. Managed candidate integration reconstructs an exact Git tree from the verified archive and base commit using an isolated index, creates a deterministic candidate commit and CAS-protected `refs/hermes/candidates/*` ref, verifies the resulting diff write set, requires canonical source HEAD to remain at the bound base commit, and never moves the canonical checkout HEAD.
+BR-31. If controller-owned candidate finalization fails after result acceptance, the exact result becomes non-integrable, its packet and slice become quarantined through one append-only audit event, and the managed workspace plus process-cleanup readback are retained for controller repair rather than being released for duplicate execution.
 
 ## 5. Negative cases
 
@@ -202,6 +206,10 @@ N-27. Fabricated closure references or commands that never entered the current c
 N-28. Appending a new source event after closure must not leave the old closure, candidate, evidence or completed slice projection valid, and the stale pre-correction plan must not remain claimable.
 N-29. A model/tool caller must not impersonate a fresh verifier or a different integrator by supplying an actor-session argument.
 N-30. A started worker that returns cancellation/error, malformed JSON, a moved workspace base or a mismatched write set without termination proof must not release its claim for retry.
+N-31. `release_claim` must reject a missing, unknown-field, unsupported-kind, wrong-worker, wrong-packet, wrong-fence, malformed-time or stale `runner_not_started` receipt and must leave the claim fenced; runner-supplied `worker_terminated`, `runner_returned`, and generic process-exit assertions must not make a started claim retryable.
+N-32. Missing, duplicate, unexpected, path-escaping, hardlink, special-file, wrong-mode, hash-mismatched or content-digest-mismatched candidate archive members must not integrate.
+N-33. A candidate with wrong source/base/ref binding, advanced canonical source HEAD, conflicting candidate ref or post-integration write-set mismatch must not mutate the canonical checkout or be recorded as integrated.
+N-34. Candidate archive/finalization failure after accepted result persistence must not leave that result integrable, release the slice for duplicate execution, reap the only recoverable workspace, or omit an append-only quarantine event.
 
 ## 6. Dependency-ordered implementation DAG
 

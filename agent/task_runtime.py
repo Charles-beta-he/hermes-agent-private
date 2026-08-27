@@ -9,10 +9,15 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 from pathlib import Path
 import os
 import sqlite3
+import stat
+import subprocess
+import tarfile
+import tempfile
 import time
 import uuid
 from typing import Any, Iterator, Mapping, Sequence
@@ -22,6 +27,340 @@ SCHEMA = "hermes_task_runtime_v1"
 CONTEXT_PACKET_SCHEMA = "hermes_context_packet_v1"
 WORKER_RESULT_SCHEMA = "hermes_worker_result_v1"
 TERMINAL_SLICE_STATES = {"completed", "cancelled"}
+
+
+_MAX_CANDIDATE_ARCHIVE_BYTES = 256 * 1024 * 1024
+
+
+def _read_candidate_archive_bytes(archive: Path) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(archive, flags)
+    except OSError as exc:
+        raise ValueError("workspace_candidate_archive_invalid") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("workspace_candidate_archive_invalid")
+        if metadata.st_size < 0 or metadata.st_size > _MAX_CANDIDATE_ARCHIVE_BYTES:
+            raise ValueError("workspace_candidate_archive_size_invalid")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            content = handle.read(_MAX_CANDIDATE_ARCHIVE_BYTES + 1)
+        if len(content) != metadata.st_size or len(content) > _MAX_CANDIDATE_ARCHIVE_BYTES:
+            raise ValueError("workspace_candidate_archive_size_invalid")
+        return content
+    finally:
+        os.close(descriptor)
+
+
+def _candidate_archive_manifest(
+    archive: Path, *, archive_bytes: bytes | None = None
+) -> tuple[dict[str, Any], str]:
+    if archive_bytes is None:
+        archive_bytes = _read_candidate_archive_bytes(archive)
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as bundle:
+            members = bundle.getmembers()
+            names = [member.name for member in members]
+            if len(names) != len(set(names)) or "MANIFEST.json" not in names:
+                raise ValueError("workspace_candidate_archive_members_invalid")
+            manifest_member = bundle.getmember("MANIFEST.json")
+            if not manifest_member.isfile():
+                raise ValueError("workspace_candidate_manifest_invalid")
+            manifest_file = bundle.extractfile(manifest_member)
+            if manifest_file is None:
+                raise ValueError("workspace_candidate_manifest_invalid")
+            manifest = json.loads(manifest_file.read().decode("utf-8"))
+            if not isinstance(manifest, dict):
+                raise ValueError("workspace_candidate_manifest_invalid")
+            paths = [str(item) for item in manifest.get("changed_artifacts") or []]
+            deleted = {str(item) for item in manifest.get("deleted_artifacts") or []}
+            if (
+                paths != sorted(paths)
+                or len(paths) != len(set(paths))
+                or not deleted.issubset(paths)
+                or any(
+                    not path
+                    or Path(path).is_absolute()
+                    or ".." in Path(path).parts
+                    or Path(path).as_posix() != path
+                    for path in paths
+                )
+            ):
+                raise ValueError("workspace_candidate_manifest_paths_invalid")
+            expected_members = {"MANIFEST.json"} | {
+                f"files/{path}" for path in paths if path not in deleted
+            }
+            if set(names) != expected_members:
+                raise ValueError("workspace_candidate_archive_members_invalid")
+            digest = hashlib.sha256()
+            for path in paths:
+                if path in deleted:
+                    digest.update(b"D\0")
+                    digest.update(path.encode("utf-8"))
+                    digest.update(b"\0" + b"0" + b"\0")
+                    continue
+                member = bundle.getmember(f"files/{path}")
+                if member.issym():
+                    if member.mode != 0o777:
+                        raise ValueError("workspace_candidate_archive_mode_invalid")
+                    mode = b"120000"
+                    content = member.linkname.encode("utf-8")
+                elif member.isfile():
+                    if member.mode not in (0o644, 0o755):
+                        raise ValueError("workspace_candidate_archive_mode_invalid")
+                    mode = b"100755" if member.mode == 0o755 else b"100644"
+                    extracted = bundle.extractfile(member)
+                    if extracted is None:
+                        raise ValueError("workspace_candidate_archive_member_invalid")
+                    content = extracted.read()
+                else:
+                    raise ValueError("workspace_candidate_archive_member_invalid")
+                digest.update(mode + b"\0")
+                digest.update(path.encode("utf-8") + b"\0")
+                digest.update(str(len(content)).encode("ascii") + b"\0")
+                digest.update(content)
+            return manifest, "sha256:" + digest.hexdigest()
+    except (OSError, KeyError, tarfile.TarError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("workspace_candidate_manifest_invalid") from exc
+
+
+def _verify_workspace_candidate_receipt(
+    receipt: Mapping[str, Any] | None,
+    *,
+    task_id: str,
+    slice_id: str,
+    packet_id: str,
+    lease_token: str,
+    source_repo: str,
+    base_commit: str,
+    candidate_digest: str,
+    changed_artifacts: set[str],
+) -> dict[str, Any]:
+    if not isinstance(receipt, Mapping):
+        raise ValueError("workspace_candidate_receipt_required")
+    payload = dict(receipt)
+    allowed = {
+        "schema", "task_id", "slice_id", "packet_id", "lease_token",
+        "source_repo", "base_commit", "candidate_digest", "changed_artifacts", "archive_path",
+        "archive_sha256", "workspace_reap_receipt", "observed_at",
+    }
+    if set(payload) != allowed or payload.get("schema") != "hermes_workspace_candidate_receipt_v1":
+        raise ValueError("workspace_candidate_receipt_invalid")
+    expected = (
+        task_id, slice_id, packet_id, lease_token, source_repo, base_commit,
+        candidate_digest,
+    )
+    actual = tuple(
+        str(payload.get(key) or "")
+        for key in (
+            "task_id", "slice_id", "packet_id", "lease_token", "source_repo",
+            "base_commit", "candidate_digest",
+        )
+    )
+    if actual != expected:
+        raise ValueError("workspace_candidate_receipt_binding_mismatch")
+    if {str(item) for item in payload.get("changed_artifacts") or []} != changed_artifacts:
+        raise ValueError("workspace_candidate_write_set_mismatch")
+    reap = payload.get("workspace_reap_receipt")
+    if not isinstance(reap, Mapping) or not (
+        reap.get("removed") is True
+        and reap.get("residual_probe_succeeded") is True
+        and not reap.get("residual_writer_pids")
+        and str(reap.get("packet_id") or "") == packet_id
+        and str(reap.get("lease_token") or "") == lease_token
+    ):
+        raise ValueError("workspace_candidate_reap_invalid")
+    root = (
+        Path(os.environ.get("HERMES_HOME", "~/.hermes")).expanduser().resolve()
+        / "task-runtime-workspaces" / "candidates"
+    )
+    archive = Path(str(payload.get("archive_path") or "")).expanduser().absolute()
+    if archive.parent.resolve() != root or not archive.is_file() or archive.is_symlink():
+        raise ValueError("workspace_candidate_archive_invalid")
+    archive_bytes = _read_candidate_archive_bytes(archive)
+    archive_sha = hashlib.sha256(archive_bytes).hexdigest()
+    if archive_sha != str(payload.get("archive_sha256") or ""):
+        raise ValueError("workspace_candidate_archive_digest_mismatch")
+    manifest, archive_candidate_digest = _candidate_archive_manifest(
+        archive, archive_bytes=archive_bytes
+    )
+    if archive_candidate_digest != candidate_digest:
+        raise ValueError("workspace_candidate_content_digest_mismatch")
+    if not isinstance(manifest, dict) or (
+        manifest.get("schema") != "hermes_workspace_candidate_manifest_v1"
+        or str(manifest.get("task_id") or "") != task_id
+        or str(manifest.get("slice_id") or "") != slice_id
+        or str(manifest.get("packet_id") or "") != packet_id
+        or str(manifest.get("lease_token") or "") != lease_token
+        or str(manifest.get("source_repo") or "") != source_repo
+        or str(manifest.get("base_commit") or "") != base_commit
+        or str(manifest.get("candidate_digest") or "") != candidate_digest
+        or {str(item) for item in manifest.get("changed_artifacts") or []}
+        != changed_artifacts
+    ):
+        raise ValueError("workspace_candidate_manifest_binding_mismatch")
+    return payload
+
+
+def _git_bytes(
+    repo: Path,
+    args: Sequence[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    stdin: bytes | None = None,
+) -> bytes:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update({str(key): str(value) for key, value in env.items()})
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            input=stdin,
+            capture_output=True,
+            check=True,
+            env=merged_env,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("workspace_candidate_git_integration_failed") from exc
+    return completed.stdout
+
+
+def _integrate_workspace_candidate_ref(
+    receipt: Mapping[str, Any], *, integrator_session_id: str
+) -> dict[str, Any]:
+    source_repo = Path(str(receipt["source_repo"])).expanduser().resolve()
+    if str(source_repo) != str(receipt["source_repo"]) or not (source_repo / ".git").exists():
+        raise ValueError("workspace_candidate_source_repo_invalid")
+    base_commit = str(receipt["base_commit"])
+    resolved_base = _git_bytes(source_repo, ["rev-parse", "--verify", f"{base_commit}^{{commit}}"])
+    resolved_base_text = resolved_base.decode("ascii").strip()
+    if resolved_base_text != base_commit:
+        raise ValueError("workspace_candidate_base_commit_mismatch")
+    current_head = _git_bytes(source_repo, ["rev-parse", "--verify", "HEAD"]).decode(
+        "ascii"
+    ).strip()
+    if current_head != base_commit:
+        raise ValueError("workspace_candidate_source_head_mismatch")
+    archive = Path(str(receipt["archive_path"])).expanduser().absolute()
+    archive_bytes = _read_candidate_archive_bytes(archive)
+    if hashlib.sha256(archive_bytes).hexdigest() != str(receipt["archive_sha256"]):
+        raise ValueError("workspace_candidate_archive_digest_mismatch")
+    manifest, computed_digest = _candidate_archive_manifest(
+        archive, archive_bytes=archive_bytes
+    )
+    if computed_digest != str(receipt["candidate_digest"]):
+        raise ValueError("workspace_candidate_content_digest_mismatch")
+    for key in (
+        "task_id", "slice_id", "packet_id", "lease_token", "source_repo",
+        "base_commit", "candidate_digest",
+    ):
+        if str(manifest.get(key) or "") != str(receipt[key]):
+            raise ValueError("workspace_candidate_manifest_binding_mismatch")
+    binding = "\0".join(
+        str(receipt[key])
+        for key in ("task_id", "slice_id", "packet_id", "lease_token", "candidate_digest")
+    )
+    ref_suffix = hashlib.sha256(binding.encode("utf-8")).hexdigest()
+    candidate_ref = f"refs/hermes/candidates/{ref_suffix}"
+    index_fd, index_name = tempfile.mkstemp(prefix="hermes-candidate-index-")
+    os.close(index_fd)
+    Path(index_name).unlink(missing_ok=True)
+    index_env = {"GIT_INDEX_FILE": index_name}
+    try:
+        _git_bytes(source_repo, ["read-tree", base_commit], env=index_env)
+        deleted = {str(item) for item in manifest.get("deleted_artifacts") or []}
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as bundle:
+            for path in [str(item) for item in manifest["changed_artifacts"]]:
+                if path in deleted:
+                    _git_bytes(
+                        source_repo,
+                        ["update-index", "--force-remove", "--", path],
+                        env=index_env,
+                    )
+                    continue
+                member = bundle.getmember(f"files/{path}")
+                if member.issym():
+                    mode = "120000"
+                    content = member.linkname.encode("utf-8")
+                else:
+                    mode = "100755" if member.mode == 0o755 else "100644"
+                    extracted = bundle.extractfile(member)
+                    if extracted is None:
+                        raise ValueError("workspace_candidate_archive_member_invalid")
+                    content = extracted.read()
+                object_id = _git_bytes(
+                    source_repo, ["hash-object", "-w", "--stdin"], stdin=content
+                ).decode("ascii").strip()
+                _git_bytes(
+                    source_repo,
+                    ["update-index", "--add", "--cacheinfo", mode, object_id, path],
+                    env=index_env,
+                )
+        tree_id = _git_bytes(source_repo, ["write-tree"], env=index_env).decode("ascii").strip()
+    finally:
+        Path(index_name).unlink(missing_ok=True)
+    observed_at = str(receipt["observed_at"])
+    commit_env = {
+        "GIT_AUTHOR_NAME": "Hermes Candidate Controller",
+        "GIT_AUTHOR_EMAIL": "hermes-candidate@localhost",
+        "GIT_COMMITTER_NAME": "Hermes Candidate Controller",
+        "GIT_COMMITTER_EMAIL": "hermes-candidate@localhost",
+        "GIT_AUTHOR_DATE": observed_at,
+        "GIT_COMMITTER_DATE": observed_at,
+    }
+    message = (
+        "Hermes managed workspace candidate\n\n"
+        f"Task: {receipt['task_id']}\n"
+        f"Slice: {receipt['slice_id']}\n"
+        f"Packet: {receipt['packet_id']}\n"
+        f"Candidate: {receipt['candidate_digest']}\n"
+    ).encode("utf-8")
+    commit_id = _git_bytes(
+        source_repo,
+        ["commit-tree", tree_id, "-p", base_commit],
+        env=commit_env,
+        stdin=message,
+    ).decode("ascii").strip()
+    try:
+        existing_ref = _git_bytes(
+            source_repo, ["rev-parse", "--verify", candidate_ref]
+        ).decode("ascii").strip()
+    except ValueError:
+        existing_ref = ""
+    if existing_ref:
+        if existing_ref != commit_id:
+            raise ValueError("workspace_candidate_ref_conflict")
+        idempotent = True
+    else:
+        _git_bytes(
+            source_repo,
+            ["update-ref", candidate_ref, commit_id, "0" * 40],
+        )
+        idempotent = False
+    observed_paths = {
+        line
+        for line in _git_bytes(
+            source_repo,
+            ["diff-tree", "--no-commit-id", "--name-only", "-r", commit_id],
+        ).decode("utf-8").splitlines()
+        if line
+    }
+    expected_paths = {str(item) for item in manifest["changed_artifacts"]}
+    if observed_paths != expected_paths:
+        raise ValueError("workspace_candidate_ref_write_set_mismatch")
+    return {
+        "schema": "hermes_workspace_candidate_integration_v1",
+        "source_repo": str(source_repo),
+        "base_commit": base_commit,
+        "candidate_ref": candidate_ref,
+        "candidate_commit": commit_id,
+        "candidate_tree": tree_id,
+        "candidate_digest": str(receipt["candidate_digest"]),
+        "integrator_session_id": integrator_session_id,
+        "idempotent_replay": idempotent,
+    }
 
 
 def _utc_now() -> str:
@@ -67,9 +406,10 @@ def _runtime_owner_profile(explicit: str | None = None) -> str:
     if not home_raw:
         return "default"
     home = Path(home_raw).expanduser().resolve()
-    if home == (Path.home() / ".hermes").resolve():
+    default_home = (Path.home() / ".hermes").resolve()
+    if home == default_home:
         return "default"
-    if home.parent.name == "profiles" and home.name:
+    if home.parent == (default_home / "profiles") and home.name:
         return home.name
     identity = hashlib.sha256(str(home).encode("utf-8")).hexdigest()[:24]
     return f"home:{identity}"
@@ -493,9 +833,11 @@ class TaskRuntimeStore:
                     self._invalidate_claims(conn, task_id, "post_close_source_event")
                     conn.execute(
                         "UPDATE tasks SET status = 'draft', candidate_digest = '', "
+                        "plan_revision = plan_revision + 1, implementation_graph_json = '[]', "
                         "evidence_graph_json = '[]', closure_json = '{}' WHERE task_id = ?",
                         (task_id,),
                     )
+                    conn.execute("DELETE FROM task_slices WHERE task_id = ?", (task_id,))
                 self._bump_state(
                     conn,
                     task_id,
@@ -523,6 +865,9 @@ class TaskRuntimeStore:
             conn.execute(
                 """
                 UPDATE tasks SET spec_bundle_json = ?, spec_revision = spec_revision + 1,
+                    plan_revision = plan_revision + CASE
+                        WHEN implementation_graph_json != '[]' THEN 1 ELSE 0 END,
+                    implementation_graph_json = '[]',
                     state_revision = state_revision + 1, status = 'specified',
                     candidate_digest = '', evidence_graph_json = '[]', closure_json = '{}',
                     updated_at = ?
@@ -531,6 +876,7 @@ class TaskRuntimeStore:
                 (_json(spec), _utc_now(), task_id),
             )
             self._invalidate_claims(conn, task_id, "spec_changed")
+            conn.execute("DELETE FROM task_slices WHERE task_id = ?", (task_id,))
             self._record_state_event(
                 conn,
                 task_id,
@@ -598,6 +944,20 @@ class TaskRuntimeStore:
                 forbidden = {str(item) for item in definition.get("forbidden_changes") or []}
                 if owned & forbidden:
                     raise ValueError("slice_owned_and_forbidden_paths_overlap")
+                worker_command = definition.get("worker_command") or []
+                if (
+                    not isinstance(worker_command, list)
+                    or any(
+                        not isinstance(item, str) or not item
+                        for item in worker_command
+                    )
+                ):
+                    raise ValueError("worker_command_invalid")
+                worker_timeout = float(
+                    definition.get("worker_timeout_seconds") or 900
+                )
+                if worker_timeout <= 0 or worker_timeout > 86_400:
+                    raise ValueError("worker_timeout_seconds_invalid")
             self._invalidate_claims(conn, task_id, "plan_changed")
             conn.execute("DELETE FROM task_slices WHERE task_id = ?", (task_id,))
             for ordinal, definition in enumerate(definitions):
@@ -690,7 +1050,12 @@ class TaskRuntimeStore:
                 "architecture_invariants": list(definition.get("architecture_invariants") or []),
                 "owned_paths": list(definition.get("owned_paths") or []),
                 "workspace_path": str(definition.get("workspace_path") or ""),
+                "workspace_source_repo": str(definition.get("workspace_source_repo") or ""),
                 "workspace_base_commit": str(definition.get("workspace_base_commit") or ""),
+                "worker_command": list(definition.get("worker_command") or []),
+                "worker_timeout_seconds": float(
+                    definition.get("worker_timeout_seconds") or 900
+                ),
                 "forbidden_changes": list(definition.get("forbidden_changes") or []),
                 "dependencies": list(definition.get("dependencies") or []),
                 "verification_commands": list(definition.get("verification_commands") or []),
@@ -743,18 +1108,22 @@ class TaskRuntimeStore:
         expected = str(payload.pop("packet_digest", ""))
         return bool(expected) and expected == _digest(payload)
 
-    def release_claim(
+    def heartbeat_claim(
         self,
         task_id: str,
         *,
         worker_session_id: str,
         packet_id: str,
-        reason: str,
+        lease_seconds: int,
+        now: float | None = None,
     ) -> dict[str, Any]:
-        """Abandon one active lease after local worker failure and make it retryable."""
+        """Extend one exact active lease without minting a new ContextPacket."""
         worker = str(worker_session_id or "").strip()
         if not worker:
             raise ValueError("worker_session_id_required")
+        if int(lease_seconds) <= 0:
+            raise ValueError("lease_seconds_invalid")
+        expires_at = float(time.time() if now is None else now) + int(lease_seconds)
         with self._write() as conn:
             self._task_row(conn, task_id)
             packet = conn.execute(
@@ -767,6 +1136,92 @@ class TaskRuntimeStore:
                 raise ValueError("packet_not_active")
             if packet["lease_owner"] != worker:
                 raise ValueError("lease_owner_mismatch")
+            updated = conn.execute(
+                """
+                UPDATE task_slices SET lease_expires_at = ?
+                WHERE task_id = ? AND slice_id = ? AND status = 'claimed'
+                    AND lease_owner = ? AND lease_token = ?
+                """,
+                (
+                    expires_at,
+                    task_id,
+                    packet["slice_id"],
+                    worker,
+                    packet["lease_token"],
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("lease_fence_mismatch")
+            self._bump_state(
+                conn,
+                task_id,
+                "slice_claim_heartbeat",
+                {
+                    "slice_id": packet["slice_id"],
+                    "packet_id": packet_id,
+                    "worker_session_id": worker,
+                    "lease_token": packet["lease_token"],
+                    "lease_expires_at": expires_at,
+                },
+            )
+        return {
+            "task_id": task_id,
+            "packet_id": packet_id,
+            "worker_session_id": worker,
+            "lease_token": packet["lease_token"],
+            "lease_expires_at": expires_at,
+        }
+
+    def release_claim(
+        self,
+        task_id: str,
+        *,
+        worker_session_id: str,
+        packet_id: str,
+        reason: str,
+        termination_proof: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Abandon one active lease only after an auditable local termination observation."""
+        worker = str(worker_session_id or "").strip()
+        if not worker:
+            raise ValueError("worker_session_id_required")
+        if not isinstance(termination_proof, Mapping):
+            raise ValueError("termination_proof_required")
+        proof = dict(termination_proof)
+        allowed_proof_fields = {
+            "kind", "worker_session_id", "packet_id", "lease_token", "observed_at"
+        }
+        if set(proof) - allowed_proof_fields:
+            raise ValueError("termination_proof_unknown_fields")
+        if str(proof.get("kind") or "").strip() != "runner_not_started":
+            raise ValueError("termination_proof_kind_invalid")
+        if str(proof.get("worker_session_id") or "").strip() != worker:
+            raise ValueError("termination_proof_worker_mismatch")
+        if str(proof.get("packet_id") or "").strip() != str(packet_id):
+            raise ValueError("termination_proof_packet_mismatch")
+        observed_at = str(proof.get("observed_at") or "").strip()
+        if not observed_at:
+            raise ValueError("termination_proof_observed_at_required")
+        try:
+            observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("termination_proof_observed_at_invalid") from exc
+        if observed.tzinfo is None or abs(time.time() - observed.timestamp()) > 300:
+            raise ValueError("termination_proof_observed_at_stale")
+        with self._write() as conn:
+            self._task_row(conn, task_id)
+            packet = conn.execute(
+                "SELECT * FROM context_packets WHERE packet_id = ? AND task_id = ?",
+                (packet_id, task_id),
+            ).fetchone()
+            if packet is None:
+                raise ValueError("packet_not_found")
+            if packet["status"] != "active":
+                raise ValueError("packet_not_active")
+            if packet["lease_owner"] != worker:
+                raise ValueError("lease_owner_mismatch")
+            if str(proof.get("lease_token") or "") != str(packet["lease_token"]):
+                raise ValueError("termination_proof_lease_fence_mismatch")
             updated = conn.execute(
                 """
                 UPDATE task_slices
@@ -792,6 +1247,7 @@ class TaskRuntimeStore:
                     "packet_id": packet_id,
                     "worker_session_id": worker,
                     "reason": str(reason or "worker_failed"),
+                    "termination_proof": proof,
                 },
             )
         return {
@@ -800,6 +1256,7 @@ class TaskRuntimeStore:
             "worker_session_id": worker,
             "status": "abandoned",
             "reason": str(reason or "worker_failed"),
+            "termination_proof": proof,
         }
 
     def quarantine_claim(
@@ -860,6 +1317,116 @@ class TaskRuntimeStore:
             "reason": str(reason or "worker_termination_unproven"),
         }
 
+    def recover_quarantined_claim(
+        self,
+        task_id: str,
+        *,
+        cleanup: Any,
+        workspace_reap_receipt: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Retry a quarantined slice only from a controller-issued cleanup capability."""
+        from agent.task_runtime_process import VerifiedTaskCleanup
+
+        if not isinstance(cleanup, VerifiedTaskCleanup):
+            raise ValueError("verified_process_cleanup_required")
+        binding = cleanup.binding
+        receipt = cleanup.receipt
+        if binding.task_id != task_id:
+            raise ValueError("cleanup_task_mismatch")
+        if not (
+            receipt.leader_reaped
+            and receipt.residual_probe_succeeded
+            and not receipt.residual_pids
+        ):
+            raise ValueError("cleanup_process_residuals_present")
+        try:
+            observed = datetime.fromisoformat(receipt.observed_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("cleanup_observed_at_invalid") from exc
+        if observed.tzinfo is None or abs(time.time() - observed.timestamp()) > 300:
+            raise ValueError("cleanup_observed_at_stale")
+        with self._write() as conn:
+            self._task_row(conn, task_id)
+            packet = conn.execute(
+                "SELECT * FROM context_packets WHERE packet_id = ? AND task_id = ?",
+                (binding.packet_id, task_id),
+            ).fetchone()
+            if packet is None:
+                raise ValueError("packet_not_found")
+            if packet["status"] != "quarantined":
+                raise ValueError("packet_not_quarantined")
+            if packet["slice_id"] != binding.slice_id:
+                raise ValueError("cleanup_slice_mismatch")
+            if packet["lease_owner"] != binding.worker_session_id:
+                raise ValueError("cleanup_worker_mismatch")
+            if packet["lease_token"] != binding.lease_token:
+                raise ValueError("cleanup_lease_fence_mismatch")
+            packet_payload = _decode(packet["payload_json"], {})
+            auto_workspace = bool(
+                packet_payload.get("workspace_source_repo")
+                and not packet_payload.get("workspace_path")
+                and packet_payload.get("owned_paths")
+            )
+            if auto_workspace:
+                if not isinstance(workspace_reap_receipt, Mapping):
+                    raise ValueError("workspace_reap_receipt_required")
+                workspace_receipt = dict(workspace_reap_receipt)
+                if (
+                    workspace_receipt.get("packet_id") != binding.packet_id
+                    or workspace_receipt.get("lease_token") != binding.lease_token
+                ):
+                    raise ValueError("workspace_reap_fence_mismatch")
+                if not (
+                    workspace_receipt.get("removed") is True
+                    and workspace_receipt.get("residual_probe_succeeded") is True
+                    and not workspace_receipt.get("residual_writer_pids")
+                ):
+                    raise ValueError("workspace_reap_unproven")
+            updated = conn.execute(
+                """
+                UPDATE task_slices
+                SET status = 'pending', lease_owner = '', lease_token = '',
+                    lease_expires_at = NULL, result_id = ''
+                WHERE task_id = ? AND slice_id = ? AND status = 'quarantined'
+                    AND lease_owner = ? AND lease_token = ?
+                """,
+                (
+                    task_id,
+                    binding.slice_id,
+                    binding.worker_session_id,
+                    binding.lease_token,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("lease_fence_mismatch")
+            conn.execute(
+                "UPDATE context_packets SET status = 'recovered' WHERE packet_id = ?",
+                (binding.packet_id,),
+            )
+            self._bump_state(
+                conn,
+                task_id,
+                "slice_claim_recovered",
+                {
+                    "slice_id": binding.slice_id,
+                    "packet_id": binding.packet_id,
+                    "worker_session_id": binding.worker_session_id,
+                    "lease_token": binding.lease_token,
+                    "process_receipt": receipt.to_dict(),
+                    "workspace_reap_receipt": (
+                        dict(workspace_reap_receipt)
+                        if workspace_reap_receipt is not None
+                        else None
+                    ),
+                },
+            )
+        return {
+            "task_id": task_id,
+            "slice_id": binding.slice_id,
+            "packet_id": binding.packet_id,
+            "status": "recovered",
+        }
+
     def submit_result(
         self,
         task_id: str,
@@ -904,10 +1471,24 @@ class TaskRuntimeStore:
                     reasons.append("stale_spec_revision")
                 if int(packet["plan_revision"]) != int(task["plan_revision"]):
                     reasons.append("stale_plan_revision")
-                if packet["status"] == "invalidated" and not any(reason.startswith("stale_") for reason in reasons):
-                    reasons.append("packet_invalidated")
+                if packet["status"] != "active":
+                    reasons.append(f"packet_not_active:{packet['status']}")
                 if packet["lease_owner"] != worker:
                     reasons.append("lease_owner_mismatch")
+                slice_attempt = conn.execute(
+                    "SELECT status, lease_owner, lease_token FROM task_slices "
+                    "WHERE task_id = ? AND slice_id = ?",
+                    (task_id, slice_id),
+                ).fetchone()
+                if slice_attempt is None:
+                    reasons.append("slice_not_found")
+                else:
+                    if slice_attempt["status"] != "claimed":
+                        reasons.append("slice_not_claimed")
+                    if slice_attempt["lease_owner"] != worker:
+                        reasons.append("current_lease_owner_mismatch")
+                    if slice_attempt["lease_token"] != packet["lease_token"]:
+                        reasons.append("current_lease_fence_mismatch")
                 if now_value > float(packet["lease_expires_at"]):
                     reasons.append("lease_expired")
                 if payload.get("input_digest") != packet["packet_digest"]:
@@ -959,6 +1540,12 @@ class TaskRuntimeStore:
                             for item in evidence_refs
                         ):
                             reasons.append("worker_evidence_refs_invalid")
+                        elif any(
+                            set(item) - {"kind", "ref"}
+                            for item in evidence_refs
+                            if isinstance(item, Mapping)
+                        ):
+                            reasons.append("worker_evidence_refs_unknown_fields")
                         verification_results = payload["verification_results"]
                         expected_commands = {
                             str(item) for item in packet_payload.get("verification_commands") or []
@@ -974,6 +1561,12 @@ class TaskRuntimeStore:
                             or not expected_commands.issubset(observed_commands)
                         ):
                             reasons.append("worker_verification_incomplete")
+                        elif any(
+                            set(item) - {"command", "exit_code"}
+                            for item in verification_results
+                            if isinstance(item, Mapping)
+                        ):
+                            reasons.append("worker_verification_unknown_fields")
                         elif any(
                             type(item.get("exit_code")) is not int
                             or int(item["exit_code"]) != 0
@@ -1020,7 +1613,98 @@ class TaskRuntimeStore:
             row = conn.execute("SELECT * FROM worker_results WHERE result_id = ?", (identity,)).fetchone()
             return self._result_payload(row, idempotent_replay=False)
 
-    def integrate_result(self, task_id: str, result_id: str, *, integrator_session_id: str) -> dict[str, Any]:
+    def quarantine_candidate_finalize_failure(
+        self,
+        task_id: str,
+        result_id: str,
+        *,
+        worker_session_id: str,
+        packet_id: str,
+        error: str,
+    ) -> dict[str, Any]:
+        """Fail closed after an accepted result cannot be frozen into a candidate.
+
+        The accepted result is retained for audit but made non-integrable, while the
+        exact packet and slice move to quarantine.  The managed workspace is left in
+        place for controller repair; it is never released as a retryable claim.
+        """
+        with self._write() as conn:
+            row = conn.execute(
+                "SELECT * FROM worker_results WHERE result_id = ? AND task_id = ?",
+                (result_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(result_id)
+            if row["packet_id"] != packet_id:
+                raise ValueError("candidate_finalize_packet_mismatch")
+            if row["worker_session_id"] != worker_session_id:
+                raise ValueError("candidate_finalize_worker_mismatch")
+            if row["disposition"] == "candidate_finalize_failed":
+                return {
+                    "task_id": task_id,
+                    "result_id": result_id,
+                    "slice_id": row["slice_id"],
+                    "status": "quarantined",
+                    "idempotent_replay": True,
+                }
+            if row["disposition"] != "accepted_for_integration":
+                raise ValueError("candidate_finalize_result_not_accepted")
+            packet = conn.execute(
+                "SELECT * FROM context_packets WHERE packet_id = ?",
+                (packet_id,),
+            ).fetchone()
+            if packet is None or packet["status"] != "submitted":
+                raise ValueError("candidate_finalize_packet_not_submitted")
+            slice_row = conn.execute(
+                "SELECT * FROM task_slices WHERE task_id = ? AND slice_id = ?",
+                (task_id, row["slice_id"]),
+            ).fetchone()
+            if slice_row is None or slice_row["status"] != "submitted":
+                raise ValueError("candidate_finalize_slice_not_submitted")
+            reason = f"workspace_candidate_finalize_failed:{str(error)[:500]}"
+            now_iso = _utc_now()
+            conn.execute(
+                "UPDATE worker_results SET disposition = 'candidate_finalize_failed', "
+                "reasons_json = ?, updated_at = ? WHERE result_id = ?",
+                (_json([reason]), now_iso, result_id),
+            )
+            conn.execute(
+                "UPDATE context_packets SET status = 'quarantined' WHERE packet_id = ?",
+                (packet_id,),
+            )
+            conn.execute(
+                "UPDATE task_slices SET status = 'quarantined' "
+                "WHERE task_id = ? AND slice_id = ?",
+                (task_id, row["slice_id"]),
+            )
+            self._bump_state(
+                conn,
+                task_id,
+                "workspace_candidate_finalize_failed",
+                {
+                    "result_id": result_id,
+                    "packet_id": packet_id,
+                    "slice_id": row["slice_id"],
+                    "worker_session_id": worker_session_id,
+                    "reason": reason,
+                },
+            )
+            return {
+                "task_id": task_id,
+                "result_id": result_id,
+                "slice_id": row["slice_id"],
+                "status": "quarantined",
+                "idempotent_replay": False,
+            }
+
+    def integrate_result(
+        self,
+        task_id: str,
+        result_id: str,
+        *,
+        integrator_session_id: str,
+        workspace_candidate_receipt: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         integrator = str(integrator_session_id or "").strip()
         if not integrator:
             raise ValueError("integrator_session_id_required")
@@ -1042,7 +1726,11 @@ class TaskRuntimeStore:
                 dep = conn.execute("SELECT status FROM task_slices WHERE task_id = ? AND slice_id = ?", (task_id, dependency)).fetchone()
                 if dep is None or dep["status"] != "completed":
                     raise ValueError("dependency_not_completed")
-            packet = conn.execute("SELECT state_revision FROM context_packets WHERE packet_id = ?", (row["packet_id"],)).fetchone()
+            packet = conn.execute(
+                "SELECT state_revision, lease_token, payload_json FROM context_packets "
+                "WHERE packet_id = ?",
+                (row["packet_id"],),
+            ).fetchone()
             changed = {str(path) for path in payload.get("changed_artifacts") or []}
             prior_rows = conn.execute(
                 "SELECT payload_json FROM worker_results WHERE task_id = ? AND disposition = 'integrated' "
@@ -1059,6 +1747,29 @@ class TaskRuntimeStore:
             candidate = str(payload.get("candidate_digest") or "")
             if not candidate:
                 raise ValueError("candidate_digest_required")
+            managed_workspace = bool(
+                definition.get("owned_paths")
+                and str(definition.get("workspace_source_repo") or "").strip()
+                and not str(definition.get("workspace_path") or "").strip()
+            )
+            verified_workspace_receipt = None
+            workspace_integration_receipt = None
+            if managed_workspace:
+                verified_workspace_receipt = _verify_workspace_candidate_receipt(
+                    workspace_candidate_receipt,
+                    task_id=task_id,
+                    slice_id=str(row["slice_id"]),
+                    packet_id=str(row["packet_id"]),
+                    lease_token=str(packet["lease_token"]),
+                    source_repo=str(definition.get("workspace_source_repo") or ""),
+                    base_commit=str(definition.get("workspace_base_commit") or ""),
+                    candidate_digest=candidate,
+                    changed_artifacts=changed,
+                )
+                workspace_integration_receipt = _integrate_workspace_candidate_ref(
+                    verified_workspace_receipt,
+                    integrator_session_id=integrator,
+                )
             new_revision = int(task["state_revision"]) + 1
             evidence = _decode(task["evidence_graph_json"], [])
             evidence.append(
@@ -1069,6 +1780,8 @@ class TaskRuntimeStore:
                     "evidence_refs": list(payload.get("evidence_refs") or []),
                     "verification_results": list(payload.get("verification_results") or []),
                     "candidate_digest": candidate,
+                    "workspace_candidate_receipt": verified_workspace_receipt,
+                    "workspace_integration_receipt": workspace_integration_receipt,
                     "integrated_state_revision": new_revision,
                 }
             )
@@ -1097,10 +1810,21 @@ class TaskRuntimeStore:
                     "result_id": result_id,
                     "slice_id": row["slice_id"],
                     "candidate_digest": candidate,
+                    "workspace_candidate_receipt": verified_workspace_receipt,
+                    "workspace_integration_receipt": workspace_integration_receipt,
                     "integrator_session_id": integrator,
                 },
             )
-            return {"task_id": task_id, "result_id": result_id, "slice_id": row["slice_id"], "slice_status": "completed", "state_revision": new_revision, "candidate_digest": candidate, "idempotent_replay": False}
+            return {
+                "task_id": task_id,
+                "result_id": result_id,
+                "slice_id": row["slice_id"],
+                "slice_status": "completed",
+                "state_revision": new_revision,
+                "candidate_digest": candidate,
+                "workspace_integration_receipt": workspace_integration_receipt,
+                "idempotent_replay": False,
+            }
 
     def build_closure_packet(
         self,
@@ -1275,6 +1999,7 @@ class TaskRuntimeStore:
             if not closure_evidence or any(
                 not str(item.get("ref") or "").strip()
                 or str(item.get("candidate_digest") or "") != candidate
+                or bool(set(item) - {"kind", "ref", "candidate_digest"})
                 for item in closure_evidence
             ):
                 raise ValueError("closure_evidence_required")
@@ -1284,6 +2009,7 @@ class TaskRuntimeStore:
                 or isinstance(item.get("exit_code"), bool)
                 or int(item["exit_code"]) != 0
                 or str(item.get("candidate_digest") or "") != candidate
+                or bool(set(item) - {"command", "exit_code", "candidate_digest"})
                 for item in closure_verification
             ):
                 raise ValueError("closure_verification_failed")
@@ -1294,6 +2020,14 @@ class TaskRuntimeStore:
                 for item in evidence_graph
                 if str(item.get("candidate_digest") or "") == candidate
             ]
+            candidate_claims = {
+                str(claim)
+                for item in candidate_evidence
+                for claim in (item.get("claims") or [])
+                if str(claim)
+            }
+            if not required.issubset(candidate_claims):
+                raise ValueError("candidate_evidence_claims_incomplete")
 
             def without_candidate(item: Mapping[str, Any]) -> dict[str, Any]:
                 return {
@@ -1494,6 +2228,21 @@ class TaskRuntimeStore:
         if row is None:
             raise KeyError(task_id)
         self._assert_owner(row)
+        state_events = conn.execute(
+            "SELECT state_revision, event_type, payload_json, previous_event_digest, "
+            "event_digest, recorded_at FROM task_state_events WHERE task_id = ? "
+            "ORDER BY state_revision",
+            (task_id,),
+        ).fetchall()
+        if not self._state_event_ledger_valid(
+            task_id, int(row["state_revision"]), state_events
+        ):
+            raise ValueError("task_state_event_ledger_invalid")
+        tip_payload = _decode(state_events[-1]["payload_json"], {})
+        if str(tip_payload.get("_projection_digest") or "") != self._projection_digest(
+            conn, task_id
+        ):
+            raise ValueError("task_projection_digest_invalid")
         return row
 
     @staticmethod
