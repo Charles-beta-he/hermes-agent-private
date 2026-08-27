@@ -4,8 +4,8 @@ Status semantics: `covered` means the listed contract is exercised by the fresh 
 
 ## Fresh local evidence checkpoints
 
-| E1 | `pytest -q tests/agent/test_task_runtime.py tests/agent/test_task_runtime_worker.py tests/agent/test_task_runtime_process_supervisor.py tests/agent/test_task_runtime_workspace.py` | `78 passed in 7.22s` |
-| E2 | `pytest -q tests/agent/test_task_runtime_ingress.py tests/agent/test_task_runtime_process_e2e.py tests/tools/test_task_runtime_tool.py tests/gateway/test_fast_command.py tests/test_dispatch_session_id.py` | `23 passed in 1.00s` |
+| E1 | `pytest -q tests/agent/test_task_runtime.py tests/agent/test_task_runtime_worker.py tests/agent/test_task_runtime_process_supervisor.py tests/agent/test_task_runtime_workspace.py` | `78 passed in 7.26s` |
+| E2 | `pytest -q tests/agent/test_task_runtime_ingress.py tests/agent/test_task_runtime_process_e2e.py tests/tools/test_task_runtime_tool.py tests/gateway/test_fast_command.py tests/test_dispatch_session_id.py` | `23 passed in 1.06s` |
 
 - E3: temporary-home real CLI startup: `HOME=<tmp>/home HERMES_HOME=<tmp>/hermes uv run --frozen hermes --version` → exit 0, Hermes Agent v0.19.0; `cron/jobs.json` and `gateway.json` remained absent.
 
@@ -31,7 +31,7 @@ Status semantics: `covered` means the listed contract is exercised by the fresh 
 | BR-29 | covered | post-accept freeze, deterministic archive, persisted exact replay, controller cleanup and workspace reap tests; E1 |
 | BR-30 | covered | isolated-index tree construction, deterministic commit/ref replay, diff-tree readback, exact source-HEAD/base gate and canonical HEAD non-mutation assertions; E1 |
 | BR-31 | covered | accepted-result candidate-finalize fault injection makes result non-integrable, quarantines packet/slice through an append-only event and preserves workspace/process readback; E1 |
-| BR-32, BR-33 | covered | governed SpecBundle negative matrix covers task class, project/prototype/competitor/open-source preflight, full open-source due-diligence dimensions, bidirectional source/claim edges, Oracle/closure coverage and blocking unknowns; E1 |
+| BR-32, BR-33 | covered | governed SpecBundle negative matrix covers task class, project/prototype/competitor/open-source preflight, prototype-to-Oracle binding, full open-source due-diligence dimensions, bidirectional source/claim edges, Oracle/closure coverage and blocking unknowns; E1 |
 | BR-34, BR-35 | covered | append-only digest-bound independent review, state-neutral exact replay/conflict rejection, compiler separation, plan readmission and runtime-bound tool flow; E1/E2/E8 |
 | BR-36, BR-37 | covered | non-draft source correction invalidates dependent projections and old review; summary/Oracle/source contracts are structurally required by the governed spec gate; E1 |
 | BR-38 | covered | pre-SpecReview schema reconstruction preserves the existing projection-bound event ledger without fabricating a migration event; E1 |
@@ -50,7 +50,7 @@ Status semantics: `covered` means the listed contract is exercised by the fresh 
 | N-32 | covered | duplicate/unexpected/hardlink/path escape/hash/content checks, malformed receipt, serialized concurrent freeze, no-follow archive read and resource-size ceiling; E1 |
 | N-33 | covered | source/base binding, exact source-HEAD mismatch, CAS candidate ref, deterministic replay, explicit conflicting-ref and wrong-base rejection, diff readback, canonical HEAD non-mutation, and injected post-ref/pre-DB-commit failure followed by exact roll-forward replay; E1 |
 | N-34 | covered | injected post-accept finalization failure is fail-closed and idempotently quarantined while preserving the only recoverable managed workspace; E1 |
-| N-35, N-36 | covered | missing governance, malformed task class/claims/closure/source coverage, required discovery-lane completion and incomplete open-source due diligence fail closed; E1 |
+| N-35, N-36 | covered | missing governance, malformed task class/claims/closure/source coverage, required discovery-lane completion, unbound prototype Oracle and incomplete open-source due diligence fail closed; E1 |
 | N-37 | covered | self-review, unreviewed mutation, stale source digest and append-only review identity conflict negatives; E1 |
 | N-38 | covered | source change clears plan/slices/candidate/evidence/closure and makes stale plan unclaimable until fresh review/spec/plan; E1 |
 | N-39 | covered | reviewer/compiler derive from runtime session and are absent as public actor-override properties; E2/E8 |
