@@ -13,6 +13,7 @@ import io
 import json
 from pathlib import Path
 import os
+import re
 import sqlite3
 import stat
 import subprocess
@@ -50,6 +51,33 @@ OPEN_SOURCE_EVALUATION_DIMENSIONS = {
     "rollback",
     "lifecycle_cost",
 }
+_SEMVER = (
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-(?:0|[1-9][0-9]*|[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
+_EXACT_VERSION_PIN = re.compile(
+    rf"^(?:"
+    rf"v?{_SEMVER}"
+    rf"|[^\s=]+==v?{_SEMVER}"
+    rf"|version:v?{_SEMVER}"
+    r"|tag:[0-9A-Za-z][0-9A-Za-z._-]*"
+    r"|commit:(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})"
+    r"|(?:[^@\s]+@)?sha256:[0-9a-fA-F]{64}"
+    r")$"
+)
+
+
+def _is_exact_version_pin(value: str) -> bool:
+    normalized = value.strip()
+    if not _EXACT_VERSION_PIN.fullmatch(normalized):
+        return False
+    lowered = normalized.lower()
+    return not any(
+        lowered.endswith(f":{moving}")
+        for moving in ("latest", "main", "master", "head", "dev", "nightly")
+    )
 
 
 _MAX_CANDIDATE_ARCHIVE_BYTES = 256 * 1024 * 1024
@@ -747,8 +775,7 @@ class TaskRuntimeStore:
                 (task_id,),
             ).fetchall()
             source_events = conn.execute(
-                "SELECT payload_json FROM source_events WHERE task_id = ? "
-                "ORDER BY recorded_at, event_id",
+                "SELECT payload_json FROM source_events WHERE task_id = ? ORDER BY rowid",
                 (task_id,),
             ).fetchall()
             state_events = conn.execute(
@@ -870,8 +897,7 @@ class TaskRuntimeStore:
         events = [
             _decode(row["payload_json"], {})
             for row in conn.execute(
-                "SELECT payload_json FROM source_events WHERE task_id = ? "
-                "ORDER BY recorded_at, event_id",
+                "SELECT payload_json FROM source_events WHERE task_id = ? ORDER BY rowid",
                 (task["task_id"],),
             ).fetchall()
         ]
@@ -882,23 +908,29 @@ class TaskRuntimeStore:
 
     @staticmethod
     def _source_ids(source_snapshot: Mapping[str, Any]) -> list[str]:
-        identifiers = [
-            str(item.get("source_id") or "")
+        raw_identifiers = [
+            item.get("source_id")
             for item in source_snapshot.get("original_sources") or []
             if isinstance(item, Mapping)
         ]
-        identifiers.extend(
-            str(item.get("event_id") or "")
+        raw_identifiers.extend(
+            item.get("event_id")
             for item in source_snapshot.get("source_events") or []
             if isinstance(item, Mapping)
         )
-        if any(not item for item in identifiers) or len(identifiers) != len(set(identifiers)):
+        if any(
+            not isinstance(item, str) or not item.strip() for item in raw_identifiers
+        ):
+            raise ValueError("task_source_identity_invalid")
+        identifiers = [item for item in raw_identifiers if isinstance(item, str)]
+        if len(identifiers) != len(set(identifiers)):
             raise ValueError("task_source_identity_invalid")
         return identifiers
 
     @staticmethod
     def _validate_governed_spec(
-        spec: Mapping[str, Any], *, source_ids: Sequence[str]
+        spec: Mapping[str, Any], *, source_ids: Sequence[str],
+        source_snapshot: Mapping[str, Any] | None = None,
     ) -> None:
         governance = spec.get("governance")
         if not isinstance(governance, Mapping):
@@ -908,18 +940,89 @@ class TaskRuntimeStore:
             raise ValueError("spec_task_class_invalid")
 
         known_sources = set(source_ids)
+        source_records = [
+            item
+            for item in reversed((source_snapshot or {}).get("source_events") or [])
+            if isinstance(item, Mapping)
+        ]
+        source_records.extend(
+            item
+            for item in (source_snapshot or {}).get("original_sources") or []
+            if isinstance(item, Mapping)
+        )
+        def authority_rank(item: Mapping[str, Any]) -> int:
+            kind = str(item.get("kind") or "").strip().lower().replace("-", "_")
+            if not kind or "user" in kind or "requirement" in kind or "correction" in kind:
+                return 0
+            if "prd" in kind or "ssot" in kind or "project" in kind:
+                return 1
+            if any(token in kind for token in ("prototype", "screenshot", "video", "reference")):
+                return 2
+            if any(token in kind for token in ("implementation", "runtime", "source_code", "api_contract")):
+                return 3
+            if "competitor" in kind:
+                return 4
+            if any(token in kind for token in ("general_practice", "model_inference", "inference")):
+                return 5
+            return 3
+
+        def is_direct_authoritative_oracle(item: Mapping[str, Any]) -> bool:
+            kind = str(item.get("kind") or "").strip().lower().replace("-", "_")
+            if not kind:
+                return True
+            if any(
+                token in kind
+                for token in (
+                    "summary",
+                    "demo",
+                    "test_output",
+                    "test_result",
+                    "model_agreement",
+                    "readme",
+                    "generated",
+                )
+            ):
+                return False
+            return any(
+                token in kind
+                for token in (
+                    "user",
+                    "requirement",
+                    "correction",
+                    "prd",
+                    "ssot",
+                    "project",
+                    "prototype",
+                    "screenshot",
+                    "video",
+                    "reference",
+                    "implementation",
+                    "runtime",
+                    "source_code",
+                    "api_contract",
+                )
+            )
+
+        source_records.sort(key=authority_rank)
+        authoritative_ids = [
+            str(item.get("source_id") or item.get("event_id") or "")
+            for item in source_records
+            if "summary" not in str(item.get("kind") or "").strip().lower()
+        ]
+        oracle_eligible_ids = {
+            str(item.get("source_id") or item.get("event_id") or "")
+            for item in source_records
+            if is_direct_authoritative_oracle(item)
+        }
+        if not source_records:
+            authoritative_ids = list(source_ids)
+            oracle_eligible_ids = set(source_ids)
         source_authority_raw = governance.get("source_authority")
         if not isinstance(source_authority_raw, list) or any(
             not isinstance(item, str) or not item.strip() for item in source_authority_raw
         ):
             raise ValueError("spec_source_authority_invalid")
         source_authority = list(source_authority_raw)
-        if (
-            not source_authority
-            or len(source_authority) != len(set(source_authority))
-            or set(source_authority) != known_sources
-        ):
-            raise ValueError("spec_source_authority_incomplete")
         oracle_refs_raw = governance.get("oracle_refs")
         if not isinstance(oracle_refs_raw, list) or any(
             not isinstance(item, str) or not item.strip() for item in oracle_refs_raw
@@ -928,13 +1031,26 @@ class TaskRuntimeStore:
         oracle_refs = set(oracle_refs_raw)
         if not oracle_refs or not oracle_refs.issubset(known_sources):
             raise ValueError("spec_oracle_refs_invalid")
+        if not oracle_refs.issubset(oracle_eligible_ids):
+            raise ValueError("spec_oracle_refs_not_authoritative")
+        if (
+            not source_authority
+            or len(source_authority) != len(set(source_authority))
+            or set(source_authority) != set(authoritative_ids)
+        ):
+            raise ValueError("spec_source_authority_incomplete")
+        if source_authority != authoritative_ids:
+            raise ValueError("spec_source_authority_order_invalid")
         source_coverage = governance.get("source_coverage")
         if not isinstance(source_coverage, Mapping) or set(source_coverage) != known_sources:
             raise ValueError("spec_source_coverage_incomplete")
         if any(
             not isinstance(source_coverage[source_id], list)
             or not source_coverage[source_id]
-            or any(not str(item or "").strip() for item in source_coverage[source_id])
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in source_coverage[source_id]
+            )
             for source_id in known_sources
         ):
             raise ValueError("spec_source_coverage_incomplete")
@@ -948,7 +1064,13 @@ class TaskRuntimeStore:
             for claim in claims:
                 if not isinstance(claim, Mapping):
                     raise ValueError("spec_claim_invalid")
-                claim_id = str(claim.get("id") or "")
+                claim_id_raw = claim.get("id")
+                if not isinstance(claim_id_raw, str) or not claim_id_raw.strip():
+                    raise ValueError("spec_claim_identity_invalid")
+                claim_id = claim_id_raw
+                claim_body = claim.get("text")
+                if not isinstance(claim_body, str) or not claim_body.strip():
+                    raise ValueError("spec_claim_body_required")
                 claim_refs_raw = claim.get("source_refs")
                 if not isinstance(claim_refs_raw, list) or any(
                     not isinstance(item, str) or not item.strip() for item in claim_refs_raw
@@ -959,17 +1081,19 @@ class TaskRuntimeStore:
                     raise ValueError("spec_claim_identity_invalid")
                 if not refs or not refs.issubset(known_sources):
                     raise ValueError("spec_claim_source_refs_invalid")
+                if refs.isdisjoint(oracle_eligible_ids):
+                    raise ValueError("spec_claim_source_authority_required")
                 claim_ids.add(claim_id)
                 claim_source_edges.update((source_id, claim_id) for source_id in refs)
         covered_claim_ids = {
-            str(claim_id)
+            claim_id
             for source_id in known_sources
             for claim_id in source_coverage[source_id]
         }
         if covered_claim_ids != claim_ids:
             raise ValueError("spec_source_coverage_incomplete")
         coverage_edges = {
-            (source_id, str(claim_id))
+            (source_id, claim_id)
             for source_id in known_sources
             for claim_id in source_coverage[source_id]
         }
@@ -1001,7 +1125,8 @@ class TaskRuntimeStore:
                 raise ValueError("spec_discovery_preflight_invalid")
             if not refs or not refs.issubset(known_sources):
                 raise ValueError("spec_discovery_source_refs_invalid")
-            if not str(lane.get("decision") or "").strip():
+            decision = lane.get("decision")
+            if not isinstance(decision, str) or not decision.strip():
                 raise ValueError("spec_discovery_decision_required")
         if str(discovery["project_evidence"].get("status")) != "completed":
             raise ValueError("project_evidence_preflight_required")
@@ -1024,11 +1149,14 @@ class TaskRuntimeStore:
                 not isinstance(evaluation, Mapping)
                 or not OPEN_SOURCE_EVALUATION_DIMENSIONS.issubset(evaluation)
                 or any(
-                    not str(evaluation[dimension]).strip()
+                    not isinstance(evaluation[dimension], str)
+                    or not evaluation[dimension].strip()
                     for dimension in OPEN_SOURCE_EVALUATION_DIMENSIONS
                 )
             ):
                 raise ValueError("open_source_evaluation_incomplete")
+            if not _is_exact_version_pin(evaluation["version_pin"]):
+                raise ValueError("open_source_version_pin_invalid")
         if governance.get("blocking_unknowns") != []:
             raise ValueError("spec_blocking_unknowns_unresolved")
 
@@ -1057,7 +1185,9 @@ class TaskRuntimeStore:
             source_snapshot = self._source_snapshot(conn, task)
             source_ids = self._source_ids(source_snapshot)
             if normalized_verdict == "approved":
-                self._validate_governed_spec(spec, source_ids=source_ids)
+                self._validate_governed_spec(
+                    spec, source_ids=source_ids, source_snapshot=source_snapshot
+                )
             spec_digest = _digest(spec)
             source_digest = _digest(source_snapshot)
             review_id = _digest(
@@ -1125,9 +1255,19 @@ class TaskRuntimeStore:
         payload = dict(event)
         if not payload.get("content"):
             raise ValueError("source_event_content_required")
+        supplied_event_id = payload.get("event_id")
+        if "event_id" in payload and (
+            not isinstance(supplied_event_id, str) or not supplied_event_id.strip()
+        ):
+            raise ValueError("source_event_identity_invalid")
+        payload.pop("recorded_at", None)
         with self._write() as conn:
             task = self._task_row(conn, task_id)
-            event_id = str(payload.get("event_id") or _digest(payload))
+            event_id = (
+                supplied_event_id
+                if isinstance(supplied_event_id, str)
+                else _digest(payload)
+            )
             existing_row = conn.execute(
                 "SELECT payload_json FROM source_events WHERE task_id = ? AND event_id = ?",
                 (task_id, event_id),
@@ -1142,7 +1282,7 @@ class TaskRuntimeStore:
                     raise ValueError("source_event_id_conflict")
             else:
                 payload["event_id"] = event_id
-                payload.setdefault("recorded_at", _utc_now())
+                payload["recorded_at"] = _utc_now()
                 conn.execute(
                     "INSERT INTO source_events (task_id, event_id, payload_json, recorded_at) "
                     "VALUES (?, ?, ?, ?)",
@@ -1195,7 +1335,9 @@ class TaskRuntimeStore:
             source_digest = _digest(source_snapshot)
             accepted_review: sqlite3.Row | None = None
             source_ids = self._source_ids(source_snapshot)
-            self._validate_governed_spec(spec, source_ids=source_ids)
+            self._validate_governed_spec(
+                spec, source_ids=source_ids, source_snapshot=source_snapshot
+            )
             approved_reviews = conn.execute(
                 "SELECT reviewer_session_id, review_id FROM spec_reviews "
                 "WHERE task_id = ? AND spec_digest = ? AND source_digest = ? "
@@ -1268,7 +1410,9 @@ class TaskRuntimeStore:
                 raise ValueError("task_not_specified_for_plan")
             source_snapshot = self._source_snapshot(conn, row)
             source_ids = self._source_ids(source_snapshot)
-            self._validate_governed_spec(spec, source_ids=source_ids)
+            self._validate_governed_spec(
+                spec, source_ids=source_ids, source_snapshot=source_snapshot
+            )
             approved_review = conn.execute(
                 "SELECT 1 FROM spec_reviews WHERE task_id = ? AND spec_digest = ? "
                 "AND source_digest = ? AND verdict = 'approved' LIMIT 1",
@@ -1276,6 +1420,24 @@ class TaskRuntimeStore:
             ).fetchone()
             if approved_review is None:
                 raise ValueError("independent_spec_review_required")
+            current_spec_revision = int(row["spec_revision"])
+            current_spec_digest = _digest(spec)
+            current_source_digest = _digest(source_snapshot)
+            frozen_events = conn.execute(
+                "SELECT payload_json FROM task_state_events "
+                "WHERE task_id = ? AND event_type = 'spec_frozen'",
+                (task_id,),
+            ).fetchall()
+            current_spec_frozen = any(
+                int(payload.get("spec_revision") or -1) == current_spec_revision
+                and str(payload.get("spec_digest") or "") == current_spec_digest
+                and str(payload.get("source_digest") or "") == current_source_digest
+                for payload in (
+                    _decode(event["payload_json"], {}) for event in frozen_events
+                )
+            )
+            if not current_spec_frozen:
+                raise ValueError("current_spec_freeze_required")
             spec_claims = {
                 str(item.get("id") or "")
                 for field in ("required_clauses", "negative_requirements")
@@ -1387,7 +1549,9 @@ class TaskRuntimeStore:
             spec = _decode(task["spec_bundle_json"], {})
             source_snapshot = self._source_snapshot(conn, task)
             self._validate_governed_spec(
-                spec, source_ids=self._source_ids(source_snapshot)
+                spec,
+                source_ids=self._source_ids(source_snapshot),
+                source_snapshot=source_snapshot,
             )
             approved_review = conn.execute(
                 "SELECT 1 FROM spec_reviews WHERE task_id = ? AND spec_digest = ? "
@@ -1396,6 +1560,42 @@ class TaskRuntimeStore:
             ).fetchone()
             if approved_review is None:
                 raise ValueError("independent_spec_review_required")
+            admission_events = conn.execute(
+                "SELECT state_revision, event_type, payload_json FROM task_state_events "
+                "WHERE task_id = ? AND event_type IN ('spec_frozen', 'plan_set') "
+                "ORDER BY state_revision",
+                (task_id,),
+            ).fetchall()
+            current_spec_revision = int(task["spec_revision"])
+            current_plan_revision = int(task["plan_revision"])
+            frozen_revisions = [
+                int(event["state_revision"])
+                for event in admission_events
+                if str(event["event_type"]) == "spec_frozen"
+                and int(_decode(event["payload_json"], {}).get("spec_revision") or -1)
+                == current_spec_revision
+                and str(_decode(event["payload_json"], {}).get("spec_digest") or "")
+                == _digest(spec)
+                and str(_decode(event["payload_json"], {}).get("source_digest") or "")
+                == _digest(source_snapshot)
+            ]
+            latest_frozen_revision = max(frozen_revisions, default=-1)
+            current_plan_admitted = any(
+                str(event["event_type"]) == "plan_set"
+                and int(event["state_revision"]) > latest_frozen_revision
+                and int(_decode(event["payload_json"], {}).get("plan_revision") or -1)
+                == current_plan_revision
+                for event in admission_events
+            )
+            if latest_frozen_revision < 0:
+                raise ValueError("current_spec_plan_admission_required")
+            if (
+                str(task["status"]) == "specified"
+                and _decode(task["implementation_graph_json"], []) == []
+            ):
+                return None
+            if not current_plan_admitted:
+                raise ValueError("current_spec_plan_admission_required")
             expired_slice_ids = self._expire_leases(conn, task_id, now_value)
             if expired_slice_ids:
                 task = self._task_row(conn, task_id)
@@ -2248,7 +2448,7 @@ class TaskRuntimeStore:
             source_events = [
                 _decode(row["payload_json"], {})
                 for row in conn.execute(
-                    "SELECT payload_json FROM source_events WHERE task_id = ? ORDER BY recorded_at, event_id",
+                    "SELECT payload_json FROM source_events WHERE task_id = ? ORDER BY rowid",
                     (task_id,),
                 ).fetchall()
             ]
@@ -2325,7 +2525,7 @@ class TaskRuntimeStore:
             source_events = [
                 _decode(row["payload_json"], {})
                 for row in conn.execute(
-                    "SELECT payload_json FROM source_events WHERE task_id = ? ORDER BY recorded_at, event_id",
+                    "SELECT payload_json FROM source_events WHERE task_id = ? ORDER BY rowid",
                     (task_id,),
                 ).fetchall()
             ]
@@ -2517,7 +2717,7 @@ class TaskRuntimeStore:
             "task": dict(task),
             "source_events": rows(
                 "SELECT event_id, payload_json, recorded_at FROM source_events "
-                "WHERE task_id = ? ORDER BY recorded_at, event_id"
+                "WHERE task_id = ? ORDER BY rowid"
             ),
             "bindings": rows(
                 "SELECT entrypoint, session_id, created_at FROM entrypoint_bindings "

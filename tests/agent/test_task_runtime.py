@@ -318,6 +318,78 @@ def test_legacy_planned_task_cannot_bypass_governed_spec_on_claim(tmp_path):
         )
 
 
+def test_legacy_governed_plan_requires_fresh_freeze_and_plan_before_claim(tmp_path):
+    path = tmp_path / "legacy-governed-planned.db"
+    spec = _spec_for_sources("S1")
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE tasks (
+                task_id TEXT PRIMARY KEY,
+                schema_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                original_sources_json TEXT NOT NULL,
+                source_events_json TEXT NOT NULL,
+                spec_bundle_json TEXT NOT NULL,
+                implementation_graph_json TEXT NOT NULL,
+                evidence_graph_json TEXT NOT NULL,
+                closure_json TEXT NOT NULL,
+                spec_revision INTEGER NOT NULL,
+                plan_revision INTEGER NOT NULL,
+                state_revision INTEGER NOT NULL,
+                candidate_digest TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-governed-planned",
+                "hermes.task-record.v1",
+                "legacy governed planned",
+                "planned",
+                '[{"source_id":"S1","content":"legacy"}]',
+                "[]",
+                json.dumps(spec),
+                '[{"slice_id":"s1","objective":"legacy"}]',
+                "[]",
+                "{}",
+                1,
+                1,
+                1,
+                "",
+                1.0,
+                1.0,
+            ),
+        )
+
+    migrated = TaskRuntimeStore(path, owner_profile="profile-a")
+    task = migrated.get_task("legacy-governed-planned")
+    review = migrated.record_spec_review(
+        task["task_id"],
+        spec,
+        reviewer_session_id="legacy-reviewer",
+        verdict="approved",
+        findings=[],
+        expected_state_revision=task["state_revision"],
+    )
+    assert review["verdict"] == "approved"
+    reviewed = migrated.get_task(task["task_id"])
+    with pytest.raises(ValueError, match="current_spec_freeze_required"):
+        migrated.set_plan(
+            task["task_id"],
+            [_slice("fresh-slice")],
+            expected_state_revision=reviewed["state_revision"],
+        )
+    with pytest.raises(ValueError, match="current_spec_plan_admission_required"):
+        migrated.claim_next_slice(
+            task["task_id"], worker_session_id="worker-a", lease_seconds=60
+        )
+
+
 def test_task_owner_profile_is_persisted_and_enforced_even_on_shared_db(tmp_path):
     path = tmp_path / "shared.db"
     owner_store = TaskRuntimeStore(path, owner_profile="profile-a")
@@ -728,6 +800,144 @@ def test_governed_spec_rejects_string_shaped_collection_fields(
         )
 
 
+def test_governed_spec_rejects_non_string_claim_and_coverage_ids(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "numeric-claim-id.db")
+    task = store.create_task(
+        title="numeric governed claim",
+        original_sources=[{"source_id": "A", "kind": "user_message", "content": "source"}],
+    )
+    spec = _spec_for_sources("A")
+    spec["required_clauses"][0]["id"] = 1
+    spec["governance"]["source_coverage"] = {"A": ["1", "N1"]}
+    spec["closure_criteria"] = ["1", "N1"]
+
+    with pytest.raises(ValueError, match="spec_claim_identity_invalid"):
+        store.record_spec_review(
+            task["task_id"],
+            spec,
+            reviewer_session_id="numeric-claim-reviewer",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=task["state_revision"],
+        )
+
+    spec = _spec_for_sources("A")
+    spec["governance"]["source_coverage"] = {"A": [1, "N1"]}
+    with pytest.raises(ValueError, match="spec_source_coverage_incomplete"):
+        store.record_spec_review(
+            task["task_id"],
+            spec,
+            reviewer_session_id="numeric-coverage-reviewer",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=task["state_revision"],
+        )
+
+
+def test_governed_spec_rejects_summary_oracle_reordered_authority_and_bodyless_claims(
+    tmp_path,
+):
+    for derived_kind in (
+        "agent_summary",
+        "open_source_demo",
+        "test_output",
+        "model_agreement",
+        "readme",
+    ):
+        derived_store = TaskRuntimeStore(tmp_path / f"{derived_kind}-oracle.db")
+        derived_task = derived_store.create_task(
+            title=f"{derived_kind}-only oracle",
+            original_sources=[
+                {
+                    "source_id": "S-derived",
+                    "kind": derived_kind,
+                    "content": "derived index or evidence",
+                }
+            ],
+        )
+        with pytest.raises(ValueError, match="spec_oracle_refs_not_authoritative"):
+            derived_store.record_spec_review(
+                derived_task["task_id"],
+                _governed_spec("S-derived"),
+                reviewer_session_id=f"{derived_kind}-reviewer",
+                verdict="approved",
+                findings=[],
+                expected_state_revision=derived_task["state_revision"],
+            )
+
+    numeric_store = TaskRuntimeStore(tmp_path / "numeric-source-id.db")
+    numeric_task = numeric_store.create_task(
+        title="numeric source identity",
+        original_sources=[{"source_id": 1, "kind": "user_message", "content": "source"}],
+    )
+    with pytest.raises(ValueError, match="task_source_identity_invalid"):
+        numeric_store.record_spec_review(
+            numeric_task["task_id"],
+            _governed_spec("1"),
+            reviewer_session_id="numeric-source-reviewer",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=numeric_task["state_revision"],
+        )
+
+    derived_claim_store = TaskRuntimeStore(tmp_path / "derived-claim-authority.db")
+    derived_claim_task = derived_claim_store.create_task(
+        title="derived-only claim authority",
+        original_sources=[
+            {"source_id": "U", "kind": "user_message", "content": "authority"},
+            {"source_id": "T", "kind": "test_output", "content": "derived"},
+        ],
+    )
+    derived_claim_spec = _spec_for_sources("U", "T")
+    derived_claim_spec["governance"]["oracle_refs"] = ["U"]
+    derived_claim_spec["governance"]["source_coverage"] = {
+        "U": ["N1"],
+        "T": ["R1"],
+    }
+    derived_claim_spec["required_clauses"][0]["source_refs"] = ["T"]
+    derived_claim_spec["negative_requirements"][0]["source_refs"] = ["U"]
+    with pytest.raises(ValueError, match="spec_claim_source_authority_required"):
+        derived_claim_store.record_spec_review(
+            derived_claim_task["task_id"],
+            derived_claim_spec,
+            reviewer_session_id="derived-claim-reviewer",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=derived_claim_task["state_revision"],
+        )
+
+    ordered_store = TaskRuntimeStore(tmp_path / "authority-order.db")
+    ordered_task = ordered_store.create_task(
+        title="ordered authority",
+        original_sources=[
+            {"source_id": "S1", "kind": "user_message", "content": "highest"},
+            {"source_id": "S2", "kind": "project_ssot", "content": "second"},
+        ],
+    )
+    reversed_spec = _spec_for_sources("S2", "S1")
+    with pytest.raises(ValueError, match="spec_source_authority_order_invalid"):
+        ordered_store.record_spec_review(
+            ordered_task["task_id"],
+            reversed_spec,
+            reviewer_session_id="order-reviewer",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=ordered_task["state_revision"],
+        )
+
+    bodyless_spec = _spec_for_sources("S1", "S2")
+    bodyless_spec["required_clauses"][0].pop("text")
+    with pytest.raises(ValueError, match="spec_claim_body_required"):
+        ordered_store.record_spec_review(
+            ordered_task["task_id"],
+            bodyless_spec,
+            reviewer_session_id="body-reviewer",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=ordered_task["state_revision"],
+        )
+
+
 def test_reference_reimplementation_binds_prototype_evidence_as_oracle(tmp_path):
     store = TaskRuntimeStore(tmp_path / "prototype-oracle.db")
     task = store.create_task(
@@ -797,6 +1007,51 @@ def test_mature_capability_requires_complete_open_source_due_diligence(tmp_path)
         "rollback": "removal and fallback path recorded",
         "lifecycle_cost": "adoption, upgrade and replacement cost recorded",
     }
+    spec["governance"]["discovery"]["open_source"]["evaluation"]["license"] = 1
+    with pytest.raises(ValueError, match="open_source_evaluation_incomplete"):
+        store.record_spec_review(
+            task["task_id"],
+            spec,
+            reviewer_session_id="oss-reviewer-wrong-type",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=task["state_revision"],
+        )
+    spec["governance"]["discovery"]["open_source"]["evaluation"]["license"] = (
+        "compatible license recorded"
+    )
+    for invalid_pin in (
+        "exact version and integrity pin recorded",
+        "tag:refs/heads/main",
+        "version:HEAD~1",
+        "version:latest+1",
+        "1.2",
+        "1.2.3.4",
+        "version:1.2.3.4",
+        "pkg==1.2",
+        "commit:abcdef0",
+        "1.2.3-..",
+        "1٢.2.3",
+        "1.2٢.3",
+        "1.2.3-1٢",
+        "version:1٢.2.3",
+        "pkg==1.2٢.3",
+    ):
+        spec["governance"]["discovery"]["open_source"]["evaluation"][
+            "version_pin"
+        ] = invalid_pin
+        with pytest.raises(ValueError, match="open_source_version_pin_invalid"):
+            store.record_spec_review(
+                task["task_id"],
+                spec,
+                reviewer_session_id=f"oss-reviewer-invalid-pin-{invalid_pin}",
+                verdict="approved",
+                findings=[],
+                expected_state_revision=task["state_revision"],
+            )
+    spec["governance"]["discovery"]["open_source"]["evaluation"][
+        "version_pin"
+    ] = "version:1.2.3"
     approved = store.record_spec_review(
         task["task_id"],
         spec,
@@ -886,6 +1141,55 @@ def test_source_coverage_edges_must_match_claim_source_refs_bidirectionally(tmp_
             findings=[],
             expected_state_revision=task["state_revision"],
         )
+
+
+def test_source_events_use_runtime_append_order_and_reject_coerced_identity(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "source-event-order.db")
+    task = store.create_task(
+        title="source event order",
+        original_sources=[
+            {"source_id": "S0", "kind": "user_message", "content": "original"}
+        ],
+    )
+    with pytest.raises(ValueError, match="source_event_identity_invalid"):
+        store.append_source_event(
+            task["task_id"],
+            {"event_id": 1, "content": "numeric identity"},
+        )
+
+    store.append_source_event(
+        task["task_id"],
+        {
+            "event_id": "E-first",
+            "kind": "user_correction",
+            "content": "first append",
+            "recorded_at": "2999-01-01T00:00:00+00:00",
+        },
+    )
+    latest = store.append_source_event(
+        task["task_id"],
+        {
+            "event_id": "E-latest",
+            "kind": "user_correction",
+            "content": "latest append",
+            "recorded_at": "1900-01-01T00:00:00+00:00",
+        },
+    )
+    assert latest["source_events"][0]["event_id"] == "E-first"
+    assert latest["source_events"][1]["event_id"] == "E-latest"
+    assert latest["source_events"][0]["recorded_at"] != "2999-01-01T00:00:00+00:00"
+    assert latest["source_events"][1]["recorded_at"] != "1900-01-01T00:00:00+00:00"
+
+    spec = _spec_for_sources("E-latest", "E-first", "S0")
+    approved = store.record_spec_review(
+        task["task_id"],
+        spec,
+        reviewer_session_id="source-order-reviewer",
+        verdict="approved",
+        findings=[],
+        expected_state_revision=latest["state_revision"],
+    )
+    assert approved["verdict"] == "approved"
 
 
 def test_new_source_invalidates_spec_plan_candidate_and_requires_fresh_review(tmp_path):
@@ -1694,10 +1998,15 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
             worker_session_id="stale-plan-worker",
             lease_seconds=60,
         )
+    respecified_spec = _spec_for_sources("S-U1", "post-close-correction")
+    respecified_spec["governance"]["source_authority"] = [
+        "post-close-correction",
+        "S-U1",
+    ]
     respecified = _review_and_freeze(
         store,
         task_id,
-        _spec_for_sources("S-U1", "post-close-correction"),
+        respecified_spec,
         expected_state_revision=invalidated["state_revision"],
         reviewer_session_id="spec-reviewer-after-correction",
         compiler_session_id="spec-compiler-after-correction",
