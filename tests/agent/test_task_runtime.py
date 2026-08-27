@@ -256,6 +256,68 @@ def test_legacy_task_owner_is_migrated_to_opening_profile(tmp_path):
         TaskRuntimeStore(path, owner_profile="profile-b").get_task("legacy-task")
 
 
+def test_legacy_planned_task_cannot_bypass_governed_spec_on_claim(tmp_path):
+    path = tmp_path / "legacy-planned.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE tasks (
+                task_id TEXT PRIMARY KEY,
+                schema_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                original_sources_json TEXT NOT NULL,
+                source_events_json TEXT NOT NULL,
+                spec_bundle_json TEXT NOT NULL,
+                implementation_graph_json TEXT NOT NULL,
+                evidence_graph_json TEXT NOT NULL,
+                closure_json TEXT NOT NULL,
+                spec_revision INTEGER NOT NULL,
+                plan_revision INTEGER NOT NULL,
+                state_revision INTEGER NOT NULL,
+                candidate_digest TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-planned",
+                "hermes.task-record.v1",
+                "legacy planned",
+                "planned",
+                '[{"source_id":"S1","content":"legacy"}]',
+                "[]",
+                json.dumps(
+                    {
+                        "required_clauses": [{"id": "R1", "text": "legacy"}],
+                        "negative_requirements": [
+                            {"id": "N1", "text": "legacy negative"}
+                        ],
+                        "closure_criteria": ["R1", "N1"],
+                    }
+                ),
+                '[{"slice_id":"s1","objective":"legacy"}]',
+                "[]",
+                "{}",
+                1,
+                1,
+                1,
+                "",
+                1.0,
+                1.0,
+            ),
+        )
+
+    migrated = TaskRuntimeStore(path, owner_profile="profile-a")
+    with pytest.raises(ValueError, match="spec_governance_required"):
+        migrated.claim_next_slice(
+            "legacy-planned", worker_session_id="worker-a", lease_seconds=60
+        )
+
+
 def test_task_owner_profile_is_persisted_and_enforced_even_on_shared_db(tmp_path):
     path = tmp_path / "shared.db"
     owner_store = TaskRuntimeStore(path, owner_profile="profile-a")

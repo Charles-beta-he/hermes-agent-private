@@ -1359,6 +1359,18 @@ class TaskRuntimeStore:
             task = self._task_row(conn, task_id)
             if str(task["status"]) in {"draft", "closed"}:
                 raise ValueError("task_not_claimable")
+            spec = _decode(task["spec_bundle_json"], {})
+            source_snapshot = self._source_snapshot(conn, task)
+            self._validate_governed_spec(
+                spec, source_ids=self._source_ids(source_snapshot)
+            )
+            approved_review = conn.execute(
+                "SELECT 1 FROM spec_reviews WHERE task_id = ? AND spec_digest = ? "
+                "AND source_digest = ? AND verdict = 'approved' LIMIT 1",
+                (task_id, _digest(spec), _digest(source_snapshot)),
+            ).fetchone()
+            if approved_review is None:
+                raise ValueError("independent_spec_review_required")
             expired_slice_ids = self._expire_leases(conn, task_id, now_value)
             if expired_slice_ids:
                 task = self._task_row(conn, task_id)
