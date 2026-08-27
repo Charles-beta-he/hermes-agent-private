@@ -26,6 +26,15 @@ export {
   type EvidenceV1,
 } from "./evidence";
 export {
+  evaluateGovernedLocalRequirementsAuditPreflightV1,
+  evaluateGovernedLocalRequirementsAuditReadbackComparisonV1,
+  type GovernedLocalRequirementsAuditPolicyV1,
+  GovernedLocalRequirementsAuditPolicyV1Schema,
+  type GovernedLocalRequirementsAuditPreflightV1Result,
+  type GovernedLocalRequirementsAuditReadbackComparisonV1Result,
+  toGovernedLocalRequirementsAuditPolicyV1JsonSchema,
+} from "./local-requirements-audit";
+export {
   toVerifierVoteV1JsonSchema,
   type VerifierVoteV1,
   VerifierVoteV1Schema,

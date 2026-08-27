@@ -1135,6 +1135,11 @@ def _build_child_agent(
     # 'leaf' (default) cannot; 'orchestrator' retains the delegation
     # toolset subject to depth/kill-switch bounds applied below.
     role: str = "leaf",
+    # Trusted task-runtime executor may pre-allocate lease/session identity.
+    forced_session_id: Optional[str] = None,
+    # Trusted runtimes may pin a child to an isolated workspace. The path is
+    # applied through the per-thread runtime cwd context when the child runs.
+    forced_workspace_path: Optional[str] = None,
 ):
     """
     Build a child AIAgent on the main thread (thread-safe construction).
@@ -1214,7 +1219,11 @@ def _build_child_agent(
     if effective_role == "orchestrator" and "delegation" not in child_toolsets:
         child_toolsets.append("delegation")
 
-    workspace_hint = _resolve_workspace_hint(parent_agent)
+    workspace_hint = (
+        os.path.abspath(os.path.expanduser(str(forced_workspace_path)))
+        if forced_workspace_path
+        else _resolve_workspace_hint(parent_agent)
+    )
     child_prompt = _build_child_system_prompt(
         goal,
         context,
@@ -1424,6 +1433,7 @@ def _build_child_agent(
         providers_order=child_providers_order,
         provider_sort=child_provider_sort,
         openrouter_min_coding_score=child_openrouter_min_coding_score,
+        session_id=forced_session_id,  # type: ignore[arg-type]
         tool_progress_callback=child_progress_cb,
         iteration_budget=None,  # fresh per-turn budget per subagent
         graph_budget=child_graph_budget,
@@ -1453,6 +1463,7 @@ def _build_child_agent(
     child._subagent_id = subagent_id
     child._parent_subagent_id = parent_subagent_id
     child._subagent_goal = goal
+    setattr(child, "_delegate_workspace_path", workspace_hint if forced_workspace_path else None)
     child._parent_turn_id = getattr(parent_agent, "_current_turn_id", "") or ""
     # Stable sidebar marker: delegate subagent sessions must stay out of
     # session pickers even when a parent delete orphans them (parent_session_id
@@ -1825,6 +1836,33 @@ def _apply_summary_budget(results: List[Dict[str, Any]], parent_agent) -> None:
         )
 
 
+def _run_child_conversation_in_workspace(
+    child: Any,
+    *,
+    workspace_path: Optional[str],
+    user_message: str,
+    task_id: str,
+    stream_callback,
+):
+    """Run a child under a thread-local workspace and always restore prior cwd."""
+    cwd_token = None
+    if workspace_path:
+        from agent.runtime_cwd import set_session_cwd
+
+        cwd_token = set_session_cwd(workspace_path)
+    try:
+        return child.run_conversation(
+            user_message=user_message,
+            task_id=task_id,
+            stream_callback=stream_callback,
+        )
+    finally:
+        if cwd_token is not None:
+            from agent.runtime_cwd import reset_session_cwd
+
+            reset_session_cwd(cwd_token)
+
+
 def _run_single_child(
     task_index: int,
     goal: str,
@@ -1836,6 +1874,8 @@ def _run_single_child(
     Run a pre-built child agent. Called from within a thread.
     Returns a structured result dict.
     """
+    if child is None:
+        raise ValueError("child_required")
     child_start = time.monotonic()
 
     # Get the progress callback from the child agent
@@ -2027,7 +2067,9 @@ def _run_single_child(
 
         def _run_with_thread_capture():
             _worker_thread_holder["t"] = threading.current_thread()
-            return child.run_conversation(
+            return _run_child_conversation_in_workspace(
+                child,
+                workspace_path=getattr(child, "_delegate_workspace_path", None),
                 user_message=goal,
                 task_id=child_task_id,
                 stream_callback=_relay_child_text,

@@ -1,0 +1,61 @@
+{
+  "$id": "https://hermes-agent.local/schemas/governed-local-requirements-audit-policy-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "governed_local_requirements_audit"
+    },
+    "profile": {
+      "type": "string",
+      "const": "audit-local"
+    },
+    "artifact_relative_path": {
+      "type": "string",
+      "const": "artifacts/audit-pack.json"
+    },
+    "readback_freshness_bound_seconds": {
+      "type": "number",
+      "const": 60
+    },
+    "network_adapter_calls": {
+      "type": "boolean",
+      "const": false
+    },
+    "external_message_calls": {
+      "type": "boolean",
+      "const": false
+    },
+    "calendar_calls": {
+      "type": "boolean",
+      "const": false
+    },
+    "notes_calls": {
+      "type": "boolean",
+      "const": false
+    },
+    "production_mission_writes": {
+      "type": "boolean",
+      "const": false
+    },
+    "active_gateway_mutations": {
+      "type": "boolean",
+      "const": false
+    }
+  },
+  "required": [
+    "kind",
+    "profile",
+    "artifact_relative_path",
+    "readback_freshness_bound_seconds",
+    "network_adapter_calls",
+    "external_message_calls",
+    "calendar_calls",
+    "notes_calls",
+    "production_mission_writes",
+    "active_gateway_mutations"
+  ],
+  "additionalProperties": false,
+  "title": "Hermes GovernedLocalRequirementsAuditPolicyV1"
+}

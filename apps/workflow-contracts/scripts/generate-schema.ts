@@ -11,6 +11,7 @@ import {
   toDelegationTreeBudgetSnapshotV1JsonSchema,
 } from "../src/delegation-tree-budget-preflight";
 import { toEvidenceV1JsonSchema } from "../src/evidence";
+import { toGovernedLocalRequirementsAuditPolicyV1JsonSchema } from "../src/local-requirements-audit";
 import { toVerifierVoteV1JsonSchema } from "../src/verifier-vote";
 import { toWorkflowDefinitionV1JsonSchema } from "../src/workflow-definition";
 import {
@@ -40,6 +41,10 @@ const workflowKernelSchemaDir = fileURLToPath(
 
 const schemas = [
   ["evidence-v1.schema.json", toEvidenceV1JsonSchema()],
+  [
+    "governed-local-requirements-audit-policy-v1.schema.json",
+    toGovernedLocalRequirementsAuditPolicyV1JsonSchema(),
+  ],
   ["verifier-vote-v1.schema.json", toVerifierVoteV1JsonSchema()],
   ["closure-v1.schema.json", toClosureV1JsonSchema()],
   [
