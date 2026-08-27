@@ -60,6 +60,21 @@ class TestSessionIdForwarding:
         assert "session_id" in captured
         assert captured["session_id"] is None
 
+    def test_platform_is_forwarded(self):
+        """Runtime platform reaches tools that need exact entrypoint identity."""
+        captured = {}
+        with patch("model_tools.registry", _make_registry(captured)):
+            from model_tools import handle_function_call
+            handle_function_call(
+                "task_runtime",
+                {"action": "status"},
+                task_id="task-999",
+                session_id="sess-1",
+                platform="telegram",
+                skip_pre_tool_call_hook=True,
+            )
+        assert captured.get("platform") == "telegram"
+
     def test_task_id_still_forwarded(self):
         """Existing task_id forwarding is not broken by this change."""
         captured = {}

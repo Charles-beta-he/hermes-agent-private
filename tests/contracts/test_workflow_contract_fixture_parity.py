@@ -15,6 +15,19 @@ VOTE_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "verifier-vot
 VOTE_SCHEMA_PATH = REPO_ROOT / "schemas" / "verifier-vote-v1.schema.json"
 CLOSURE_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "closure-v1" / "cases.json"
 CLOSURE_SCHEMA_PATH = REPO_ROOT / "schemas" / "closure-v1.schema.json"
+LOCAL_REQUIREMENTS_AUDIT_CASES_PATH = (
+    REPO_ROOT
+    / "tests"
+    / "contracts"
+    / "fixtures"
+    / "governed-local-requirements-audit-policy-v1"
+    / "cases.json"
+)
+LOCAL_REQUIREMENTS_AUDIT_SCHEMA_PATH = (
+    REPO_ROOT
+    / "schemas"
+    / "governed-local-requirements-audit-policy-v1.schema.json"
+)
 RUN_STATUS_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "workflow-run-status-v1" / "cases.json"
 RUN_STATUS_SCHEMA_PATH = REPO_ROOT / "schemas" / "workflow-run-status-v1.schema.json"
 TRANSITION_CASES_PATH = REPO_ROOT / "tests" / "contracts" / "fixtures" / "workflow-run-transition-v1" / "cases.json"
@@ -75,6 +88,21 @@ def test_verifier_vote_v1_fixture_parity(case: dict) -> None:
 @pytest.mark.parametrize("case", _cases(CLOSURE_CASES_PATH), ids=lambda case: case["name"])
 def test_closure_v1_fixture_parity(case: dict) -> None:
     _assert_schema_case(CLOSURE_SCHEMA_PATH, case, "ClosureV1")
+
+
+@pytest.mark.parametrize(
+    "case",
+    _cases(LOCAL_REQUIREMENTS_AUDIT_CASES_PATH),
+    ids=lambda case: case["name"],
+)
+def test_governed_local_requirements_audit_policy_v1_fixture_parity(
+    case: dict,
+) -> None:
+    _assert_schema_case(
+        LOCAL_REQUIREMENTS_AUDIT_SCHEMA_PATH,
+        case,
+        "GovernedLocalRequirementsAuditPolicyV1",
+    )
 
 
 @pytest.mark.parametrize("case", _cases(RUN_STATUS_CASES_PATH), ids=lambda case: case["name"])

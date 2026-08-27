@@ -1,0 +1,231 @@
+[
+  {
+    "name": "valid exact frozen policy",
+    "valid": true,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid changed kind",
+    "valid": false,
+    "value": {
+      "kind": "generic_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid changed profile",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "default",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid changed artifact path",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/other.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid changed freshness bound",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 61,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid enabled network adapter calls",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": true,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid enabled external message calls",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": true,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid enabled calendar calls",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": true,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid enabled notes calls",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": true,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid enabled production mission writes",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": true,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid enabled active gateway mutations",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": true
+    }
+  },
+  {
+    "name": "invalid non-boolean forbidden effect",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": 0,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid missing required field",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false
+    }
+  },
+  {
+    "name": "invalid unknown field",
+    "valid": false,
+    "value": {
+      "kind": "governed_local_requirements_audit",
+      "profile": "audit-local",
+      "artifact_relative_path": "artifacts/audit-pack.json",
+      "readback_freshness_bound_seconds": 60,
+      "network_adapter_calls": false,
+      "external_message_calls": false,
+      "calendar_calls": false,
+      "notes_calls": false,
+      "production_mission_writes": false,
+      "active_gateway_mutations": false,
+      "executor_enabled": false
+    }
+  },
+  {
+    "name": "invalid non-object input",
+    "valid": false,
+    "value": null
+  }
+]

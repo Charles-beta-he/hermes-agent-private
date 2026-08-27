@@ -1523,6 +1523,21 @@ def _run_conversation_impl(
     _plugin_user_context = _ctx.plugin_user_context
     _ext_prefetch_cache = _ctx.ext_prefetch_cache
 
+    # Bound task state is projected per turn, never baked into the stable
+    # system prompt or persisted conversation history.  The ingress adapter
+    # also records the exact clean inbound message as a durable source event.
+    from agent.task_runtime_ingress import hydrate_bound_task_context
+
+    _task_runtime_context = hydrate_bound_task_context(
+        agent,
+        user_message=(
+            original_user_message
+            if isinstance(original_user_message, str)
+            else str(original_user_message)
+        ),
+        turn_id=turn_id,
+    )
+
     # Private continuation overlay: reset relay capacity for human/root turns
     # after the upstream prologue refactor, while recursive relay turns preserve
     # their count through the _auto_relay_active flag.
@@ -1775,6 +1790,8 @@ def _run_conversation_impl(
                         _injections.append(_fenced)
                 if _plugin_user_context:
                     _injections.append(_plugin_user_context)
+                if _task_runtime_context:
+                    _injections.append(_task_runtime_context)
                 if _injections:
                     _base = api_msg.get("content", "")
                     if isinstance(_base, str):
