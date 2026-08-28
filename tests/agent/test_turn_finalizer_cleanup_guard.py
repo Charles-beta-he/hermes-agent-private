@@ -172,6 +172,35 @@ def test_clean_turn_has_no_cleanup_errors_key():
     assert "cleanup_errors" not in result
 
 
+def test_finalizer_passes_structured_todo_continuation_contract(monkeypatch):
+    import agent.conversation_loop as conversation_loop
+    from tools.todo_tool import TodoStore
+
+    captured = {}
+
+    def capture_reason(**kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr(conversation_loop, "_self_advance_checkpoint_reason", capture_reason)
+    agent = _StubAgent(raise_in=())
+    store = TodoStore()
+    setattr(agent, "_todo_store", store)
+    store.write([
+        {"id": "next", "content": "Next", "status": "pending"},
+    ])
+    store.set_continuation_mode("whole_goal")
+    setattr(agent, "_turn_continuation_requested", True)
+
+    _run(agent, final_response="report", api_call_count=1)
+
+    assert captured["continuation_mode"] == "whole_goal"
+    assert captured["turn_continuation_requested"] is True
+    assert captured["todo_items"] == [
+        {"id": "next", "content": "Next", "status": "pending"},
+    ]
+
+
 def test_text_response_on_last_allowed_call_is_completed():
     agent = _StubAgent(raise_in=())
     result = _run(

@@ -1170,13 +1170,18 @@ class TestHydrateTodoStore:
             self._assistant_todo_call("c1"),
             {
                 "role": "tool",
-                "content": json.dumps({"todos": todos}),
+                "content": json.dumps({
+                    "todos": todos,
+                    "continuation": {"mode": "whole_goal"},
+                }),
                 "tool_call_id": "c1",
             },
         ]
         with patch("run_agent._set_interrupt"):
             agent._hydrate_todo_store(history)
         assert agent._todo_store.has_items()
+        # Replayed tool output is planning state, not continuation authority.
+        assert agent._todo_store.continuation_mode() == "manual"
 
     def test_skips_non_todo_tools(self, agent):
         history = [

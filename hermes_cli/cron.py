@@ -465,6 +465,21 @@ def _job_action(action: str, job_id: str, success_verb: str) -> int:
     return 0
 
 
+def cron_migrate_v1_claims(args) -> int:
+    """Run the explicit post-stop/drain legacy claim migration."""
+    if not getattr(args, "confirm_drained", False):
+        print("Refusing migration without --confirm-drained.", file=sys.stderr)
+        return 2
+    from cron.jobs import migrate_legacy_run_claims_after_drain
+
+    migrated = migrate_legacy_run_claims_after_drain()
+    if migrated:
+        print(f"Migrated {len(migrated)} legacy claim(s): {', '.join(migrated)}")
+    else:
+        print("No legacy claim residue found.")
+    return 0
+
+
 def cron_command(args):
     """Handle cron subcommands."""
     subcmd = getattr(args, 'cron_command', None)
@@ -487,6 +502,9 @@ def cron_command(args):
 
     if subcmd == "delivery-queue":
         return cron_delivery_queue(args)
+
+    if subcmd == "migrate-v1-claims":
+        return cron_migrate_v1_claims(args)
 
     if subcmd in {"create", "add"}:
         return cron_create(args)
