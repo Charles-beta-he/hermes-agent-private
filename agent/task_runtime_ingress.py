@@ -117,7 +117,6 @@ def hydrate_bound_task_context(
             task["task_id"],
             {
                 "event_id": f"{entrypoint}:{session_id}:{turn_id}",
-                "source_id": f"{entrypoint}:{session_id}:{turn_id}",
                 "kind": "user_message",
                 "content": user_message,
                 "entrypoint": entrypoint,

@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import copy
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import sys
 import threading
 
 import pytest
 
+import agent.task_runtime as task_runtime_module
 from agent.task_runtime import TaskRuntimeStore
 from agent.task_runtime_process import (
     TaskCleanupBinding,
@@ -199,6 +204,74 @@ def test_binding_replay_is_idempotent_and_cross_task_rebind_is_rejected(tmp_path
     assert resolved is not None and resolved["task_id"] == first["task_id"]
 
 
+@pytest.mark.parametrize("source_id", [1, True, "", "   "])
+def test_create_task_rejects_non_native_or_blank_original_source_identity_before_mutation(
+    tmp_path, source_id
+):
+    store = TaskRuntimeStore(tmp_path / "task-runtime.db")
+
+    with pytest.raises(ValueError, match="original_source_identity_invalid"):
+        store.create_task(
+            title="invalid source identity",
+            original_sources=[
+                {"source_id": source_id, "kind": "user_message", "content": "source"}
+            ],
+        )
+
+    with store._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+
+
+def test_create_task_rejects_str_subclass_original_source_identity_before_mutation(tmp_path):
+    class SourceId(str):
+        pass
+
+    store = TaskRuntimeStore(tmp_path / "task-runtime.db")
+
+    with pytest.raises(ValueError, match="original_source_identity_invalid"):
+        store.create_task(
+            title="invalid source identity",
+            original_sources=[
+                {"source_id": SourceId("S1"), "kind": "user_message", "content": "source"}
+            ],
+        )
+
+    with store._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+
+
+def test_create_task_rejects_duplicate_original_source_identity_before_mutation(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "task-runtime.db")
+
+    with pytest.raises(ValueError, match="original_source_identity_duplicate"):
+        store.create_task(
+            title="duplicate source identity",
+            original_sources=[
+                {"source_id": "S1", "kind": "user_message", "content": "first"},
+                {"source_id": "S1", "kind": "user_message", "content": "second"},
+            ],
+        )
+
+    with store._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("content", [1, True, ""])
+def test_create_task_rejects_non_native_or_empty_original_source_content_before_mutation(
+    tmp_path, content
+):
+    store = TaskRuntimeStore(tmp_path / "task-runtime.db")
+
+    with pytest.raises(ValueError, match="original_source_content_invalid"):
+        store.create_task(
+            title="invalid source content",
+            original_sources=[{"source_id": "S1", "content": content}],
+        )
+
+    with store._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+
+
 def test_default_path_is_profile_scoped(monkeypatch, tmp_path):
     profile_home = tmp_path / "profile-a"
     monkeypatch.delenv("HERMES_TASK_RUNTIME_DB", raising=False)
@@ -254,6 +327,313 @@ def test_legacy_task_owner_is_migrated_to_opening_profile(tmp_path):
 
     with pytest.raises(PermissionError, match="task_owner_profile_mismatch"):
         TaskRuntimeStore(path, owner_profile="profile-b").get_task("legacy-task")
+
+
+def test_legacy_source_event_identity_is_not_coerced_during_migration(tmp_path):
+    path = tmp_path / "legacy-source-event.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE tasks (
+                task_id TEXT PRIMARY KEY,
+                schema_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                original_sources_json TEXT NOT NULL,
+                source_events_json TEXT NOT NULL,
+                spec_bundle_json TEXT NOT NULL,
+                implementation_graph_json TEXT NOT NULL,
+                evidence_graph_json TEXT NOT NULL,
+                closure_json TEXT NOT NULL,
+                spec_revision INTEGER NOT NULL,
+                plan_revision INTEGER NOT NULL,
+                state_revision INTEGER NOT NULL,
+                candidate_digest TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            INSERT INTO tasks VALUES (
+                'legacy-source-event', 'hermes.task-record.v1', 'legacy source event',
+                'draft', '[]', '[{"event_id":1,"content":"legacy correction"}]',
+                '{}', '[]', '[]', '{}', 0, 0, 1, '', 1.0, 1.0
+            );
+            """
+        )
+
+    with pytest.raises(ValueError, match="source_event_identity_invalid"):
+        TaskRuntimeStore(path, owner_profile="profile-a")
+    with sqlite3.connect(path) as conn:
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'source_events'"
+        ).fetchone()
+        if table_exists:
+            assert conn.execute("SELECT COUNT(*) FROM source_events").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    ("source_events_json", "error"),
+    [
+        ('[{"event_id":"valid-event","content":"valid"},7]', "source_event_invalid"),
+        (
+            '[{"event_id":"same-event","content":"first"},'
+            '{"event_id":"same-event","content":"second"}]',
+            "source_event_id_conflict",
+        ),
+        (
+            '[{"event_id":"typed-event","content":1},'
+            '{"event_id":"typed-event","content":true}]',
+            "source_event_id_conflict",
+        ),
+        ('[{"event_id":"non-finite","content":NaN}]', "source_event_payload_invalid"),
+        (
+            '[{"event_id":"duplicate-member","content":1,"content":true}]',
+            "source_event_payload_invalid",
+        ),
+        (
+            '[{"event_id":"duplicate-id","event_id":"other","content":"x"}]',
+            "source_event_payload_invalid",
+        ),
+        (
+            '[{"event_id":"nested-duplicate","content":{"k":1,"k":2}}]',
+            "source_event_payload_invalid",
+        ),
+        ('[{"event_id":"missing-content"}]', "source_event_content_required"),
+        (
+            '[{"event_id":"numeric-recorded-at","content":"x","recorded_at":1}]',
+            "source_event_recorded_at_invalid",
+        ),
+        (
+            '[{"event_id":"empty-recorded-at","content":"x","recorded_at":""}]',
+            "source_event_recorded_at_invalid",
+        ),
+        ('"scalar-event"', "source_event_collection_invalid"),
+        ('{"event_id":"object-root"}', "source_event_collection_invalid"),
+        ("", "source_event_collection_invalid"),
+        ("null", "source_event_collection_invalid"),
+    ],
+)
+def test_legacy_source_event_collection_rejects_invalid_shapes_during_migration(
+    tmp_path, source_events_json, error
+):
+    path = tmp_path / "legacy-source-event-invalid-shape.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE tasks (
+                task_id TEXT PRIMARY KEY,
+                schema_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                original_sources_json TEXT NOT NULL,
+                source_events_json TEXT NOT NULL,
+                spec_bundle_json TEXT NOT NULL,
+                implementation_graph_json TEXT NOT NULL,
+                evidence_graph_json TEXT NOT NULL,
+                closure_json TEXT NOT NULL,
+                spec_revision INTEGER NOT NULL,
+                plan_revision INTEGER NOT NULL,
+                state_revision INTEGER NOT NULL,
+                candidate_digest TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-source-event-invalid-shape",
+                "hermes.task-record.v1",
+                "legacy source event invalid shape",
+                "draft",
+                "[]",
+                source_events_json,
+                "{}",
+                "[]",
+                "[]",
+                "{}",
+                0,
+                0,
+                1,
+                "",
+                1.0,
+                1.0,
+            ),
+        )
+
+    with pytest.raises(ValueError, match=error):
+        TaskRuntimeStore(path, owner_profile="profile-a")
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'source_events'"
+        ).fetchone() is None
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+        assert "owner_profile" not in columns
+
+
+@pytest.mark.parametrize(
+    ("row_event_id", "payload_json", "row_recorded_at", "error"),
+    [
+        (
+            "non-finite",
+            '{"event_id":"non-finite","content":NaN,"recorded_at":"2026-01-01T00:00:00Z"}',
+            "2026-01-01T00:00:00Z",
+            "source_event_payload_invalid",
+        ),
+        (
+            "duplicate-member",
+            '{"event_id":"duplicate-member","content":1,"content":true,'
+            '"recorded_at":"2026-01-01T00:00:00Z"}',
+            "2026-01-01T00:00:00Z",
+            "source_event_payload_invalid",
+        ),
+        (
+            "7",
+            '{"event_id":7,"content":"x","recorded_at":"2026-01-01T00:00:00Z"}',
+            "2026-01-01T00:00:00Z",
+            "source_event_identity_invalid",
+        ),
+        (
+            "row-id",
+            '{"event_id":"payload-id","content":"x",'
+            '"recorded_at":"2026-01-01T00:00:00Z"}',
+            "2026-01-01T00:00:00Z",
+            "source_event_id_conflict",
+        ),
+        (
+            "missing-content",
+            '{"event_id":"missing-content","recorded_at":"2026-01-01T00:00:00Z"}',
+            "2026-01-01T00:00:00Z",
+            "source_event_content_required",
+        ),
+        (
+            "blank-recorded-at",
+            '{"event_id":"blank-recorded-at","content":"x","recorded_at":""}',
+            "",
+            "source_event_recorded_at_invalid",
+        ),
+        (
+            "recorded-at-mismatch",
+            '{"event_id":"recorded-at-mismatch","content":"x",'
+            '"recorded_at":"2026-01-01T00:00:00Z"}',
+            "2026-01-02T00:00:00Z",
+            "source_event_payload_invalid",
+        ),
+    ],
+)
+def test_existing_normalized_source_event_is_revalidated_on_upgrade(
+    tmp_path, row_event_id, payload_json, row_recorded_at, error
+):
+    path = tmp_path / "normalized-source-event-upgrade.db"
+    store = TaskRuntimeStore(path, owner_profile="profile-a")
+    task = store.create_task(
+        title="normalized source event upgrade",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO source_events(task_id, event_id, payload_json, recorded_at) "
+            "VALUES (?, ?, ?, ?)",
+            (task["task_id"], row_event_id, payload_json, row_recorded_at),
+        )
+
+    with pytest.raises(ValueError, match=error):
+        TaskRuntimeStore(path, owner_profile="profile-a")
+    with sqlite3.connect(path) as conn:
+        retained = conn.execute(
+            "SELECT event_id, payload_json, recorded_at FROM source_events"
+        ).fetchall()
+    assert retained == [(row_event_id, payload_json, row_recorded_at)]
+
+
+@pytest.mark.parametrize(
+    ("sources_json", "error"),
+    [
+        ('[{"source_id":7,"content":"original"}]', "original_source_identity_invalid"),
+        ('[{"source_id":true,"content":"original"}]', "original_source_identity_invalid"),
+        ('[{"source_id":" ","content":"original"}]', "original_source_identity_invalid"),
+        ('[{"source_id":"S0","content":7}]', "original_source_content_invalid"),
+        (
+            '[{"source_id":"S0","content":"first"},'
+            '{"source_id":"S0","content":"second"}]',
+            "original_source_identity_duplicate",
+        ),
+    ],
+)
+def test_existing_original_source_identity_is_revalidated_on_upgrade(
+    tmp_path, sources_json, error
+):
+    path = tmp_path / "original-source-upgrade.db"
+    store = TaskRuntimeStore(path, owner_profile="profile-a")
+    task = store.create_task(
+        title="original source upgrade",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE tasks SET original_sources_json = ? WHERE task_id = ?",
+            (sources_json, task["task_id"]),
+        )
+
+    with pytest.raises(ValueError, match=error):
+        TaskRuntimeStore(path, owner_profile="profile-a")
+    with sqlite3.connect(path) as conn:
+        retained = conn.execute(
+            "SELECT original_sources_json FROM tasks WHERE task_id = ?",
+            (task["task_id"],),
+        ).fetchone()[0]
+    assert retained == sources_json
+
+
+def test_legacy_source_event_reopen_rejects_normalized_identity_conflict(tmp_path):
+    path = tmp_path / "legacy-source-event-reopen-conflict.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE tasks (
+                task_id TEXT PRIMARY KEY,
+                schema_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                original_sources_json TEXT NOT NULL,
+                source_events_json TEXT NOT NULL,
+                spec_bundle_json TEXT NOT NULL,
+                implementation_graph_json TEXT NOT NULL,
+                evidence_graph_json TEXT NOT NULL,
+                closure_json TEXT NOT NULL,
+                spec_revision INTEGER NOT NULL,
+                plan_revision INTEGER NOT NULL,
+                state_revision INTEGER NOT NULL,
+                candidate_digest TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            INSERT INTO tasks VALUES (
+                'legacy-reopen-conflict', 'hermes.task-record.v1', 'legacy reopen conflict',
+                'draft', '[]', '[{"event_id":"same-event","content":1}]',
+                '{}', '[]', '[]', '{}', 0, 0, 1, '', 1.0, 1.0
+            );
+            """
+        )
+
+    TaskRuntimeStore(path, owner_profile="profile-a")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE tasks SET source_events_json = ? WHERE task_id = ?",
+            ('[{"event_id":"same-event","content":true}]', "legacy-reopen-conflict"),
+        )
+
+    with pytest.raises(ValueError, match="source_event_id_conflict"):
+        TaskRuntimeStore(path, owner_profile="profile-a")
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute(
+            "SELECT payload_json FROM source_events WHERE task_id = ?",
+            ("legacy-reopen-conflict",),
+        ).fetchall()
+    assert len(rows) == 1
+    content = json.loads(rows[0][0])["content"]
+    assert type(content) is int
+    assert content == 1
 
 
 def test_legacy_planned_task_cannot_bypass_governed_spec_on_claim(tmp_path):
@@ -378,10 +758,12 @@ def test_legacy_governed_plan_requires_fresh_freeze_and_plan_before_claim(tmp_pa
     )
     assert review["verdict"] == "approved"
     reviewed = migrated.get_task(task["task_id"])
+    fresh_slice = _slice("fresh-slice")
+    fresh_slice["source_refs"] = ["S1"]
     with pytest.raises(ValueError, match="current_spec_freeze_required"):
         migrated.set_plan(
             task["task_id"],
-            [_slice("fresh-slice")],
+            [fresh_slice],
             expected_state_revision=reviewed["state_revision"],
         )
     with pytest.raises(ValueError, match="current_spec_plan_admission_required"):
@@ -542,6 +924,35 @@ def test_plan_must_cover_frozen_claims_sources_and_verification_contract(tmp_pat
                 [definition],
                 expected_state_revision=task["state_revision"],
             )
+    unchanged = store.get_task(task["task_id"])
+    assert unchanged["state_revision"] == task["state_revision"]
+    assert unchanged["plan_revision"] == 0
+    assert unchanged["slices"] == []
+
+
+def test_plan_rejects_numeric_source_ref_that_stringifies_to_known_source(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "numeric-plan-source-ref.db")
+    task = store.create_task(
+        title="numeric plan source ref",
+        original_sources=[{"source_id": "1", "content": "source"}],
+    )
+    spec = _governed_spec("1")
+    task = _review_and_freeze(
+        store,
+        task["task_id"],
+        spec,
+        expected_state_revision=task["state_revision"],
+    )
+    definition = _slice("s1")
+    definition["source_refs"] = [1]
+
+    with pytest.raises(ValueError, match="slice_source_ref_unknown"):
+        store.set_plan(
+            task["task_id"],
+            [definition],
+            expected_state_revision=task["state_revision"],
+        )
+
     unchanged = store.get_task(task["task_id"])
     assert unchanged["state_revision"] == task["state_revision"]
     assert unchanged["plan_revision"] == 0
@@ -837,73 +1248,21 @@ def test_governed_spec_rejects_non_string_claim_and_coverage_ids(tmp_path):
 def test_governed_spec_rejects_summary_oracle_reordered_authority_and_bodyless_claims(
     tmp_path,
 ):
-    for derived_kind in (
-        "agent_summary",
-        "open_source_demo",
-        "test_output",
-        "model_agreement",
-        "readme",
-    ):
-        derived_store = TaskRuntimeStore(tmp_path / f"{derived_kind}-oracle.db")
-        derived_task = derived_store.create_task(
-            title=f"{derived_kind}-only oracle",
-            original_sources=[
-                {
-                    "source_id": "S-derived",
-                    "kind": derived_kind,
-                    "content": "derived index or evidence",
-                }
-            ],
-        )
-        with pytest.raises(ValueError, match="spec_oracle_refs_not_authoritative"):
-            derived_store.record_spec_review(
-                derived_task["task_id"],
-                _governed_spec("S-derived"),
-                reviewer_session_id=f"{derived_kind}-reviewer",
-                verdict="approved",
-                findings=[],
-                expected_state_revision=derived_task["state_revision"],
-            )
-
-    numeric_store = TaskRuntimeStore(tmp_path / "numeric-source-id.db")
-    numeric_task = numeric_store.create_task(
-        title="numeric source identity",
-        original_sources=[{"source_id": 1, "kind": "user_message", "content": "source"}],
-    )
-    with pytest.raises(ValueError, match="task_source_identity_invalid"):
-        numeric_store.record_spec_review(
-            numeric_task["task_id"],
-            _governed_spec("1"),
-            reviewer_session_id="numeric-source-reviewer",
-            verdict="approved",
-            findings=[],
-            expected_state_revision=numeric_task["state_revision"],
-        )
-
-    derived_claim_store = TaskRuntimeStore(tmp_path / "derived-claim-authority.db")
-    derived_claim_task = derived_claim_store.create_task(
-        title="derived-only claim authority",
+    summary_store = TaskRuntimeStore(tmp_path / "summary-oracle.db")
+    summary_task = summary_store.create_task(
+        title="summary-only oracle",
         original_sources=[
-            {"source_id": "U", "kind": "user_message", "content": "authority"},
-            {"source_id": "T", "kind": "test_output", "content": "derived"},
+            {"source_id": "S-summary", "kind": "summary", "content": "derived index"}
         ],
     )
-    derived_claim_spec = _spec_for_sources("U", "T")
-    derived_claim_spec["governance"]["oracle_refs"] = ["U"]
-    derived_claim_spec["governance"]["source_coverage"] = {
-        "U": ["N1"],
-        "T": ["R1"],
-    }
-    derived_claim_spec["required_clauses"][0]["source_refs"] = ["T"]
-    derived_claim_spec["negative_requirements"][0]["source_refs"] = ["U"]
-    with pytest.raises(ValueError, match="spec_claim_source_authority_required"):
-        derived_claim_store.record_spec_review(
-            derived_claim_task["task_id"],
-            derived_claim_spec,
-            reviewer_session_id="derived-claim-reviewer",
+    with pytest.raises(ValueError, match="spec_oracle_refs_not_authoritative"):
+        summary_store.record_spec_review(
+            summary_task["task_id"],
+            _governed_spec("S-summary"),
+            reviewer_session_id="summary-reviewer",
             verdict="approved",
             findings=[],
-            expected_state_revision=derived_claim_task["state_revision"],
+            expected_state_revision=summary_task["state_revision"],
         )
 
     ordered_store = TaskRuntimeStore(tmp_path / "authority-order.db")
@@ -935,6 +1294,1904 @@ def test_governed_spec_rejects_summary_oracle_reordered_authority_and_bodyless_c
             verdict="approved",
             findings=[],
             expected_state_revision=ordered_task["state_revision"],
+        )
+
+
+def test_governed_spec_rejects_target_derived_oracle_kinds(tmp_path):
+    for derived_kind in (
+        "agent_summary",
+        "open_source_demo",
+        "test_output",
+        "model_agreement",
+        "readme",
+    ):
+        store = TaskRuntimeStore(tmp_path / f"{derived_kind}-oracle.db")
+        task = store.create_task(
+            title=f"{derived_kind}-only oracle",
+            original_sources=[
+                {
+                    "source_id": "S-derived",
+                    "kind": derived_kind,
+                    "content": "derived index or evidence",
+                }
+            ],
+        )
+        with pytest.raises(ValueError, match="spec_oracle_refs_not_authoritative"):
+            store.record_spec_review(
+                task["task_id"],
+                _governed_spec("S-derived"),
+                reviewer_session_id=f"{derived_kind}-reviewer",
+                verdict="approved",
+                findings=[],
+                expected_state_revision=task["state_revision"],
+            )
+
+
+def test_derived_summary_cannot_masquerade_as_authoritative_source(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "derived-summary-authority.db")
+    task = store.create_task(
+        title="derived summary authority",
+        original_sources=[
+            {"source_id": "REQ", "kind": "user_message", "content": "original"},
+            {"source_id": "SUM", "kind": "derived_summary", "content": "derived"},
+        ],
+    )
+    spec = _spec_for_sources("REQ", "SUM")
+    spec["governance"]["oracle_refs"] = ["REQ"]
+    before_revision = task["state_revision"]
+    with pytest.raises(ValueError, match="spec_source_authority_incomplete"):
+        store.record_spec_review(
+            task["task_id"], spec, reviewer_session_id="summary-authority-reviewer",
+            verdict="approved", findings=[], expected_state_revision=before_revision,
+        )
+    rejected = store.get_task(task["task_id"])
+    assert rejected["state_revision"] == before_revision
+    assert rejected["spec_reviews"] == []
+
+
+def test_derived_summary_cannot_be_oracle(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "derived-summary-oracle.db")
+    task = store.create_task(
+        title="derived summary oracle",
+        original_sources=[
+            {"source_id": "REQ", "kind": "user_message", "content": "original"},
+            {"source_id": "SUM", "kind": "derived_summary", "content": "derived"},
+        ],
+    )
+    spec = _spec_for_sources("REQ", "SUM")
+    spec["governance"]["source_authority"] = ["REQ"]
+    spec["governance"]["oracle_refs"] = ["SUM"]
+    before_revision = task["state_revision"]
+    with pytest.raises(ValueError, match="spec_oracle_refs_not_authoritative"):
+        store.record_spec_review(
+            task["task_id"], spec, reviewer_session_id="summary-oracle-reviewer",
+            verdict="approved", findings=[], expected_state_revision=before_revision,
+        )
+    rejected = store.get_task(task["task_id"])
+    assert rejected["state_revision"] == before_revision
+    assert rejected["spec_reviews"] == []
+
+
+def test_strict_ui_accepts_task_packet_source_kind_and_session_locator(tmp_path):
+    sources = [
+        _strict_source("REQ", "project_ssot", "build exact results", 10),
+        _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+    ]
+    sources[0]["immutable_locator"] = "session://default/session-1/message-1"
+    store = TaskRuntimeStore(tmp_path / "session-locator.db")
+    task = store.create_task(title="session locator", original_sources=sources)
+    reviewed = store.record_spec_review(
+        task["task_id"], _strict_ui_spec(), reviewer_session_id="strict-reviewer",
+        verdict="approved", findings=[], expected_state_revision=task["state_revision"],
+    )
+    assert reviewed["state_revision"] == task["state_revision"] + 1
+
+
+def test_non_authoritative_research_note_cannot_enter_source_authority(tmp_path):
+    sources = [
+        _strict_source(
+            "REQ", "research_note", "build exact results", 10,
+            derived_from=["PROTO"],
+        ),
+        _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+    ]
+    store = TaskRuntimeStore(tmp_path / "research-note-authority.db")
+    task = store.create_task(title="research authority", original_sources=sources)
+    with pytest.raises(ValueError, match="spec_source_authority_incomplete"):
+        store.record_spec_review(
+            task["task_id"], _strict_ui_spec(), reviewer_session_id="strict-reviewer",
+            verdict="approved", findings=[], expected_state_revision=task["state_revision"],
+        )
+
+
+def test_non_authoritative_summary_cannot_replace_direct_claim_anchor(tmp_path):
+    sources = [
+        _strict_source("REQ", "original_requirement", "build exact results", 10),
+        _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+        _strict_source("SUM", "summary", "derived index", 30, derived_from=["REQ"]),
+    ]
+    spec = _strict_ui_spec()
+    spec["governance"]["source_coverage"]["SUM"] = ["R1"]
+    required = spec["required_clauses"][0]
+    required["source_refs"] = ["REQ", "PROTO", "SUM"]
+    required["source_anchors"] = [
+        {"source_ref": "SUM", "locator": sources[2]["immutable_locator"]}
+    ]
+    store = TaskRuntimeStore(tmp_path / "summary-anchor.db")
+    task = store.create_task(title="summary anchor", original_sources=sources)
+    with pytest.raises(ValueError, match="source_anchor_not_authoritative"):
+        store.record_spec_review(
+            task["task_id"], spec, reviewer_session_id="strict-reviewer",
+            verdict="approved", findings=[], expected_state_revision=task["state_revision"],
+        )
+
+
+def _strict_source(source_id, source_kind, content, authority_rank, derived_from=None):
+    digest = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return {
+        "source_id": source_id,
+        "kind": "summary" if source_kind == "summary" else "user_message",
+        "source_kind": source_kind,
+        "content": content,
+        "immutable_locator": f"inline:{source_id}@{digest}",
+        "content_digest": digest,
+        "authority_rank": authority_rank,
+        "derived_from": list(derived_from or []),
+    }
+
+
+def _strict_ui_spec():
+    spec = _spec_for_sources("REQ", "PROTO")
+    prototype_digest = "sha256:" + hashlib.sha256(
+        b"results visual oracle"
+    ).hexdigest()
+    governance = spec["governance"]
+    governance["target_profile"] = "strict_ui"
+    governance["oracle_refs"] = ["PROTO"]
+    governance["source_obligations"] = {
+        "pages": ["list", "detail"],
+        "states": [
+            "list/loading",
+            "list/success",
+            "list/empty",
+            "detail/success",
+            "detail/error",
+        ],
+        "interactions": ["list-to-detail", "detail-back-to-list"],
+        "viewports": ["1440x900"],
+        "negative_cases": [
+            "no-generic-list-empty",
+            "no-generic-detail-error",
+            "preserve-list-state-on-back",
+        ],
+        "fidelity_dimensions": ["visual", "interaction", "responsive"],
+    }
+    obligations = [
+        f"{field}:{value}"
+        for field, values in governance["source_obligations"].items()
+        for value in values
+    ]
+    spec["required_clauses"][0].update(
+        {
+            "source_refs": ["REQ", "PROTO"],
+            "source_anchors": [
+                {
+                    "source_ref": "PROTO",
+                    "locator": f"inline:PROTO@{prototype_digest}#list-detail",
+                }
+            ],
+            "scope_quantifier": "all",
+            "obligation_refs": obligations,
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": ["visual", "interaction", "responsive"],
+        }
+    )
+    spec["negative_requirements"][0].update(
+        {
+            "source_refs": ["REQ", "PROTO"],
+            "source_anchors": [
+                {
+                    "source_ref": "PROTO",
+                    "locator": f"inline:PROTO@{prototype_digest}#list-detail",
+                }
+            ],
+            "scope_quantifier": "all",
+            "obligation_refs": ["negative_cases:no-generic-detail-error"],
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": ["visual"],
+        }
+    )
+    governance["source_coverage"] = {
+        "REQ": ["R1", "N1"],
+        "PROTO": ["R1", "N1"],
+    }
+    for lane in governance["discovery"].values():
+        lane["source_refs"] = ["REQ"]
+    return spec
+
+
+def _strict_ui_spec_with_numeric_string_claim_ids():
+    spec = _strict_ui_spec()
+    spec["required_clauses"][0]["id"] = "1"
+    spec["negative_requirements"][0]["id"] = "2"
+    spec["closure_criteria"] = ["1", "2"]
+    spec["governance"]["source_coverage"] = {
+        "REQ": ["1", "2"],
+        "PROTO": ["1", "2"],
+    }
+    return spec
+
+
+def _numeric_claim_strict_packet(tmp_path, *, suffix, worker_session_id):
+    store = TaskRuntimeStore(tmp_path / f"numeric-claim-{suffix}.db")
+    task = store.create_task(
+        title="numeric claim identity",
+        original_sources=[
+            _strict_source("REQ", "original_requirement", "build exact results", 10),
+            _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+        ],
+    )
+    spec = _strict_ui_spec_with_numeric_string_claim_ids()
+    task = _review_and_freeze(
+        store, task["task_id"], spec, expected_state_revision=task["state_revision"]
+    )
+    definition = _slice("numeric-claim-slice")
+    definition.update(
+        {
+            "required_clauses": ["1"],
+            "negative_requirements": ["2"],
+            "source_refs": ["REQ", "PROTO"],
+            "obligation_refs": spec["required_clauses"][0]["obligation_refs"],
+            "source_anchors": spec["required_clauses"][0]["source_anchors"],
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": ["visual", "interaction", "responsive"],
+        }
+    )
+    store.set_plan(
+        task["task_id"], [definition], expected_state_revision=task["state_revision"]
+    )
+    packet = store.claim_next_slice(
+        task["task_id"], worker_session_id=worker_session_id, lease_seconds=60
+    )
+    assert packet is not None
+    return store, task["task_id"], definition, packet
+
+
+def test_strict_spec_review_rejects_string_subclass_claim_identity_before_mutation(tmp_path):
+    class ClaimId(str):
+        pass
+
+    store = TaskRuntimeStore(tmp_path / "strict-subclass-claim.db")
+    task = store.create_task(
+        title="strict subclass claim",
+        original_sources=[
+            _strict_source("REQ", "original_requirement", "build exact results", 10),
+            _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+        ],
+    )
+    spec = _strict_ui_spec()
+    spec["required_clauses"][0]["id"] = ClaimId("R1")
+
+    with pytest.raises(ValueError, match="spec_claim_identity_invalid"):
+        store.record_spec_review(
+            task["task_id"],
+            spec,
+            reviewer_session_id="reviewer-native-identity",
+            verdict="approved",
+            findings=[],
+            expected_state_revision=task["state_revision"],
+        )
+
+    unchanged = store.get_task(task["task_id"])
+    assert unchanged["state_revision"] == task["state_revision"]
+    assert unchanged["spec_reviews"] == []
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        ("numeric_claim", "slice_claim_identity_invalid"),
+        ("numeric_slice", "slice_ids_must_be_unique_and_nonempty"),
+    ],
+)
+def test_strict_plan_rejects_non_native_claim_and_slice_identity_before_mutation(
+    tmp_path, mutation, error
+):
+    store = TaskRuntimeStore(tmp_path / f"strict-plan-{mutation}.db")
+    task = store.create_task(
+        title="strict plan identity",
+        original_sources=[
+            _strict_source("REQ", "original_requirement", "build exact results", 10),
+            _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+        ],
+    )
+    spec = _strict_ui_spec_with_numeric_string_claim_ids()
+    task = _review_and_freeze(
+        store, task["task_id"], spec, expected_state_revision=task["state_revision"]
+    )
+    definition = _slice("strict-native-plan")
+    definition.update(
+        {
+            "required_clauses": ["1"],
+            "negative_requirements": ["2"],
+            "source_refs": ["REQ", "PROTO"],
+            "obligation_refs": spec["required_clauses"][0]["obligation_refs"],
+            "source_anchors": spec["required_clauses"][0]["source_anchors"],
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": ["visual", "interaction", "responsive"],
+        }
+    )
+    if mutation == "numeric_claim":
+        definition["required_clauses"] = [1]
+    else:
+        definition["slice_id"] = 1
+
+    with pytest.raises(ValueError, match=error):
+        store.set_plan(
+            task["task_id"], [definition], expected_state_revision=task["state_revision"]
+        )
+
+    unchanged = store.get_task(task["task_id"])
+    assert unchanged["state_revision"] == task["state_revision"]
+    assert unchanged["implementation_graph"] == []
+
+
+def _numeric_claim_evidence(packet, definition, *, claim_ids=("1", "2")):
+    base = {
+        "kind": "ui-fidelity",
+        "oracle_refs": ["PROTO"],
+        "candidate_digest": "sha256:numeric-claim",
+        "source_digest": packet["source_digest"],
+        "spec_digest": packet["spec_digest"],
+    }
+    return [
+        {
+            **base,
+            "ref": "uimax:numeric-1",
+            "claim_id": claim_ids[0],
+            "obligation_refs": definition["obligation_refs"],
+            "fidelity_dimensions": definition["fidelity_dimensions"],
+            "source_anchors": packet["claim_contracts"]["1"]["source_anchors"],
+        },
+        {
+            **base,
+            "ref": "uimax:numeric-2",
+            "claim_id": claim_ids[1],
+            "obligation_refs": ["negative_cases:no-generic-detail-error"],
+            "fidelity_dimensions": ["visual"],
+            "source_anchors": packet["claim_contracts"]["2"]["source_anchors"],
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        ("missing_source_kind", "source_artifact_kind_required"),
+        ("illegal_source_kind", "source_artifact_kind_invalid"),
+        ("digest_mismatch", "source_artifact_digest_mismatch"),
+        ("mutable_locator", "source_artifact_locator_not_immutable"),
+        ("mutable_session_locator", "source_artifact_locator_not_immutable"),
+        ("authority_empty", "spec_source_authority_incomplete"),
+        ("obligation_incomplete", "source_obligation_scope_incomplete"),
+        ("quantifier_weakened", "source_quantifier_weakened"),
+        ("unbound_claim", "source_obligation_scope_incomplete"),
+        ("detached_claim_anchor", "source_anchor_not_immutable"),
+        ("duplicate_source_identity", "original_source_identity_duplicate"),
+    ],
+)
+def test_strict_ui_source_and_obligation_admission_fails_closed(tmp_path, mutation, error):
+    sources = [
+        _strict_source("REQ", "original_requirement", "build exact results", 10),
+        _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+    ]
+    spec = _strict_ui_spec()
+    if mutation == "missing_source_kind":
+        sources[0].pop("source_kind")
+    elif mutation == "illegal_source_kind":
+        sources[0]["source_kind"] = "model_guess"
+    elif mutation == "digest_mismatch":
+        sources[0]["content_digest"] = "sha256:" + "0" * 64
+    elif mutation == "mutable_locator":
+        sources[0]["immutable_locator"] = "https://example.test/latest"
+    elif mutation == "mutable_session_locator":
+        sources[0]["immutable_locator"] = (
+            "session://default/session-1/message-1?revision=latest"
+        )
+    elif mutation == "authority_empty":
+        spec["governance"]["source_authority"] = []
+    elif mutation == "obligation_incomplete":
+        spec["required_clauses"][0]["obligation_refs"].remove("states:detail/error")
+    elif mutation == "quantifier_weakened":
+        spec["required_clauses"][0]["scope_quantifier"] = "main"
+    elif mutation == "unbound_claim":
+        for field in (
+            "obligation_refs",
+            "source_anchors",
+            "scope_quantifier",
+            "oracle_refs",
+            "fidelity_dimensions",
+        ):
+            spec["negative_requirements"][0].pop(field)
+    elif mutation == "detached_claim_anchor":
+        spec["required_clauses"][0]["source_anchors"][0]["locator"] = (
+            "inline:PROTO#list-detail"
+        )
+    elif mutation == "duplicate_source_identity":
+        sources.insert(1, dict(sources[0]))
+        spec["governance"]["source_authority"] = ["REQ", "REQ", "PROTO"]
+    store = TaskRuntimeStore(tmp_path / f"strict-{mutation}.db")
+    if mutation == "duplicate_source_identity":
+        with pytest.raises(ValueError, match=error):
+            store.create_task(title="strict ui", original_sources=sources)
+        with store._connect() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+        return
+    task = store.create_task(title="strict ui", original_sources=sources)
+    before_revision = task["state_revision"]
+    with pytest.raises(ValueError, match=error):
+        store.record_spec_review(
+            task["task_id"], spec, reviewer_session_id="strict-reviewer",
+            verdict="approved", findings=[], expected_state_revision=before_revision,
+        )
+    rejected = store.get_task(task["task_id"])
+    assert rejected["state_revision"] == before_revision
+    assert rejected["spec_reviews"] == []
+
+
+def test_strict_ui_context_packet_preserves_semantic_fidelity_contract(tmp_path):
+    sources = [
+        _strict_source("REQ", "original_requirement", "build exact results", 10),
+        _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+    ]
+    store = TaskRuntimeStore(tmp_path / "strict-context.db")
+    task = store.create_task(title="strict context", original_sources=sources)
+    spec = _strict_ui_spec()
+    task = _review_and_freeze(
+        store, task["task_id"], spec, expected_state_revision=task["state_revision"]
+    )
+    definition = _slice("s1")
+    definition["source_refs"] = ["REQ", "PROTO"]
+    definition.update(
+        {
+            "obligation_refs": spec["required_clauses"][0]["obligation_refs"],
+            "source_anchors": spec["required_clauses"][0]["source_anchors"],
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": ["visual", "interaction", "responsive"],
+        }
+    )
+    task = store.set_plan(
+        task["task_id"], [definition], expected_state_revision=task["state_revision"]
+    )
+    packet = store.claim_next_slice(
+        task["task_id"], worker_session_id="strict-worker", lease_seconds=60
+    )
+    assert packet is not None
+    for field in ("obligation_refs", "source_anchors", "oracle_refs", "fidelity_dimensions"):
+        assert packet[field] == definition[field]
+    assert packet["source_digest"].startswith("sha256:")
+    assert packet["spec_digest"].startswith("sha256:")
+
+
+def test_strict_ui_plan_cannot_weaken_semantic_fidelity_contract(tmp_path):
+    sources = [
+        _strict_source("REQ", "original_requirement", "build exact results", 10),
+        _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+    ]
+    store = TaskRuntimeStore(tmp_path / "strict-plan-contract.db")
+    task = store.create_task(title="strict plan contract", original_sources=sources)
+    spec = _strict_ui_spec()
+    task = _review_and_freeze(
+        store, task["task_id"], spec, expected_state_revision=task["state_revision"]
+    )
+
+    def strict_definition():
+        definition = _slice("strict-plan-slice")
+        definition["source_refs"] = ["REQ", "PROTO"]
+        definition.update(
+            {
+                "obligation_refs": list(
+                    spec["required_clauses"][0]["obligation_refs"]
+                ),
+                "source_anchors": list(
+                    spec["required_clauses"][0]["source_anchors"]
+                ),
+                "oracle_refs": ["PROTO"],
+                "fidelity_dimensions": ["visual", "interaction", "responsive"],
+            }
+        )
+        return definition
+
+    mutations = []
+    missing_obligation = strict_definition()
+    missing_obligation["obligation_refs"] = missing_obligation["obligation_refs"][:-1]
+    mutations.append(missing_obligation)
+    wrong_oracle = strict_definition()
+    wrong_oracle["oracle_refs"] = ["REQ"]
+    mutations.append(wrong_oracle)
+    missing_anchor = strict_definition()
+    missing_anchor["source_anchors"] = []
+    mutations.append(missing_anchor)
+    missing_dimension = strict_definition()
+    missing_dimension["fidelity_dimensions"] = ["visual", "interaction"]
+    mutations.append(missing_dimension)
+    for definition in mutations:
+        with pytest.raises(
+            ValueError, match="slice_semantic_fidelity_contract_mismatch"
+        ):
+            store.set_plan(
+                task["task_id"], [definition],
+                expected_state_revision=task["state_revision"],
+            )
+
+
+def test_strict_ui_each_evidence_item_requires_semantic_binding(tmp_path):
+    sources = [
+        _strict_source("REQ", "original_requirement", "build exact results", 10),
+        _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+    ]
+    store = TaskRuntimeStore(tmp_path / "strict-evidence-binding.db")
+    task = store.create_task(title="strict evidence binding", original_sources=sources)
+    spec = _strict_ui_spec()
+    task = _review_and_freeze(
+        store, task["task_id"], spec, expected_state_revision=task["state_revision"]
+    )
+    definition = _slice("strict-evidence-slice")
+    definition.update(
+        {
+            "source_refs": ["REQ", "PROTO"],
+            "obligation_refs": spec["required_clauses"][0]["obligation_refs"],
+            "source_anchors": spec["required_clauses"][0]["source_anchors"],
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": ["visual", "interaction", "responsive"],
+        }
+    )
+    task = store.set_plan(
+        task["task_id"], [definition], expected_state_revision=task["state_revision"]
+    )
+    packet = store.claim_next_slice(
+        task["task_id"], worker_session_id="strict-evidence-worker", lease_seconds=60
+    )
+    assert packet is not None
+    result = _result(packet, candidate="sha256:strict-evidence")
+    result["evidence_refs"] = [
+        {
+            "kind": "ui-fidelity",
+            "ref": "uimax:obligations-only",
+            "claim_id": "R1",
+            "obligation_refs": definition["obligation_refs"],
+            "oracle_refs": [],
+            "fidelity_dimensions": [],
+        },
+        {
+            "kind": "ui-fidelity",
+            "ref": "uimax:oracle-only",
+            "claim_id": "R1",
+            "obligation_refs": [],
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": definition["fidelity_dimensions"],
+        },
+    ]
+    submitted = store.submit_result(
+        task["task_id"], worker_session_id="strict-evidence-worker",
+        packet_id=packet["packet_id"], result=result,
+    )
+    assert submitted["disposition"] == "rejected"
+    assert "worker_semantic_evidence_incomplete" in submitted["reasons"]
+
+    missing_digests = _result(packet, candidate="sha256:strict-evidence")
+    missing_digests["evidence_refs"] = [
+        {
+            "kind": "ui-fidelity",
+            "ref": "uimax:r1-without-digests",
+            "claim_id": "R1",
+            "obligation_refs": definition["obligation_refs"],
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": definition["fidelity_dimensions"],
+        },
+        {
+            "kind": "ui-fidelity",
+            "ref": "uimax:n1-without-digests",
+            "claim_id": "N1",
+            "obligation_refs": ["negative_cases:no-generic-detail-error"],
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": ["visual"],
+        },
+    ]
+    submitted = store.submit_result(
+        task["task_id"], worker_session_id="strict-evidence-worker",
+        packet_id=packet["packet_id"], result=missing_digests,
+    )
+    assert submitted["disposition"] == "rejected"
+    assert "worker_semantic_evidence_incomplete" in submitted["reasons"]
+
+
+def test_strict_worker_rejects_coerced_numeric_claim_identities(tmp_path):
+    class SpoofedString(str):
+        pass
+
+    store, task_id, definition, packet = _numeric_claim_strict_packet(
+        tmp_path, suffix="worker", worker_session_id="numeric-worker-1"
+    )
+    numeric_claims = _result(packet, candidate="sha256:numeric-claim")
+    numeric_claims["claims"] = [1, 2]
+    numeric_claims["evidence_refs"] = _numeric_claim_evidence(packet, definition)
+    submitted = store.submit_result(
+        task_id,
+        worker_session_id="numeric-worker-1",
+        packet_id=packet["packet_id"],
+        result=numeric_claims,
+    )
+    assert submitted["disposition"] == "rejected"
+    assert "worker_claims_invalid" in submitted["reasons"]
+
+    store, task_id, definition, packet = _numeric_claim_strict_packet(
+        tmp_path, suffix="worker-evidence", worker_session_id="numeric-worker-2"
+    )
+    numeric_evidence = _result(packet, candidate="sha256:numeric-claim")
+    numeric_evidence["claims"] = ["1", "2"]
+    numeric_evidence["evidence_refs"] = _numeric_claim_evidence(
+        packet, definition, claim_ids=(1, 2)
+    )
+    submitted = store.submit_result(
+        task_id,
+        worker_session_id="numeric-worker-2",
+        packet_id=packet["packet_id"],
+        result=numeric_evidence,
+    )
+    assert submitted["disposition"] == "rejected"
+    assert "worker_semantic_evidence_incomplete" in submitted["reasons"]
+
+    subclass_claim = _result(packet, candidate="sha256:numeric-claim")
+    subclass_claim["claims"] = [SpoofedString("1"), "2"]
+    subclass_claim["evidence_refs"] = _numeric_claim_evidence(packet, definition)
+    submitted = store.submit_result(
+        task_id,
+        worker_session_id="numeric-worker-2",
+        packet_id=packet["packet_id"],
+        result=subclass_claim,
+    )
+    assert submitted["disposition"] == "rejected"
+    assert "worker_claims_invalid" in submitted["reasons"]
+
+    subclass_evidence = _result(packet, candidate="sha256:numeric-claim")
+    subclass_evidence["claims"] = ["1", "2"]
+    subclass_evidence["evidence_refs"] = _numeric_claim_evidence(packet, definition)
+    subclass_evidence["evidence_refs"][0]["claim_id"] = SpoofedString("1")
+    submitted = store.submit_result(
+        task_id,
+        worker_session_id="numeric-worker-2",
+        packet_id=packet["packet_id"],
+        result=subclass_evidence,
+    )
+    assert submitted["disposition"] == "rejected"
+    assert "worker_semantic_evidence_incomplete" in submitted["reasons"]
+
+    unassigned_claim = _result(packet, candidate="sha256:numeric-claim")
+    unassigned_claim["claims"] = ["1", "2", "EXTRA"]
+    unassigned_claim["evidence_refs"] = _numeric_claim_evidence(packet, definition)
+    submitted = store.submit_result(
+        task_id,
+        worker_session_id="numeric-worker-2",
+        packet_id=packet["packet_id"],
+        result=unassigned_claim,
+    )
+    assert submitted["disposition"] == "rejected"
+    assert "worker_claims_unassigned" in submitted["reasons"]
+
+    replay_store, replay_task_id, replay_definition, replay_packet = (
+        _numeric_claim_strict_packet(
+            tmp_path, suffix="worker-replay", worker_session_id="numeric-worker-replay"
+        )
+    )
+    valid_result = _result(replay_packet, candidate="sha256:numeric-claim")
+    valid_result["claims"] = ["1", "2"]
+    valid_result["evidence_refs"] = _numeric_claim_evidence(
+        replay_packet, replay_definition
+    )
+    accepted = replay_store.submit_result(
+        replay_task_id,
+        worker_session_id="numeric-worker-replay",
+        packet_id=replay_packet["packet_id"],
+        result=valid_result,
+    )
+    assert accepted["disposition"] == "accepted_for_integration"
+    spoofed_replay = dict(valid_result)
+    spoofed_replay["claims"] = [SpoofedString("1"), "2"]
+    rejected = replay_store.submit_result(
+        replay_task_id,
+        worker_session_id="numeric-worker-replay",
+        packet_id=replay_packet["packet_id"],
+        result=spoofed_replay,
+    )
+    assert rejected["disposition"] == "rejected"
+    assert "worker_claims_invalid" in rejected["reasons"]
+
+    for field in (
+        "claims",
+        "changed_artifacts",
+        "evidence_refs",
+        "verification_results",
+        "risks",
+        "unknowns",
+    ):
+        tuple_replay = dict(valid_result)
+        tuple_replay[field] = tuple(valid_result[field])
+        rejected = replay_store.submit_result(
+            replay_task_id,
+            worker_session_id="numeric-worker-replay",
+            packet_id=replay_packet["packet_id"],
+            result=tuple_replay,
+        )
+        assert rejected["disposition"] == "rejected"
+        assert "worker_result_invalid_field_types" in rejected["reasons"]
+
+    class SpoofedDict(dict):
+        pass
+
+    mapping_replay = dict(valid_result)
+    mapping_replay["state_delta_proposal"] = SpoofedDict(
+        valid_result["state_delta_proposal"]
+    )
+    rejected = replay_store.submit_result(
+        replay_task_id,
+        worker_session_id="numeric-worker-replay",
+        packet_id=replay_packet["packet_id"],
+        result=mapping_replay,
+    )
+    assert rejected["disposition"] == "rejected"
+    assert "worker_result_invalid_field_types" in rejected["reasons"]
+
+    class SpoofedList(list):
+        pass
+
+    nested_replays = []
+
+    top_level_mapping = SpoofedDict(valid_result)
+    nested_replays.append(top_level_mapping)
+
+    evidence_mapping = dict(valid_result)
+    evidence_mapping["evidence_refs"] = list(valid_result["evidence_refs"])
+    evidence_mapping["evidence_refs"][0] = SpoofedDict(
+        evidence_mapping["evidence_refs"][0]
+    )
+    nested_replays.append(evidence_mapping)
+
+    verification_mapping = dict(valid_result)
+    verification_mapping["verification_results"] = list(
+        valid_result["verification_results"]
+    )
+    verification_mapping["verification_results"][0] = SpoofedDict(
+        verification_mapping["verification_results"][0]
+    )
+    nested_replays.append(verification_mapping)
+
+    nested_list = copy.deepcopy(valid_result)
+    nested_list["evidence_refs"][0]["obligation_refs"] = SpoofedList(
+        nested_list["evidence_refs"][0]["obligation_refs"]
+    )
+    nested_replays.append(nested_list)
+
+    nested_string = copy.deepcopy(valid_result)
+    nested_string["evidence_refs"][0]["obligation_refs"][0] = SpoofedString(
+        nested_string["evidence_refs"][0]["obligation_refs"][0]
+    )
+    nested_replays.append(nested_string)
+
+    nested_mapping = copy.deepcopy(valid_result)
+    nested_mapping["evidence_refs"][0]["source_anchors"][0] = SpoofedDict(
+        nested_mapping["evidence_refs"][0]["source_anchors"][0]
+    )
+    nested_replays.append(nested_mapping)
+
+    non_finite = copy.deepcopy(valid_result)
+    non_finite["risks"] = [float("nan")]
+    nested_replays.append(non_finite)
+
+    for hostile_replay in nested_replays:
+        rejected = replay_store.submit_result(
+            replay_task_id,
+            worker_session_id="numeric-worker-replay",
+            packet_id=replay_packet["packet_id"],
+            result=hostile_replay,
+        )
+        assert rejected["disposition"] == "rejected"
+        assert rejected.get("idempotent_replay") is not True
+        assert "worker_result_invalid_field_types" in rejected["reasons"]
+
+
+def test_strict_closure_rejects_coerced_numeric_claim_identities(tmp_path):
+    class SpoofedString(str):
+        pass
+
+    store, task_id, definition, packet = _numeric_claim_strict_packet(
+        tmp_path, suffix="closure", worker_session_id="numeric-worker"
+    )
+    result = _result(packet, candidate="sha256:numeric-claim")
+    result["claims"] = ["1", "2"]
+    evidence = _numeric_claim_evidence(packet, definition)
+    result["evidence_refs"] = evidence
+    submitted = store.submit_result(
+        task_id,
+        worker_session_id="numeric-worker",
+        packet_id=packet["packet_id"],
+        result=result,
+    )
+    assert submitted["disposition"] == "accepted_for_integration"
+    store.integrate_result(
+        task_id, submitted["result_id"], integrator_session_id="numeric-integrator"
+    )
+    closure_packet = store.build_closure_packet(
+        task_id, verifier_session_id="numeric-verifier"
+    )
+    verification_results = [
+        {
+            "command": definition["verification_commands"][0],
+            "exit_code": 0,
+            "candidate_digest": "sha256:numeric-claim",
+        }
+    ]
+    with pytest.raises(ValueError, match="closure_claim_identity_invalid"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:numeric-claim",
+            verifier_session_id="numeric-verifier",
+            claims={1: "pass", 2: "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=evidence,
+            verification_results=verification_results,
+        )
+    numeric_evidence = [dict(item, claim_id=index) for index, item in enumerate(evidence, 1)]
+    with pytest.raises(ValueError, match="closure_evidence_claim_binding_invalid"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:numeric-claim",
+            verifier_session_id="numeric-verifier",
+            claims={"1": "pass", "2": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=numeric_evidence,
+            verification_results=verification_results,
+        )
+
+    with pytest.raises(ValueError, match="closure_claim_identity_invalid"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:numeric-claim",
+            verifier_session_id="numeric-verifier",
+            claims={SpoofedString("1"): "pass", "2": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=evidence,
+            verification_results=verification_results,
+        )
+
+    subclass_evidence = [dict(item) for item in evidence]
+    subclass_evidence[0]["claim_id"] = SpoofedString("1")
+    with pytest.raises(ValueError, match="closure_evidence_claim_binding_invalid"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:numeric-claim",
+            verifier_session_id="numeric-verifier",
+            claims={"1": "pass", "2": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=subclass_evidence,
+            verification_results=verification_results,
+        )
+
+    with pytest.raises(ValueError, match="closure_claims_unknown"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:numeric-claim",
+            verifier_session_id="numeric-verifier",
+            claims={"1": "pass", "2": "pass", "EXTRA": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=evidence,
+            verification_results=verification_results,
+        )
+
+    closed = store.close_task(
+        task_id,
+        candidate_digest="sha256:numeric-claim",
+        verifier_session_id="numeric-verifier",
+        claims={"1": "pass", "2": "pass"},
+        closure_packet=closure_packet,
+        evidence_refs=evidence,
+        verification_results=verification_results,
+    )
+    assert closed["status"] == "closed"
+    with pytest.raises(ValueError, match="closure_claim_identity_invalid"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:numeric-claim",
+            verifier_session_id="numeric-verifier",
+            claims={SpoofedString("1"): "pass", "2": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=evidence,
+            verification_results=verification_results,
+        )
+
+
+def _strict_task_ready_for_closure(
+    tmp_path, *, partial=False, uncovered_claim=False, suffix="full"
+):
+    sources = [
+        _strict_source("REQ", "original_requirement", "build exact results", 10),
+        _strict_source("PROTO", "approved_prototype", "results visual oracle", 20),
+    ]
+    store = TaskRuntimeStore(tmp_path / f"strict-closure-{suffix}.db")
+    task = store.create_task(title="strict closure", original_sources=sources)
+    spec = _strict_ui_spec()
+    task = _review_and_freeze(
+        store, task["task_id"], spec, expected_state_revision=task["state_revision"]
+    )
+    definition = _slice("s1")
+    definition.update(
+        {
+            "source_refs": ["REQ", "PROTO"],
+            "obligation_refs": spec["required_clauses"][0]["obligation_refs"],
+            "source_anchors": spec["required_clauses"][0]["source_anchors"],
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": ["visual", "interaction", "responsive"],
+        }
+    )
+    task = store.set_plan(
+        task["task_id"], [definition], expected_state_revision=task["state_revision"]
+    )
+    packet = store.claim_next_slice(
+        task["task_id"], worker_session_id="strict-worker", lease_seconds=60
+    )
+    assert packet is not None
+    result = _result(packet, candidate="sha256:strict-candidate")
+    evidence_obligations = definition["obligation_refs"]
+    if partial:
+        evidence_obligations = ["states:list/success"]
+    semantic_evidence = [
+        {
+            "kind": "ui-fidelity",
+            "ref": "uimax:strict-r1-pass",
+            "claim_id": "R1",
+            "obligation_refs": evidence_obligations,
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": definition["fidelity_dimensions"],
+            "source_anchors": packet["claim_contracts"]["R1"]["source_anchors"],
+            "candidate_digest": "sha256:strict-candidate",
+            "source_digest": packet["source_digest"],
+            "spec_digest": packet["spec_digest"],
+        },
+        {
+            "kind": "ui-fidelity",
+            "ref": "uimax:strict-n1-pass",
+            "claim_id": "N1",
+            "obligation_refs": ["negative_cases:no-generic-detail-error"],
+            "oracle_refs": ["PROTO"],
+            "fidelity_dimensions": ["visual"],
+            "source_anchors": packet["claim_contracts"]["N1"]["source_anchors"],
+            "candidate_digest": "sha256:strict-candidate",
+            "source_digest": packet["source_digest"],
+            "spec_digest": packet["spec_digest"],
+        },
+    ]
+    worker_evidence = [dict(item) for item in semantic_evidence]
+    result["evidence_refs"] = worker_evidence
+    submitted = store.submit_result(
+        task["task_id"], worker_session_id="strict-worker",
+        packet_id=packet["packet_id"], result=result,
+    )
+    if partial:
+        return store, task["task_id"], submitted, semantic_evidence, []
+    store.integrate_result(
+        task["task_id"], submitted["result_id"], integrator_session_id="strict-integrator"
+    )
+    closure_packet = store.build_closure_packet(
+        task["task_id"], verifier_session_id="strict-verifier"
+    )
+    verification = [
+        {
+            "command": packet["verification_commands"][0],
+            "exit_code": 0,
+            "candidate_digest": "sha256:strict-candidate",
+        }
+    ]
+    closure_evidence = semantic_evidence[:1] if uncovered_claim else semantic_evidence
+    return store, task["task_id"], closure_packet, closure_evidence, verification
+
+
+def test_strict_ui_closure_requires_obligation_oracle_and_candidate_binding(tmp_path):
+    store, task_id, packet, evidence, verification = _strict_task_ready_for_closure(tmp_path)
+    assert packet["obligation_digest"].startswith("sha256:")
+    assert packet["oracle_refs"] == ["PROTO"]
+    without_obligations = dict(evidence[0])
+    without_obligations.pop("obligation_refs")
+    with pytest.raises(ValueError, match="closure_obligation_evidence_incomplete"):
+        store.close_task(
+            task_id, candidate_digest="sha256:strict-candidate",
+            verifier_session_id="strict-verifier", claims={"R1": "pass", "N1": "pass"},
+            closure_packet=packet, evidence_refs=[without_obligations, evidence[1]],
+            verification_results=verification,
+        )
+    wrong_oracle = dict(evidence[0], oracle_refs=["REQ"])
+    with pytest.raises(ValueError, match="closure_oracle_binding_invalid"):
+        store.close_task(
+            task_id, candidate_digest="sha256:strict-candidate",
+            verifier_session_id="strict-verifier", claims={"R1": "pass", "N1": "pass"},
+            closure_packet=packet, evidence_refs=[wrong_oracle, evidence[1]],
+            verification_results=verification,
+        )
+    closed = store.close_task(
+        task_id, candidate_digest="sha256:strict-candidate",
+        verifier_session_id="strict-verifier", claims={"R1": "pass", "N1": "pass"},
+        closure_packet=packet, evidence_refs=evidence, verification_results=verification,
+    )
+    assert closed["status"] == "closed"
+    assert closed["closure"]["obligation_digest"] == packet["obligation_digest"]
+    assert closed["closure"]["oracle_refs"] == ["PROTO"]
+    assert closed["closure"]["source_digest"] == packet["source_digest"]
+    assert closed["closure"]["spec_digest"] == packet["spec_digest"]
+
+
+def test_strict_ui_partial_evidence_is_rejected_before_integration(tmp_path):
+    store, task_id, submitted, _evidence, _verification = _strict_task_ready_for_closure(
+        tmp_path, partial=True, suffix="partial"
+    )
+    assert submitted["disposition"] == "rejected"
+    assert "worker_semantic_evidence_claim_contract_mismatch" in submitted["reasons"]
+    current = store.get_task(task_id)
+    assert current["status"] == "running"
+    assert current["candidate_digest"] == ""
+    assert current["evidence_graph"] == []
+
+
+def test_strict_ui_each_required_claim_needs_closure_evidence(tmp_path):
+    store, task_id, packet, evidence, verification = _strict_task_ready_for_closure(
+        tmp_path, uncovered_claim=True, suffix="uncovered-claim"
+    )
+    with pytest.raises(ValueError, match="closure_evidence_claim_binding_incomplete"):
+        store.close_task(
+            task_id, candidate_digest="sha256:strict-candidate",
+            verifier_session_id="strict-verifier", claims={"R1": "pass", "N1": "pass"},
+            closure_packet=packet, evidence_refs=evidence,
+            verification_results=verification,
+        )
+
+
+def test_strict_ui_worker_rejects_swapped_per_claim_semantic_contracts(tmp_path):
+    store, task_id, definition, packet = _numeric_claim_strict_packet(
+        tmp_path, suffix="swapped-worker-contract", worker_session_id="swap-worker"
+    )
+    result = _result(packet, candidate="sha256:swapped-contract")
+    evidence = _numeric_claim_evidence(packet, definition)
+    first_contract = {
+        key: list(evidence[0][key])
+        for key in ("obligation_refs", "oracle_refs", "fidelity_dimensions")
+    }
+    second_contract = {
+        key: list(evidence[1][key])
+        for key in ("obligation_refs", "oracle_refs", "fidelity_dimensions")
+    }
+    for key, value in second_contract.items():
+        evidence[0][key] = value
+    for key, value in first_contract.items():
+        evidence[1][key] = value
+    for item in evidence:
+        item["candidate_digest"] = "sha256:swapped-contract"
+    result["claims"] = ["1", "2"]
+    result["evidence_refs"] = evidence
+
+    submitted = store.submit_result(
+        task_id,
+        worker_session_id="swap-worker",
+        packet_id=packet["packet_id"],
+        result=result,
+    )
+
+    assert submitted["disposition"] == "rejected"
+    assert "worker_semantic_evidence_claim_contract_mismatch" in submitted["reasons"]
+
+
+def test_strict_ui_worker_rejects_claim_source_anchor_drift(tmp_path):
+    store, task_id, definition, packet = _numeric_claim_strict_packet(
+        tmp_path, suffix="source-anchor-drift", worker_session_id="anchor-worker"
+    )
+    result = _result(packet, candidate="sha256:anchor-drift")
+    evidence = _numeric_claim_evidence(packet, definition)
+    for item in evidence:
+        item["candidate_digest"] = "sha256:anchor-drift"
+    evidence[0]["source_anchors"] = [
+        {
+            **evidence[0]["source_anchors"][0],
+            "locator": "inline:PROTO@sha256:tampered#partial",
+        }
+    ]
+    result["claims"] = ["1", "2"]
+    result["evidence_refs"] = evidence
+
+    submitted = store.submit_result(
+        task_id,
+        worker_session_id="anchor-worker",
+        packet_id=packet["packet_id"],
+        result=result,
+    )
+
+    assert submitted["disposition"] == "rejected"
+    assert "worker_semantic_evidence_claim_contract_mismatch" in submitted["reasons"]
+
+
+def test_strict_ui_closure_rejects_swapped_per_claim_semantic_contracts(tmp_path):
+    store, task_id, packet, evidence, verification = _strict_task_ready_for_closure(
+        tmp_path, suffix="swapped-closure-contract"
+    )
+    first_contract = {
+        key: list(evidence[0][key])
+        for key in ("obligation_refs", "oracle_refs", "fidelity_dimensions")
+    }
+    second_contract = {
+        key: list(evidence[1][key])
+        for key in ("obligation_refs", "oracle_refs", "fidelity_dimensions")
+    }
+    for key, value in second_contract.items():
+        evidence[0][key] = value
+    for key, value in first_contract.items():
+        evidence[1][key] = value
+
+    with pytest.raises(ValueError, match="closure_evidence_claim_contract_mismatch"):
+        store.close_task(
+            task_id,
+            candidate_digest="sha256:strict-candidate",
+            verifier_session_id="strict-verifier",
+            claims={"R1": "pass", "N1": "pass"},
+            closure_packet=packet,
+            evidence_refs=evidence,
+            verification_results=verification,
+        )
+
+
+def test_worker_rejects_non_native_governed_result_identities_before_replay(tmp_path):
+    class SpoofedString(str):
+        pass
+
+    store, task_id, definition, packet = _numeric_claim_strict_packet(
+        tmp_path, suffix="governed-identities", worker_session_id="1"
+    )
+    valid = _result(packet, candidate="1")
+    valid["claims"] = ["1", "2"]
+    valid["evidence_refs"] = _numeric_claim_evidence(packet, definition)
+    for item in valid["evidence_refs"]:
+        item["candidate_digest"] = 1
+
+    rejected = store.submit_result(
+        task_id,
+        worker_session_id=SpoofedString("1"),
+        packet_id=SpoofedString(packet["packet_id"]),
+        result=dict(valid, candidate_digest=1),
+    )
+
+    assert rejected["disposition"] == "rejected"
+    assert "worker_result_identity_invalid" in rejected["reasons"]
+    with store._connect() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM worker_results WHERE task_id = ? AND disposition != 'rejected'",
+            (task_id,),
+        ).fetchone()[0] == 0
+
+
+def test_closure_rejects_non_native_governed_identities(tmp_path):
+    class SpoofedString(str):
+        pass
+
+    store, task_id, packet, evidence, verification = _strict_task_ready_for_closure(
+        tmp_path, suffix="closure-governed-identities"
+    )
+    evidence = [dict(item) for item in evidence]
+    verification = [dict(item) for item in verification]
+    for item in evidence:
+        item["candidate_digest"] = SpoofedString(item["candidate_digest"])
+    verification[0]["candidate_digest"] = SpoofedString(
+        verification[0]["candidate_digest"]
+    )
+
+    with pytest.raises(ValueError, match="closure_identity_invalid"):
+        store.close_task(
+            task_id,
+            candidate_digest=SpoofedString("sha256:strict-candidate"),
+            verifier_session_id=SpoofedString("strict-verifier"),
+            claims={"R1": "pass", "N1": "pass"},
+            closure_packet=packet,
+            evidence_refs=evidence,
+            verification_results=verification,
+        )
+    assert store.get_task(task_id)["status"] != "closed"
+
+
+def test_context_packet_digest_requires_exact_native_identity(tmp_path):
+    class SpoofedString(str):
+        pass
+
+    class SpoofedDict(dict):
+        pass
+
+    store = TaskRuntimeStore(tmp_path / "packet-digest-identity.db")
+    payload = {"schema": "probe", "packet_id": "P"}
+    digest = task_runtime_module._digest(payload)
+    valid_packet = {**payload, "packet_digest": digest}
+
+    assert store.verify_context_packet(valid_packet) is True
+    assert (
+        store.verify_context_packet(
+            {**payload, "packet_digest": SpoofedString(digest)}
+        )
+        is False
+    )
+    assert store.verify_context_packet(SpoofedDict(valid_packet)) is False
+    assert (
+        store.verify_context_packet(
+            {
+                "schema": SpoofedString("probe"),
+                "packet_id": "P",
+                "packet_digest": digest,
+            }
+        )
+        is False
+    )
+
+
+def test_context_packet_verification_rejects_cycles_and_excessive_depth(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "packet-bounds.db")
+    cyclic: list[object] = []
+    cyclic.append(cyclic)
+    assert (
+        store.verify_context_packet(
+            {"packet_digest": "sha256:not-reached", "payload": cyclic}
+        )
+        is False
+    )
+
+    deeply_nested: object = "leaf"
+    for _ in range(110):
+        deeply_nested = [deeply_nested]
+    assert (
+        store.verify_context_packet(
+            {"packet_digest": "sha256:not-reached", "payload": deeply_nested}
+        )
+        is False
+    )
+    assert (
+        store.verify_context_packet(
+            {"packet_digest": "sha256:not-reached", "payload": [None] * 10_001}
+        )
+        is False
+    )
+
+
+def test_worker_result_rejects_cycles_and_excessive_depth_before_replay(tmp_path):
+    store, task_id, definition, packet = _numeric_claim_strict_packet(
+        tmp_path, suffix="worker-bounds", worker_session_id="bounded-worker"
+    )
+    valid_result = _result(packet, candidate="sha256:numeric-claim")
+    valid_result["claims"] = ["1", "2"]
+    valid_result["evidence_refs"] = _numeric_claim_evidence(packet, definition)
+
+    invalid_results = []
+    cyclic: list[object] = []
+    cyclic.append(cyclic)
+    cyclic_result = dict(valid_result)
+    cyclic_result["risks"] = cyclic
+    invalid_results.append(cyclic_result)
+
+    deeply_nested: object = "leaf"
+    for _ in range(110):
+        deeply_nested = [deeply_nested]
+    deep_result = dict(valid_result)
+    deep_result["state_delta_proposal"] = {"nested": deeply_nested}
+    invalid_results.append(deep_result)
+
+    wide_result = dict(valid_result)
+    wide_result["risks"] = [None] * 10_001
+    invalid_results.append(wide_result)
+
+    before_revision = store.get_task(task_id)["state_revision"]
+    for result in invalid_results:
+        rejected = store.submit_result(
+            task_id,
+            worker_session_id="bounded-worker",
+            packet_id=packet["packet_id"],
+            result=result,
+        )
+        assert rejected["disposition"] == "rejected"
+        assert rejected.get("idempotent_replay") is not True
+        assert "worker_result_invalid_field_types" in rejected["reasons"]
+
+    assert store.get_task(task_id)["state_revision"] == before_revision
+    with sqlite3.connect(store.path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM worker_results WHERE task_id = ?", (task_id,)
+        ).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("field", ["slice_id", "input_digest"])
+def test_worker_rejects_non_native_packet_binding_fields(tmp_path, field):
+    class SpoofedString(str):
+        pass
+
+    store, task_id, definition, packet = _numeric_claim_strict_packet(
+        tmp_path, suffix=f"worker-binding-{field}", worker_session_id="binding-worker"
+    )
+    result = _result(packet, candidate="sha256:numeric-claim")
+    result["claims"] = ["1", "2"]
+    result["evidence_refs"] = _numeric_claim_evidence(packet, definition)
+    result[field] = SpoofedString(result[field])
+
+    rejected = store.submit_result(
+        task_id,
+        worker_session_id="binding-worker",
+        packet_id=packet["packet_id"],
+        result=result,
+    )
+
+    assert rejected["disposition"] == "rejected"
+    assert "worker_result_identity_invalid" in rejected["reasons"]
+
+
+def test_worker_and_closure_reject_non_native_evidence_ref(tmp_path):
+    class SpoofedString(str):
+        pass
+
+    store, task_id, definition, packet = _numeric_claim_strict_packet(
+        tmp_path, suffix="worker-evidence-ref", worker_session_id="evidence-worker"
+    )
+    result = _result(packet, candidate="sha256:numeric-claim")
+    result["claims"] = ["1", "2"]
+    result["evidence_refs"] = _numeric_claim_evidence(packet, definition)
+    result["evidence_refs"][0]["ref"] = SpoofedString(
+        result["evidence_refs"][0]["ref"]
+    )
+    rejected = store.submit_result(
+        task_id,
+        worker_session_id="evidence-worker",
+        packet_id=packet["packet_id"],
+        result=result,
+    )
+    assert rejected["disposition"] == "rejected"
+    assert "worker_evidence_refs_invalid" in rejected["reasons"]
+
+    closure_store, closure_task_id, closure_packet, evidence, verification = (
+        _strict_task_ready_for_closure(tmp_path, suffix="closure-evidence-ref")
+    )
+    evidence = [dict(item) for item in evidence]
+    evidence[0]["ref"] = SpoofedString(evidence[0]["ref"])
+    with pytest.raises(ValueError, match="closure_evidence_required"):
+        closure_store.close_task(
+            closure_task_id,
+            candidate_digest="sha256:strict-candidate",
+            verifier_session_id="strict-verifier",
+            claims={"R1": "pass", "N1": "pass"},
+            closure_packet=closure_packet,
+            evidence_refs=evidence,
+            verification_results=verification,
+        )
+    assert closure_store.get_task(closure_task_id)["status"] != "closed"
+
+
+def test_integrator_rejects_non_native_result_identity_before_mutation(tmp_path):
+    class SpoofedString(str):
+        pass
+
+    store, task_id, definition, packet = _numeric_claim_strict_packet(
+        tmp_path, suffix="integrator-result-id", worker_session_id="result-worker"
+    )
+    result = _result(packet, candidate="sha256:numeric-claim")
+    result["claims"] = ["1", "2"]
+    result["evidence_refs"] = _numeric_claim_evidence(packet, definition)
+    accepted = store.submit_result(
+        task_id,
+        worker_session_id="result-worker",
+        packet_id=packet["packet_id"],
+        result=result,
+    )
+    assert accepted["disposition"] == "accepted_for_integration"
+    before = store.get_task(task_id)
+
+    with pytest.raises(ValueError, match="result_id_required"):
+        store.integrate_result(
+            task_id,
+            SpoofedString(accepted["result_id"]),
+            integrator_session_id="independent-integrator",
+        )
+
+    after = store.get_task(task_id)
+    assert after["state_revision"] == before["state_revision"]
+    assert after["status"] == before["status"]
+
+
+def test_failed_legacy_owner_upgrade_rolls_back_schema_and_retries_deterministically(tmp_path):
+    path = tmp_path / "legacy-owner-transaction.db"
+    seed = TaskRuntimeStore(path)
+    task = seed.create_task(
+        title="legacy owner migration",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    with sqlite3.connect(path) as conn:
+        conn.execute("ALTER TABLE tasks DROP COLUMN owner_profile")
+        conn.execute("DROP TRIGGER task_state_events_no_delete")
+        conn.execute("DELETE FROM task_state_events")
+        conn.execute(
+            "UPDATE tasks SET original_sources_json = ? WHERE task_id = ?",
+            ('[{"source_id":1,"content":"invalid"}]', task["task_id"]),
+        )
+
+    with pytest.raises(ValueError, match="original_source_identity_invalid"):
+        TaskRuntimeStore(path, owner_profile="profile-a")
+
+    with sqlite3.connect(path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+        assert "owner_profile" not in columns
+        conn.execute(
+            "UPDATE tasks SET original_sources_json = ? WHERE task_id = ?",
+            ('[{"source_id":"S0","content":"original"}]', task["task_id"]),
+        )
+
+    reopened = TaskRuntimeStore(path, owner_profile="profile-a")
+    assert reopened.get_task(task["task_id"])["owner_profile"] == "profile-a"
+
+
+def test_sql_script_transactional_executor_handles_multiple_statements_per_line():
+    with sqlite3.connect(":memory:") as conn:
+        task_runtime_module._execute_sql_script_transactionally(
+            conn,
+            "CREATE TABLE items (value INTEGER); "
+            "INSERT INTO items VALUES (1); "
+            "CREATE TRIGGER no_more BEFORE INSERT ON items BEGIN "
+            "SELECT RAISE(ABORT, 'no_more'); END;",
+        )
+        assert conn.execute("SELECT value FROM items").fetchall() == [(1,)]
+        with pytest.raises(sqlite3.IntegrityError, match="no_more"):
+            conn.execute("INSERT INTO items VALUES (2)")
+
+
+def test_legacy_upgrade_rolls_back_schema_and_data_when_post_ddl_backfill_fails(tmp_path):
+    path = tmp_path / "legacy-post-ddl-failure.db"
+    seed = TaskRuntimeStore(path)
+    task = seed.create_task(
+        title="post-DDL migration failure",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TRIGGER task_state_events_no_delete")
+        conn.execute("DELETE FROM task_state_events")
+        conn.execute("DROP TABLE spec_reviews")
+        conn.execute("ALTER TABLE tasks DROP COLUMN owner_profile")
+        conn.execute(
+            "UPDATE tasks SET source_events_json = ? WHERE task_id = ?",
+            ('[{"event_id":"E1","source_id":"S0","content":"correction"}]', task["task_id"]),
+        )
+        conn.execute(
+            "CREATE TRIGGER abort_source_event_backfill "
+            "BEFORE INSERT ON source_events BEGIN "
+            "SELECT RAISE(ABORT, 'injected_backfill_failure'); END"
+        )
+        before = tuple(conn.iterdump())
+
+    with pytest.raises(sqlite3.IntegrityError, match="injected_backfill_failure"):
+        TaskRuntimeStore(path, owner_profile="profile-a")
+
+    with sqlite3.connect(path) as conn:
+        after = tuple(conn.iterdump())
+        assert after == before
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+        assert "owner_profile" not in columns
+        assert conn.execute("SELECT COUNT(*) FROM source_events").fetchone()[0] == 0
+        conn.execute("DROP TRIGGER abort_source_event_backfill")
+
+    reopened = TaskRuntimeStore(path, owner_profile="profile-a")
+    migrated = reopened.get_task(task["task_id"])
+    assert migrated["owner_profile"] == "profile-a"
+    assert [event["event_id"] for event in migrated["source_events"]] == ["E1"]
+
+
+def test_legacy_backfill_without_recorded_at_is_deterministic_across_identical_copies(
+    tmp_path, monkeypatch
+):
+    seed_path = tmp_path / "legacy-deterministic-seed.db"
+    seed = TaskRuntimeStore(seed_path)
+    task = seed.create_task(
+        title="deterministic legacy event",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    with sqlite3.connect(seed_path) as conn:
+        conn.execute(
+            "UPDATE tasks SET source_events_json = ? WHERE task_id = ?",
+            (
+                '[{"event_id":"E2","content":false},'
+                '{"event_id":"E1","content":0}]',
+                task["task_id"],
+            ),
+        )
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    paths = [tmp_path / "legacy-copy-a.db", tmp_path / "legacy-copy-b.db"]
+    for copy_path in paths:
+        shutil.copyfile(seed_path, copy_path)
+
+    snapshots = []
+    for index, copy_path in enumerate(paths, start=1):
+        monkeypatch.setattr(
+            task_runtime_module,
+            "_utc_now",
+            lambda index=index: f"2026-08-28T00:00:0{index}Z",
+        )
+        reopened = TaskRuntimeStore(copy_path)
+        with sqlite3.connect(copy_path) as conn:
+            conn.row_factory = sqlite3.Row
+            task_row = conn.execute(
+                "SELECT * FROM tasks WHERE task_id = ?", (task["task_id"],)
+            ).fetchone()
+            assert task_row is not None
+            snapshot = reopened._source_snapshot(conn, task_row)
+        snapshots.append(snapshot)
+
+    assert snapshots[0] == snapshots[1]
+    assert task_runtime_module._digest(snapshots[0]) == task_runtime_module._digest(
+        snapshots[1]
+    )
+    assert [event["event_id"] for event in snapshots[0]["source_events"]] == [
+        "E2",
+        "E1",
+    ]
+    migrated_contents = [event["content"] for event in snapshots[0]["source_events"]]
+    assert type(migrated_contents[0]) is bool and migrated_contents[0] is False
+    assert type(migrated_contents[1]) is int and migrated_contents[1] == 0
+
+
+def test_legacy_upgrade_rejects_source_artifact_event_identity_collision_before_schema_mutation(
+    tmp_path,
+):
+    path = tmp_path / "legacy-source-namespace-collision.db"
+    seed = TaskRuntimeStore(path)
+    task = seed.create_task(
+        title="legacy source namespace collision",
+        original_sources=[{"source_id": "SAME", "content": "original"}],
+    )
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE spec_reviews")
+        conn.execute("ALTER TABLE tasks DROP COLUMN owner_profile")
+        conn.execute(
+            "UPDATE tasks SET source_events_json = ? WHERE task_id = ?",
+            ('[{"event_id":"SAME","content":"correction"}]', task["task_id"]),
+        )
+        before = tuple(conn.iterdump())
+
+    with pytest.raises(ValueError, match="task_source_identity_invalid"):
+        TaskRuntimeStore(path, owner_profile="profile-a")
+
+    with sqlite3.connect(path) as conn:
+        assert tuple(conn.iterdump()) == before
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+        assert "owner_profile" not in columns
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'spec_reviews'"
+        ).fetchone()[0] == 0
+
+
+def test_concurrent_fresh_initializers_share_one_atomic_schema(tmp_path):
+    initializer_count = 12
+    for round_index in range(8):
+        path = tmp_path / f"concurrent-fresh-init-{round_index}.db"
+        barrier = threading.Barrier(initializer_count)
+
+        def initialize(_: int) -> str:
+            barrier.wait(timeout=10)
+            return TaskRuntimeStore(path).owner_profile
+
+        with ThreadPoolExecutor(max_workers=initializer_count) as pool:
+            owners = list(pool.map(initialize, range(initializer_count)))
+
+        assert len(set(owners)) == 1
+        with sqlite3.connect(path) as conn:
+            assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+            assert conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
+            ).fetchone()[0] == 1
+
+
+def test_post_commit_wal_failure_is_recoverable_without_schema_divergence(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "post-commit-wal-retry.db"
+    original = TaskRuntimeStore._ensure_wal_mode
+    calls = 0
+
+    def fail_once(self):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise sqlite3.OperationalError("injected_wal_failure")
+        return original(self)
+
+    monkeypatch.setattr(TaskRuntimeStore, "_ensure_wal_mode", fail_once)
+    with pytest.raises(sqlite3.OperationalError, match="injected_wal_failure"):
+        TaskRuntimeStore(path)
+
+    recovered = TaskRuntimeStore(path)
+    assert recovered.owner_profile
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
+        ).fetchone()[0] == 1
+
+
+def test_legacy_nonempty_source_collection_requires_native_content_on_upgrade(tmp_path):
+    path = tmp_path / "legacy-missing-content.db"
+    seed = TaskRuntimeStore(path)
+    task = seed.create_task(
+        title="legacy source content",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE tasks SET original_sources_json = ? WHERE task_id = ?",
+            ('[{"source_id":"S0"}]', task["task_id"]),
+        )
+
+    with pytest.raises(ValueError, match="original_source_content_invalid"):
+        TaskRuntimeStore(path)
+
+    with sqlite3.connect(path) as conn:
+        persisted = conn.execute(
+            "SELECT original_sources_json FROM tasks WHERE task_id = ?", (task["task_id"],)
+        ).fetchone()[0]
+    assert persisted == '[{"source_id":"S0"}]'
+
+
+def test_source_event_source_ref_requires_native_existing_artifact_before_mutation(tmp_path):
+    class SpoofedString(str):
+        pass
+
+    store = TaskRuntimeStore(tmp_path / "source-event-source-ref.db")
+    task = store.create_task(
+        title="source event source ref",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    for source_id, error in (
+        (1, "source_event_source_identity_invalid"),
+        (True, "source_event_source_identity_invalid"),
+        ("", "source_event_source_identity_invalid"),
+        ("   ", "source_event_source_identity_invalid"),
+        (SpoofedString("S0"), "source_event_source_identity_invalid"),
+        ("missing", "source_event_source_ref_unknown"),
+    ):
+        with pytest.raises(ValueError, match=error):
+            store.append_source_event(
+                task["task_id"],
+                {"event_id": f"E-{type(source_id).__name__}-{source_id!r}", "source_id": source_id, "content": "correction"},
+            )
+    current = store.get_task(task["task_id"])
+    assert current["state_revision"] == task["state_revision"]
+    assert current["source_events"] == []
+
+    accepted = store.append_source_event(
+        task["task_id"],
+        {"event_id": "E-valid", "source_id": "S0", "content": "valid correction"},
+    )
+    assert accepted["state_revision"] == task["state_revision"] + 1
+    assert accepted["source_events"][0]["source_id"] == "S0"
+
+
+def test_source_event_identity_cannot_collide_with_source_artifact_before_mutation(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "source-namespace-collision.db")
+    task = store.create_task(
+        title="source namespace collision",
+        original_sources=[{"source_id": "SAME", "content": "original"}],
+    )
+
+    with pytest.raises(ValueError, match="task_source_identity_invalid"):
+        store.append_source_event(
+            task["task_id"], {"event_id": "SAME", "content": "correction"}
+        )
+
+    unchanged = store.get_task(task["task_id"])
+    assert unchanged["state_revision"] == task["state_revision"]
+    assert unchanged["source_events"] == []
+
+
+def test_source_event_identity_rejects_non_string_before_mutation(tmp_path):
+    class SpoofedString(str):
+        pass
+
+    store = TaskRuntimeStore(tmp_path / "source-event-identity.db")
+    task = store.create_task(
+        title="source event identity",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    for invalid_event_id in (1, SpoofedString("E1")):
+        with pytest.raises(ValueError, match="source_event_identity_invalid"):
+            store.append_source_event(
+                task["task_id"],
+                {"event_id": invalid_event_id, "content": "correction"},
+            )
+    current = store.get_task(task["task_id"])
+    assert current["state_revision"] == task["state_revision"]
+    assert current["source_events"] == []
+
+
+def test_source_event_live_admission_preserves_false_and_zero_scalar_content(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "source-event-false-zero-content.db")
+    task = store.create_task(
+        title="source event scalar content parity",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+
+    for index, content in enumerate((False, 0), start=1):
+        updated = store.append_source_event(
+            task["task_id"],
+            {"event_id": f"E{index}", "content": content},
+        )
+        observed = updated["source_events"][-1]["content"]
+        assert type(observed) is type(content)
+        assert observed == content
+
+
+def test_source_event_replay_uses_json_type_sensitive_semantics(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "source-event-type-sensitive-replay.db")
+    task = store.create_task(
+        title="source event type-sensitive replay",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    appended = store.append_source_event(
+        task["task_id"], {"event_id": "E1", "content": 1}
+    )
+    with pytest.raises(ValueError, match="source_event_id_conflict"):
+        store.append_source_event(
+            task["task_id"], {"event_id": "E1", "content": True}
+        )
+    current = store.get_task(task["task_id"])
+    assert current["state_revision"] == appended["state_revision"]
+    assert len(current["source_events"]) == 1
+    assert type(current["source_events"][0]["content"]) is int
+    assert current["source_events"][0]["content"] == 1
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        {1: "coerced-key"},
+        ("coerced-sequence",),
+        float("nan"),
+    ],
+    ids=["non-string-object-key", "tuple-to-array", "non-finite-number"],
+)
+def test_source_event_rejects_non_native_json_payload_before_mutation(
+    tmp_path, content
+):
+    store = TaskRuntimeStore(tmp_path / "source-event-native-json.db")
+    task = store.create_task(
+        title="source event native JSON",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    with pytest.raises(ValueError, match="source_event_payload_invalid"):
+        store.append_source_event(
+            task["task_id"], {"event_id": "E1", "content": content}
+        )
+    current = store.get_task(task["task_id"])
+    assert current["state_revision"] == task["state_revision"]
+    assert current["source_events"] == []
+
+
+def test_source_event_rejects_explicit_null_identity_and_malformed_timestamp_before_mutation(
+    tmp_path,
+):
+    class SpoofedString(str):
+        pass
+
+    invalid_events = [
+        {"event_id": None, "content": "null identity"},
+        {"event_id": "E1", "content": "numeric timestamp", "recorded_at": 7},
+        {"event_id": "E2", "content": "blank timestamp", "recorded_at": ""},
+        {
+            "event_id": "E3",
+            "content": "subclass timestamp",
+            "recorded_at": SpoofedString("2026-08-28T00:00:00Z"),
+        },
+    ]
+
+    for index, event in enumerate(invalid_events):
+        store = TaskRuntimeStore(tmp_path / f"live-source-admission-{index}.db")
+        task = store.create_task(
+            title="live source admission",
+            original_sources=[{"source_id": "S0", "content": "original"}],
+        )
+        expected = (
+            "source_event_identity_invalid"
+            if event.get("event_id", object()) is None
+            else "source_event_recorded_at_invalid"
+        )
+        with pytest.raises(ValueError, match=expected):
+            store.append_source_event(task["task_id"], event)
+        current = store.get_task(task["task_id"])
+        assert current["state_revision"] == task["state_revision"]
+        assert current["source_events"] == []
+
+
+def test_source_event_authority_uses_append_order_not_caller_timestamp(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        task_runtime_module, "_utc_now", lambda: "2026-08-27T00:00:00+00:00"
+    )
+    store = TaskRuntimeStore(tmp_path / "source-event-order.db")
+    task = store.create_task(
+        title="source event order",
+        original_sources=[{"source_id": "S0", "content": "original"}],
+    )
+    task = store.append_source_event(
+        task["task_id"],
+        {
+            "event_id": "E1",
+            "content": "first correction",
+            "recorded_at": "2999-01-01T00:00:00+00:00",
+        },
+    )
+    task = store.append_source_event(
+        task["task_id"],
+        {
+            "event_id": "E2",
+            "content": "latest correction",
+            "recorded_at": "1999-01-01T00:00:00+00:00",
+        },
+    )
+    assert [item["event_id"] for item in task["source_events"]] == ["E1", "E2"]
+    assert task["source_events"][0]["recorded_at"] != "2999-01-01T00:00:00+00:00"
+    assert task["source_events"][1]["recorded_at"] != "1999-01-01T00:00:00+00:00"
+    review = store.record_spec_review(
+        task["task_id"],
+        _spec_for_sources("E2", "E1", "S0"),
+        reviewer_session_id="append-order-reviewer",
+        verdict="approved",
+        findings=[],
+        expected_state_revision=task["state_revision"],
+    )
+    assert review["verdict"] == "approved"
+
+
+def test_material_source_change_invalidates_semantic_chain(tmp_path):
+    store, task_id, packet, evidence, verification = _strict_task_ready_for_closure(
+        tmp_path, suffix="source-change"
+    )
+    closed = store.close_task(
+        task_id, candidate_digest="sha256:strict-candidate",
+        verifier_session_id="strict-verifier", claims={"R1": "pass", "N1": "pass"},
+        closure_packet=packet, evidence_refs=evidence, verification_results=verification,
+    )
+    prior_review_ids = [item["review_id"] for item in closed["spec_reviews"]]
+    new_source = _strict_source(
+        "VIEWPORT390", "original_requirement", "also support 390x844 viewport", 15
+    )
+    new_source["event_id"] = new_source.pop("source_id")
+    invalidated = store.append_source_event(task_id, new_source)
+    assert invalidated["status"] == "draft"
+    assert invalidated["implementation_graph"] == []
+    assert invalidated["slices"] == []
+    assert invalidated["candidate_digest"] == ""
+    assert invalidated["evidence_graph"] == []
+    assert invalidated["closure"] == {}
+    payload = invalidated["state_events"][-1]["payload"]
+    assert payload["event_id"] == "VIEWPORT390"
+    assert payload["spec_invalidated"] is True
+    assert payload["closure_invalidated"] is True
+    assert [item["review_id"] for item in invalidated["spec_reviews"]] == prior_review_ids
+    with pytest.raises(ValueError, match="task_not_claimable"):
+        store.claim_next_slice(
+            task_id, worker_session_id="stale-worker", lease_seconds=60
+        )
+    revised = _strict_ui_spec()
+    revised["governance"]["source_authority"] = ["REQ", "VIEWPORT390", "PROTO"]
+    revised["governance"]["source_coverage"]["VIEWPORT390"] = ["R1"]
+    revised["required_clauses"][0]["source_refs"].append("VIEWPORT390")
+    with pytest.raises(ValueError, match="independent_spec_review_required"):
+        store.freeze_spec(
+            task_id, revised, compiler_session_id="stale-compiler",
+            expected_state_revision=invalidated["state_revision"],
         )
 
 
@@ -1141,55 +3398,6 @@ def test_source_coverage_edges_must_match_claim_source_refs_bidirectionally(tmp_
             findings=[],
             expected_state_revision=task["state_revision"],
         )
-
-
-def test_source_events_use_runtime_append_order_and_reject_coerced_identity(tmp_path):
-    store = TaskRuntimeStore(tmp_path / "source-event-order.db")
-    task = store.create_task(
-        title="source event order",
-        original_sources=[
-            {"source_id": "S0", "kind": "user_message", "content": "original"}
-        ],
-    )
-    with pytest.raises(ValueError, match="source_event_identity_invalid"):
-        store.append_source_event(
-            task["task_id"],
-            {"event_id": 1, "content": "numeric identity"},
-        )
-
-    store.append_source_event(
-        task["task_id"],
-        {
-            "event_id": "E-first",
-            "kind": "user_correction",
-            "content": "first append",
-            "recorded_at": "2999-01-01T00:00:00+00:00",
-        },
-    )
-    latest = store.append_source_event(
-        task["task_id"],
-        {
-            "event_id": "E-latest",
-            "kind": "user_correction",
-            "content": "latest append",
-            "recorded_at": "1900-01-01T00:00:00+00:00",
-        },
-    )
-    assert latest["source_events"][0]["event_id"] == "E-first"
-    assert latest["source_events"][1]["event_id"] == "E-latest"
-    assert latest["source_events"][0]["recorded_at"] != "2999-01-01T00:00:00+00:00"
-    assert latest["source_events"][1]["recorded_at"] != "1900-01-01T00:00:00+00:00"
-
-    spec = _spec_for_sources("E-latest", "E-first", "S0")
-    approved = store.record_spec_review(
-        task["task_id"],
-        spec,
-        reviewer_session_id="source-order-reviewer",
-        verdict="approved",
-        findings=[],
-        expected_state_revision=latest["state_revision"],
-    )
-    assert approved["verdict"] == "approved"
 
 
 def test_new_source_invalidates_spec_plan_candidate_and_requires_fresh_review(tmp_path):
@@ -1998,15 +4206,10 @@ def test_deterministic_integration_unlocks_dependency_and_independent_closure(tm
             worker_session_id="stale-plan-worker",
             lease_seconds=60,
         )
-    respecified_spec = _spec_for_sources("S-U1", "post-close-correction")
-    respecified_spec["governance"]["source_authority"] = [
-        "post-close-correction",
-        "S-U1",
-    ]
     respecified = _review_and_freeze(
         store,
         task_id,
-        respecified_spec,
+        _spec_for_sources("S-U1", "post-close-correction"),
         expected_state_revision=invalidated["state_revision"],
         reviewer_session_id="spec-reviewer-after-correction",
         compiler_session_id="spec-compiler-after-correction",
@@ -2210,3 +4413,52 @@ def test_state_event_ledger_binds_authoritative_task_projection(tmp_path):
         ).fetchone()[0] == 0
     with pytest.raises(ValueError, match="task_projection_digest_invalid"):
         store.get_task(task_id)
+
+
+def test_source_events_use_runtime_append_order_and_reject_coerced_identity(tmp_path):
+    store = TaskRuntimeStore(tmp_path / "source-event-order.db")
+    task = store.create_task(
+        title="source event order",
+        original_sources=[
+            {"source_id": "S0", "kind": "user_message", "content": "original"}
+        ],
+    )
+    with pytest.raises(ValueError, match="source_event_identity_invalid"):
+        store.append_source_event(
+            task["task_id"],
+            {"event_id": 1, "content": "numeric identity"},
+        )
+
+    store.append_source_event(
+        task["task_id"],
+        {
+            "event_id": "E-first",
+            "kind": "user_correction",
+            "content": "first append",
+            "recorded_at": "2999-01-01T00:00:00+00:00",
+        },
+    )
+    latest = store.append_source_event(
+        task["task_id"],
+        {
+            "event_id": "E-latest",
+            "kind": "user_correction",
+            "content": "latest append",
+            "recorded_at": "1900-01-01T00:00:00+00:00",
+        },
+    )
+    assert latest["source_events"][0]["event_id"] == "E-first"
+    assert latest["source_events"][1]["event_id"] == "E-latest"
+    assert latest["source_events"][0]["recorded_at"] != "2999-01-01T00:00:00+00:00"
+    assert latest["source_events"][1]["recorded_at"] != "1900-01-01T00:00:00+00:00"
+
+    spec = _spec_for_sources("E-latest", "E-first", "S0")
+    approved = store.record_spec_review(
+        task["task_id"],
+        spec,
+        reviewer_session_id="source-order-reviewer",
+        verdict="approved",
+        findings=[],
+        expected_state_revision=latest["state_revision"],
+    )
+    assert approved["verdict"] == "approved"

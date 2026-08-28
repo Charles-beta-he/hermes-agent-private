@@ -141,7 +141,6 @@ def test_bound_turn_replay_is_exactly_once_and_conflicts_are_rejected(tmp_path, 
             task["task_id"],
             {
                 "event_id": "telegram:tg:42:7:update-99",
-                "source_id": "telegram:tg:42:7:update-99",
                 "kind": "user_message",
                 "content": "different content under same turn identity",
                 "entrypoint": "telegram",
