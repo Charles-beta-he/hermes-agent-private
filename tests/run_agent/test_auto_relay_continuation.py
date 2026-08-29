@@ -618,6 +618,86 @@ def test_try_auto_relay_starts_successor_turn_and_annotates_result(tmp_path, mon
     assert json.loads((tmp_path / "relay-relay-session-1.json").read_text())["summary"] == "partial handoff summary"
 
 
+def test_auto_relay_projects_bound_task_without_source_or_authority_revival(tmp_path, monkeypatch):
+    import agent.conversation_loop as conversation_loop
+    from agent.task_runtime import TaskRuntimeStore
+    from agent.task_runtime_ingress import hydrate_bound_task_context
+
+    db_path = tmp_path / "runtime.db"
+    monkeypatch.setenv("HERMES_TASK_RUNTIME_DB", str(db_path))
+    monkeypatch.setenv("HERMES_RELAY_PACKET_DIR", str(tmp_path / "relay"))
+    monkeypatch.setenv("HERMES_CONTINUATION_DIR", str(tmp_path / "continuations"))
+    runtime_store = TaskRuntimeStore(db_path)
+    task = runtime_store.create_task(
+        title="Relay conversation task",
+        original_sources=[
+            {"source_id": "request-1", "kind": "user_message", "content": "original"}
+        ],
+    )
+    runtime_store.bind_entrypoint(
+        task["task_id"], entrypoint="cli", session_id="relay-session"
+    )
+    todo_store = TodoStore()
+    projected = []
+
+    def fake_run_conversation(
+        agent,
+        user_message,
+        media,
+        history,
+        task_id,
+        stream_callback,
+        *,
+        persist_user_message,
+    ):
+        projected.append(
+            hydrate_bound_task_context(
+                agent,
+                user_message=persist_user_message,
+                turn_id="relay-turn-1",
+            )
+        )
+        assert _apply_whole_goal_continuation_directive(agent, user_message) is None
+        return {"final_response": "successor final", "messages": history}
+
+    monkeypatch.setattr(conversation_loop, "run_conversation", fake_run_conversation)
+    agent = SimpleNamespace(
+        auto_relay_enabled=True,
+        _relay_count=0,
+        max_relay_count=3,
+        quiet_mode=True,
+        _safe_print=lambda *_args, **_kwargs: None,
+        session_id="relay-session",
+        platform="cli",
+        parent_session_id=None,
+        model="m",
+        provider="p",
+        max_iterations=2,
+        iteration_budget=IterationBudget(2),
+        _budget_exhausted_injected=True,
+        _budget_grace_call=True,
+        _todo_store=todo_store,
+        _relay_chain_continuation_requested=False,
+    )
+
+    result = _try_auto_relay(
+        agent,
+        final_response="summary mentions 自动推进",
+        interrupted=False,
+        turn_exit_reason="max_iterations_reached(2/2)",
+        messages=[{"role": "user", "content": "original"}],
+        api_call_count=2,
+        task_id=task["task_id"],
+        stream_callback=None,
+    )
+
+    assert result["final_response"] == "successor final"
+    assert projected and task["task_id"] in projected[0]
+    assert runtime_store.get_task(task["task_id"])["source_events"] == []
+    assert todo_store.continuation_mode() == "manual"
+    assert agent._turn_continuation_requested is False
+
+
 def test_try_auto_relay_refuses_blank_raw_summary_even_if_rendered_explanation_exists(monkeypatch):
     import agent.conversation_loop as conversation_loop
 

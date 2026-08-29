@@ -173,6 +173,44 @@ def test_bound_turn_replay_is_exactly_once_and_conflicts_are_rejected(tmp_path, 
             conn.execute("DELETE FROM source_events WHERE task_id = ?", (task["task_id"],))
 
 
+def test_synthetic_relay_projects_bound_task_without_user_source_write(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    monkeypatch.setenv("HERMES_TASK_RUNTIME_DB", str(db_path))
+    store = TaskRuntimeStore(db_path)
+    task = store.create_task(
+        title="Bound relay task",
+        original_sources=[
+            {"source_id": "request-1", "kind": "user_message", "content": "original"}
+        ],
+    )
+    store.bind_entrypoint(task["task_id"], entrypoint="cli", session_id="relay-session")
+    agent = SimpleNamespace(
+        platform="cli",
+        session_id="relay-session",
+        _auto_relay_active=True,
+    )
+    before = store.get_task(task["task_id"])
+
+    first = hydrate_bound_task_context(
+        agent,
+        user_message="Continue autonomously from the prior checkpoint.",
+        turn_id="relay-turn-1",
+    )
+    replay = hydrate_bound_task_context(
+        agent,
+        user_message="Continue autonomously from the prior checkpoint.",
+        turn_id="relay-turn-1",
+    )
+
+    assert first is not None and replay == first
+    payload = json.loads(first.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert payload["task_id"] == task["task_id"]
+    assert payload["source_index"]["event_count"] == 0
+    reopened = store.get_task(task["task_id"])
+    assert reopened["source_events"] == []
+    assert reopened["state_revision"] == before["state_revision"]
+
+
 def test_unbound_turn_has_no_projection_or_source_write(tmp_path, monkeypatch):
     db_path = tmp_path / "runtime.db"
     monkeypatch.setenv("HERMES_TASK_RUNTIME_DB", str(db_path))

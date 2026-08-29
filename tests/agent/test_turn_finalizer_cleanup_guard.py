@@ -172,6 +172,60 @@ def test_clean_turn_has_no_cleanup_errors_key():
     assert "cleanup_errors" not in result
 
 
+@pytest.mark.parametrize(
+    ("cleanup_surface", "expected_error"),
+    [
+        ("save_trajectory", "save_trajectory: trajectory disk full"),
+        ("cleanup_task_resources", "cleanup_task_resources: docker teardown EOF"),
+        ("persist_session", "persist_session: sqlite database is locked"),
+    ],
+)
+def test_cleanup_failure_blocks_relay_and_preserves_predecessor(
+    monkeypatch, cleanup_surface, expected_error
+):
+    from types import SimpleNamespace
+
+    import agent.conversation_loop as conversation_loop
+    import agent.selfcheck_operator as selfcheck_operator
+    from tools.todo_tool import TodoStore
+
+    relay_calls = []
+
+    def relay_successor(*args, **kwargs):
+        relay_calls.append((args, kwargs))
+        return {
+            "final_response": "successor",
+            "completed": True,
+            "messages": [],
+        }
+
+    monkeypatch.setattr(conversation_loop, "_try_auto_relay", relay_successor)
+    monkeypatch.setattr(
+        selfcheck_operator,
+        "observe_turn_result",
+        lambda **kwargs: SimpleNamespace(
+            event_id="disabled:test",
+            findings=[],
+            repair_plans=[],
+            ledger_dir="disabled",
+        ),
+    )
+    agent = _StubAgent(raise_in=(cleanup_surface,))
+    agent._todo_store = TodoStore()
+
+    result = _run(
+        agent,
+        final_response="checkpoint",
+        api_call_count=1,
+        turn_exit_reason="text_response(finish_reason=stop)",
+    )
+
+    assert relay_calls == []
+    assert result["final_response"] == "checkpoint"
+    assert result.get("cleanup_errors") == [expected_error]
+    assert result["completed"] is True
+
+
 def test_finalizer_passes_structured_todo_continuation_contract(monkeypatch):
     import agent.conversation_loop as conversation_loop
     from tools.todo_tool import TodoStore

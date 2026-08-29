@@ -99,8 +99,10 @@ def hydrate_bound_task_context(
     user_message: str,
     turn_id: str,
 ) -> str | None:
-    """Record a bound inbound turn and return its bounded runtime projection.
+    """Project a bound turn and record only genuine inbound user text.
 
+    Synthetic auto-relay turns still receive the bounded task projection, but
+    runtime-generated relay prompts are not authoritative human source events.
     Failures are logged and fail open so an unavailable advisory/control-plane
     database cannot take down an otherwise valid CLI or gateway turn.
     """
@@ -113,17 +115,18 @@ def hydrate_bound_task_context(
         task = store.resolve_entrypoint(entrypoint, session_id)
         if task is None:
             return None
-        task = store.append_source_event(
-            task["task_id"],
-            {
-                "event_id": f"{entrypoint}:{session_id}:{turn_id}",
-                "kind": "user_message",
-                "content": user_message,
-                "entrypoint": entrypoint,
-                "session_id": session_id,
-                "turn_id": turn_id,
-            },
-        )
+        if not getattr(agent, "_auto_relay_active", False):
+            task = store.append_source_event(
+                task["task_id"],
+                {
+                    "event_id": f"{entrypoint}:{session_id}:{turn_id}",
+                    "kind": "user_message",
+                    "content": user_message,
+                    "entrypoint": entrypoint,
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                },
+            )
         return _serialize_bounded(
             _projection(task, entrypoint=entrypoint, session_id=session_id)
         )

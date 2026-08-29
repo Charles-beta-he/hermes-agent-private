@@ -493,16 +493,18 @@ def finalize_turn(
     if _checkpoint_reason and not _auto_relay_summary:
         _turn_exit_reason = _checkpoint_reason
         _auto_relay_summary = str(final_response or "")
-    relay_result = _try_auto_relay(
-        agent,
-        final_response=_auto_relay_summary,
-        interrupted=interrupted,
-        turn_exit_reason=_turn_exit_reason,
-        messages=messages,
-        api_call_count=api_call_count,
-        task_id=task_id,
-        stream_callback=stream_callback,
-    )
+    relay_result = None
+    if not _cleanup_errors:
+        relay_result = _try_auto_relay(
+            agent,
+            final_response=_auto_relay_summary,
+            interrupted=interrupted,
+            turn_exit_reason=_turn_exit_reason,
+            messages=messages,
+            api_call_count=api_call_count,
+            task_id=task_id,
+            stream_callback=stream_callback,
+        )
     if relay_result is not None:
         if (
             _kanban_budget_task
