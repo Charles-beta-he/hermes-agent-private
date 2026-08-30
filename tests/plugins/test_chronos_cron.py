@@ -193,6 +193,28 @@ def test_fire_due_no_rearm_when_job_gone(chronos, monkeypatch):
     assert fake.provisions == []
 
 
+def test_fire_due_rearms_after_accepted_failed_execution(chronos, monkeypatch):
+    prov, fake = chronos
+    claimed = {"id": "j1", "run_claim": {"id": "token"}}
+    monkeypatch.setattr("cron.jobs.claim_job_for_execution", lambda jid: claimed)
+    monkeypatch.setattr(
+        "cron.scheduler.run_one_job",
+        lambda job, **kw: True,  # ordinary failure was durably completed
+    )
+    monkeypatch.setattr(
+        "cron.jobs.get_job",
+        lambda jid: {
+            "id": jid,
+            "enabled": True,
+            "last_status": "error",
+            "next_run_at": "2026-06-18T12:05:00+00:00",
+        },
+    )
+
+    assert prov.fire_due("j1") is True
+    assert [p["job_id"] for p in fake.provisions] == ["j1"]
+
+
 def test_fire_due_no_rearm_when_claim_lost(chronos, monkeypatch):
     """If the run didn't happen (claim lost), don't re-arm."""
     prov, fake = chronos

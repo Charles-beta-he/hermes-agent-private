@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cron.jobs import (
     AmbiguousJobReference,
-    claim_job_for_fire,
+    claim_job_for_execution,
     create_job,
     get_job,
     list_jobs,
@@ -604,11 +604,10 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
 def _execute_job_now(job: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a cron job immediately, outside the scheduler tick.
 
-    Atomically claims the job first via ``claim_job_for_fire`` — the same
-    at-most-once CAS the scheduler/external-provider fire path uses — so a
-    concurrently-running gateway ticker cannot also fire it (the claim both
-    blocks a duplicate fire and advances ``next_run_at`` for recurring jobs).
-    If the claim is lost (another fire is in flight), this is a no-op.
+    Atomically claims the job via ``claim_job_for_execution`` and executes the
+    exact fenced snapshot returned under that same store lock. This prevents a
+    delayed caller from re-reading and adopting a recovery successor's token or
+    trigger generation. If the claim is lost, this is a no-op.
 
     The actual firing is delegated to ``run_one_job`` — the single shared
     execute→save→deliver→mark body the ticker and external providers use — so
@@ -618,32 +617,49 @@ def _execute_job_now(job: Dict[str, Any]) -> Dict[str, Any]:
     Returns {"claimed": bool, "success": bool, "error": str|None}.
     """
     job_id = job["id"]
+    run_claim_id = None
+    run_trigger_generation = 0
+    claim_acquired = False
     try:
         from cron.scheduler import run_one_job
 
-        # At-most-once claim: bail without running if a tick/other fire owns it.
-        if not claim_job_for_fire(job_id):
+        claimed_job = claim_job_for_execution(job_id)
+        if claimed_job is None:
             return {"claimed": False, "success": False,
                     "error": "Job is already being fired by the scheduler; not run again."}
+        claim_acquired = True
 
-        # run_one_job records last_run_at/last_status via mark_job_run (which
-        # also clears the fire claim) and returns True iff it processed the job.
-        processed = run_one_job(job)
-        refreshed = get_job(job_id) or {}
-        ok = refreshed.get("last_status") == "ok"
+        run_claim = claimed_job.get("run_claim")
+        if isinstance(run_claim, dict):
+            run_claim_id = run_claim.get("id")
+        run_trigger_generation = int(claimed_job.get("trigger_generation", 0))
+
+        run_result: Dict[str, Any] = {}
+        processed = run_one_job(claimed_job, result_out=run_result)
         return {
             "claimed": True,
-            "success": bool(processed and ok),
-            "error": refreshed.get("last_error"),
+            "success": bool(
+                processed
+                and run_result.get("completion_accepted")
+                and run_result.get("execution_success")
+            ),
+            "error": run_result.get("error"),
         }
 
     except Exception as e:
         logger.error("Failed to execute cron job %s immediately: %s", job_id, e)
-        try:
-            mark_job_run(job_id, False, str(e))
-        except Exception:
-            pass
-        return {"claimed": True, "success": False, "error": str(e)}
+        if claim_acquired:
+            try:
+                mark_job_run(
+                    job_id,
+                    False,
+                    str(e),
+                    run_trigger_generation=run_trigger_generation,
+                    run_claim_id=run_claim_id,
+                )
+            except Exception:
+                pass
+        return {"claimed": claim_acquired, "success": False, "error": str(e)}
 
 
 def cronjob(

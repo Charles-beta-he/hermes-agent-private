@@ -150,10 +150,15 @@ create/update a cron job
       (authenticated with the agent's existing Nous token)
   → at fire time Nous calls the gateway: POST {callback_url}/api/cron/fire
       (authenticated with a short-lived, purpose-scoped Nous-minted JWT)
-  → the gateway verifies the token, claims the job (store compare-and-set so
-    multi-replica deployments fire at-most-once), runs it, and re-arms the next
-    one-shot
+  → the gateway verifies the token, claims the job (a heartbeat-fenced lease
+    serializes healthy owners sharing the store), runs it, records the outcome,
+    and re-arms the next one-shot
 ```
+
+The lease fences Hermes-managed completion/output/delivery/sidecar writes. It
+cannot make arbitrary external effects inside an agent turn exactly-once after a
+crash or stale-owner recovery; effectful jobs should use downstream idempotency
+keys.
 
 Config (all non-secret; on hosted agents Nous sets these at provision time):
 

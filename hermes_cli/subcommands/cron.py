@@ -164,6 +164,18 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
     )
     cron_remove.add_argument("job_id", help="Job ID to remove")
 
+    # Explicit one-shot migration for claim residue left by stopped v1 schedulers.
+    cron_migrate_v1 = cron_subparsers.add_parser(
+        "migrate-v1-claims",
+        help="Clear legacy claim residue after all v1 schedulers are stopped",
+    )
+    cron_migrate_v1.add_argument(
+        "--confirm-drained",
+        action="store_true",
+        required=True,
+        help="Attest that every protocol-v1 scheduler has been stopped and drained",
+    )
+
     # cron status
     cron_subparsers.add_parser("status", help="Check if cron scheduler is running")
 

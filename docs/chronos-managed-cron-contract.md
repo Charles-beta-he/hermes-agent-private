@@ -117,8 +117,9 @@ Arm (or re-arm, idempotently) exactly one one-shot for a job.
   3. `POST {agent_callback_url}/api/cron/fire` with
      `Authorization: Bearer <that JWT>` and body `{"job_id": "...", "fire_at": "..."}`.
   4. Treat a non-2xx agent response as a **retryable** failure (let the
-     scheduler retry the relay). The agent's store CAS de-dupes a double fire,
-     so retries are safe.
+     scheduler retry the relay). A healthy owner's fenced claim de-duplicates an
+     overlapping relay retry. Recovery after an owner crash can replay arbitrary
+     agent effects, so effectful jobs should use downstream idempotency keys.
 - **Response to the scheduler:** 2xx once the agent POST is accepted (202), so
   the scheduler does not retry a delivered fire.
 
@@ -150,27 +151,34 @@ callback through to the verifier. (Also registered on the optional
   - valid → **202 `{"status": "accepted", "job_id": "..."}`** immediately, and
     the job runs in the background. 202-before-run means a long agent turn never
     trips the relay's HTTP timeout.
-- **At-most-once:** the agent claims the job with a store-level compare-and-set
-  (`claim_job_for_fire`) before running. A relay/scheduler retry that arrives
-  while the first fire is in flight (or after it completed) loses the claim and
-  does not double-run.
+- **Healthy-owner de-duplication:** the agent claims the job with a store-level
+  fenced lease before running. A relay/scheduler retry while the first owner is
+  healthy loses admission and does not overlap it. Crash/stale-lease recovery is
+  intentionally at-least-once for arbitrary effects inside `run_job`: a recovered
+  successor cannot know whether the failed owner already performed an external
+  side effect. Fencing covers Hermes-managed completion, output, delivery, and
+  sidecar writes after ownership checks; it is not a transaction around agent
+  effects.
 
 ---
 
-## At-most-once & re-arm semantics
+## Claim fencing & re-arm semantics
 
 - **Recurring (cron/interval):** on fire, the agent advances `next_run_at`
-  (under its store lock) as part of the claim, runs the job, then re-provisions
-  a one-shot for the new `next_run_at`. A duplicate relay for the old `fire_at`
-  finds the claim taken / time advanced and is dropped.
+  (under its store lock) as part of the claim, runs the job, records success or
+  failure, then re-provisions a one-shot for the new `next_run_at`. A duplicate
+  relay while the owner is healthy finds the claim taken / time advanced and is
+  dropped. An ordinary recorded execution failure still counts as an accepted
+  completion and therefore re-arms the recurring schedule.
 - **One-shot (`30m`, `+90s`, etc.):** fires once; `mark_job_run` marks it
   completed. No re-arm.
 - **`repeat.times = N`:** `mark_job_run` deletes the job at the limit, so
   `get_job` returns `None` after the final fire → the agent does **not** re-arm
   → the schedule stops cleanly with no orphaned one-shot.
-- **Multi-replica agents:** the store CAS makes the fire at-most-once across N
-  gateway replicas sharing one `HERMES_HOME` — exactly one replica runs each
-  fire.
+- **Multi-replica agents:** replicas sharing one `HERMES_HOME` serialize admission
+  while the protocol-v2 owner keeps advancing its heartbeat. After a crashed or
+  stalled owner is recovered, arbitrary in-agent external effects may replay;
+  consumers that require stronger guarantees need their own idempotency key.
 
 ## Reconcile (self-healing)
 

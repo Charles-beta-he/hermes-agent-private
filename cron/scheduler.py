@@ -239,7 +239,16 @@ _LEGACY_HOME_TARGET_ENV_VARS = {
     "QQBOT_HOME_CHANNEL": "QQ_HOME_CHANNEL",
 }
 
-from cron.jobs import get_due_jobs, mark_job_run, save_job_output, advance_next_run, claim_dispatch
+from cron.jobs import (
+    _RUN_CLAIM_HEARTBEAT_INTERVAL_SECONDS,
+    advance_next_run,
+    cancel_job_run_claim_heartbeat,
+    claim_dispatch,
+    get_due_jobs,
+    mark_job_run,
+    renew_job_run_claim,
+    save_job_output,
+)
 
 # Sentinel: when a cron agent has nothing new to report, it can start its
 # response with this marker to suppress delivery.  Output is still saved
@@ -2378,7 +2387,7 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
     # Inject output from referenced cron jobs as context.
     context_from = job.get("context_from")
     if context_from:
-        from cron.jobs import OUTPUT_DIR
+        from cron.jobs import load_latest_job_output
         if isinstance(context_from, str):
             context_from = [context_from]
         for source_job_id in context_from:
@@ -2393,17 +2402,9 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
                 )
                 continue
             try:
-                job_output_dir = OUTPUT_DIR / source_job_id
-                if not job_output_dir.exists():
+                latest_output = load_latest_job_output(source_job_id)
+                if latest_output is None:
                     continue  # silent skip — no output yet
-                output_files = sorted(
-                    job_output_dir.glob("*.md"),
-                    key=lambda f: f.stat().st_mtime,
-                    reverse=True,
-                )
-                if not output_files:
-                    continue  # silent skip — no output yet
-                latest_output = output_files[0].read_text(encoding="utf-8").strip()
                 # Truncate to 8K characters to avoid prompt bloat
                 _MAX_CONTEXT_CHARS = 8000
                 if len(latest_output) > _MAX_CONTEXT_CHARS:
@@ -3522,22 +3523,139 @@ def _teardown_cron_agent(agent, job_id: str) -> None:
         logger.debug("Job '%s': failed to reap stale auxiliary clients: %s", job_id, e)
 
 
-def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -> bool:
+def _start_run_claim_heartbeat(
+    job_id: str, run_claim_id: Optional[str]
+) -> tuple[
+    Optional[threading.Event], Optional[threading.Event], Optional[threading.Thread]
+]:
+    """Start fenced renewal; return stop/lost/thread (all None for legacy runs)."""
+    if not run_claim_id:
+        return None, None, None
+
+    renewed = False
+    for attempt in range(3):
+        try:
+            renewed = renew_job_run_claim(job_id, run_claim_id)
+            break
+        except Exception as exc:
+            logger.warning(
+                "Job '%s': initial claim heartbeat attempt %d failed: %s",
+                job_id,
+                attempt + 1,
+                exc,
+            )
+            if attempt < 2:
+                time.sleep(0.05)
+    if not renewed:
+        return None, None, None
+
+    stop = threading.Event()
+    ownership_lost = threading.Event()
+
+    def _heartbeat() -> None:
+        while not stop.wait(_RUN_CLAIM_HEARTBEAT_INTERVAL_SECONDS):
+            try:
+                still_owned = renew_job_run_claim(
+                    job_id, run_claim_id, cancel_event=stop
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Job '%s': claim heartbeat renewal failed transiently: %s",
+                    job_id,
+                    exc,
+                )
+                continue
+            if not still_owned:
+                ownership_lost.set()
+                return
+
+    worker = threading.Thread(
+        target=_heartbeat,
+        name=f"cron-claim-heartbeat-{job_id}",
+        daemon=True,
+    )
+    worker.start()
+    return stop, ownership_lost, worker
+
+
+def _run_claim_owned_before_side_effect(
+    job_id: str,
+    run_claim_id: Optional[str],
+    ownership_lost: Optional[threading.Event],
+) -> bool:
+    """Fail closed unless the exact fenced claim can be renewed immediately."""
+    if not run_claim_id:
+        return True
+    if ownership_lost is not None and ownership_lost.is_set():
+        return False
+    try:
+        still_owned = renew_job_run_claim(job_id, run_claim_id)
+    except Exception as exc:
+        logger.error("Job '%s': ownership revalidation failed: %s", job_id, exc)
+        return False
+    if not still_owned and ownership_lost is not None:
+        ownership_lost.set()
+    return still_owned
+
+
+def run_one_job(
+    job: dict,
+    *,
+    adapters=None,
+    loop=None,
+    verbose: bool = False,
+    result_out: Optional[dict] = None,
+) -> bool:
     """Run ONE due job end-to-end: execute → save output → deliver → mark.
 
     This is the shared firing body extracted from ``tick``'s per-job closure so
     that BOTH the built-in ticker and an external provider's ``fire_due`` (e.g.
     Chronos) run the identical sequence — no duplicated correctness.
 
-    It does NOT decide whether the job is due, claim it, or compute the next
-    run — those are the caller's concern (``tick`` advances ``next_run_at``
-    under the file lock before dispatch; an external provider claims via the
-    store CAS). This function only fires the given job once.
+    It does NOT decide whether the job is due or claim a fresh execution; callers
+    pass either the built-in ticker's atomic due snapshot or the exact snapshot
+    returned by ``claim_job_for_execution``. It starts by renewing that snapshot's
+    fenced claim and skips Hermes-managed post-run output, delivery, and sidecar
+    effects if ownership has changed. Effects already performed inside
+    ``run_job`` are outside this lease fence and are not exactly-once.
 
-    Returns True if the job was processed (even if the job itself failed —
-    failure is recorded via ``mark_job_run``), False only if processing raised.
+    The bool reports durable completion acceptance, not business success. An
+    ordinary failed execution therefore returns True when ``mark_job_run``
+    accepted it, allowing external providers to re-arm recurring jobs. Callers
+    needing the execution outcome may pass ``result_out``; it receives
+    ``completion_accepted``, ``execution_success``, and ``error``.
+    ``BaseException`` subclasses propagate after heartbeat/resource cleanup.
     """
+
+    def _return(
+        completion_accepted: bool,
+        *,
+        execution_success: bool = False,
+        error: Optional[str] = None,
+    ) -> bool:
+        if result_out is not None:
+            result_out.update(
+                completion_accepted=completion_accepted,
+                execution_success=execution_success,
+                error=error,
+            )
+        return completion_accepted
+
+    run_trigger_generation = 0
+    run_claim = job.get("run_claim")
+    run_claim_id = run_claim.get("id") if isinstance(run_claim, dict) else None
+    heartbeat_stop, ownership_lost, heartbeat_thread = _start_run_claim_heartbeat(
+        job["id"], run_claim_id
+    )
+    if run_claim_id and heartbeat_stop is None:
+        logger.warning(
+            "Job '%s': execution claim %s is no longer owned; skipping side effect",
+            job["id"],
+            run_claim_id,
+        )
+        return _return(False, error="execution claim is no longer owned")
     try:
+        run_trigger_generation = int(job.get("trigger_generation", 0))
         started_at = time.time()
         # Pre-run dispatch claim (issue #38758): atomically commit a finite
         # one-shot's dispatch BEFORE its side effect runs, so a tick that dies
@@ -3547,7 +3665,7 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
                 "Job '%s': one-shot dispatch limit reached — skipping",
                 job.get("name", job["id"]),
             )
-            return True
+            return _return(False, error="one-shot dispatch limit reached")
 
         # Run the job under the profile's secret scope. get_secret() fails
         # closed outside a scope once profile isolation is in play (multiple
@@ -3598,6 +3716,18 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
         # swallow the error and leak the agent's subprocesses/clients (#10200).
         delivery_error = None
         try:
+            if not _run_claim_owned_before_side_effect(
+                job["id"], run_claim_id, ownership_lost
+            ):
+                logger.error(
+                    "Job '%s': ownership lost after execution; suppressing output and delivery",
+                    job["id"],
+                )
+                return _return(
+                    False,
+                    execution_success=bool(run_success),
+                    error="ownership lost after execution",
+                )
             output_file = save_job_output(job["id"], output)
             if verbose:
                 logger.info("Output saved to: %s", output_file)
@@ -3610,6 +3740,18 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
                 should_deliver = False
 
             if should_deliver:
+                if not _run_claim_owned_before_side_effect(
+                    job["id"], run_claim_id, ownership_lost
+                ):
+                    logger.error(
+                        "Job '%s': ownership lost before delivery; suppressing send",
+                        job["id"],
+                    )
+                    return _return(
+                        False,
+                        execution_success=bool(run_success),
+                        error="ownership lost before delivery",
+                    )
                 try:
                     delivery_job = dict(job)
                     delivery_job["_cron_output_file"] = str(output_file)
@@ -3630,6 +3772,19 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
             success = False
             error = "Agent completed but produced empty response (model error, timeout, or misconfiguration)"
 
+        if not _run_claim_owned_before_side_effect(
+            job["id"], run_claim_id, ownership_lost
+        ):
+            logger.error(
+                "Job '%s': ownership lost before completion artifacts",
+                job["id"],
+            )
+            return _return(
+                False,
+                execution_success=bool(run_success),
+                error="ownership lost before completion artifacts",
+            )
+
         sidecar_meta = _emit_cron_session_sidecar(
             job=job,
             run_success=run_success,
@@ -3642,7 +3797,24 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
             duration_s=time.time() - started_at,
         )
 
-        mark_job_run(job["id"], success, error, delivery_error=delivery_error)
+        marked = mark_job_run(
+            job["id"],
+            success,
+            error,
+            delivery_error=delivery_error,
+            run_trigger_generation=run_trigger_generation,
+            run_claim_id=run_claim_id,
+        )
+        if not marked:
+            logger.error(
+                "Job '%s': completion rejected because execution ownership was lost",
+                job["id"],
+            )
+            return _return(
+                False,
+                execution_success=bool(success),
+                error=error or "completion ownership rejected",
+            )
         try:
             from agent.selfcheck_operator import observe_cron_job_result
 
@@ -3662,18 +3834,36 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
             )
         except Exception as _selfcheck_err:
             logger.debug("selfcheck operator cron observer failed for job %s: %s", job["id"], _selfcheck_err)
-        return True
+        return _return(
+            True,
+            execution_success=bool(success),
+            error=error if not success else None,
+        )
 
     except Exception as e:
         logger.error("Error processing job %s: %s", job['id'], e)
-        mark_job_run(job["id"], False, str(e))
-        try:
-            from agent.selfcheck_operator import observe_cron_job_result
+        marked = mark_job_run(
+            job["id"],
+            False,
+            str(e),
+            run_trigger_generation=run_trigger_generation,
+            run_claim_id=run_claim_id,
+        )
+        if marked:
+            try:
+                from agent.selfcheck_operator import observe_cron_job_result
 
-            observe_cron_job_result(job=job, success=False, error=str(e))
-        except Exception as _selfcheck_err:
-            logger.debug("selfcheck operator cron observer failed for job %s: %s", job["id"], _selfcheck_err)
-        return False
+                observe_cron_job_result(job=job, success=False, error=str(e))
+            except Exception as _selfcheck_err:
+                logger.debug("selfcheck operator cron observer failed for job %s: %s", job["id"], _selfcheck_err)
+        return _return(bool(marked), execution_success=False, error=str(e))
+    finally:
+        if heartbeat_stop is not None:
+            cancel_job_run_claim_heartbeat(heartbeat_stop)
+        if heartbeat_thread is not None and heartbeat_thread.is_alive():
+            # Never return while this execution's worker can still publish a
+            # heartbeat. The renewal path rechecks stop under the store lock.
+            heartbeat_thread.join()
 
 
 def _notify_provider_jobs_changed() -> None:
@@ -3765,7 +3955,8 @@ def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> i
             logger.info("%s - %s job(s) due", _hermes_now().strftime('%H:%M:%S'), len(due_jobs))
 
         # Advance next_run_at for all recurring jobs FIRST, under the file lock,
-        # before any execution begins.  This preserves at-most-once semantics.
+        # before any execution begins. This suppresses immediate restart replay;
+        # stale-lease recovery does not make arbitrary agent effects at-most-once.
         # For parallel jobs that are already running, advance_next_run keeps
         # bumping next_run_at forward so the grace window never expires.
         # mark_job_run() overwrites next_run_at on completion.

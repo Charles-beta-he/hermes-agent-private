@@ -1,5 +1,7 @@
 """Regression tests for dashboard cron job profile routing."""
 
+import threading
+
 import pytest
 from fastapi import HTTPException
 
@@ -48,6 +50,135 @@ def test_call_cron_for_profile_routes_storage_and_restores_globals(isolated_prof
     assert cron_jobs.CRON_DIR == old_cron_dir
     assert cron_jobs.JOBS_FILE == old_jobs_file
     assert cron_jobs.OUTPUT_DIR == old_output_dir
+
+
+def test_profile_retarget_blocks_default_store_heartbeat(isolated_profiles, monkeypatch):
+    from cron import jobs as cron_jobs
+    from hermes_cli import web_server
+
+    default_home = isolated_profiles["default"]
+    monkeypatch.setattr(cron_jobs, "CRON_DIR", default_home / "cron")
+    monkeypatch.setattr(cron_jobs, "JOBS_FILE", default_home / "cron" / "jobs.json")
+    monkeypatch.setattr(cron_jobs, "OUTPUT_DIR", default_home / "cron" / "output")
+    job = cron_jobs.create_job(prompt="x", schedule="every 1h", name="default-owned")
+    claimed = cron_jobs.claim_job_for_execution(job["id"])
+    assert claimed is not None
+    token = claimed["run_claim"]["id"]
+
+    entered = threading.Event()
+    release = threading.Event()
+    original_get_job = cron_jobs.get_job
+
+    def blocking_get_job(job_id):
+        entered.set()
+        assert release.wait(2)
+        return original_get_job(job_id)
+
+    monkeypatch.setattr(cron_jobs, "get_job", blocking_get_job)
+    profile_thread = threading.Thread(
+        target=web_server._call_cron_for_profile,
+        args=("worker_alpha", "get_job", "missing"),
+    )
+    profile_thread.start()
+    assert entered.wait(2)
+
+    result = []
+    heartbeat_thread = threading.Thread(
+        target=lambda: result.append(cron_jobs.renew_job_run_claim(job["id"], token))
+    )
+    heartbeat_thread.start()
+    heartbeat_thread.join(0.1)
+    assert heartbeat_thread.is_alive()
+
+    release.set()
+    profile_thread.join(2)
+    heartbeat_thread.join(2)
+    assert result == [True]
+
+
+def test_profile_retarget_blocks_default_output_reader(isolated_profiles, monkeypatch):
+    from cron import jobs as cron_jobs
+    from hermes_cli import web_server
+
+    default_home = isolated_profiles["default"]
+    monkeypatch.setattr(cron_jobs, "CRON_DIR", default_home / "cron")
+    monkeypatch.setattr(cron_jobs, "JOBS_FILE", default_home / "cron" / "jobs.json")
+    monkeypatch.setattr(cron_jobs, "OUTPUT_DIR", default_home / "cron" / "output")
+    source_id = "abcdef123456"
+    cron_jobs.save_job_output(source_id, "default-output")
+    worker_output = isolated_profiles["worker_alpha"] / "cron" / "output" / source_id
+    worker_output.mkdir(parents=True)
+    (worker_output / "2026-01-01_00-00-00.md").write_text("worker-output", encoding="utf-8")
+
+    entered = threading.Event()
+    release = threading.Event()
+    original_get_job = cron_jobs.get_job
+
+    def blocking_get_job(job_id):
+        entered.set()
+        assert release.wait(2)
+        return original_get_job(job_id)
+
+    monkeypatch.setattr(cron_jobs, "get_job", blocking_get_job)
+    profile_thread = threading.Thread(
+        target=web_server._call_cron_for_profile,
+        args=("worker_alpha", "get_job", "missing"),
+    )
+    profile_thread.start()
+    assert entered.wait(2)
+
+    result = []
+    reader_thread = threading.Thread(
+        target=lambda: result.append(cron_jobs.load_latest_job_output(source_id))
+    )
+    reader_thread.start()
+    reader_thread.join(0.1)
+    assert reader_thread.is_alive()
+
+    release.set()
+    profile_thread.join(2)
+    reader_thread.join(2)
+    assert result == ["default-output"]
+
+
+def test_profile_fire_uses_isolated_child_without_retargeting_parent(
+    isolated_profiles, monkeypatch
+):
+    from cron import jobs as cron_jobs
+    from hermes_cli import web_server
+
+    before = (cron_jobs.CRON_DIR, cron_jobs.JOBS_FILE, cron_jobs.OUTPUT_DIR)
+    captured = {}
+
+    class Result:
+        returncode = 0
+
+    def fake_run(argv, *, env):
+        captured["argv"] = argv
+        captured["env"] = env
+        return Result()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    assert web_server._fire_cron_job_for_profile("worker_alpha", "job-123") is True
+    assert (cron_jobs.CRON_DIR, cron_jobs.JOBS_FILE, cron_jobs.OUTPUT_DIR) == before
+    assert captured["argv"][-2:] == [
+        str(isolated_profiles["worker_alpha"]),
+        "job-123",
+    ]
+    assert captured["env"]["HERMES_HOME"] == str(isolated_profiles["worker_alpha"])
+    assert captured["env"]["HERMES_PROFILE"] == "worker_alpha"
+    assert "set_hermes_home_override(sys.argv[1])" in captured["argv"][2]
+
+
+def test_profile_fire_maps_child_claim_loss_to_false(isolated_profiles, monkeypatch):
+    from hermes_cli import web_server
+
+    class Result:
+        returncode = 3
+
+    monkeypatch.setattr("subprocess.run", lambda argv, *, env: Result())
+    assert web_server._fire_cron_job_for_profile("worker_alpha", "job-123") is False
 
 
 @pytest.mark.asyncio

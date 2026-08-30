@@ -474,26 +474,37 @@ def finalize_turn(
         _self_advance_checkpoint_reason,
         _try_auto_relay,
     )
+    try:
+        _todo_items = agent._todo_store.read()
+        _continuation_mode = agent._todo_store.continuation_mode()
+    except Exception:
+        logger.debug("self-advance todo read failed", exc_info=True)
+        _todo_items = []
+        _continuation_mode = "manual"
     _checkpoint_reason = _self_advance_checkpoint_reason(
         final_response=final_response,
-        user_message=user_message,
-        original_user_message=original_user_message,
-        messages=messages,
+        continuation_mode=_continuation_mode,
+        turn_continuation_requested=bool(
+            getattr(agent, "_turn_continuation_requested", False)
+        ),
+        todo_items=_todo_items,
         interrupted=interrupted,
     )
     if _checkpoint_reason and not _auto_relay_summary:
         _turn_exit_reason = _checkpoint_reason
         _auto_relay_summary = str(final_response or "")
-    relay_result = _try_auto_relay(
-        agent,
-        final_response=_auto_relay_summary,
-        interrupted=interrupted,
-        turn_exit_reason=_turn_exit_reason,
-        messages=messages,
-        api_call_count=api_call_count,
-        task_id=task_id,
-        stream_callback=stream_callback,
-    )
+    relay_result = None
+    if not _cleanup_errors:
+        relay_result = _try_auto_relay(
+            agent,
+            final_response=_auto_relay_summary,
+            interrupted=interrupted,
+            turn_exit_reason=_turn_exit_reason,
+            messages=messages,
+            api_call_count=api_call_count,
+            task_id=task_id,
+            stream_callback=stream_callback,
+        )
     if relay_result is not None:
         if (
             _kanban_budget_task

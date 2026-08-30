@@ -5,6 +5,43 @@ import json
 from tools.todo_tool import TodoStore, todo_tool
 
 
+class TestStructuredContinuation:
+    def test_model_tool_cannot_grant_whole_goal_continuation(self):
+        store = TodoStore()
+        assert store.continuation_mode() == "manual"
+
+        payload = json.loads(todo_tool(
+            todos=[{"id": "1", "content": "Task", "status": "pending"}],
+            continuation_mode="whole_goal",
+            store=store,
+        ))
+
+        assert payload["error"] == "continuation_mode is runtime-owned"
+        assert store.continuation_mode() == "manual"
+
+    def test_model_tool_cannot_revoke_whole_goal_continuation(self):
+        store = TodoStore()
+        store.set_continuation_mode("whole_goal")
+
+        payload = json.loads(todo_tool(continuation_mode="manual", store=store))
+
+        assert payload["error"] == "continuation_mode is runtime-owned"
+        assert store.continuation_mode() == "whole_goal"
+
+    def test_replacing_todos_cannot_create_or_revoke_runtime_authority(self):
+        store = TodoStore()
+        store.set_continuation_mode("whole_goal")
+
+        store.write([{"id": "new", "content": "New goal", "status": "pending"}])
+        assert store.continuation_mode() == "whole_goal"
+
+    def test_model_schema_does_not_expose_continuation_authority(self):
+        from tools.todo_tool import TODO_SCHEMA
+
+        properties = TODO_SCHEMA["parameters"]["properties"]
+        assert "continuation_mode" not in properties
+
+
 class TestWriteAndRead:
     def test_write_replaces_list(self):
         store = TodoStore()
