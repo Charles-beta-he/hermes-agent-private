@@ -186,12 +186,20 @@ def build_review_packet_template(
         "sudo": False,
         "push_deploy_release": False,
     }
+    candidate_digest_recipe = {
+        "algorithm": "sha256",
+        "member_order": "changed file paths sorted lexicographically by repository-relative path",
+        "framing": "mode + NUL + path + NUL + decimal byte length + NUL + bytes",
+        "mode_encoding": "python stat octal literal spelling: regular files are 0o644 or 0o755; symlinks are 0o120000; deletes use D",
+        "delete_member": "D + NUL + path + NUL + 0 + NUL, emitted after live members in sorted path order",
+    }
     return {
         "schema": REVIEW_PACKET_SCHEMA,
         "mode": "local_review_template_only",
         "generated_at": generated_at or _now_iso(),
         "status": "READY_FOR_LOCAL_REVIEW",
         "candidate_digest": candidate_digest,
+        "candidate_digest_recipe": candidate_digest_recipe,
         "task_projection_digest": _stable_sha256(task_projection),
         "changed_files": sorted(dict.fromkeys(path.strip() for path in changed_files)),
         "required_verification": [cmd.strip() for cmd in required_verification],

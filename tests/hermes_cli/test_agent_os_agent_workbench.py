@@ -121,6 +121,13 @@ def test_review_packet_template_binds_candidate_identity_and_negative_boundaries
     }
     assert packet["review_questions"][0]["id"] == "candidate_identity_bound"
     assert packet["required_verification"] == ["python -m pytest tests/hermes_cli/test_agent_os*.py -q"]
+    assert packet["candidate_digest_recipe"] == {
+        "algorithm": "sha256",
+        "member_order": "changed file paths sorted lexicographically by repository-relative path",
+        "framing": "mode + NUL + path + NUL + decimal byte length + NUL + bytes",
+        "mode_encoding": "python stat octal literal spelling: regular files are 0o644 or 0o755; symlinks are 0o120000; deletes use D",
+        "delete_member": "D + NUL + path + NUL + 0 + NUL, emitted after live members in sorted path order",
+    }
 
 
 def test_review_packet_template_rejects_runtime_activated_projection() -> None:

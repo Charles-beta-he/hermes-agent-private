@@ -108,12 +108,24 @@ def test_candidate_snapshot_binds_modes_bytes_symlinks_and_deletes(tmp_path):
     changed = ["seed.txt", "run.sh", "link"]
     observed = snapshot_workspace_candidate(lease, changed)
     expected = hashlib.sha256()
-    expected.update(b"120000\0link\0" + str(len(b"run.sh")).encode() + b"\0run.sh")
+    expected.update(b"0o120000\0link\0" + str(len(b"run.sh")).encode() + b"\0run.sh")
     script = executable.read_bytes()
-    expected.update(b"100755\0run.sh\0" + str(len(script)).encode() + b"\0" + script)
+    expected.update(b"0o755\0run.sh\0" + str(len(script)).encode() + b"\0" + script)
     expected.update(b"D\0seed.txt\0" + b"0\0")
     assert observed == "sha256:" + expected.hexdigest()
     assert snapshot_workspace_candidate(lease, list(reversed(changed))) == observed
+
+
+def test_candidate_snapshot_uses_review_recipe_octal_mode_spelling(tmp_path):
+    _, _, lease = _allocate(tmp_path)
+    workspace = Path(lease.workspace_path)
+    (workspace / "seed.txt").write_bytes(b"changed\n")
+
+    observed = snapshot_workspace_candidate(lease, ["seed.txt"])
+    expected = hashlib.sha256()
+    expected.update(b"0o644\0seed.txt\0" + str(len(b"changed\n")).encode() + b"\0changed\n")
+
+    assert observed == "sha256:" + expected.hexdigest()
 
 
 def test_candidate_snapshot_rejects_unowned_or_unsafe_write_sets(tmp_path):

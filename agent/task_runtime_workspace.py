@@ -337,10 +337,10 @@ def snapshot_workspace_candidate(
             continue
         metadata = path.lstat()
         if stat.S_ISLNK(metadata.st_mode):
-            mode = "120000"
+            mode = "0o120000"
             content = os.readlink(path).encode("utf-8")
         elif stat.S_ISREG(metadata.st_mode):
-            mode = "100755" if metadata.st_mode & stat.S_IXUSR else "100644"
+            mode = "0o755" if metadata.st_mode & stat.S_IXUSR else "0o644"
             content = path.read_bytes()
         else:
             raise ValueError("workspace_changed_artifact_not_file")
