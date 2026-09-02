@@ -14,6 +14,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from hermes_cli.agent_workbench_projection import (
+    ReviewPacketTemplateError,
+    TaskStateProjectionError,
+    build_review_packet_template,
+    build_task_state_projection,
+    load_projection_from_file,
+    load_tasks_from_file,
+)
 from hermes_cli.agent_os_control_plane import (
     authorize_local_harness,
     bootstrap_erg_runtime_state,
@@ -199,6 +207,43 @@ def cmd_agent_os(args: argparse.Namespace) -> int:
     if action == "route":
         text = getattr(args, "text", None) or ""
         return _emit(route_shadow(text, home), as_json=as_json)
+    if action == "workbench-state":
+        try:
+            payload = build_task_state_projection(load_tasks_from_file(getattr(args, "input", "")))
+        except (OSError, UnicodeError, json.JSONDecodeError, TaskStateProjectionError) as exc:
+            payload = {
+                "ok": False,
+                "schema": "AgentWorkbenchTaskStateProjection.v0",
+                "mode": "local_projection_only",
+                "error": str(exc),
+                "runtime_activation": False,
+                "would_execute": False,
+                "external_side_effects_executed": False,
+            }
+        else:
+            payload = {"ok": True, **payload}
+        return _emit(payload, as_json=as_json)
+    if action == "workbench-review-template":
+        try:
+            payload = build_review_packet_template(
+                load_projection_from_file(getattr(args, "input", "")),
+                candidate_digest=getattr(args, "candidate_digest", ""),
+                changed_files=getattr(args, "changed_file", []) or [],
+                required_verification=getattr(args, "required_verification", []) or [],
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError, ReviewPacketTemplateError) as exc:
+            payload = {
+                "ok": False,
+                "schema": "AgentWorkbenchReviewPacketTemplate.v0",
+                "mode": "local_review_template_only",
+                "error": str(exc),
+                "runtime_activation": False,
+                "would_execute": False,
+                "external_side_effects_executed": False,
+            }
+        else:
+            payload = {"ok": True, **payload}
+        return _emit(payload, as_json=as_json)
     if action == "replay":
         return _emit(
             replay_recent_user_intents(home, limit=getattr(args, "limit", 20)),
@@ -379,6 +424,27 @@ def build_agent_os_parser(subparsers) -> None:
     route.add_argument("--home", default=None, help="Hermes home to inspect")
     route.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     route.set_defaults(func=cmd_agent_os)
+
+    workbench_state = subs.add_parser(
+        "workbench-state",
+        help="Build a local-only Agent Workbench task-state projection from a JSON task list",
+    )
+    workbench_state.add_argument("--input", required=True, help="JSON list or object with tasks")
+    workbench_state.add_argument("--home", default=None, help="Accepted for CLI consistency; not mutated")
+    workbench_state.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    workbench_state.set_defaults(func=cmd_agent_os)
+
+    workbench_review = subs.add_parser(
+        "workbench-review-template",
+        help="Build a local-only review packet template bound to a task-state projection",
+    )
+    workbench_review.add_argument("--input", required=True, help="AgentWorkbenchTaskStateProjection.v0 JSON")
+    workbench_review.add_argument("--candidate-digest", required=True, help="sha256:<hex> candidate digest")
+    workbench_review.add_argument("--changed-file", action="append", default=[], help="Changed candidate file; repeatable")
+    workbench_review.add_argument("--required-verification", action="append", default=[], help="Required local verification command; repeatable")
+    workbench_review.add_argument("--home", default=None, help="Accepted for CLI consistency; not mutated")
+    workbench_review.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    workbench_review.set_defaults(func=cmd_agent_os)
 
     replay = subs.add_parser(
         "replay",
